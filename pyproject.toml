@@ -12,6 +12,7 @@ dependencies = [
 dev = [
     "pytest>=8.4.2",
     "pytest-cov>=7.1.0",
+    "ruff>=0.15.20",
 ]
 docs = [
     "myst-parser>=3.0.1",
