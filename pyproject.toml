@@ -9,7 +9,15 @@ dependencies = [
 ]
 
 [dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-cov>=7.1.0",
+]
 docs = [
     "myst-parser>=3.0.1",
     "sphinx>=7.4.7",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
