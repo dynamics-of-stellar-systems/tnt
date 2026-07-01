@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    # Only run when pushing to these specific branches
+    branches:
+      - ci-test
+  workflow_dispatch:
+  schedule:
+    # Runs at 00:00 every day (UTC)
+    - cron: '0 0 * * *'
+
+jobs:
+  uv-example:
+    name: python
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
