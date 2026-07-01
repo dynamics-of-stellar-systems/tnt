@@ -11,12 +11,22 @@ on:
     - cron: '0 0 * * *'
 
 jobs:
-  uv-example:
-    name: python
+  build:
+    name: continuous-integration
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
 
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install uv
+      - name: Install uv and set the Python version
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          # Install a specific version of uv.
+          version: "0.11.26"
