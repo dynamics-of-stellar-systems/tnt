@@ -3,7 +3,7 @@ name = "tnt"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "jax>=0.4.30",
 ]
@@ -22,3 +22,14 @@ docs = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+# JAX only supports specific OS and architecture combinations.
+# We limit resolution to these environments to prevent wheel errors.
+required-environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",  # Linux Intel/AMD
+    "sys_platform == 'linux' and platform_machine == 'aarch64'", # Linux ARM64
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'", # Intel Mac (older JAX versions only...)
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",  # Apple Silicon Mac
+    "sys_platform == 'win32' and platform_machine == 'AMD64'"    # Windows 64-bit
+]
