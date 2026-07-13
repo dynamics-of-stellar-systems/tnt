@@ -1,0 +1,94 @@
+# Project Knowledge
+
+## Python style
+
+- Follow the PEP 8 style guide whenever practical.
+- Use double quotes for Python strings.
+- Add type hints for function parameter types and return types.
+- Use the Google style for function and class docstrings.
+
+## Configuration defaults
+
+- The packaged base profile is `tnt/defaults/default_config.yaml`.
+- TNT will recursively merge the base profile with a user profile before
+  constructing a model.
+- The user profile must define the physical system, dynamically named
+  components and parameters, input directory, and output directory.
+- Defaults for properties of dynamically named components, parameters, and
+  kinematic data sets are declared under `dynamic_object_defaults`. The merge
+  layer applies them to each corresponding object unless the user overrides
+  the property on that object.
+- Policies that depend on a kinematics data-set type are declared under
+  `kinematics_type_defaults`. The configuration resolver must select the
+  matching type policy and then allow settings on the named data set to
+  override it.
+- The Gaussian-Hermite histogram defaults use a three-sigma velocity extent,
+  an approximate bin width of one tenth of the minimum observed dispersion,
+  and a zero-centered histogram.
+- The Bayesian LOSVD histogram defaults use the symmetric observed velocity
+  width without additional scaling or oversampling, center the histogram on
+  zero, and derive the systemic velocity from the flux-weighted centroid.
+- Proper-motion validation warns when velocity-bin width exceeds 0.25 times
+  the global dispersion or histogram width is less than five times the global
+  dispersion.
+- Values describing the background cosmology belong under
+  `cosmological_parameters`; they are not attributes of the modelled system.
+- The present-day Hubble parameter is named `H0`, distinguishing it from the
+  Hubble parameter at other cosmological times.
+- `mge_settings.axial_ratio_cap` is a global numerical-stability policy for
+  every multi-Gaussian expansion (MGE), not a per-component default. Values
+  above the cap are replaced by the cap, and the implementation must warn
+  about every adjustment. The resolved model data must preserve the adjusted
+  values for reproducibility.
+- Shared comparison tolerances and constraint-error floors belong under
+  `numerics_settings`. Model comparison uses a relative tolerance of `1e-10`,
+  while parameter-grid comparisons use `1e-6`. Total-mass and intrinsic-mass
+  constraint errors have floors of `1e-8` and `1e-16`, respectively.
+- Orbit-library radial limits are galaxy-specific and therefore have no
+  package-wide defaults; the user configuration must provide them.
+- A negative `orbit_library_settings.random_seed` requests a generated seed.
+  Zero or a positive integer is an explicit seed for a reproducible run.
+- Mutually exclusive chi-squared threshold representations use tagged
+  `{mode, value}` objects rather than competing keys. The generator's
+  `delta_chi2_threshold` accepts `absolute` or
+  `fraction_of_sqrt_2n_observations`; the stopping criterion's
+  `minimum_delta_chi2` accepts `absolute` or `relative`. This schema makes it
+  impossible to specify both representations simultaneously.
+- `weight_solver_settings.PM_sys_err_factor` multiplies proper-motion error
+  variances. Proper-motion uncertainties are therefore scaled by its square
+  root, and `1.0` leaves them unchanged.
+- Counter-rotating orbit-cut settings form a nested
+  `weight_solver_settings.counter_rotating_orbit_cut` block. The block owns
+  its enable switch, velocity thresholds, opposite-sign requirement, minimum
+  affected-aperture count, and h1 penalty scale.
+- The default counter-rotating cut requires at least two affected apertures.
+  The reference implementation's comment says that orbits flagged in zero or
+  one aperture are ignored, but its condition is `naperture_cut < 1`, which
+  only ignores zero and therefore admits a single affected aperture. TNT's
+  `min_affected_apertures: 2` follows the stated intent. Preserve this choice
+  during implementation unless the scientific policy is deliberately revised.
+- `execution_settings.model_processing_order` accepts `model_by_model` or
+  `stage_by_stage`. The former completes orbit integration and weight solving
+  for each model in turn; the latter integrates all models' orbit libraries
+  before starting weight solving.
+- `execution_settings.orbit_family_integration_in_parallel` controls whether
+  box- and tube-orbit families are integrated concurrently. Account for its
+  additional CPU use when configuring orbit workers.
+- Analysis defaults belong under `analysis_settings`. Orbit decomposition uses
+  explicit circularity thresholds for cold, warm, and counter-rotating orbit
+  classes, with the hot interval implied between `-0.25` and `0.25`. The
+  default component nomenclature is `bulge_disk`, decomposition caching is
+  enabled, component-weight output is disabled, and Gaussian fitting is used
+  to derive mean velocity and dispersion from LOSVD histograms.
+- The fully resolved configuration must be preserved with model output for
+  reproducibility; preserving only the user delta is insufficient.
+
+## Relationship to DYNAMITE
+
+- TNT is a standalone reimplementation and refactoring, not a compatibility
+  layer for DYNAMITE.
+- TNT's configuration schema may improve or replace DYNAMITE concepts and
+  names; compatibility with DYNAMITE configuration files is not a requirement.
+- Legacy Fortran functionality will be replaced by Python implementations
+  based on JAX. Do not introduce Fortran-specific configuration or execution
+  paths into TNT.
