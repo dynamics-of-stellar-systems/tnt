@@ -20,7 +20,8 @@ config.read("user_config.yaml")
 3. Applies common defaults to every dynamically named component, parameter,
    and kinematics data set.
 4. Applies defaults selected by each kinematics data set's `type`.
-5. Writes the fully resolved configuration to
+5. Validates the resolved data without constructing runtime objects.
+6. Writes the fully resolved configuration to
    `<output_directory>/config_repository/resolved_config.yaml`.
 
 Mapping values are merged recursively. A user value replaces a default scalar
@@ -32,7 +33,24 @@ Consequently, the generated YAML is a self-contained runtime configuration.
 
 If a kinematics data set explicitly supplies complete histogram metadata
 (`width`, `center`, and `bins`), that metadata replaces the type's histogram
-derivation policy.
+derivation policy. Supplying only part of this explicit metadata is an error.
+
+## Validation
+
+Preparation rejects duplicate YAML keys, unknown fields, missing required
+fields, incorrect value types, unsupported enumerated values, and inconsistent
+tagged thresholds. It also checks data-only numerical constraints, including
+parameter bounds, positive worker counts, orbit-grid limits, and positive odd
+explicit histogram bin counts.
+
+Errors identify the configuration path containing the invalid value. The
+resolved file is written only after every preparation-stage check succeeds.
+
+These checks do not instantiate system components, inspect observational data
+or MGE files, or verify optional runtime dependencies. Those checks belong to
+the later execution phase. TNT also does not reproduce warnings for deprecated
+configuration fields from predecessor software; unsupported fields are
+reported as errors instead.
 
 ## Paths and side effects
 

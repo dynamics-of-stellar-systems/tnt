@@ -6,19 +6,32 @@ import yaml
 from tnt.configuration import Configuration
 
 
-def _write_user_config(path: Path, output_directory: Path, body: str = "") -> None:
+def _write_user_config(
+    path: Path,
+    output_directory: Path,
+    body: str = "",
+    orbit_body: str = "",
+) -> None:
     path.write_text(
         f"""
+system_attributes:
+  distance_mpc: 10.0
+  name: test_system
 system_components:
   stars:
     type: triaxial_visible_component
     parameters:
       q:
         value: 0.7
+    mge:
+      potential_file: potential.ecsv
+      luminosity_file: luminosity.ecsv
     kinematics:
       observed:
         type: gauss_hermite
         data_file: observed.ecsv
+        aperture_file: aperture.dat
+        bin_file: bins.dat
 {body}
 system_parameters:
   ml:
@@ -26,6 +39,7 @@ system_parameters:
 orbit_library_settings:
   logrmin: -0.2
   logrmax: 2.0
+{orbit_body}
 io_settings:
   input_directory: input
   output_directory: {output_directory.as_posix()}
@@ -49,9 +63,7 @@ weight_solver_settings:
 
     config = Configuration().read(user_path)
 
-    expected_path = (
-        output_directory / "config_repository" / "resolved_config.yaml"
-    )
+    expected_path = output_directory / "config_repository" / "resolved_config.yaml"
     assert config.resolved_path == expected_path
     assert expected_path.is_file()
 
@@ -68,9 +80,7 @@ weight_solver_settings:
     parameter = written["system_components"]["stars"]["parameters"]["q"]
     assert parameter["fixed"] is False
     assert parameter["logarithmic"] is False
-    kinematics = written["system_components"]["stars"]["kinematics"][
-        "observed"
-    ]
+    kinematics = written["system_components"]["stars"]["kinematics"]["observed"]
     assert kinematics["with_pops"] is True
     assert kinematics["histogram"]["sigma_extent"] == 3.0
     assert kinematics["histogram"]["bin_width_sigma_fraction"] == 0.1
@@ -93,9 +103,9 @@ def test_explicit_histogram_replaces_derived_policy(tmp_path: Path) -> None:
     )
 
     config = Configuration().read(user_path)
-    histogram = config.data["system_components"]["stars"]["kinematics"][
-        "observed"
-    ]["histogram"]
+    histogram = config.data["system_components"]["stars"]["kinematics"]["observed"][
+        "histogram"
+    ]
 
     assert histogram == {"width": 1000.0, "center": 10.0, "bins": 101}
 
@@ -110,6 +120,124 @@ def test_read_requires_output_directory(tmp_path: Path) -> None:
     with pytest.raises(
         ValueError,
         match=r"io_settings\.output_directory must be a non-empty string",
+    ):
+        Configuration().read(user_path)
+
+
+def test_read_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    user_path.write_text(
+        "io_settings:\n  input_directory: one\n  input_directory: two\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Duplicate configuration key"):
+        Configuration().read(user_path)
+
+
+def test_read_rejects_unknown_nested_field(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""        data_flie: misspelled.ecsv
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"kinematics\.observed contains unknown field\(s\): data_flie",
+    ):
+        Configuration().read(user_path)
+
+    assert not output_directory.exists()
+
+
+def test_read_rejects_partial_explicit_histogram(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""        histogram:
+          width: 1000.0
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="must define width, center, and bins together",
+    ):
+        Configuration().read(user_path)
+
+
+def test_read_rejects_even_histogram_bin_count(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""        histogram:
+          width: 1000.0
+          center: 0.0
+          bins: 100
+""",
+    )
+
+    with pytest.raises(ValueError, match="bins must be a positive odd integer"):
+        Configuration().read(user_path)
+
+
+def test_read_rejects_orbit_grid_with_too_few_i2_values(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        orbit_body="  nI2: 3\n",
+    )
+
+    with pytest.raises(ValueError, match=r"orbit_library_settings\.nI2"):
+        Configuration().read(user_path)
+
+
+def test_read_rejects_invalid_tagged_threshold_mode(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_settings:
+    delta_chi2_threshold:
+      mode: unsupported
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"delta_chi2_threshold\.mode must be one of",
+    ):
+        Configuration().read(user_path)
+
+
+def test_read_rejects_nonpositive_worker_count(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""execution_settings:
+  orbit_workers: 0
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"execution_settings\.orbit_workers must be a positive integer",
     ):
         Configuration().read(user_path)
 

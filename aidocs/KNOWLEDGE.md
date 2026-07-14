@@ -14,9 +14,16 @@
   constructing a model.
 - Configuration preparation is implemented by `tnt.Configuration`. Its
   `read()` method loads the user YAML, recursively merges package defaults,
-  resolves dynamic and kinematics-type defaults, and atomically writes
+  resolves dynamic and kinematics-type defaults, validates the resulting
+  data, and atomically writes
   `<output_directory>/config_repository/resolved_config.yaml`. It does not
   instantiate scientific runtime objects.
+- Preparation-stage validation rejects duplicate keys, unknown or missing
+  fields, invalid types and enumerations, malformed tagged thresholds, and
+  basic numerical inconsistencies before the resolved file is written.
+  Runtime-object, observational-data, MGE-content, and optional-dependency
+  checks remain the responsibility of the later execution phase. Legacy
+  deprecation-and-ignore warnings are intentionally not reproduced.
 - Mapping values merge recursively, while user scalars and lists replace
   defaults. User values have final precedence. Schema-only
   `dynamic_object_defaults` and `kinematics_type_defaults` sections are

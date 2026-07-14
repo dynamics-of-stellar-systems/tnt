@@ -11,6 +11,8 @@ from typing import Any
 
 import yaml
 
+from tnt.configuration_validation import validate_resolved_configuration
+
 CONFIG_REPOSITORY_DIRECTORY = "config_repository"
 RESOLVED_CONFIG_FILENAME = "resolved_config.yaml"
 
@@ -52,11 +54,10 @@ class Configuration:
         merged_config = _deep_merge(default_config, user_config)
         resolved_config = _apply_schema_defaults(merged_config)
         output_directory = _resolve_io_directories(resolved_config)
+        validate_resolved_configuration(resolved_config)
 
         resolved_path = (
-            output_directory
-            / CONFIG_REPOSITORY_DIRECTORY
-            / RESOLVED_CONFIG_FILENAME
+            output_directory / CONFIG_REPOSITORY_DIRECTORY / RESOLVED_CONFIG_FILENAME
         )
         _write_yaml_atomically(resolved_config, resolved_path)
 
@@ -80,15 +81,34 @@ def _read_packaged_defaults() -> ConfigDict:
     """Load the packaged TNT default configuration."""
     default_resource = files("tnt.defaults").joinpath("default_config.yaml")
     with default_resource.open("r", encoding="utf-8") as stream:
-        loaded = yaml.safe_load(stream)
+        loaded = yaml.load(stream, Loader=_UniqueKeySafeLoader)
     return _require_mapping(loaded, "packaged default configuration")
 
 
 def _read_yaml_mapping(path: Path, description: str) -> ConfigDict:
     """Read a YAML document whose root must be a mapping."""
     with path.open("r", encoding="utf-8") as stream:
-        loaded = yaml.safe_load(stream)
+        loaded = yaml.load(stream, Loader=_UniqueKeySafeLoader)
     return _require_mapping(loaded, description)
+
+
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    """Load safe YAML while rejecting duplicate mapping keys."""
+
+    def construct_mapping(
+        self,
+        node: yaml.MappingNode,
+        deep: bool = False,
+    ) -> ConfigDict:
+        """Construct a mapping after checking each key for uniqueness."""
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                line = key_node.start_mark.line + 1
+                raise ValueError(f"Duplicate configuration key {key!r} at line {line}.")
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
 
 
 def _require_mapping(value: Any, description: str) -> ConfigDict:
@@ -145,9 +165,7 @@ def _apply_schema_defaults(config: ConfigDict) -> ConfigDict:
         for name, component in components.items()
     }
 
-    system_parameters = _mapping_value(
-        resolved, "system_parameters", "configuration"
-    )
+    system_parameters = _mapping_value(resolved, "system_parameters", "configuration")
     resolved["system_parameters"] = _resolve_parameters(
         system_parameters,
         parameter_defaults,
@@ -232,6 +250,7 @@ def _resolve_kinematics(
     """Resolve common and type-specific defaults for one kinematics data set."""
     path = f"system_components.{component_name}.kinematics.{name}"
     settings_mapping = _require_mapping(settings, path)
+    _validate_explicit_histogram_completeness(settings_mapping, path)
     kinematics_type = settings_mapping.get("type")
     if not isinstance(kinematics_type, str) or not kinematics_type:
         raise ValueError(f"{path}.type must be a non-empty string.")
@@ -260,6 +279,24 @@ def _has_complete_histogram_metadata(settings: ConfigDict) -> bool:
     return isinstance(histogram, dict) and all(
         key in histogram for key in ("width", "center", "bins")
     )
+
+
+def _validate_explicit_histogram_completeness(
+    settings: ConfigDict,
+    path: str,
+) -> None:
+    """Reject partial explicit histogram metadata before defaults are merged."""
+    histogram = settings.get("histogram")
+    if not isinstance(histogram, dict):
+        return
+    explicit_fields = {"width", "center", "bins"}
+    provided_fields = explicit_fields.intersection(histogram)
+    if provided_fields and provided_fields != explicit_fields:
+        missing = ", ".join(sorted(explicit_fields - provided_fields))
+        raise ValueError(
+            f"{path}.histogram must define width, center, and bins together; "
+            f"missing: {missing}."
+        )
 
 
 def _resolve_io_directories(config: ConfigDict) -> Path:
