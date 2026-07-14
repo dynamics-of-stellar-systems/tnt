@@ -24,6 +24,19 @@ numerics_settings:
     total_mass: 1.0e-8
     intrinsic_mass: 1.0e-16
 
+# Operational logging defaults. Logging is configured explicitly by the
+# application or execution entry point; reading a configuration has no logging
+# side effects. Each enabled run gets a timestamped logfile below the output
+# directory.
+logging_settings:
+  file:
+    enabled: true
+    level: "DEBUG"
+    directory: "logs"
+  console:
+    enabled: true
+    level: "INFO"
+
 # These values apply to every dynamically named object of the corresponding
 # type unless the user overrides the property on that object.
 dynamic_object_defaults:

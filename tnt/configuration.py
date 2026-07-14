@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from copy import deepcopy
 from importlib.resources import files
 from pathlib import Path
@@ -12,11 +15,13 @@ from typing import Any
 import yaml
 
 from tnt.configuration_validation import validate_resolved_configuration
+from tnt.logging import configure_logging
 
 CONFIG_REPOSITORY_DIRECTORY = "config_repository"
 RESOLVED_CONFIG_FILENAME = "resolved_config.yaml"
 
 ConfigDict = dict[str, Any]
+_LOGGER = logging.getLogger(__name__)
 
 
 class Configuration:
@@ -48,10 +53,16 @@ class Configuration:
             TypeError: If a required configuration mapping has the wrong type.
             ValueError: If required configuration values are absent or invalid.
         """
-        source_path = Path(filename).expanduser()
-        user_config = _read_yaml_mapping(source_path, "user configuration")
-        default_config = _read_packaged_defaults()
-        merged_config = _deep_merge(default_config, user_config)
+        source_path, merged_config = _load_merged_configuration(filename)
+        return self._resolve_and_write(source_path, merged_config)
+
+    def _resolve_and_write(
+        self,
+        source_path: Path,
+        merged_config: ConfigDict,
+    ) -> Configuration:
+        """Resolve, validate, and preserve an already-loaded configuration."""
+        _LOGGER.debug("Resolving configuration loaded from %s.", source_path)
         resolved_config = _apply_schema_defaults(merged_config)
         output_directory = _resolve_io_directories(resolved_config)
         validate_resolved_configuration(resolved_config)
@@ -60,6 +71,7 @@ class Configuration:
             output_directory / CONFIG_REPOSITORY_DIRECTORY / RESOLVED_CONFIG_FILENAME
         )
         _write_yaml_atomically(resolved_config, resolved_path)
+        _LOGGER.info("Resolved configuration written to %s.", resolved_path)
 
         self.data = resolved_config
         self.source_path = source_path.resolve()
@@ -75,6 +87,76 @@ class Configuration:
         if not self.data:
             raise RuntimeError("No configuration has been read.")
         print(_dump_yaml(self.data), end="")
+
+
+@contextmanager
+def configuration_session(filename: str | Path) -> Iterator[Configuration]:
+    """Prepare a configuration inside an isolated TNT logging session.
+
+    The user YAML and packaged defaults are loaded once. A minimal bootstrap
+    extracts the output directory and logging settings, starts TNT-local
+    logging, and then performs complete resolution and validation.
+
+    Args:
+        filename: YAML user-configuration path.
+
+    Yields:
+        The resolved configuration while its TNT logging session remains active.
+
+    Raises:
+        FileNotFoundError: If the user configuration does not exist.
+        TypeError: If bootstrap or full configuration data has the wrong type.
+        ValueError: If bootstrap or full configuration data is invalid.
+    """
+    source_path, merged_config = _load_merged_configuration(filename)
+    bootstrap_config = _logging_bootstrap_configuration(merged_config)
+
+    with configure_logging(bootstrap_config) as logging_session:
+        _LOGGER.info("User configuration loaded from %s.", source_path)
+        if logging_session.logfile_path is not None:
+            _LOGGER.info("Detailed TNT logfile: %s.", logging_session.logfile_path)
+
+        config = Configuration()
+        try:
+            config._resolve_and_write(source_path, merged_config)
+        except Exception:
+            _LOGGER.exception("Configuration preparation failed for %s.", source_path)
+            raise
+
+        try:
+            yield config
+        except Exception:
+            _LOGGER.exception("TNT configuration session failed.")
+            raise
+        else:
+            _LOGGER.info("TNT configuration session completed.")
+
+
+def _load_merged_configuration(
+    filename: str | Path,
+) -> tuple[Path, ConfigDict]:
+    """Load one user profile and merge it with packaged defaults."""
+    source_path = Path(filename).expanduser()
+    _LOGGER.debug("Reading user configuration from %s.", source_path)
+    user_config = _read_yaml_mapping(source_path, "user configuration")
+    default_config = _read_packaged_defaults()
+    return source_path, _deep_merge(default_config, user_config)
+
+
+def _logging_bootstrap_configuration(config: ConfigDict) -> ConfigDict:
+    """Extract validated-enough settings needed to start TNT logging."""
+    io_settings = _mapping_value(config, "io_settings", "configuration")
+    output_directory = io_settings.get("output_directory")
+    if not isinstance(output_directory, str) or not output_directory.strip():
+        raise ValueError("io_settings.output_directory must be a non-empty string.")
+
+    logging_settings = _mapping_value(config, "logging_settings", "configuration")
+    return {
+        "io_settings": {
+            "output_directory": str(Path(output_directory).expanduser().resolve()),
+        },
+        "logging_settings": deepcopy(logging_settings),
+    }
 
 
 def _read_packaged_defaults() -> ConfigDict:

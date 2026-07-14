@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Collection
+from pathlib import Path
 from typing import Any
 
 ConfigDict = dict[str, Any]
@@ -13,6 +14,7 @@ _TOP_LEVEL_KEYS = {
     "cosmological_parameters",
     "execution_settings",
     "io_settings",
+    "logging_settings",
     "mge_settings",
     "numerics_settings",
     "orbit_library_settings",
@@ -51,6 +53,7 @@ def validate_resolved_configuration(config: ConfigDict) -> None:
     )
     _validate_mge_settings(_mapping(config, "mge_settings", "configuration"))
     _validate_numerics_settings(_mapping(config, "numerics_settings", "configuration"))
+    _validate_logging_settings(_mapping(config, "logging_settings", "configuration"))
     _validate_system_attributes(_mapping(config, "system_attributes", "configuration"))
     _validate_components(_mapping(config, "system_components", "configuration"))
     _validate_parameters(
@@ -134,6 +137,32 @@ def _validate_system_attributes(attributes: ConfigDict) -> None:
     _require_keys(attributes, {"distance_mpc", "name"}, path)
     _positive_number(attributes["distance_mpc"], f"{path}.distance_mpc")
     _nonempty_string(attributes["name"], f"{path}.name")
+
+
+def _validate_logging_settings(settings: ConfigDict) -> None:
+    path = "logging_settings"
+    _reject_unknown_keys(settings, {"console", "file"}, path)
+    _require_keys(settings, {"console", "file"}, path)
+
+    file_settings = _mapping(settings, "file", path)
+    file_path = f"{path}.file"
+    _reject_unknown_keys(file_settings, {"directory", "enabled", "level"}, file_path)
+    _require_keys(file_settings, {"directory", "enabled", "level"}, file_path)
+    _boolean(file_settings["enabled"], f"{file_path}.enabled")
+    _logging_level(file_settings["level"], f"{file_path}.level")
+    directory = _nonempty_string(file_settings["directory"], f"{file_path}.directory")
+    directory_path = Path(directory)
+    if directory_path.is_absolute() or ".." in directory_path.parts:
+        raise ValueError(
+            f"{file_path}.directory must stay within io_settings.output_directory."
+        )
+
+    console_settings = _mapping(settings, "console", path)
+    console_path = f"{path}.console"
+    _reject_unknown_keys(console_settings, {"enabled", "level"}, console_path)
+    _require_keys(console_settings, {"enabled", "level"}, console_path)
+    _boolean(console_settings["enabled"], f"{console_path}.enabled")
+    _logging_level(console_settings["level"], f"{console_path}.level")
 
 
 def _validate_components(components: ConfigDict) -> None:
@@ -730,3 +759,11 @@ def _choice(value: Any, allowed: set[str], path: str) -> str:
         choices = ", ".join(sorted(allowed))
         raise ValueError(f"{path} must be one of: {choices}; got {value!r}.")
     return value
+
+
+def _logging_level(value: Any, path: str) -> str:
+    return _choice(
+        value,
+        {"CRITICAL", "DEBUG", "ERROR", "INFO", "WARNING"},
+        path,
+    )

@@ -13,6 +13,19 @@ config = tnt.Configuration()
 config.read("user_config.yaml")
 ```
 
+This low-level API respects logging configured by the calling application but
+does not start TNT's own handlers. Standalone workflows that want preparation
+messages in the TNT logfile should use the lifecycle API:
+
+```python
+with tnt.configuration_session("user_config.yaml") as config:
+    # Construct and execute the model while TNT logging remains active.
+    ...
+```
+
+The lifecycle API loads the YAML and defaults once, bootstraps logging from the
+output and logging settings, and then performs the same complete preparation.
+
 `Configuration.read()` performs the following operations:
 
 1. Loads the packaged `default_config.yaml` profile.

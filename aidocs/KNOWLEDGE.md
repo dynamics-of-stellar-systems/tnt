@@ -112,6 +112,28 @@
 - The fully resolved configuration must be preserved with model output for
   reproducibility; preserving only the user delta is insufficient.
 
+## Logging
+
+- Importing TNT and reading a configuration must not configure logging or
+  alter the root logger. Modules emit records through `logging.getLogger(__name__)`.
+- Standalone execution explicitly calls `tnt.configure_logging()` with the
+  resolved configuration, or preferably uses
+  `tnt.configuration_session(filename)` to include configuration preparation
+  in the logfile. The session loads the YAML/defaults only once, bootstraps the
+  output and logging settings, and continues full resolution with the same
+  mapping. TNT configures only the `tnt` package logger, writes `DEBUG` and
+  higher records to a timestamped file below the output directory, and sends
+  `INFO` and higher records to the terminal.
+- A logging session owns and removes only TNT-created handlers, is idempotent,
+  restores the prior `tnt` logger state when closed, and never shuts down or
+  reloads Python logging.
+- Worker processes call `tnt.configure_worker_logging()` with the parent
+  session's queue. Only the parent listener writes to the logfile and terminal,
+  avoiding concurrent writes from multiple processes.
+- `dev_tests/config_test.py` demonstrates the bootstrap lifecycle with
+  `tnt.configuration_session()`; running it records configuration preparation
+  below the configured output directory while printing the resolved YAML.
+
 ## Relationship to DYNAMITE
 
 - TNT is a standalone reimplementation and refactoring, not a compatibility

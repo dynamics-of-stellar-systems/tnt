@@ -1,9 +1,10 @@
+import logging
 from pathlib import Path
 
 import pytest
 import yaml
 
-from tnt.configuration import Configuration
+from tnt.configuration import Configuration, configuration_session
 
 
 def _write_user_config(
@@ -61,7 +62,18 @@ weight_solver_settings:
 """,
     )
 
+    package_logger = logging.getLogger("tnt")
+    logger_state = (
+        list(package_logger.handlers),
+        package_logger.level,
+        package_logger.propagate,
+    )
+
     config = Configuration().read(user_path)
+
+    assert list(package_logger.handlers) == logger_state[0]
+    assert package_logger.level == logger_state[1]
+    assert package_logger.propagate is logger_state[2]
 
     expected_path = output_directory / "config_repository" / "resolved_config.yaml"
     assert config.resolved_path == expected_path
@@ -72,6 +84,10 @@ weight_solver_settings:
     assert "dynamic_object_defaults" not in written
     assert "kinematics_type_defaults" not in written
     assert written["cosmological_parameters"]["H0"] == 70.0
+    assert written["logging_settings"] == {
+        "file": {"enabled": True, "level": "DEBUG", "directory": "logs"},
+        "console": {"enabled": True, "level": "INFO"},
+    }
     assert written["io_settings"]["input_directory"] == str(
         (Path.cwd() / "input").resolve()
     )
@@ -240,6 +256,87 @@ def test_read_rejects_nonpositive_worker_count(tmp_path: Path) -> None:
         match=r"execution_settings\.orbit_workers must be a positive integer",
     ):
         Configuration().read(user_path)
+
+
+@pytest.mark.parametrize(
+    ("logging_body", "message"),
+    [
+        (
+            """logging_settings:
+  console:
+    level: VERBOSE
+""",
+            r"logging_settings\.console\.level must be one of",
+        ),
+        (
+            """logging_settings:
+  file:
+    directory: ../outside
+""",
+            r"logging_settings\.file\.directory must stay within",
+        ),
+    ],
+)
+def test_read_rejects_invalid_logging_settings(
+    tmp_path: Path,
+    logging_body: str,
+    message: str,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory, body=logging_body)
+
+    with pytest.raises(ValueError, match=message):
+        Configuration().read(user_path)
+
+
+def test_configuration_session_logs_preparation(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+
+    with configuration_session(user_path) as config:
+        logging.getLogger("tnt.test").debug("execution debug detail")
+        assert config.resolved_path is not None
+
+    logfiles = list((output_directory / "logs").glob("tnt-*.log"))
+    assert len(logfiles) == 1
+    logfile = logfiles[0].read_text(encoding="utf-8")
+    terminal = capsys.readouterr().err
+
+    assert f"User configuration loaded from {user_path}" in logfile
+    assert f"Resolving configuration loaded from {user_path}" in logfile
+    assert "Resolved configuration written to" in logfile
+    assert "execution debug detail" in logfile
+    assert "TNT configuration session completed" in logfile
+    assert "User configuration loaded from" in terminal
+    assert "execution debug detail" not in terminal
+
+
+def test_configuration_session_logs_validation_failure(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""        data_flie: misspelled.ecsv
+""",
+    )
+
+    with pytest.raises(ValueError, match="data_flie"):
+        with configuration_session(user_path):
+            pass
+
+    logfiles = list((output_directory / "logs").glob("tnt-*.log"))
+    assert len(logfiles) == 1
+    logfile = logfiles[0].read_text(encoding="utf-8")
+    assert "Configuration preparation failed" in logfile
+    assert "data_flie" in logfile
+    assert "Traceback" in logfile
+    assert not (output_directory / "config_repository").exists()
 
 
 def test_print_requires_read_configuration() -> None:

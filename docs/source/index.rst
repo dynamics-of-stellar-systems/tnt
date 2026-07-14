@@ -16,3 +16,4 @@ documentation for details.
 
    overview
    configuration
+   logging
