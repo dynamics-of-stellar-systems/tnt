@@ -1,0 +1,167 @@
+# TNT development configuration for NGC6278.
+#
+# TNT recursively merges this user profile over the packaged defaults before
+# resolving dynamically named components, parameters, and kinematics data sets.
+---
+
+system_attributes:
+  distance_mpc: 39.96
+  name: "NGC6278"
+
+system_components:
+  bh:
+    type: "plummer"
+    include: true
+    parameters:
+      m:
+        generator_settings:
+          lower_bound: 1.0
+          upper_bound: 10.0
+          step: 1.0
+          minimum_step: 0.0
+        fixed: true
+        value: 5.0
+        logarithmic: true
+        latex_label: "$\\log(M_\\mathrm{BH}/M_\\odot)$"
+      a:
+        fixed: true
+        value: 1.0e-3
+        latex_label: "$a_\\mathrm{BH}$"
+
+  dh:
+    type: "nfw"
+    include: true
+    parameters:
+      c:
+        generator_settings:
+          lower_bound: 2.0
+          upper_bound: 4.0
+          step: 1.0
+          minimum_step: 0.1
+        fixed: true
+        value: 3.0
+        logarithmic: true
+        latex_label: "$\\log(C)$"
+      f:
+        generator_settings:
+          lower_bound: 0.0
+          upper_bound: 2.0
+          step: 0.5
+          minimum_step: 0.1
+        fixed: true
+        value: 1.0
+        logarithmic: true
+        latex_label: "$\\log(M_{200}/M_\\mathrm{stars})$"
+
+  stars:
+    type: "triaxial_visible_component"
+    include: true
+    parameters:
+      q:
+        generator_settings:
+          lower_bound: 0.05
+          upper_bound: 0.99
+          step: 0.04
+          minimum_step: 0.02
+        fixed: true
+        value: 0.54
+        latex_label: "$q_\\mathrm{min}$"
+      p:
+        generator_settings:
+          lower_bound: 0.99
+          upper_bound: 0.999
+          step: 0.02
+          minimum_step: 0.01
+        fixed: true
+        value: 0.99
+        latex_label: "$p_\\mathrm{min}$"
+      u:
+        generator_settings:
+          lower_bound: 0.95
+          upper_bound: 1.0
+          step: 0.01
+          minimum_step: 0.01
+        fixed: true
+        value: 0.9999
+        latex_label: "$u_\\mathrm{min}$"
+    mge:
+      potential_file: "mge.ecsv"
+      luminosity_file: "mge.ecsv"
+    kinematics:
+      kinset1:
+        type: "gauss_hermite"
+        histogram:
+          width: 2719.8215332031
+          center: 0.0
+          bins: 203
+        data_file: "gauss_hermite_kins.ecsv"
+        aperture_file: "aperture.dat"
+        bin_file: "bins.dat"
+        with_pops: false
+
+system_parameters:
+  ml:
+    generator_settings:
+      lower_bound: 1.0
+      upper_bound: 9.0
+      step: 4.0
+      minimum_step: 0.5
+    fixed: false
+    value: 5.0
+    latex_label: "$Y_\\mathrm{r}$"
+
+orbit_library_settings:
+  nE: 6
+  logrmin: -0.101275
+  logrmax: 1.99123
+  nI2: 5
+  nI3: 4
+  dithering: 1
+  quad_nr: 10
+  quad_nth: 6
+  quad_nph: 6
+  orbital_periods: 200
+  sampling: 50000
+  starting_orbit: 1
+  number_orbits: -1
+  accuracy: 1.0e-5
+  # A nonnegative integer is an explicit reproducible seed.
+  random_seed: 4242
+
+weight_solver_settings:
+  type: "NNLS"
+  nnls_solver: "scipy"
+  maxiter_factor: 3
+  counter_rotating_orbit_cut:
+    enabled: true
+  regularisation: 0
+  number_GH: 4
+  GH_sys_err: "0.0 0.0 0.0 0.0 0.3 0.3 0.6 0.6"
+  lum_intr_rel_err: 0.01
+  sb_proj_rel_err: 0.02
+  reattempt_failures: true
+
+parameter_space_settings:
+  generator_type: "GridSearch"
+  which_chi2: "kinchi2"
+  generator_settings:
+    delta_chi2_threshold:
+      mode: "fraction_of_sqrt_2n_observations"
+      value: 0.1
+  stopping_criteria:
+    minimum_delta_chi2:
+      mode: "absolute"
+      value: 0.5
+    n_max_mods: 3
+    n_max_iter: 10
+
+io_settings:
+  input_directory: "NGC6278_input/"
+  output_directory: "NGC6278_output/"
+  all_models_file: "all_models.ecsv"
+
+execution_settings:
+  orbit_workers: "all_available"
+  weight_workers: "all_available"
+  model_processing_order: "stage_by_stage"
+  orbit_family_integration_in_parallel: true

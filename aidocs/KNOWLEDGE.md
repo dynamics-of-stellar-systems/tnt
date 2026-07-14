@@ -12,8 +12,30 @@
 - The packaged base profile is `tnt/defaults/default_config.yaml`.
 - TNT will recursively merge the base profile with a user profile before
   constructing a model.
+- Configuration preparation is implemented by `tnt.Configuration`. Its
+  `read()` method loads the user YAML, recursively merges package defaults,
+  resolves dynamic and kinematics-type defaults, and atomically writes
+  `<output_directory>/config_repository/resolved_config.yaml`. It does not
+  instantiate scientific runtime objects.
+- Mapping values merge recursively, while user scalars and lists replace
+  defaults. User values have final precedence. Schema-only
+  `dynamic_object_defaults` and `kinematics_type_defaults` sections are
+  removed after their values have been applied.
+- Complete explicit kinematics histogram metadata (`width`, `center`, and
+  `bins`) replaces the histogram derivation policy for that data set.
+- Relative input and output paths are interpreted from the process working
+  directory and stored as absolute paths in the resolved snapshot.
+  Configuration preparation requires both path strings but creates only the
+  output directory and configuration repository.
 - The user profile must define the physical system, dynamically named
   components and parameters, input directory, and output directory.
+- TNT user profiles use snake-case type identifiers and field names. Parameter
+  search bounds belong under `generator_settings` as `lower_bound`,
+  `upper_bound`, `step`, and `minimum_step`; display labels use `latex_label`.
+- Component MGE files are grouped under `mge` as `potential_file` and
+  `luminosity_file`. Explicit kinematics histogram metadata is grouped under
+  `histogram` as `width`, `center`, and `bins`; input paths use `data_file`,
+  `aperture_file`, and `bin_file`.
 - Defaults for properties of dynamically named components, parameters, and
   kinematic data sets are declared under `dynamic_object_defaults`. The merge
   layer applies them to each corresponding object unless the user overrides
