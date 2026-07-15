@@ -17,6 +17,7 @@ dev = [
 ]
 docs = [
     "myst-parser>=3.0.1",
+    "pydata-sphinx-theme>=0.16.1",
     "sphinx>=7.4.7",
 ]
 

@@ -14,6 +14,5 @@ documentation for details.
 .. toctree::
    :maxdepth: 2
 
-   overview
    configuration
    logging
