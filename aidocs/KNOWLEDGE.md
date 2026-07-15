@@ -6,7 +6,7 @@
 - Use double quotes for Python strings.
 - Add type hints for function parameter types and return types.
 - Use the Google style for function and class docstrings.
-- Keep individual methods to 200 lines or fewer as a soft limit; exceeding it
+- Keep individual methods to 100 lines or fewer as a soft limit; exceeding it
   slightly is acceptable when necessary.
 
 ## Configuration defaults
