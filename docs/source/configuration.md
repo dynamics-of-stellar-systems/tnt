@@ -48,13 +48,48 @@ If a kinematics data set explicitly supplies complete histogram metadata
 (`width`, `center`, and `bins`), that metadata replaces the type's histogram
 derivation policy. Supplying only part of this explicit metadata is an error.
 
+## Per-data-set kinematics settings
+
+Observational error policies and fitting order belong to each named kinematics
+data set because observations from different instruments may require different
+assumptions. Type-specific defaults supply neutral settings, which a data set
+can override:
+
+```yaml
+kinematics:
+  central_spectroscopy:
+    type: "gauss_hermite"
+    maximum_gh_order: 4
+    observational_errors:
+      systematic_uncertainties:
+        v: 0.0
+        sigma: 0.0
+        h3: 0.0
+        h4: 0.0
+
+  proper_motion_catalogue:
+    type: "proper_motions"
+    observational_errors:
+      variance_scale: 1.0
+```
+
+Gauss-Hermite systematic uncertainties are named explicitly and added in
+quadrature to the corresponding observational uncertainties. Their keys must
+cover `v`, `sigma`, and every coefficient through `maximum_gh_order`.
+Proper-motion `variance_scale` multiplies error variances and must be positive;
+its neutral value is `1.0`.
+
+The former global `number_GH`, `GH_sys_err`, and `PM_sys_err_factor` fields are
+not weight-solver settings in TNT and are rejected as unknown fields.
+
 ## Validation
 
 Preparation rejects duplicate YAML keys, unknown fields, missing required
 fields, incorrect value types, unsupported enumerated values, and inconsistent
 tagged thresholds. It also checks data-only numerical constraints, including
 parameter bounds, positive worker counts, orbit-grid limits, and positive odd
-explicit histogram bin counts.
+explicit histogram bin counts. Per-kinematics checks cover Gauss-Hermite order,
+complete systematic-uncertainty mappings, and proper-motion variance scaling.
 
 Errors identify the configuration path containing the invalid value. The
 resolved file is written only after every preparation-stage check succeeds.

@@ -12,6 +12,7 @@ def _write_user_config(
     output_directory: Path,
     body: str = "",
     orbit_body: str = "",
+    kinematics_type: str = "gauss_hermite",
 ) -> None:
     path.write_text(
         f"""
@@ -29,7 +30,7 @@ system_components:
       luminosity_file: luminosity.ecsv
     kinematics:
       observed:
-        type: gauss_hermite
+        type: {kinematics_type}
         data_file: observed.ecsv
         aperture_file: aperture.dat
         bin_file: bins.dat
@@ -98,11 +99,21 @@ weight_solver_settings:
     assert parameter["logarithmic"] is False
     kinematics = written["system_components"]["stars"]["kinematics"]["observed"]
     assert kinematics["with_pops"] is True
+    assert kinematics["maximum_gh_order"] == 4
+    assert kinematics["observational_errors"]["systematic_uncertainties"] == {
+        "v": 0.0,
+        "sigma": 0.0,
+        "h3": 0.0,
+        "h4": 0.0,
+    }
     assert kinematics["histogram"]["sigma_extent"] == 3.0
     assert kinematics["histogram"]["bin_width_sigma_fraction"] == 0.1
     cut = written["weight_solver_settings"]["counter_rotating_orbit_cut"]
     assert cut["enabled"] is True
     assert cut["min_affected_apertures"] == 2
+    assert "number_GH" not in written["weight_solver_settings"]
+    assert "GH_sys_err" not in written["weight_solver_settings"]
+    assert "PM_sys_err_factor" not in written["weight_solver_settings"]
 
 
 def test_explicit_histogram_replaces_derived_policy(tmp_path: Path) -> None:
@@ -287,6 +298,118 @@ def test_read_rejects_invalid_logging_settings(
     _write_user_config(user_path, output_directory, body=logging_body)
 
     with pytest.raises(ValueError, match=message):
+        Configuration().read(user_path)
+
+
+def test_gauss_hermite_sets_resolve_independent_orders_and_systematics(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""      secondary:
+        type: gauss_hermite
+        maximum_gh_order: 5
+        observational_errors:
+          systematic_uncertainties:
+            v: 1.0
+            sigma: 2.0
+            h3: 0.03
+            h4: 0.04
+            h5: 0.05
+        data_file: secondary.ecsv
+        aperture_file: secondary_aperture.dat
+        bin_file: secondary_bins.dat
+""",
+    )
+
+    config = Configuration().read(user_path)
+    kinematics = config.data["system_components"]["stars"]["kinematics"]
+
+    assert kinematics["observed"]["maximum_gh_order"] == 4
+    assert kinematics["secondary"]["maximum_gh_order"] == 5
+    assert kinematics["secondary"]["observational_errors"][
+        "systematic_uncertainties"
+    ] == {
+        "v": 1.0,
+        "sigma": 2.0,
+        "h3": 0.03,
+        "h4": 0.04,
+        "h5": 0.05,
+    }
+
+
+def test_changed_gauss_hermite_order_requires_complete_systematics(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""        maximum_gh_order: 5
+""",
+    )
+
+    with pytest.raises(ValueError, match=r"missing required field\(s\): h5"):
+        Configuration().read(user_path)
+
+
+def test_proper_motion_set_resolves_its_own_variance_scale(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""        observational_errors:
+          variance_scale: 1.5
+""",
+        kinematics_type="proper_motions",
+    )
+
+    config = Configuration().read(user_path)
+    kinematics = config.data["system_components"]["stars"]["kinematics"]["observed"]
+
+    assert "maximum_gh_order" not in kinematics
+    assert kinematics["observational_errors"] == {"variance_scale": 1.5}
+
+
+def test_proper_motion_variance_scale_must_be_positive(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""        observational_errors:
+          variance_scale: 0.0
+""",
+        kinematics_type="proper_motions",
+    )
+
+    with pytest.raises(ValueError, match=r"variance_scale must be greater"):
+        Configuration().read(user_path)
+
+
+@pytest.mark.parametrize("legacy_key", ["number_GH", "GH_sys_err", "PM_sys_err_factor"])
+def test_weight_solver_rejects_former_global_kinematics_keys(
+    tmp_path: Path,
+    legacy_key: str,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body=f"""weight_solver_settings:
+  {legacy_key}: 1
+""",
+    )
+
+    with pytest.raises(ValueError, match=legacy_key):
         Configuration().read(user_path)
 
 

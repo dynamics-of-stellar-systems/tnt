@@ -347,12 +347,34 @@ def _resolve_kinematics(
         kinematics_type_defaults[kinematics_type],
         f"kinematics_type_defaults.{kinematics_type}",
     )
+    type_defaults = _replace_explicit_systematic_uncertainties(
+        type_defaults,
+        settings_mapping,
+    )
     if _has_complete_histogram_metadata(settings_mapping):
         type_defaults = deepcopy(type_defaults)
         type_defaults.pop("histogram", None)
 
     resolved = _deep_merge(kinematics_defaults, type_defaults)
     return _deep_merge(resolved, settings_mapping)
+
+
+def _replace_explicit_systematic_uncertainties(
+    type_defaults: ConfigDict,
+    settings: ConfigDict,
+) -> ConfigDict:
+    """Replace rather than merge an explicit systematic-uncertainty mapping."""
+    observational_errors = settings.get("observational_errors")
+    if not isinstance(observational_errors, dict):
+        return type_defaults
+    if "systematic_uncertainties" not in observational_errors:
+        return type_defaults
+
+    adjusted_defaults = deepcopy(type_defaults)
+    default_errors = adjusted_defaults.get("observational_errors")
+    if isinstance(default_errors, dict):
+        default_errors.pop("systematic_uncertainties", None)
+    return adjusted_defaults
 
 
 def _has_complete_histogram_metadata(settings: ConfigDict) -> bool:

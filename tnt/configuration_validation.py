@@ -292,6 +292,8 @@ def _validate_kinematics(kinematics: ConfigDict, path: str) -> None:
                 "bin_file",
                 "data_file",
                 "histogram",
+                "maximum_gh_order",
+                "observational_errors",
                 "type",
                 "warning_thresholds",
                 "with_pops",
@@ -311,6 +313,11 @@ def _validate_kinematics(kinematics: ConfigDict, path: str) -> None:
         _boolean(settings["with_pops"], f"{settings_path}.with_pops")
         for key in ("aperture_file", "bin_file", "data_file"):
             _nonempty_string(settings[key], f"{settings_path}.{key}")
+        _validate_kinematics_observational_settings(
+            settings,
+            settings_path,
+            kinematics_type,
+        )
         if "histogram" in settings:
             _validate_histogram(
                 _mapping(settings, "histogram", settings_path),
@@ -327,6 +334,67 @@ def _validate_kinematics(kinematics: ConfigDict, path: str) -> None:
                 _mapping(settings, "warning_thresholds", settings_path),
                 f"{settings_path}.warning_thresholds",
             )
+
+
+def _validate_kinematics_observational_settings(
+    settings: ConfigDict,
+    path: str,
+    kinematics_type: str,
+) -> None:
+    """Validate type-specific fitting order and observational-error policy."""
+    if kinematics_type == "gauss_hermite":
+        _require_keys(settings, {"maximum_gh_order", "observational_errors"}, path)
+        maximum_order = _integer(
+            settings["maximum_gh_order"],
+            f"{path}.maximum_gh_order",
+        )
+        if maximum_order < 2:
+            raise ValueError(f"{path}.maximum_gh_order must be at least 2.")
+        _validate_gauss_hermite_errors(
+            _mapping(settings, "observational_errors", path),
+            f"{path}.observational_errors",
+            maximum_order,
+        )
+        return
+
+    if "maximum_gh_order" in settings:
+        raise ValueError(f"{path}.maximum_gh_order is only valid for gauss_hermite.")
+    if kinematics_type == "proper_motions":
+        _require_keys(settings, {"observational_errors"}, path)
+        _validate_proper_motion_errors(
+            _mapping(settings, "observational_errors", path),
+            f"{path}.observational_errors",
+        )
+    elif "observational_errors" in settings:
+        raise ValueError(
+            f"{path}.observational_errors is not supported for {kinematics_type}."
+        )
+
+
+def _validate_gauss_hermite_errors(
+    errors: ConfigDict,
+    path: str,
+    maximum_order: int,
+) -> None:
+    """Validate named systematic uncertainties through one GH order."""
+    _reject_unknown_keys(errors, {"systematic_uncertainties"}, path)
+    _require_keys(errors, {"systematic_uncertainties"}, path)
+    systematics = _mapping(errors, "systematic_uncertainties", path)
+    systematics_path = f"{path}.systematic_uncertainties"
+    expected_keys = {"v", "sigma"} | {
+        f"h{order}" for order in range(3, maximum_order + 1)
+    }
+    _reject_unknown_keys(systematics, expected_keys, systematics_path)
+    _require_keys(systematics, expected_keys, systematics_path)
+    for key in expected_keys:
+        _nonnegative_number(systematics[key], f"{systematics_path}.{key}")
+
+
+def _validate_proper_motion_errors(errors: ConfigDict, path: str) -> None:
+    """Validate a proper-motion observational variance scale."""
+    _reject_unknown_keys(errors, {"variance_scale"}, path)
+    _require_keys(errors, {"variance_scale"}, path)
+    _positive_number(errors["variance_scale"], f"{path}.variance_scale")
 
 
 def _validate_histogram(
@@ -452,13 +520,10 @@ def _validate_orbit_library_settings(settings: ConfigDict) -> None:
 def _validate_weight_solver_settings(settings: ConfigDict) -> None:
     path = "weight_solver_settings"
     keys = {
-        "GH_sys_err",
-        "PM_sys_err_factor",
         "counter_rotating_orbit_cut",
         "lum_intr_rel_err",
         "maxiter_factor",
         "nnls_solver",
-        "number_GH",
         "reattempt_failures",
         "regularisation",
         "sb_proj_rel_err",
@@ -470,11 +535,7 @@ def _validate_weight_solver_settings(settings: ConfigDict) -> None:
     _choice(settings["nnls_solver"], {"cvxopt", "scipy"}, f"{path}.nnls_solver")
     _positive_number(settings["maxiter_factor"], f"{path}.maxiter_factor")
     _nonnegative_number(settings["regularisation"], f"{path}.regularisation")
-    number_gh = _integer(settings["number_GH"], f"{path}.number_GH")
-    if number_gh <= 0:
-        raise ValueError(f"{path}.number_GH must be a positive integer.")
-    _nonempty_string(settings["GH_sys_err"], f"{path}.GH_sys_err")
-    for key in ("PM_sys_err_factor", "lum_intr_rel_err", "sb_proj_rel_err"):
+    for key in ("lum_intr_rel_err", "sb_proj_rel_err"):
         _nonnegative_number(settings[key], f"{path}.{key}")
     _boolean(settings["reattempt_failures"], f"{path}.reattempt_failures")
     _validate_counter_rotating_cut(

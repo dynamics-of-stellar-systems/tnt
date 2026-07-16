@@ -90,6 +90,13 @@ system_components:
     kinematics:
       kinset1:
         type: "gauss_hermite"
+        maximum_gh_order: 4
+        observational_errors:
+          systematic_uncertainties:
+            v: 0.0
+            sigma: 0.0
+            h3: 0.0
+            h4: 0.0
         histogram:
           width: 2719.8215332031
           center: 0.0
@@ -135,8 +142,6 @@ weight_solver_settings:
   counter_rotating_orbit_cut:
     enabled: true
   regularisation: 0
-  number_GH: 4
-  GH_sys_err: "0.0 0.0 0.0 0.0 0.3 0.3 0.6 0.6"
   lum_intr_rel_err: 0.01
   sb_proj_rel_err: 0.02
   reattempt_failures: true

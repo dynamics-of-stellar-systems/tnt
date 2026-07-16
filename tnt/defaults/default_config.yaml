@@ -52,6 +52,15 @@ dynamic_object_defaults:
 # User-supplied values on an individual data set override these policies.
 kinematics_type_defaults:
   gauss_hermite:
+    # Highest Gauss-Hermite order constrained for this observational data set.
+    maximum_gh_order: 4
+    observational_errors:
+      # Add these data-set-specific systematic uncertainties in quadrature.
+      systematic_uncertainties:
+        v: 0.0
+        sigma: 0.0
+        h3: 0.0
+        h4: 0.0
     histogram:
       # Total width is 2 * max(abs(v) + sigma_extent * sigma).
       sigma_extent: 3.0
@@ -67,6 +76,10 @@ kinematics_type_defaults:
       center: 0.0
       systemic_velocity: "flux_weighted"
   proper_motions:
+    observational_errors:
+      # Multiplier for the observational error variances. The corresponding
+      # uncertainties are multiplied by its square root; 1.0 is neutral.
+      variance_scale: 1.0
     warning_thresholds:
       # Warn if velocity-bin width / global velocity dispersion exceeds this.
       max_bin_width_sigma_ratio: 0.25
@@ -112,12 +125,6 @@ weight_solver_settings:
     # A cut orbit receives h1 = h1_penalty_scale / histogram_bin_width.
     h1_penalty_scale: 3.0
   regularisation: 0
-  number_GH: 4
-  # Neutral systematic errors for v, sigma, h3, and h4.
-  GH_sys_err: "0.0 0.0 0.0 0.0"
-  # Multiplier for proper-motion (PM) error variances. The corresponding PM
-  # uncertainties are multiplied by sqrt(PM_sys_err_factor); 1.0 is neutral.
-  PM_sys_err_factor: 1.0
   lum_intr_rel_err: 0.01
   sb_proj_rel_err: 0.01
   reattempt_failures: true

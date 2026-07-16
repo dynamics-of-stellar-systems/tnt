@@ -85,9 +85,17 @@
   `fraction_of_sqrt_2n_observations`; the stopping criterion's
   `minimum_delta_chi2` accepts `absolute` or `relative`. This schema makes it
   impossible to specify both representations simultaneously.
-- `weight_solver_settings.PM_sys_err_factor` multiplies proper-motion error
-  variances. Proper-motion uncertainties are therefore scaled by its square
-  root, and `1.0` leaves them unchanged.
+- Gauss-Hermite `maximum_gh_order` and observational-error policies belong to
+  each dynamically named kinematics data set, not to global weight-solver
+  settings. Type defaults use order 4 with neutral named systematic
+  uncertainties for `v`, `sigma`, `h3`, and `h4`. An explicit systematic map
+  replaces the default map and must cover every quantity through the selected
+  order.
+- `proper_motions.observational_errors.variance_scale` is also per data set.
+  It multiplies proper-motion error variances, so uncertainties are scaled by
+  its square root; it must be positive and `1.0` is neutral.
+- The former weight-solver keys `number_GH`, `GH_sys_err`, and
+  `PM_sys_err_factor` are not part of the TNT schema.
 - Counter-rotating orbit-cut settings form a nested
   `weight_solver_settings.counter_rotating_orbit_cut` block. The block owns
   its enable switch, velocity thresholds, opposite-sign requirement, minimum
