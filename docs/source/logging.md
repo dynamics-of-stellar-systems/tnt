@@ -15,16 +15,20 @@ the subsequent execution body are therefore recorded in the same logfile:
 import logging
 import tnt
 
-with tnt.configuration_session("user_config.yaml") as config:
+with tnt.configuration_session(
+    "user_config.yaml",
+    workspace_root="/scratch/project/NGC6278",
+) as config:
     logger = logging.getLogger("tnt.application")
     logger.info("Starting TNT execution")
     # Construct and execute the model here.
 ```
 
-The bootstrap parses the user YAML and packaged defaults once, extracts and
-validates the output directory and logging settings, starts logging, and then
-continues complete configuration resolution using the already-loaded mapping.
-It does not parse the configuration twice.
+The bootstrap parses the user YAML and packaged defaults once, resolves the
+output directory against the same workspace root used by full preparation,
+validates the logging settings, starts logging, and then continues complete
+configuration resolution using the already-loaded mapping. It does not parse
+the configuration twice.
 
 Malformed YAML, an invalid or missing output directory, and invalid bootstrap
 logging settings cannot be recorded in the intended logfile because a valid

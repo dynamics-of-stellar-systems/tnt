@@ -17,9 +17,9 @@
 - Configuration preparation is implemented by `tnt.Configuration`. Its
   `read()` method loads the user YAML, recursively merges package defaults,
   resolves dynamic and kinematics-type defaults, validates the resulting
-  data, and atomically writes
-  `<output_directory>/config_repository/resolved_config.yaml`. It does not
-  instantiate scientific runtime objects.
+  data, and atomically preserves `user_config.yaml`, `resolved_config.yaml`,
+  and `run_manifest.yaml` below `<output_directory>/config_repository/`. It
+  does not instantiate scientific runtime objects.
 - Preparation-stage validation rejects duplicate keys, unknown or missing
   fields, invalid types and enumerations, malformed tagged thresholds, and
   basic numerical inconsistencies before the resolved file is written.
@@ -32,10 +32,24 @@
   removed after their values have been applied.
 - Complete explicit kinematics histogram metadata (`width`, `center`, and
   `bins`) replaces the histogram derivation policy for that data set.
-- Relative input and output paths are interpreted from the process working
-  directory and stored as absolute paths in the resolved snapshot.
+- Relative input and output paths are interpreted from an explicit workspace
+  root. When omitted, the root is the invoking Python script's directory, with
+  the process working directory used only for interactive sessions. Runtime
+  configuration data materializes both paths as absolute; the resolved YAML
+  stores them relative to the workspace root.
+- `Configuration.data` and `as_dict()` expose runtime paths;
+  `portable_data` and `as_portable_dict()` expose the archived form.
   Configuration preparation requires both path strings but creates only the
   output directory and configuration repository.
+- `config_repository/user_config.yaml` is a byte-identical copy of the user
+  file. `resolved_config.yaml` has all defaults applied with portable paths.
+  `run_manifest.yaml` records materialized paths, configuration checksums,
+  software versions, Git commit and dirty state when available,
+  Python/platform/host context, scheduler identifiers, logfile location, and
+  orbit random-seed state.
+- Configuration preparation cannot record a generated seed or observational
+  input checksums because neither exists yet. A negative seed is recorded as
+  `pending_generation`; the execution phase must update the effective seed.
 - The user profile must define the physical system, dynamically named
   components and parameters, input directory, and output directory.
 - TNT user profiles use snake-case type identifiers and field names. Parameter
@@ -126,6 +140,15 @@
 
 - Importing TNT and reading a configuration must not configure logging or
   alter the root logger. Modules emit records through `logging.getLogger(__name__)`.
+- `Configuration.read()` is the low-level preparation API: it resolves,
+  validates, and preserves the same configuration artifacts as
+  `configuration_session()`, but it does not install TNT logging handlers.
+  Use it when the embedding application owns logging or no TNT preparation
+  logfile is required.
+- `configuration_session()` is the recommended standalone lifecycle. It wraps
+  the same preparation logic and the caller's model-execution block in one TNT
+  logging session, records exceptions, and removes only TNT-created handlers
+  when the `with` block ends.
 - Standalone execution explicitly calls `tnt.configure_logging()` with the
   resolved configuration, or preferably uses
   `tnt.configuration_session(filename)` to include configuration preparation

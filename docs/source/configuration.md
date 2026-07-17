@@ -13,18 +13,51 @@ config = tnt.Configuration()
 config.read("user_config.yaml")
 ```
 
+Input and output paths are interpreted relative to a workspace root. Supply
+one explicitly when the data should be rooted somewhere other than the
+invoking script:
+
+```python
+config.read("user_config.yaml", workspace_root="/scratch/project/NGC6278")
+```
+
 This low-level API respects logging configured by the calling application but
 does not start TNT's own handlers. Standalone workflows that want preparation
 messages in the TNT logfile should use the lifecycle API:
 
 ```python
-with tnt.configuration_session("user_config.yaml") as config:
+with tnt.configuration_session(
+    "user_config.yaml",
+    workspace_root="/scratch/project/NGC6278",
+) as config:
     # Construct and execute the model while TNT logging remains active.
     ...
 ```
 
 The lifecycle API loads the YAML and defaults once, bootstraps logging from the
 output and logging settings, and then performs the same complete preparation.
+
+### `Configuration.read()` versus `configuration_session()`
+
+Both interfaces apply the same defaults and validation, return the same kind
+of resolved `Configuration` object, and write the same configuration-repository
+artifacts. Their difference is ownership of the logging lifecycle:
+
+| Behavior | `Configuration.read()` | `configuration_session()` |
+| --- | --- | --- |
+| Resolves and validates configuration | Yes | Yes |
+| Writes the configuration repository | Yes | Yes |
+| Starts TNT logfile and terminal handlers | No | Yes |
+| Logs configuration preparation | Only through logging already configured by the caller | Yes |
+| Logs exceptions from subsequent model execution | No | Yes, while execution remains inside the `with` block |
+| Cleans up TNT-created logging handlers | Not applicable | Yes, when the `with` block ends |
+
+Use `Configuration.read()` when TNT is embedded in an application that owns
+its logging configuration, or when preparation does not need a TNT logfile.
+Use `configuration_session()` for a normal standalone TNT run so that
+configuration preparation and model execution share one logfile. Code that
+constructs and executes the model should remain inside the session's `with`
+block.
 
 `Configuration.read()` performs the following operations:
 
@@ -34,15 +67,17 @@ output and logging settings, and then performs the same complete preparation.
    and kinematics data set.
 4. Applies defaults selected by each kinematics data set's `type`.
 5. Validates the resolved data without constructing runtime objects.
-6. Writes the fully resolved configuration to
-   `<output_directory>/config_repository/resolved_config.yaml`.
+6. Preserves the original user YAML, portable resolved configuration, and run
+   manifest below `<output_directory>/config_repository/`.
 
 Mapping values are merged recursively. A user value replaces a default scalar
 or list. User values always take precedence over applicable defaults.
 
 The schema-only `dynamic_object_defaults` and `kinematics_type_defaults`
 sections are applied during preparation and omitted from the resolved file.
-Consequently, the generated YAML is a self-contained runtime configuration.
+Consequently, the generated YAML contains all scientific and numerical
+settings needed by TNT without depending on the package defaults used during
+the original preparation.
 
 If a kinematics data set explicitly supplies complete histogram metadata
 (`width`, `center`, and `bins`), that metadata replaces the type's histogram
@@ -103,12 +138,56 @@ reported as errors instead.
 ## Paths and side effects
 
 The user profile must define non-empty `io_settings.input_directory` and
-`io_settings.output_directory` strings. Relative paths are interpreted from
-the process working directory and stored as absolute paths in the resolved
-configuration, so the execution phase does not depend on a later working
+`io_settings.output_directory` strings. Both are interpreted relative to the
+workspace root. If `workspace_root` is omitted, TNT uses the directory that
+contains the invoking Python script. Interactive sessions, which have no
+invoking script file, fall back to the current working directory. A relative
+workspace-root argument itself is interpreted from the current working
 directory.
 
+For example:
+
+```yaml
+io_settings:
+  input_directory: "input"
+  output_directory: "output"
+```
+
+With a workspace root of `/scratch/project/NGC6278`, TNT uses
+`/scratch/project/NGC6278/input` and
+`/scratch/project/NGC6278/output` at runtime. Explicit absolute input and output
+paths remain supported; TNT expresses them relative to the workspace root in
+the portable snapshot. Choosing a common parent of input and output as the
+workspace root therefore gives the most useful archived configuration.
+
+`Configuration.data` and `Configuration.as_dict()` contain materialized
+absolute input and output paths for runtime consumers. The corresponding
+portable values are available through `Configuration.portable_data` and
+`Configuration.as_portable_dict()`.
+
+## Configuration repository
+
+After successful validation, TNT writes three files atomically into
+`<output_directory>/config_repository/`:
+
+- `user_config.yaml` is a byte-for-byte copy of the submitted file, including
+  its comments and formatting.
+- `resolved_config.yaml` has all TNT defaults applied and stores input and
+  output paths relative to the workspace root. It is intended to be moved to
+  another machine and reused with a different workspace root.
+- `run_manifest.yaml` records the absolute paths used for this preparation,
+  checksums of both configuration files, TNT and dependency versions, the Git
+  commit and dirty-working-tree state when available, Python and platform
+  details, hostname, scheduler job identifiers when available, and random-seed
+  state.
+
+A negative configured orbit-library seed still means that execution must
+generate a seed. Until that happens, the preparation manifest records the
+effective seed as `null` with status `pending_generation`; the future execution
+stage must update it once the actual seed is known.
+
 Configuration preparation creates the output directory and its
-`config_repository` subdirectory when necessary. It atomically replaces
-`resolved_config.yaml` on each successful read. It does not instantiate
-components, load observational data, or execute modelling code.
+`config_repository` subdirectory when necessary. The three repository files
+are replaced on each successful preparation. It does not instantiate
+components, load observational data, checksum observational inputs, or execute
+modelling code.

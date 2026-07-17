@@ -1,4 +1,6 @@
 import logging
+import sys
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -70,18 +72,20 @@ weight_solver_settings:
         package_logger.propagate,
     )
 
-    config = Configuration().read(user_path)
+    config = Configuration().read(user_path, workspace_root=tmp_path)
 
     assert list(package_logger.handlers) == logger_state[0]
     assert package_logger.level == logger_state[1]
     assert package_logger.propagate is logger_state[2]
 
-    expected_path = output_directory / "config_repository" / "resolved_config.yaml"
+    repository = output_directory / "config_repository"
+    expected_path = repository / "resolved_config.yaml"
     assert config.resolved_path == expected_path
     assert expected_path.is_file()
 
     written = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
-    assert written == config.data
+    assert written == config.portable_data
+    assert config.workspace_root == tmp_path
     assert "dynamic_object_defaults" not in written
     assert "kinematics_type_defaults" not in written
     assert written["cosmological_parameters"]["H0"] == 70.0
@@ -89,10 +93,10 @@ weight_solver_settings:
         "file": {"enabled": True, "level": "DEBUG", "directory": "logs"},
         "console": {"enabled": True, "level": "INFO"},
     }
-    assert written["io_settings"]["input_directory"] == str(
-        (Path.cwd() / "input").resolve()
-    )
-    assert written["io_settings"]["output_directory"] == str(output_directory)
+    assert written["io_settings"]["input_directory"] == "input"
+    assert written["io_settings"]["output_directory"] == "output"
+    assert config.data["io_settings"]["input_directory"] == str(tmp_path / "input")
+    assert config.data["io_settings"]["output_directory"] == str(output_directory)
     assert written["system_components"]["stars"]["include"] is True
     parameter = written["system_components"]["stars"]["parameters"]["q"]
     assert parameter["fixed"] is False
@@ -115,6 +119,63 @@ weight_solver_settings:
     assert "GH_sys_err" not in written["weight_solver_settings"]
     assert "PM_sys_err_factor" not in written["weight_solver_settings"]
 
+    user_copy = repository / "user_config.yaml"
+    assert config.user_config_path == user_copy
+    assert user_copy.read_bytes() == user_path.read_bytes()
+
+    manifest_path = repository / "run_manifest.yaml"
+    assert config.run_manifest_path == manifest_path
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["manifest_version"] == 1
+    assert set(manifest["tnt"]) == {
+        "version",
+        "git_commit",
+        "git_working_tree_dirty",
+    }
+    assert manifest["execution"]["workspace_root"] == str(tmp_path)
+    assert manifest["configuration"]["source"] == str(user_path)
+    assert manifest["configuration"]["input_directory"] == str(tmp_path / "input")
+    assert manifest["configuration"]["output_directory"] == str(output_directory)
+    assert manifest["configuration"]["logfile"] is None
+    assert (
+        manifest["configuration"]["user_config_sha256"]
+        == sha256(user_path.read_bytes()).hexdigest()
+    )
+    assert (
+        manifest["configuration"]["resolved_config_sha256"]
+        == sha256(expected_path.read_bytes()).hexdigest()
+    )
+    assert manifest["randomness"] == {
+        "configured_orbit_library_seed": -1,
+        "effective_orbit_library_seed": None,
+        "status": "pending_generation",
+    }
+
+
+def test_default_workspace_root_is_invoking_script_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script_directory = tmp_path / "driver"
+    script_directory.mkdir()
+    script_path = script_directory / "run_model.py"
+    script_path.write_text("# test entrypoint\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules["__main__"], "__file__", str(script_path))
+
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, Path("results"))
+
+    config = Configuration().read(user_path)
+
+    assert config.workspace_root == script_directory
+    assert config.data["io_settings"]["input_directory"] == str(
+        script_directory / "input"
+    )
+    assert config.data["io_settings"]["output_directory"] == str(
+        script_directory / "results"
+    )
+    assert config.portable_data["io_settings"]["output_directory"] == "results"
+
 
 def test_explicit_histogram_replaces_derived_policy(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
@@ -129,7 +190,7 @@ def test_explicit_histogram_replaces_derived_policy(tmp_path: Path) -> None:
 """,
     )
 
-    config = Configuration().read(user_path)
+    config = Configuration().read(user_path, workspace_root=tmp_path)
     histogram = config.data["system_components"]["stars"]["kinematics"]["observed"][
         "histogram"
     ]
@@ -148,7 +209,7 @@ def test_read_requires_output_directory(tmp_path: Path) -> None:
         ValueError,
         match=r"io_settings\.output_directory must be a non-empty string",
     ):
-        Configuration().read(user_path)
+        Configuration().read(user_path, workspace_root=tmp_path)
 
 
 def test_read_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
@@ -159,7 +220,7 @@ def test_read_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="Duplicate configuration key"):
-        Configuration().read(user_path)
+        Configuration().read(user_path, workspace_root=tmp_path)
 
 
 def test_read_rejects_unknown_nested_field(tmp_path: Path) -> None:
@@ -176,7 +237,7 @@ def test_read_rejects_unknown_nested_field(tmp_path: Path) -> None:
         ValueError,
         match=r"kinematics\.observed contains unknown field\(s\): data_flie",
     ):
-        Configuration().read(user_path)
+        Configuration().read(user_path, workspace_root=tmp_path)
 
     assert not output_directory.exists()
 
@@ -196,7 +257,7 @@ def test_read_rejects_partial_explicit_histogram(tmp_path: Path) -> None:
         ValueError,
         match="must define width, center, and bins together",
     ):
-        Configuration().read(user_path)
+        Configuration().read(user_path, workspace_root=tmp_path)
 
 
 def test_read_rejects_even_histogram_bin_count(tmp_path: Path) -> None:
@@ -213,7 +274,7 @@ def test_read_rejects_even_histogram_bin_count(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="bins must be a positive odd integer"):
-        Configuration().read(user_path)
+        Configuration().read(user_path, workspace_root=tmp_path)
 
 
 def test_read_rejects_orbit_grid_with_too_few_i2_values(
@@ -228,7 +289,7 @@ def test_read_rejects_orbit_grid_with_too_few_i2_values(
     )
 
     with pytest.raises(ValueError, match=r"orbit_library_settings\.nI2"):
-        Configuration().read(user_path)
+        Configuration().read(user_path, workspace_root=tmp_path)
 
 
 def test_read_rejects_invalid_tagged_threshold_mode(tmp_path: Path) -> None:
@@ -248,7 +309,7 @@ def test_read_rejects_invalid_tagged_threshold_mode(tmp_path: Path) -> None:
         ValueError,
         match=r"delta_chi2_threshold\.mode must be one of",
     ):
-        Configuration().read(user_path)
+        Configuration().read(user_path, workspace_root=tmp_path)
 
 
 def test_read_rejects_nonpositive_worker_count(tmp_path: Path) -> None:
@@ -266,7 +327,7 @@ def test_read_rejects_nonpositive_worker_count(tmp_path: Path) -> None:
         ValueError,
         match=r"execution_settings\.orbit_workers must be a positive integer",
     ):
-        Configuration().read(user_path)
+        Configuration().read(user_path, workspace_root=tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -298,7 +359,7 @@ def test_read_rejects_invalid_logging_settings(
     _write_user_config(user_path, output_directory, body=logging_body)
 
     with pytest.raises(ValueError, match=message):
-        Configuration().read(user_path)
+        Configuration().read(user_path, workspace_root=tmp_path)
 
 
 def test_gauss_hermite_sets_resolve_independent_orders_and_systematics(
@@ -325,7 +386,7 @@ def test_gauss_hermite_sets_resolve_independent_orders_and_systematics(
 """,
     )
 
-    config = Configuration().read(user_path)
+    config = Configuration().read(user_path, workspace_root=tmp_path)
     kinematics = config.data["system_components"]["stars"]["kinematics"]
 
     assert kinematics["observed"]["maximum_gh_order"] == 4
@@ -354,7 +415,7 @@ def test_changed_gauss_hermite_order_requires_complete_systematics(
     )
 
     with pytest.raises(ValueError, match=r"missing required field\(s\): h5"):
-        Configuration().read(user_path)
+        Configuration().read(user_path, workspace_root=tmp_path)
 
 
 def test_proper_motion_set_resolves_its_own_variance_scale(
@@ -371,7 +432,7 @@ def test_proper_motion_set_resolves_its_own_variance_scale(
         kinematics_type="proper_motions",
     )
 
-    config = Configuration().read(user_path)
+    config = Configuration().read(user_path, workspace_root=tmp_path)
     kinematics = config.data["system_components"]["stars"]["kinematics"]["observed"]
 
     assert "maximum_gh_order" not in kinematics
@@ -391,7 +452,7 @@ def test_proper_motion_variance_scale_must_be_positive(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match=r"variance_scale must be greater"):
-        Configuration().read(user_path)
+        Configuration().read(user_path, workspace_root=tmp_path)
 
 
 @pytest.mark.parametrize("legacy_key", ["number_GH", "GH_sys_err", "PM_sys_err_factor"])
@@ -410,7 +471,7 @@ def test_weight_solver_rejects_former_global_kinematics_keys(
     )
 
     with pytest.raises(ValueError, match=legacy_key):
-        Configuration().read(user_path)
+        Configuration().read(user_path, workspace_root=tmp_path)
 
 
 def test_configuration_session_logs_preparation(
@@ -421,13 +482,18 @@ def test_configuration_session_logs_preparation(
     output_directory = tmp_path / "output"
     _write_user_config(user_path, output_directory)
 
-    with configuration_session(user_path) as config:
+    with configuration_session(user_path, workspace_root=tmp_path) as config:
         logging.getLogger("tnt.test").debug("execution debug detail")
         assert config.resolved_path is not None
 
     logfiles = list((output_directory / "logs").glob("tnt-*.log"))
     assert len(logfiles) == 1
     logfile = logfiles[0].read_text(encoding="utf-8")
+    manifest = yaml.safe_load(
+        (output_directory / "config_repository" / "run_manifest.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
     terminal = capsys.readouterr().err
 
     assert f"User configuration loaded from {user_path}" in logfile
@@ -437,6 +503,7 @@ def test_configuration_session_logs_preparation(
     assert "TNT configuration session completed" in logfile
     assert "User configuration loaded from" in terminal
     assert "execution debug detail" not in terminal
+    assert manifest["configuration"]["logfile"] == str(logfiles[0])
 
 
 def test_configuration_session_logs_validation_failure(tmp_path: Path) -> None:
@@ -450,7 +517,7 @@ def test_configuration_session_logs_validation_failure(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="data_flie"):
-        with configuration_session(user_path):
+        with configuration_session(user_path, workspace_root=tmp_path):
             pass
 
     logfiles = list((output_directory / "logs").glob("tnt-*.log"))
