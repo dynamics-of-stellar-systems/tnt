@@ -16,3 +16,10 @@ documentation for details.
 
    configuration
    logging
+
+.. toctree::
+   :maxdepth: 1
+   :caption: More Information
+
+   more_info/team
+   more_info/license
