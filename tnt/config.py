@@ -8,6 +8,9 @@ import unxt as u
 import yaml
 from unxt import AbstractUnitSystem, Quantity
 
+from tnt import mge
+from tnt.mge import AbstractMGE
+
 
 class UnitSystems(NamedTuple):
     """Internal and display unit systems defined by a configuration."""
@@ -90,3 +93,31 @@ def build_distance(config: dict[str, Any]) -> Quantity:
         KeyError: If the configuration has no ``distance:`` entry.
     """
     return Quantity.from_(au.Quantity(config["distance"]))
+
+
+def build_mges(
+    config: dict[str, Any],
+    unit_system: AbstractUnitSystem,
+    base_dir: str | Path = ".",
+) -> dict[str, AbstractMGE]:
+    """Build the named MGEs from a configuration.
+
+    Each MGE's kind (light or mass) is inferred from its file's declared
+    units -- see `tnt.mge.read_mge`.
+
+    Args:
+        config: A configuration dictionary, as returned by `read_config`,
+            containing an optional ``mges:`` mapping of unique identifiers
+            to ECSV file paths.
+        unit_system: The unit system to convert each MGE's columns into.
+        base_dir: Directory that relative ECSV paths are resolved against
+            (typically the config file's own directory).
+
+    Returns:
+        A dict mapping each identifier to its `LightMGE` or `MassMGE`.
+    """
+    base_dir = Path(base_dir)
+    return {
+        identifier: mge.read_mge(base_dir / path, unit_system)
+        for identifier, path in config.get("mges", {}).items()
+    }

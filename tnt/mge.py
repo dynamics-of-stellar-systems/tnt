@@ -122,8 +122,77 @@ class LightMGE(AbstractMGE):
 
     _intensity_attr: ClassVar[str] = "power"
 
+    def to_mass(self, m_over_l: Quantity) -> MassMGE:
+        """Convert to a MassMGE given a mass-to-light ratio.
+
+        `sigma`, `q`, and `PA_twist` are unaffected and carried over
+        unchanged -- only `I` (and hence what it represents) changes.
+
+        Args:
+            m_over_l: The mass-to-light ratio (e.g. in Msun/Lsun), either a
+                single value applied to every component, or an array with
+                one value per Gaussian component.
+
+        Returns:
+            A `MassMGE` with ``I = self.I * m_over_l``.
+
+        Raises:
+            ValueError: If `m_over_l` is array-valued and its length
+                doesn't match the number of Gaussian components.
+        """
+        if m_over_l.ndim > 0 and m_over_l.shape[0] != self.I.shape[0]:
+            raise ValueError(
+                f"m_over_l has {m_over_l.shape[0]} components, but this MGE "
+                f"has {self.I.shape[0]}."
+            )
+
+        return MassMGE(
+            I=self.I * m_over_l, sigma=self.sigma, q=self.q, PA_twist=self.PA_twist
+        )
+
 
 class MassMGE(AbstractMGE):
     """An MGE of a mass surface-density distribution (``I`` in e.g. Msun/arcsec2)."""
 
     _intensity_attr: ClassVar[str] = "mass"
+
+
+_MGE_CLASSES: tuple[type[AbstractMGE], ...] = (LightMGE, MassMGE)
+
+
+def read_mge(path: str | Path, unit_system: AbstractUnitSystem) -> AbstractMGE:
+    """Read an MGE from an ECSV file, inferring whether it's light or mass.
+
+    The kind is inferred from the declared unit of the file's ``I`` column:
+    whichever of `LightMGE` (power/angle**2) or `MassMGE` (mass/angle**2) it
+    is dimensionally consistent with. This makes the check meaningful -- a
+    file with the wrong kind of units for its intended use is rejected here,
+    rather than silently accepted.
+
+    Args:
+        path: Path to the ECSV file.
+        unit_system: The unit system to convert the columns into.
+
+    Returns:
+        A `LightMGE` or `MassMGE`, whichever matches the file's ``I`` column.
+
+    Raises:
+        ValueError: If the ``I`` column's unit doesn't match any known MGE
+            kind.
+    """
+    table = QTable.read(path, format="ascii.ecsv")
+    intensity_unit = table["I"].unit
+
+    for cls in _MGE_CLASSES:
+        target_unit = getattr(unit_system, cls._intensity_attr) / unit_system.angle**2
+        if intensity_unit.is_equivalent(target_unit):
+            return cls.from_qtable(table, unit_system)
+
+    expected = [
+        getattr(unit_system, cls._intensity_attr) / unit_system.angle**2
+        for cls in _MGE_CLASSES
+    ]
+    raise ValueError(
+        f"Could not infer MGE kind for {path}: its I column has unit "
+        f"{intensity_unit!r}, which is not equivalent to any of {expected!r}."
+    )

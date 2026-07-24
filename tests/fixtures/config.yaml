@@ -13,4 +13,5 @@ units:
     speed: km / s
 
 mges:
-  light_mge: 'mge_lum.ecsv'
+  light: 'mge_lum.ecsv'
+  mass: 'mge_mass.ecsv'

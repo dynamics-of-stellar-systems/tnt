@@ -4,6 +4,7 @@ import pytest
 import unxt as u
 
 from tnt import config
+from tnt.mge import LightMGE, MassMGE
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -59,6 +60,22 @@ def test_build_distance():
 def test_build_distance_missing():
     with pytest.raises(KeyError):
         config.build_distance({})
+
+
+def test_build_mges():
+    config_dict = config.read_config(FIXTURES_DIR / "config.yaml")
+    unit_system = config.build_unit_systems(config_dict).internal
+
+    mges = config.build_mges(config_dict, unit_system, base_dir=FIXTURES_DIR)
+
+    assert isinstance(mges["light"], LightMGE)
+    assert isinstance(mges["mass"], MassMGE)
+
+
+def test_build_mges_without_mges_section():
+    unit_system = u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
+
+    assert config.build_mges({}, unit_system) == {}
 
 
 def test_build_unit_systems_missing_units():

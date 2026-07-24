@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import pytest
 import unxt as u
 
-from tnt.mge import LightMGE, MassMGE
+from tnt.mge import LightMGE, MassMGE, read_mge
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -43,6 +43,76 @@ def test_read_converts_mass_columns_to_unit_system():
         mge.q.ustrip(""),
         jnp.array([0.91205, 0.83017, 0.9999, 0.60214, 0.9999, 0.60214]),
     )
+
+
+def test_read_mge_infers_light_kind():
+    mge = read_mge(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+
+    assert isinstance(mge, LightMGE)
+    assert mge.I.unit == u.unit("Lsun / rad2")
+
+
+def test_read_mge_infers_mass_kind():
+    mge = read_mge(FIXTURES_DIR / "mge_mass.ecsv", _internal_unit_system())
+
+    assert isinstance(mge, MassMGE)
+    assert mge.I.unit == u.unit("Msun / rad2")
+
+
+def test_read_mge_rejects_unrecognized_units(tmp_path):
+    bad_file = tmp_path / "bad.ecsv"
+    bad_file.write_text(
+        "# %ECSV 0.9\n"
+        "# ---\n"
+        "# datatype:\n"
+        "# - {name: I, unit: s, datatype: float64}\n"
+        "# - {name: sigma, unit: arcsec, datatype: float64}\n"
+        "# - {name: q, unit: '', datatype: float64}\n"
+        "# - {name: PA_twist, unit: deg, datatype: float64}\n"
+        "# schema: astropy-2.0\n"
+        "I sigma q PA_twist\n"
+        "1.0 1.0 1.0 0.0\n"
+    )
+
+    with pytest.raises(ValueError, match="Could not infer MGE kind"):
+        read_mge(bad_file, _internal_unit_system())
+
+
+def test_to_mass_with_constant_ratio():
+    light = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    m_over_l = u.Quantity(2.5, "Msun / Lsun")
+
+    mass = light.to_mass(m_over_l)
+
+    assert isinstance(mass, MassMGE)
+    assert mass.I.unit == u.unit("Msun / rad2")
+    assert jnp.allclose(
+        mass.I.ustrip("Msun / rad2"), light.I.ustrip("Lsun / rad2") * 2.5
+    )
+    assert jnp.allclose(mass.sigma.ustrip("rad"), light.sigma.ustrip("rad"))
+    assert jnp.allclose(mass.q.ustrip(""), light.q.ustrip(""))
+    assert jnp.allclose(mass.PA_twist.ustrip("rad"), light.PA_twist.ustrip("rad"))
+
+
+def test_to_mass_with_per_component_ratio():
+    light = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    ratios = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    m_over_l = u.Quantity(ratios, "Msun / Lsun")
+
+    mass = light.to_mass(m_over_l)
+
+    assert isinstance(mass, MassMGE)
+    assert jnp.allclose(
+        mass.I.ustrip("Msun / rad2"), light.I.ustrip("Lsun / rad2") * ratios
+    )
+
+
+def test_to_mass_rejects_mismatched_component_count():
+    light = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    m_over_l = u.Quantity(jnp.array([1.0, 2.0]), "Msun / Lsun")
+
+    with pytest.raises(ValueError, match="m_over_l has 2 components"):
+        light.to_mass(m_over_l)
 
 
 def test_mge_is_frozen():
