@@ -48,6 +48,19 @@ def test_build_unit_systems_without_display_overrides():
     assert unit_systems.internal == unit_systems.display
 
 
+def test_build_distance():
+    config_dict = config.read_config(FIXTURES_DIR / "config.yaml")
+
+    distance = config.build_distance(config_dict)
+
+    assert distance == u.Quantity(30.5, "Mpc")
+
+
+def test_build_distance_missing():
+    with pytest.raises(KeyError):
+        config.build_distance({})
+
+
 def test_build_unit_systems_missing_units():
     with pytest.raises(KeyError):
         config.build_unit_systems({})

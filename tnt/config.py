@@ -3,9 +3,10 @@
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import astropy.units as au
 import unxt as u
 import yaml
-from unxt import AbstractUnitSystem
+from unxt import AbstractUnitSystem, Quantity
 
 
 class UnitSystems(NamedTuple):
@@ -72,3 +73,20 @@ def build_unit_systems(config: dict[str, Any]) -> UnitSystems:
     display = u.unitsystem(internal, *display_overrides.values())
 
     return UnitSystems(internal=internal, display=display)
+
+
+def build_distance(config: dict[str, Any]) -> Quantity:
+    """Build the distance to the galaxy from a configuration.
+
+    Args:
+        config: A configuration dictionary, as returned by `read_config`,
+            containing a ``distance:`` value/unit string (e.g. ``"30.5
+            Mpc"``).
+
+    Returns:
+        The distance as a `unxt.Quantity`.
+
+    Raises:
+        KeyError: If the configuration has no ``distance:`` entry.
+    """
+    return Quantity.from_(au.Quantity(config["distance"]))
