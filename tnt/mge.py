@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import ClassVar, Self
 
 import equinox as eqx
+import jax.numpy as jnp
 from astropy.table import QTable
 from unxt import AbstractUnitSystem, Quantity
 
@@ -46,6 +47,7 @@ class AbstractMGE(eqx.Module):
         Raises:
             astropy.units.UnitConversionError: If a column's unit is not
                 dimensionally consistent with the expected physical type.
+            ValueError: If any ``q`` value is outside ``(0, 1]``.
         """
         intensity_unit = getattr(unit_system, cls._intensity_attr) / unit_system.angle**2
         target_units = {
@@ -59,6 +61,10 @@ class AbstractMGE(eqx.Module):
             name: Quantity.from_(table[name].to(unit))
             for name, unit in target_units.items()
         }
+
+        q = columns["q"].ustrip("")
+        if not bool(jnp.all((q > 0) & (q <= 1))):
+            raise ValueError(f"q must satisfy 0 < q <= 1 for all components, got {q}")
 
         return cls(**columns)
 

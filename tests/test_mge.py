@@ -59,6 +59,46 @@ def test_read_mge_infers_mass_kind():
     assert mge.I.unit == u.unit("Msun / rad2")
 
 
+@pytest.mark.parametrize("bad_q", [0.0, -0.5, 1.5])
+def test_read_rejects_q_out_of_range(tmp_path, bad_q):
+    bad_file = tmp_path / "bad_q.ecsv"
+    bad_file.write_text(
+        "# %ECSV 0.9\n"
+        "# ---\n"
+        "# datatype:\n"
+        "# - {name: I, unit: Lsun / arcsec2, datatype: float64}\n"
+        "# - {name: sigma, unit: arcsec, datatype: float64}\n"
+        "# - {name: q, unit: '', datatype: float64}\n"
+        "# - {name: PA_twist, unit: deg, datatype: float64}\n"
+        "# schema: astropy-2.0\n"
+        "I sigma q PA_twist\n"
+        f"1.0 1.0 {bad_q} 0.0\n"
+    )
+
+    with pytest.raises(ValueError, match="q must satisfy 0 < q <= 1"):
+        LightMGE.read(bad_file, _internal_unit_system())
+
+
+def test_read_accepts_q_equal_to_one(tmp_path):
+    ok_file = tmp_path / "q_one.ecsv"
+    ok_file.write_text(
+        "# %ECSV 0.9\n"
+        "# ---\n"
+        "# datatype:\n"
+        "# - {name: I, unit: Lsun / arcsec2, datatype: float64}\n"
+        "# - {name: sigma, unit: arcsec, datatype: float64}\n"
+        "# - {name: q, unit: '', datatype: float64}\n"
+        "# - {name: PA_twist, unit: deg, datatype: float64}\n"
+        "# schema: astropy-2.0\n"
+        "I sigma q PA_twist\n"
+        "1.0 1.0 1.0 0.0\n"
+    )
+
+    mge = LightMGE.read(ok_file, _internal_unit_system())
+
+    assert jnp.allclose(mge.q.ustrip(""), 1.0)
+
+
 def test_read_mge_rejects_unrecognized_units(tmp_path):
     bad_file = tmp_path / "bad.ecsv"
     bad_file.write_text(
