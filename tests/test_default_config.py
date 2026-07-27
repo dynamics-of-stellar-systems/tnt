@@ -20,6 +20,9 @@ def test_default_config_is_packaged() -> None:
     assert "  parameter:\n    fixed: false\n    logarithmic: false" in config_text
     assert "  kinematics:\n    with_pops: false" in config_text
     assert "kinematics_type_defaults:" in config_text
+    assert '        v: {value: 0.0, unit: "km / s"}' in config_text
+    assert '        sigma: {value: 0.0, unit: "km / s"}' in config_text
+    assert '      center: {value: 0.0, unit: "km / s"}' in config_text
     assert "      sigma_extent: 3.0" in config_text
     assert "      bin_width_sigma_fraction: 0.1" in config_text
     assert "      width_scale: 1.0" in config_text

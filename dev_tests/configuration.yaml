@@ -25,6 +25,7 @@ system_components:
         logarithmic: true
         latex_label: "$\\log(M_\\mathrm{BH}/M_\\odot)$"
       a:
+        unit: "kpc"
         fixed: true
         value: 1.0e-3
         latex_label: "$a_\\mathrm{BH}$"
@@ -94,13 +95,13 @@ system_components:
         maximum_gh_order: 4
         observational_errors:
           systematic_uncertainties:
-            v: 0.0
-            sigma: 0.0
+            v: {value: 0.0, unit: "km / s"}
+            sigma: {value: 0.0, unit: "km / s"}
             h3: 0.0
             h4: 0.0
         histogram:
           width: {value: 2719.8215332031, unit: "km / s"}
-          center: 0.0
+          center: {value: 0.0, unit: "km / s"}
           bins: 203
         data_file: "gauss_hermite_kins.ecsv"
         aperture_file: "aperture.dat"

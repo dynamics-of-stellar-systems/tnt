@@ -30,18 +30,18 @@ configuration object exposes the constructed systems as
 
 ## Quantity syntax
 
-A bare number is always interpreted in the corresponding internal unit:
+Every unitful value must state its unit, even when that unit is the configured
+internal unit and even when the value is zero. Standalone quantities use a
+`value` and `unit` mapping:
 
 ```yaml
 system_attributes:
-  distance: 39960.0  # kpc with the packaged internal units
-```
+  distance: {value: 39960.0, unit: "kpc"}
 
-Use a `value` and `unit` mapping when expressing a quantity in another unit:
-
-```yaml
-system_attributes:
-  distance: {value: 39.96, unit: "Mpc"}
+kinematics:
+  central_spectroscopy:
+    histogram:
+      center: {value: 0.0, unit: "km / s"}
 
 cosmological_parameters:
   H0:
@@ -54,7 +54,8 @@ YAML sequence such as `[39.96, Mpc]` is deliberately not supported: naming
 `value` and `unit` makes the schema clearer and permits precise validation
 errors.
 
-Parameters use one unit for their value and search range:
+Unitful parameters require one sibling `unit` applying to their value and
+search range:
 
 ```yaml
 parameters:
@@ -72,6 +73,10 @@ For a linear parameter, TNT converts the value, bounds, step, and minimum step.
 For a logarithmic parameter, the declared unit is the reference unit for the
 logarithm: TNT shifts the value and bounds into the internal reference unit,
 while logarithmic step sizes remain unchanged.
+
+Dimensionless fields remain plain numbers and must not add a `unit`. Examples
+include axial ratios, Gauss-Hermite coefficients, relative error factors, and
+unitless warning thresholds.
 
 ## Currently unit-aware fields
 

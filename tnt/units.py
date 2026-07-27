@@ -135,15 +135,11 @@ def normalize_unitful_value(
     unit_systems: UnitSystems,
     path: str,
 ) -> float:
-    """Normalize a bare number or ``{value, unit}`` mapping."""
-    if _is_number(value):
-        numeric = float(value)
-        _require_finite(numeric, path)
-        return numeric
+    """Normalize an explicit ``{value, unit}`` mapping."""
     if not isinstance(value, Mapping):
         raise TypeError(
-            f"{path} must be a number in TNT internal units or a mapping "
-            "containing value and unit."
+            f"{path} must be a mapping containing value and unit; unitful "
+            "configuration values must state their unit explicitly."
         )
 
     explicit = _mapping(value, path)
@@ -203,15 +199,18 @@ def _normalize_parameters(
     for name, parameter_value in parameters.items():
         parameter_path = f"{path}.{name}"
         parameter = _mapping(parameter_value, parameter_path)
-        declared_unit = parameter.pop("unit", None)
         dimension = dimensions.get(name)
-        if declared_unit is None:
-            continue
         if dimension is None:
-            raise ValueError(
-                f"{parameter_path}.unit is not supported because this parameter "
-                "is dimensionless or does not yet have a declared dimension."
-            )
+            if "unit" in parameter:
+                raise ValueError(
+                    f"{parameter_path}.unit is not supported because this "
+                    "parameter is dimensionless or does not yet have a declared "
+                    "dimension."
+                )
+            continue
+        if "unit" not in parameter:
+            raise ValueError(f"{parameter_path} is missing required field: unit.")
+        declared_unit = parameter.pop("unit")
 
         source = _validated_declared_unit(
             declared_unit, dimension, f"{parameter_path}.unit"

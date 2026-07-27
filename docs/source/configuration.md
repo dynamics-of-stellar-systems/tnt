@@ -102,8 +102,8 @@ kinematics:
     maximum_gh_order: 4
     observational_errors:
       systematic_uncertainties:
-        v: 0.0
-        sigma: 0.0
+        v: {value: 0.0, unit: "km / s"}
+        sigma: {value: 0.0, unit: "km / s"}
         h3: 0.0
         h4: 0.0
 

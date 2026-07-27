@@ -19,7 +19,7 @@ def _write_user_config(
     path.write_text(
         f"""
 system_attributes:
-  distance: 10.0
+  distance: {{value: 10.0, unit: "kpc"}}
   name: test_system
 system_components:
   stars:
@@ -39,6 +39,7 @@ system_components:
 {body}
 system_parameters:
   ml:
+    unit: "Msun / Lsun"
     value: 5.0
 orbit_library_settings:
   logrmin: -0.2
@@ -198,8 +199,8 @@ def test_explicit_histogram_replaces_derived_policy(tmp_path: Path) -> None:
         user_path,
         output_directory,
         body="""        histogram:
-          width: 1000.0
-          center: 10.0
+          width: {value: 1000.0, unit: "kpc / Myr"}
+          center: {value: 10.0, unit: "kpc / Myr"}
           bins: 101
 """,
     )
@@ -219,7 +220,7 @@ def test_read_normalizes_explicit_quantity_and_preserves_user_notation(
     output_directory = tmp_path / "output"
     _write_user_config(user_path, output_directory)
     original = user_path.read_text(encoding="utf-8").replace(
-        "distance: 10.0",
+        'distance: {value: 10.0, unit: "kpc"}',
         'distance: {value: 10.0, unit: "Mpc"}',
     )
     user_path.write_text(original, encoding="utf-8")
@@ -243,12 +244,52 @@ def test_read_rejects_incompatible_quantity_unit_before_writing(
     output_directory = tmp_path / "output"
     _write_user_config(user_path, output_directory)
     invalid = user_path.read_text(encoding="utf-8").replace(
-        "distance: 10.0",
+        'distance: {value: 10.0, unit: "kpc"}',
         'distance: {value: 10.0, unit: "Myr"}',
     )
     user_path.write_text(invalid, encoding="utf-8")
 
     with pytest.raises(ValueError, match=r"system_attributes\.distance\.unit"):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert not output_directory.exists()
+
+
+def test_read_rejects_unitful_bare_number_before_writing(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    invalid = user_path.read_text(encoding="utf-8").replace(
+        'distance: {value: 10.0, unit: "kpc"}',
+        "distance: 10.0",
+    )
+    user_path.write_text(invalid, encoding="utf-8")
+
+    with pytest.raises(
+        TypeError,
+        match=r"system_attributes\.distance.*must state their unit explicitly",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert not output_directory.exists()
+
+
+def test_quantity_override_cannot_inherit_default_unit(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""cosmological_parameters:
+  H0:
+    value: 75.0
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"cosmological_parameters\.H0.*missing required field.*unit",
+    ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
     assert not output_directory.exists()
@@ -305,7 +346,7 @@ def test_read_rejects_partial_explicit_histogram(tmp_path: Path) -> None:
         user_path,
         output_directory,
         body="""        histogram:
-          width: 1000.0
+          width: {value: 1000.0, unit: "kpc / Myr"}
 """,
     )
 
@@ -323,8 +364,8 @@ def test_read_rejects_even_histogram_bin_count(tmp_path: Path) -> None:
         user_path,
         output_directory,
         body="""        histogram:
-          width: 1000.0
-          center: 0.0
+          width: {value: 1000.0, unit: "kpc / Myr"}
+          center: {value: 0.0, unit: "kpc / Myr"}
           bins: 100
 """,
     )
@@ -431,8 +472,8 @@ def test_gauss_hermite_sets_resolve_independent_orders_and_systematics(
         maximum_gh_order: 5
         observational_errors:
           systematic_uncertainties:
-            v: 1.0
-            sigma: 2.0
+            v: {value: 1.0, unit: "kpc / Myr"}
+            sigma: {value: 2.0, unit: "kpc / Myr"}
             h3: 0.03
             h4: 0.04
             h5: 0.05

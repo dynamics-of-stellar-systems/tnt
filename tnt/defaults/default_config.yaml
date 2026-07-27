@@ -7,8 +7,8 @@
 # If histogram metadata is omitted for a kinematic data set, TNT derives it
 # from the observations using data-type-specific rules.
 
-# Bare numeric values for unitful fields are interpreted in the internal unit
-# system. An explicit value can instead be written as {value: ..., unit: ...}.
+# Every unitful field must state its unit explicitly. Standalone quantities use
+# {value: ..., unit: ...}; unitful parameters use a sibling unit field.
 # Display units are presentation preferences and do not change stored values.
 units:
   internal:
@@ -71,8 +71,8 @@ kinematics_type_defaults:
     observational_errors:
       # Add these data-set-specific systematic uncertainties in quadrature.
       systematic_uncertainties:
-        v: 0.0
-        sigma: 0.0
+        v: {value: 0.0, unit: "km / s"}
+        sigma: {value: 0.0, unit: "km / s"}
         h3: 0.0
         h4: 0.0
     histogram:
@@ -80,14 +80,14 @@ kinematics_type_defaults:
       sigma_extent: 3.0
       # The approximate bin width is this fraction of the minimum sigma.
       bin_width_sigma_fraction: 0.1
-      center: 0.0
+      center: {value: 0.0, unit: "km / s"}
   bayes_losvd:
     histogram:
       # Scale relative to the symmetric width covering the observed LOSVD.
       width_scale: 1.0
       # A factor of 1 uses the observed LOSVD velocity spacing.
       oversampling_factor: 1.0
-      center: 0.0
+      center: {value: 0.0, unit: "km / s"}
       systemic_velocity: "flux_weighted"
   proper_motions:
     observational_errors:

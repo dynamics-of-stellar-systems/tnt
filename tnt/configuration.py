@@ -305,11 +305,20 @@ def _deep_merge(base: ConfigDict, override: ConfigDict) -> ConfigDict:
     result = deepcopy(base)
     for key, override_value in override.items():
         base_value = result.get(key)
-        if isinstance(base_value, dict) and isinstance(override_value, dict):
+        if (
+            isinstance(base_value, dict)
+            and isinstance(override_value, dict)
+            and not _is_explicit_quantity_mapping(base_value)
+        ):
             result[key] = _deep_merge(base_value, override_value)
         else:
             result[key] = deepcopy(override_value)
     return result
+
+
+def _is_explicit_quantity_mapping(value: ConfigDict) -> bool:
+    """Return whether a mapping is one atomic value-and-unit quantity."""
+    return set(value) == {"unit", "value"}
 
 
 def _apply_schema_defaults(config: ConfigDict) -> ConfigDict:

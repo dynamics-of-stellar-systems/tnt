@@ -34,12 +34,14 @@
   `units.display` selectively overrides presentation units and otherwise
   inherits from the internal system. `Configuration.unit_systems` exposes the
   two constructed systems.
-- A bare unitful configuration number is already in the corresponding internal
-  unit. An explicit quantity uses `{value: ..., unit: ...}`. Unitful parameter
-  definitions instead use a sibling `unit` applying to the parameter value and
-  generator range. Configuration preparation converts supported quantities to
-  plain internal-unit numbers before validation and resolved-YAML generation;
-  the byte-identical user copy retains the submitted notation.
+- Every known unitful configuration value must state its unit explicitly;
+  internal units and zero values are not implicit exceptions. Standalone
+  quantities use `{value: ..., unit: ...}`. Unitful parameter definitions use
+  a required sibling `unit` applying to the parameter value and generator
+  range. Dimensionless values remain plain numbers and reject a `unit`.
+  Configuration preparation converts supported quantities to plain
+  internal-unit numbers before validation and resolved-YAML generation; the
+  byte-identical user copy retains the submitted notation.
 - The first unit-aware schema covers `cosmological_parameters.H0`,
   `system_attributes.distance`, explicit kinematics histogram width and center,
   Gauss-Hermite `v` and `sigma` systematic uncertainties, Plummer `m` and `a`,

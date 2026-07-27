@@ -61,13 +61,9 @@ def test_build_unit_systems_requires_every_internal_dimension() -> None:
         build_unit_systems(settings)
 
 
-def test_normalize_unitful_value_accepts_bare_or_explicit_values() -> None:
+def test_normalize_unitful_value_accepts_explicit_value_and_unit() -> None:
     systems = build_unit_systems(_unit_settings())
 
-    assert (
-        normalize_unitful_value(2.5, "length", systems, "system_attributes.distance")
-        == 2.5
-    )
     assert normalize_unitful_value(
         {"value": 2.5, "unit": "Mpc"},
         "length",
@@ -76,10 +72,22 @@ def test_normalize_unitful_value_accepts_bare_or_explicit_values() -> None:
     ) == pytest.approx(2500.0)
 
 
+def test_normalize_unitful_value_rejects_bare_number() -> None:
+    systems = build_unit_systems(_unit_settings())
+
+    with pytest.raises(TypeError, match="must state their unit explicitly"):
+        normalize_unitful_value(
+            2.5,
+            "length",
+            systems,
+            "system_attributes.distance",
+        )
+
+
 def test_normalize_unitful_value_rejects_sequence_shorthand() -> None:
     systems = build_unit_systems(_unit_settings())
 
-    with pytest.raises(TypeError, match="number.*or a mapping"):
+    with pytest.raises(TypeError, match="mapping containing value and unit"):
         normalize_unitful_value(
             [2.5, "Mpc"],
             "length",
@@ -135,7 +143,7 @@ def test_normalize_supported_configuration_quantities() -> None:
                         "observational_errors": {
                             "systematic_uncertainties": {
                                 "v": {"value": 2.0, "unit": "km / s"},
-                                "sigma": 3.0,
+                                "sigma": {"value": 3.0, "unit": "kpc / Myr"},
                                 "h3": 0.0,
                             }
                         },
@@ -205,4 +213,51 @@ def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:
     }
 
     with pytest.raises(ValueError, match=r"parameters\.c\.unit is not supported"):
+        normalize_configuration_quantities(config, systems)
+
+
+@pytest.mark.parametrize(
+    ("components", "system_parameters", "error"),
+    [
+        (
+            {
+                "bh": {
+                    "type": "plummer",
+                    "parameters": {
+                        "m": {
+                            "value": 10.0,
+                            "logarithmic": True,
+                        }
+                    },
+                }
+            },
+            {},
+            r"system_components\.bh\.parameters\.m.*required field: unit",
+        ),
+        (
+            {},
+            {
+                "ml": {
+                    "value": 5.0,
+                    "logarithmic": False,
+                }
+            },
+            r"system_parameters\.ml.*required field: unit",
+        ),
+    ],
+)
+def test_unitful_parameter_requires_unit(
+    components: dict,
+    system_parameters: dict,
+    error: str,
+) -> None:
+    systems = build_unit_systems(_unit_settings())
+    config = {
+        "cosmological_parameters": {},
+        "system_attributes": {},
+        "system_components": components,
+        "system_parameters": system_parameters,
+    }
+
+    with pytest.raises(ValueError, match=error):
         normalize_configuration_quantities(config, systems)
