@@ -26,6 +26,30 @@
   Runtime-object, observational-data, MGE-content, and optional-dependency
   checks remain the responsibility of the later execution phase. Legacy
   deprecation-and-ignore warnings are intentionally not reproduced.
+- TNT uses `unxt` for configuration units. The required
+  `units.internal` block defines length, time, mass, angle, and power;
+  `units.display` selectively overrides presentation units and otherwise
+  inherits from the internal system. `Configuration.unit_systems` exposes the
+  two constructed systems.
+- A bare unitful configuration number is already in the corresponding internal
+  unit. An explicit quantity uses `{value: ..., unit: ...}`. Unitful parameter
+  definitions instead use a sibling `unit` applying to the parameter value and
+  generator range. Configuration preparation converts supported quantities to
+  plain internal-unit numbers before validation and resolved-YAML generation;
+  the byte-identical user copy retains the submitted notation.
+- The first unit-aware schema covers `cosmological_parameters.H0`,
+  `system_attributes.distance`, explicit kinematics histogram width and center,
+  Gauss-Hermite `v` and `sigma` systematic uncertainties, Plummer `m` and `a`,
+  and system `ml`. Linear parameter steps are converted; logarithmic parameter
+  values and bounds are shifted between reference units while log step sizes
+  remain unchanged.
+- MGE contents and quantities inside observational files are deliberately
+  deferred to the later object-construction/data-loading phase. Configuration
+  preparation does not open those files.
+- Intel macOS needs the compatibility constraints recorded in
+  `pyproject.toml`: the latest available JAX wheel is in the 0.4 series, and
+  `unxt` 1.1.1 requires matching older Quax, Quaxed, Plum, Astropy, and NumPy
+  APIs on that platform.
 - Mapping values merge recursively, while user scalars and lists replace
   defaults. User values have final precedence. Schema-only
   `dynamic_object_defaults` and `kinematics_type_defaults` sections are

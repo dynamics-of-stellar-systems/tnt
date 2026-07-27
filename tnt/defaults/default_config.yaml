@@ -7,8 +7,22 @@
 # If histogram metadata is omitted for a kinematic data set, TNT derives it
 # from the observations using data-type-specific rules.
 
+# Bare numeric values for unitful fields are interpreted in the internal unit
+# system. An explicit value can instead be written as {value: ..., unit: ...}.
+# Display units are presentation preferences and do not change stored values.
+units:
+  internal:
+    length: "kpc"
+    time: "Myr"
+    mass: "Msun"
+    angle: "rad"
+    power: "Lsun"
+  display:
+    angle: "arcsec"
+    speed: "km / s"
+
 cosmological_parameters:
-  H0: 70.0
+  H0: {value: 70.0, unit: "km / (s Mpc)"}
 
 # Apply this numerical-stability cap uniformly to every multi-Gaussian
 # expansion (MGE). Values above the cap are replaced and must trigger a warning.

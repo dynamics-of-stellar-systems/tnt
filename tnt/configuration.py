@@ -23,6 +23,11 @@ import yaml
 
 from tnt.configuration_validation import validate_resolved_configuration
 from tnt.logging import configure_logging
+from tnt.units import (
+    UnitSystems,
+    build_unit_systems,
+    normalize_configuration_quantities,
+)
 
 CONFIG_REPOSITORY_DIRECTORY = "config_repository"
 USER_CONFIG_FILENAME = "user_config.yaml"
@@ -51,6 +56,7 @@ class Configuration:
         self.user_config_path: Path | None = None
         self.resolved_path: Path | None = None
         self.run_manifest_path: Path | None = None
+        self.unit_systems: UnitSystems | None = None
 
     def read(
         self,
@@ -95,6 +101,13 @@ class Configuration:
         """Resolve, validate, and preserve an already-loaded configuration."""
         _LOGGER.debug("Resolving configuration loaded from %s.", source_path)
         schema_resolved_config = _apply_schema_defaults(merged_config)
+        unit_systems = build_unit_systems(
+            _mapping_value(schema_resolved_config, "units", "configuration")
+        )
+        schema_resolved_config = normalize_configuration_quantities(
+            schema_resolved_config,
+            unit_systems,
+        )
         runtime_config, portable_config, output_directory = _resolve_io_directories(
             schema_resolved_config,
             workspace_root,
@@ -134,6 +147,7 @@ class Configuration:
         self.user_config_path = user_config_path.resolve()
         self.resolved_path = resolved_path.resolve()
         self.run_manifest_path = run_manifest_path.resolve()
+        self.unit_systems = unit_systems
         return self
 
     def as_dict(self) -> ConfigDict:
@@ -583,6 +597,7 @@ def _build_run_manifest(
         "dependencies": {
             "jax": _package_version("jax"),
             "pyyaml": _package_version("PyYAML"),
+            "unxt": _package_version("unxt"),
         },
         "execution": {
             "hostname": socket.gethostname(),

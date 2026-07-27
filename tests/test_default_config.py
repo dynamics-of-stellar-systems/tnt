@@ -7,7 +7,8 @@ def test_default_config_is_packaged() -> None:
 
     assert default_config.is_file()
     assert "orbit_library_settings:" in config_text
-    assert "cosmological_parameters:\n  H0: 70.0" in config_text
+    assert '  H0: {value: 70.0, unit: "km / (s Mpc)"}' in config_text
+    assert "units:" in config_text
     assert "mge_settings:\n  axial_ratio_cap: 0.9999" in config_text
     assert "numerics_settings:" in config_text
     assert "  model_comparison_relative_tolerance: 1.0e-10" in config_text

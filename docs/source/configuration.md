@@ -66,8 +66,10 @@ block.
 3. Applies common defaults to every dynamically named component, parameter,
    and kinematics data set.
 4. Applies defaults selected by each kinematics data set's `type`.
-5. Validates the resolved data without constructing runtime objects.
-6. Preserves the original user YAML, portable resolved configuration, and run
+5. Validates the configured unit systems and converts supported unitful
+   quantities to internal units.
+6. Validates the resolved data without constructing runtime objects.
+7. Preserves the original user YAML, portable resolved configuration, and run
    manifest below `<output_directory>/config_repository/`.
 
 Mapping values are merged recursively. A user value replaces a default scalar
@@ -82,6 +84,9 @@ the original preparation.
 If a kinematics data set explicitly supplies complete histogram metadata
 (`width`, `center`, and `bins`), that metadata replaces the type's histogram
 derivation policy. Supplying only part of this explicit metadata is an error.
+
+See [Units](units.md) for the internal and display unit systems, accepted
+quantity syntax, and the fields currently normalized during preparation.
 
 ## Per-data-set kinematics settings
 

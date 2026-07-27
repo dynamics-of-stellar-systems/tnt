@@ -5,7 +5,7 @@
 ---
 
 system_attributes:
-  distance_mpc: 39.96
+  distance: {value: 39.96, unit: "Mpc"}
   name: "NGC6278"
 
 system_components:
@@ -14,6 +14,7 @@ system_components:
     include: true
     parameters:
       m:
+        unit: "Msun"
         generator_settings:
           lower_bound: 1.0
           upper_bound: 10.0
@@ -98,7 +99,7 @@ system_components:
             h3: 0.0
             h4: 0.0
         histogram:
-          width: 2719.8215332031
+          width: {value: 2719.8215332031, unit: "km / s"}
           center: 0.0
           bins: 203
         data_file: "gauss_hermite_kins.ecsv"
@@ -108,6 +109,7 @@ system_components:
 
 system_parameters:
   ml:
+    unit: "Msun / Lsun"
     generator_settings:
       lower_bound: 1.0
       upper_bound: 9.0

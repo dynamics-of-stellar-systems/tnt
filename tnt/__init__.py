@@ -4,10 +4,12 @@ import logging as _logging
 
 from tnt.configuration import Configuration, configuration_session
 from tnt.logging import LoggingSession, configure_logging, configure_worker_logging
+from tnt.units import UnitSystems
 
 __all__ = [
     "Configuration",
     "LoggingSession",
+    "UnitSystems",
     "configure_logging",
     "configure_worker_logging",
     "configuration_session",

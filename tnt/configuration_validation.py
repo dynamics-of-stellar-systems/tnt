@@ -22,6 +22,7 @@ _TOP_LEVEL_KEYS = {
     "system_attributes",
     "system_components",
     "system_parameters",
+    "units",
     "weight_solver_settings",
 }
 _COMPONENT_TYPES = {"nfw", "plummer", "triaxial_visible_component"}
@@ -44,10 +45,11 @@ def validate_resolved_configuration(config: ConfigDict) -> None:
     _reject_unknown_keys(config, _TOP_LEVEL_KEYS, "configuration")
     _require_keys(
         config,
-        {"system_attributes", "system_components", "system_parameters"},
+        {"system_attributes", "system_components", "system_parameters", "units"},
         "configuration",
     )
 
+    _validate_units(_mapping(config, "units", "configuration"))
     _validate_cosmological_parameters(
         _mapping(config, "cosmological_parameters", "configuration")
     )
@@ -82,6 +84,21 @@ def _validate_cosmological_parameters(settings: ConfigDict) -> None:
     _reject_unknown_keys(settings, {"H0"}, path)
     _require_keys(settings, {"H0"}, path)
     _positive_number(settings["H0"], f"{path}.H0")
+
+
+def _validate_units(settings: ConfigDict) -> None:
+    path = "units"
+    _reject_unknown_keys(settings, {"display", "internal"}, path)
+    _require_keys(settings, {"display", "internal"}, path)
+    internal = _mapping(settings, "internal", path)
+    internal_keys = {"angle", "length", "mass", "power", "time"}
+    _reject_unknown_keys(internal, internal_keys, f"{path}.internal")
+    _require_keys(internal, internal_keys, f"{path}.internal")
+    display = _mapping(settings, "display", path)
+    _reject_unknown_keys(display, internal_keys | {"speed"}, f"{path}.display")
+    for section_name, section in (("internal", internal), ("display", display)):
+        for key, value in section.items():
+            _nonempty_string(value, f"{path}.{section_name}.{key}")
 
 
 def _validate_mge_settings(settings: ConfigDict) -> None:
@@ -133,9 +150,9 @@ def _validate_numerics_settings(settings: ConfigDict) -> None:
 
 def _validate_system_attributes(attributes: ConfigDict) -> None:
     path = "system_attributes"
-    _reject_unknown_keys(attributes, {"distance_mpc", "name"}, path)
-    _require_keys(attributes, {"distance_mpc", "name"}, path)
-    _positive_number(attributes["distance_mpc"], f"{path}.distance_mpc")
+    _reject_unknown_keys(attributes, {"distance", "name"}, path)
+    _require_keys(attributes, {"distance", "name"}, path)
+    _positive_number(attributes["distance"], f"{path}.distance")
     _nonempty_string(attributes["name"], f"{path}.name")
 
 

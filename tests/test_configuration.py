@@ -19,7 +19,7 @@ def _write_user_config(
     path.write_text(
         f"""
 system_attributes:
-  distance_mpc: 10.0
+  distance: 10.0
   name: test_system
 system_components:
   stars:
@@ -88,7 +88,20 @@ weight_solver_settings:
     assert config.workspace_root == tmp_path
     assert "dynamic_object_defaults" not in written
     assert "kinematics_type_defaults" not in written
-    assert written["cosmological_parameters"]["H0"] == 70.0
+    assert written["cosmological_parameters"]["H0"] == pytest.approx(
+        7.158985155319864e-05
+    )
+    assert written["units"] == {
+        "internal": {
+            "length": "kpc",
+            "time": "Myr",
+            "mass": "Msun",
+            "angle": "rad",
+            "power": "Lsun",
+        },
+        "display": {"angle": "arcsec", "speed": "km / s"},
+    }
+    assert config.unit_systems is not None
     assert written["logging_settings"] == {
         "file": {"enabled": True, "level": "DEBUG", "directory": "logs"},
         "console": {"enabled": True, "level": "INFO"},
@@ -132,6 +145,7 @@ weight_solver_settings:
         "git_commit",
         "git_working_tree_dirty",
     }
+    assert "unxt" in manifest["dependencies"]
     assert manifest["execution"]["workspace_root"] == str(tmp_path)
     assert manifest["configuration"]["source"] == str(user_path)
     assert manifest["configuration"]["input_directory"] == str(tmp_path / "input")
@@ -196,6 +210,48 @@ def test_explicit_histogram_replaces_derived_policy(tmp_path: Path) -> None:
     ]
 
     assert histogram == {"width": 1000.0, "center": 10.0, "bins": 101}
+
+
+def test_read_normalizes_explicit_quantity_and_preserves_user_notation(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    original = user_path.read_text(encoding="utf-8").replace(
+        "distance: 10.0",
+        'distance: {value: 10.0, unit: "Mpc"}',
+    )
+    user_path.write_text(original, encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert config.data["system_attributes"]["distance"] == pytest.approx(10000.0)
+    assert config.user_config_path is not None
+    assert '{value: 10.0, unit: "Mpc"}' in config.user_config_path.read_text(
+        encoding="utf-8"
+    )
+    assert config.resolved_path is not None
+    resolved = yaml.safe_load(config.resolved_path.read_text(encoding="utf-8"))
+    assert resolved["system_attributes"]["distance"] == pytest.approx(10000.0)
+
+
+def test_read_rejects_incompatible_quantity_unit_before_writing(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    invalid = user_path.read_text(encoding="utf-8").replace(
+        "distance: 10.0",
+        'distance: {value: 10.0, unit: "Myr"}',
+    )
+    user_path.write_text(invalid, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"system_attributes\.distance\.unit"):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert not output_directory.exists()
 
 
 def test_read_requires_output_directory(tmp_path: Path) -> None:
