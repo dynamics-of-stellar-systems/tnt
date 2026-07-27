@@ -5,10 +5,18 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "astropy>=8.0.1",
-    "equinox>=0.13.8",
-    "jax>=0.4.30",
+    # Intel macOS has no JAX wheels after the 0.4 series. Keep its scientific
+    # stack on the mutually compatible versions supported by unxt 1.1.1.
+    "astropy>=7,<7.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "astropy>=8.0.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "equinox>=0.11.10,<0.12; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "equinox>=0.13.8; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "jax>0.4.32,<0.4.36; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "jax>=0.4.30; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "numpy>=1.24,<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "plum-dispatch>=2.5.6,<2.6; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "pyyaml>=6.0.3",
+    "quaxed>=0.8.1,<0.9; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "unxt>=1.1.1",
 ]
 
