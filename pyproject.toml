@@ -27,6 +27,9 @@ docs = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.ruff.lint]
+extend-select = ["E501"]
+
 [tool.uv]
 # JAX only supports specific OS and architecture combinations.
 # We limit resolution to these environments to prevent wheel errors.

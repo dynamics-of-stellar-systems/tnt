@@ -3,10 +3,11 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 import unxt as u
 
-from tnt.mge import LightMGE, MassMGE, read_mge
+from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, read_mge
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -155,6 +156,240 @@ def test_to_mass_rejects_mismatched_component_count():
         light.to_mass(m_over_l)
 
 
+def test_deproject_axisymmetric_edge_on_recovers_observed_q():
+    distance = u.Quantity(30.5, "Mpc")
+    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    physical = mge.angular_to_physical(distance)
+
+    deprojected = physical.deproject_axisymmetric(u.Quantity(90.0, "deg"))
+
+    assert isinstance(deprojected, Deprojected3DMGE)
+    assert jnp.allclose(deprojected.q.ustrip(""), physical.q.ustrip(""))
+    assert jnp.allclose(deprojected.p.ustrip(""), 1.0)
+    assert jnp.allclose(deprojected.sigma.ustrip("Mpc"), physical.sigma.ustrip("Mpc"))
+
+
+def test_deproject_axisymmetric_conserves_total_flux():
+    distance = u.Quantity(30.5, "Mpc")
+    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    physical = mge.angular_to_physical(distance)
+    inclination = u.Quantity(60.0, "deg")
+
+    deprojected = physical.deproject_axisymmetric(inclination)
+
+    sigma = physical.sigma.ustrip("Mpc")
+    q_obs = physical.q.ustrip("")
+    flux_2d = 2 * jnp.pi * sigma**2 * q_obs * physical.I.ustrip("Lsun / Mpc2")
+
+    q_intr = deprojected.q.ustrip("")
+    mass_3d = (
+        (2 * jnp.pi) ** 1.5 * sigma**3 * q_intr * deprojected.I.ustrip("Lsun / Mpc3")
+    )
+
+    assert jnp.allclose(flux_2d, mass_3d, rtol=1e-5)
+
+
+def test_deproject_axisymmetric_requires_physical_units():
+    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+
+    with pytest.raises(ValueError, match="physical .length. sigma"):
+        mge.deproject_axisymmetric(u.Quantity(90.0, "deg"))
+
+
+def test_deproject_axisymmetric_requires_zero_pa_twist():
+    distance = u.Quantity(30.5, "Mpc")
+    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    physical = mge.angular_to_physical(distance)
+    twisted = LightMGE(
+        I=physical.I,
+        sigma=physical.sigma,
+        q=physical.q,
+        PA_twist=u.Quantity(jnp.full(physical.q.shape, 0.1), "rad"),
+    )
+
+    with pytest.raises(ValueError, match="PA_twist == 0"):
+        twisted.deproject_axisymmetric(u.Quantity(90.0, "deg"))
+
+
+def test_deproject_axisymmetric_invalid_inclination_gives_nan():
+    distance = u.Quantity(30.5, "Mpc")
+    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    physical = mge.angular_to_physical(distance)
+
+    # Smallest q in the fixture is ~0.55, so an inclination close to face-on
+    # (cos(i) close to 1) makes deprojection impossible for that component.
+    deprojected = physical.deproject_axisymmetric(u.Quantity(5.0, "deg"))
+
+    assert jnp.any(jnp.isnan(deprojected.q.ustrip("")))
+
+
+def _single_component_light_mge(q_obs: float, psi: float) -> LightMGE:
+    return LightMGE(
+        I=u.Quantity(jnp.array([5.0]), "Lsun / kpc2"),
+        sigma=u.Quantity(jnp.array([2.0]), "kpc"),
+        q=u.Quantity(jnp.array([q_obs]), ""),
+        PA_twist=u.Quantity(jnp.array([psi]), "rad"),
+    )
+
+
+def test_deproject_triaxial_circular_projection_gives_sphere():
+    # A perfectly circular projected Gaussian (q_obs=1) must deproject to a
+    # sphere (p=q=1) regardless of viewing angle -- delta=1-q_obs**2=0 makes
+    # both eq. 7 and eq. 8's numerators vanish.
+    mge = _single_component_light_mge(q_obs=1.0, psi=0.3)
+
+    deprojected = mge.deproject_triaxial(
+        theta=u.Quantity(1.2, "rad"),
+        phi=u.Quantity(0.7, "rad"),
+        psi=u.Quantity(0.0, "rad"),
+    )
+
+    assert jnp.allclose(deprojected.p.ustrip(""), 1.0)
+    assert jnp.allclose(deprojected.q.ustrip(""), 1.0)
+
+
+def test_deproject_triaxial_gives_valid_axial_ratios():
+    # A viewing geometry known (numerically, in a sandbox scan) to give a
+    # physically valid solution: 0 < q <= p <= 1.
+    mge = _single_component_light_mge(q_obs=0.9, psi=-1.0)
+
+    deprojected = mge.deproject_triaxial(
+        theta=u.Quantity(0.3, "rad"),
+        phi=u.Quantity(0.96, "rad"),
+        psi=u.Quantity(0.0, "rad"),
+    )
+
+    p = deprojected.p.ustrip("")
+    q = deprojected.q.ustrip("")
+    assert jnp.allclose(p, 0.8995, atol=1e-4)
+    assert jnp.allclose(q, 0.8495, atol=1e-4)
+    assert jnp.all((q > 0) & (q <= p) & (p <= 1))
+
+
+def test_deproject_triaxial_conserves_total_flux():
+    mge = _single_component_light_mge(q_obs=0.9, psi=-1.0)
+
+    deprojected = mge.deproject_triaxial(
+        theta=u.Quantity(0.3, "rad"),
+        phi=u.Quantity(0.96, "rad"),
+        psi=u.Quantity(0.0, "rad"),
+    )
+
+    sigma_obs = mge.sigma.ustrip("kpc")
+    flux_2d = (
+        2 * jnp.pi * sigma_obs**2 * mge.q.ustrip("") * mge.I.ustrip("Lsun / kpc2")
+    )
+
+    p, q = deprojected.p.ustrip(""), deprojected.q.ustrip("")
+    sigma_intr = deprojected.sigma.ustrip("kpc")
+    mass_3d = (
+        (2 * jnp.pi) ** 1.5
+        * sigma_intr**3
+        * p
+        * q
+        * deprojected.I.ustrip("Lsun / kpc3")
+    )
+
+    assert jnp.allclose(flux_2d, mass_3d, rtol=1e-5)
+
+
+def test_deproject_triaxial_requires_physical_units():
+    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+
+    with pytest.raises(ValueError, match="physical .length. sigma"):
+        mge.deproject_triaxial(
+            theta=u.Quantity(1.0, "rad"),
+            phi=u.Quantity(1.0, "rad"),
+            psi=u.Quantity(0.0, "rad"),
+        )
+
+
+def _forward_project_triaxial(
+    sigma: float, p: float, q: float, theta: float, phi: float
+):
+    """Independently project a triaxial Gaussian (numpy, no tnt code involved).
+
+    Builds the projected covariance by rotating the intrinsic covariance
+    into the (x', y', LOS) frame -- x' in the (x, y) plane, y' such that
+    the z-axis projects onto y' (Cappellari 2002 / van den Bosch et al.
+    2008's coordinate convention) -- then reads off the projected sigma,
+    axial ratio, and position angle from that 2x2 sub-block. This gives
+    ground-truth (sigma_obs, q_obs, psi') values for round-trip testing
+    `deproject_triaxial`, independent of eqs. 6-9 themselves.
+    """
+    cov = np.diag([sigma**2, (p * sigma) ** 2, (q * sigma) ** 2])
+    n = np.array(
+        [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
+    )
+    z_hat = np.array([0.0, 0.0, 1.0])
+    x_prime = np.cross(n, z_hat)
+    x_prime /= np.linalg.norm(x_prime)
+    y_prime = np.cross(n, x_prime)
+    if abs(np.dot(z_hat - np.dot(z_hat, n) * n, x_prime)) > 1e-8:
+        y_prime = np.cross(x_prime, n)
+
+    rotation = np.stack([x_prime, y_prime, n])
+    projected_cov = (rotation @ cov @ rotation.T)[:2, :2]
+    eigvals, eigvecs = np.linalg.eigh(projected_cov)
+    sigma_obs = np.sqrt(eigvals[1])
+    q_obs = np.sqrt(eigvals[0]) / sigma_obs
+    x_comp, y_comp = eigvecs[:, 1]
+    # Position angle measured counterclockwise from y' to the major axis,
+    # in Cappellari/van den Bosch's convention -- opposite handedness to
+    # the "mathematical" atan2(x_comp, y_comp).
+    psi_prime = -np.arctan2(x_comp, y_comp)
+    return sigma_obs, q_obs, psi_prime
+
+
+@pytest.mark.parametrize(
+    ("sigma_intr", "p_intr", "q_intr", "theta", "phi"),
+    [
+        (2.0, 0.7, 0.5, 0.9, 0.4),
+        (3.0, 0.6, 0.3, 1.3, 2.1),
+        (1.0, 0.9, 0.85, 0.5, 0.5),
+    ],
+)
+def test_deproject_triaxial_recovers_independent_forward_projection(
+    sigma_intr, p_intr, q_intr, theta, phi
+):
+    sigma_obs, q_obs, psi_prime = _forward_project_triaxial(
+        sigma_intr, p_intr, q_intr, theta, phi
+    )
+    mge = LightMGE(
+        I=u.Quantity(jnp.array([5.0]), "Lsun / kpc2"),
+        sigma=u.Quantity(jnp.array([sigma_obs]), "kpc"),
+        q=u.Quantity(jnp.array([q_obs]), ""),
+        PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+    )
+
+    deprojected = mge.deproject_triaxial(
+        theta=u.Quantity(theta, "rad"),
+        phi=u.Quantity(phi, "rad"),
+        psi=u.Quantity(psi_prime, "rad"),
+    )
+
+    assert jnp.allclose(deprojected.p.ustrip(""), p_intr, atol=1e-4)
+    assert jnp.allclose(deprojected.q.ustrip(""), q_intr, atol=1e-4)
+    assert jnp.allclose(deprojected.sigma.ustrip("kpc"), sigma_intr, atol=1e-4)
+
+
+def test_deproject_triaxial_global_psi_and_pa_twist_are_additive():
+    # Only the sum psi + PA_twist enters the deprojection (van den Bosch
+    # et al. 2008, eq. 6), so shifting the global psi should give the same
+    # result as adding that shift directly to PA_twist with psi=0.
+    theta, phi = u.Quantity(0.3, "rad"), u.Quantity(0.96, "rad")
+
+    shifted_psi = _single_component_light_mge(q_obs=0.9, psi=-1.0).deproject_triaxial(
+        theta=theta, phi=phi, psi=u.Quantity(0.4, "rad")
+    )
+    shifted_twist = _single_component_light_mge(
+        q_obs=0.9, psi=-1.0 + 0.4
+    ).deproject_triaxial(theta=theta, phi=phi, psi=u.Quantity(0.0, "rad"))
+
+    assert jnp.allclose(shifted_psi.p.ustrip(""), shifted_twist.p.ustrip(""))
+    assert jnp.allclose(shifted_psi.q.ustrip(""), shifted_twist.q.ustrip(""))
+
+
 def test_mge_is_frozen():
     mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
 
@@ -207,7 +442,9 @@ def test_angular_physical_round_trip():
     round_tripped = mge.angular_to_physical(distance).physical_to_angular(distance)
 
     assert jnp.allclose(round_tripped.sigma.ustrip("rad"), mge.sigma.ustrip("rad"))
-    assert jnp.allclose(round_tripped.I.ustrip("Lsun / rad2"), mge.I.ustrip("Lsun / rad2"))
+    assert jnp.allclose(
+        round_tripped.I.ustrip("Lsun / rad2"), mge.I.ustrip("Lsun / rad2")
+    )
     assert jnp.allclose(round_tripped.q.ustrip(""), mge.q.ustrip(""))
     assert jnp.allclose(
         round_tripped.PA_twist.ustrip("rad"), mge.PA_twist.ustrip("rad")
