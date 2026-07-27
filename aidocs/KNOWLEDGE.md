@@ -2,6 +2,9 @@
 
 ## Python style
 
+- TNT requires Python 3.12 or newer. `.python-version` selects the 3.12
+  baseline for local development, and CI tests supported Python versions
+  beginning with 3.12.
 - Follow the PEP 8 style guide whenever practical.
 - Use double quotes for Python strings.
 - Add type hints for function parameter types and return types.
