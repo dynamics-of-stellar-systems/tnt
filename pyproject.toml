@@ -3,9 +3,21 @@ name = "tnt"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
-    "jax>=0.4.30",
+    # Intel macOS has no JAX wheels after the 0.4 series. unxt 1.1.1 uses the
+    # pre-stackless Quax API removed by JAX 0.4.36.
+    "jax>0.4.32,<0.4.36; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "jax>=0.4.30; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "numpy>=1.24,<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "pyyaml>=6.0",
+    # unxt 1.1.1 supports the last JAX release available for Intel macOS, but
+    # several of its published lower-bound-only constraints admit incompatible
+    # later releases.
+    "astropy>=7,<7.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "plum-dispatch>=2.5.6,<2.6; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "quaxed>=0.8.1,<0.9; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "unxt>=1.1.1",
 ]
 
 [dependency-groups]
@@ -16,6 +28,7 @@ dev = [
 ]
 docs = [
     "myst-parser>=3.0.1",
+    "pydata-sphinx-theme>=0.16.1",
     "sphinx>=7.4.7",
 ]
 
