@@ -25,10 +25,13 @@ _REFERENCE_UNITS = {
     "inverse_time": "1 / s",
     "mass_to_light": "kg / W",
 }
-_COMPONENT_PARAMETER_DIMENSIONS = {
+_POTENTIAL_PARAMETER_DIMENSIONS = {
     "plummer": {"m": "mass", "a": "length"},
+    "triaxial_light_mge": {"ml": "mass_to_light"},
+    # Normalize first so schema validation can issue the more specific error
+    # that mass MGE potentials must not declare an ml parameter.
+    "triaxial_mass_mge": {"ml": "mass_to_light"},
 }
-_SYSTEM_PARAMETER_DIMENSIONS = {"ml": "mass_to_light"}
 
 
 @dataclass(frozen=True)
@@ -96,35 +99,26 @@ def normalize_configuration_quantities(
         attributes, "distance", "length", unit_systems, "system_attributes"
     )
 
-    components = _nested_mapping(resolved, "system_components", "configuration")
-    for component_name, component_value in components.items():
-        component_path = f"system_components.{component_name}"
-        component = _mapping(component_value, component_path)
-        component_type = component.get("type")
-        dimensions = _COMPONENT_PARAMETER_DIMENSIONS.get(component_type, {})
-        parameters = component.get("parameters")
+    potential = _nested_mapping(resolved, "potential", "configuration")
+    for potential_name, potential_value in potential.items():
+        potential_path = f"potential.{potential_name}"
+        settings = _mapping(potential_value, potential_path)
+        potential_type = settings.get("type")
+        dimensions = _POTENTIAL_PARAMETER_DIMENSIONS.get(potential_type, {})
+        parameters = settings.get("parameters")
         if parameters is not None:
             _normalize_parameters(
-                _mapping(parameters, f"{component_path}.parameters"),
+                _mapping(parameters, f"{potential_path}.parameters"),
                 dimensions,
                 unit_systems,
-                f"{component_path}.parameters",
+                f"{potential_path}.parameters",
             )
 
-        kinematics = component.get("kinematics")
-        if kinematics is not None:
-            _normalize_kinematics(
-                _mapping(kinematics, f"{component_path}.kinematics"),
-                unit_systems,
-                f"{component_path}.kinematics",
-            )
-
-    system_parameters = _nested_mapping(resolved, "system_parameters", "configuration")
-    _normalize_parameters(
-        system_parameters,
-        _SYSTEM_PARAMETER_DIMENSIONS,
+    kinematic_data = _nested_mapping(resolved, "kinematic_data", "configuration")
+    _normalize_kinematics(
+        kinematic_data,
         unit_systems,
-        "system_parameters",
+        "kinematic_data",
     )
     return resolved
 

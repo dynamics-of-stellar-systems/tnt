@@ -54,13 +54,11 @@ logging_settings:
 # These values apply to every dynamically named object of the corresponding
 # type unless the user overrides the property on that object.
 dynamic_object_defaults:
-  component:
+  potential:
     include: true
   parameter:
     fixed: false
     logarithmic: false
-  kinematics:
-    with_pops: false
 
 # Defaults selected by the type of each dynamically named kinematics data set.
 # User-supplied values on an individual data set override these policies.
@@ -100,10 +98,13 @@ kinematics_type_defaults:
       # Warn if histogram width / global velocity dispersion falls below this.
       min_histogram_width_sigma_ratio: 5.0
 
-# Component names, types, parameters, and data files describe the system being
-# modelled and therefore have no package-wide defaults.
-system_components: {}
-system_parameters: {}
+# Named scientific inputs and model components describe the system being
+# modelled and therefore have no package-wide entries.
+MGEs: {}
+spatial_binnings: {}
+potential: {}
+kinematic_data: {}
+population_data: {}
 
 orbit_library_settings:
   nE: 6
@@ -146,6 +147,17 @@ weight_solver_settings:
 parameter_space_settings:
   generator_type: "GridSearch"
   which_chi2: "kinchi2"
+  potential_rescalings:
+    # Scale the fully assembled potential independently of its ordinary
+    # component parameters. Disabled settings remain present and validated.
+    enabled: false
+    range_count: 10
+    mass_scale_range:
+      minimum: 0.1
+      maximum: 10.0
+    spacing: "logarithmic"
+    # Ensure that mass scale factor 1.0 is represented exactly once.
+    include_unscaled: true
   generator_settings:
     # Modes: "absolute" or "fraction_of_sqrt_2n_observations".
     delta_chi2_threshold:

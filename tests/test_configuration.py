@@ -21,26 +21,29 @@ def _write_user_config(
 system_attributes:
   distance: {{value: 10.0, unit: "kpc"}}
   name: test_system
-system_components:
+MGEs:
+  light: luminosity.ecsv
+spatial_binnings:
+  observed:
+    aperture_file: aperture.dat
+    bin_file: bins.dat
+potential:
   stars:
-    type: triaxial_visible_component
+    type: triaxial_light_mge
+    mge: light
     parameters:
       q:
         value: 0.7
-    mge:
-      potential_file: potential.ecsv
-      luminosity_file: luminosity.ecsv
-    kinematics:
-      observed:
-        type: {kinematics_type}
-        data_file: observed.ecsv
-        aperture_file: aperture.dat
-        bin_file: bins.dat
+      ml:
+        unit: "Msun / Lsun"
+        value: 5.0
+kinematic_data:
+  observed:
+    type: {kinematics_type}
+    binning: observed
+    mge: light
+    data_file: observed.ecsv
 {body}
-system_parameters:
-  ml:
-    unit: "Msun / Lsun"
-    value: 5.0
 orbit_library_settings:
   logrmin: -0.2
   logrmax: 2.0
@@ -59,8 +62,7 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     _write_user_config(
         user_path,
         output_directory,
-        body="""        with_pops: true
-weight_solver_settings:
+        body="""weight_solver_settings:
   counter_rotating_orbit_cut:
     enabled: true
 """,
@@ -111,12 +113,13 @@ weight_solver_settings:
     assert written["io_settings"]["output_directory"] == "output"
     assert config.data["io_settings"]["input_directory"] == str(tmp_path / "input")
     assert config.data["io_settings"]["output_directory"] == str(output_directory)
-    assert written["system_components"]["stars"]["include"] is True
-    parameter = written["system_components"]["stars"]["parameters"]["q"]
+    assert written["potential"]["stars"]["include"] is True
+    parameter = written["potential"]["stars"]["parameters"]["q"]
     assert parameter["fixed"] is False
     assert parameter["logarithmic"] is False
-    kinematics = written["system_components"]["stars"]["kinematics"]["observed"]
-    assert kinematics["with_pops"] is True
+    kinematics = written["kinematic_data"]["observed"]
+    assert kinematics["binning"] == "observed"
+    assert kinematics["mge"] == "light"
     assert kinematics["maximum_gh_order"] == 4
     assert kinematics["observational_errors"]["systematic_uncertainties"] == {
         "v": 0.0,
@@ -126,6 +129,13 @@ weight_solver_settings:
     }
     assert kinematics["histogram"]["sigma_extent"] == 3.0
     assert kinematics["histogram"]["bin_width_sigma_fraction"] == 0.1
+    assert written["parameter_space_settings"]["potential_rescalings"] == {
+        "enabled": False,
+        "range_count": 10,
+        "mass_scale_range": {"minimum": 0.1, "maximum": 10.0},
+        "spacing": "logarithmic",
+        "include_unscaled": True,
+    }
     cut = written["weight_solver_settings"]["counter_rotating_orbit_cut"]
     assert cut["enabled"] is True
     assert cut["min_affected_apertures"] == 2
@@ -198,17 +208,15 @@ def test_explicit_histogram_replaces_derived_policy(tmp_path: Path) -> None:
     _write_user_config(
         user_path,
         output_directory,
-        body="""        histogram:
-          width: {value: 1000.0, unit: "kpc / Myr"}
-          center: {value: 10.0, unit: "kpc / Myr"}
-          bins: 101
+        body="""    histogram:
+      width: {value: 1000.0, unit: "kpc / Myr"}
+      center: {value: 10.0, unit: "kpc / Myr"}
+      bins: 101
 """,
     )
 
     config = Configuration().read(user_path, workspace_root=tmp_path)
-    histogram = config.data["system_components"]["stars"]["kinematics"]["observed"][
-        "histogram"
-    ]
+    histogram = config.data["kinematic_data"]["observed"]["histogram"]
 
     assert histogram == {"width": 1000.0, "center": 10.0, "bins": 101}
 
@@ -326,13 +334,13 @@ def test_read_rejects_unknown_nested_field(tmp_path: Path) -> None:
     _write_user_config(
         user_path,
         output_directory,
-        body="""        data_flie: misspelled.ecsv
+        body="""    data_flie: misspelled.ecsv
 """,
     )
 
     with pytest.raises(
         ValueError,
-        match=r"kinematics\.observed contains unknown field\(s\): data_flie",
+        match=r"kinematic_data\.observed contains unknown field\(s\): data_flie",
     ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
@@ -345,8 +353,8 @@ def test_read_rejects_partial_explicit_histogram(tmp_path: Path) -> None:
     _write_user_config(
         user_path,
         output_directory,
-        body="""        histogram:
-          width: {value: 1000.0, unit: "kpc / Myr"}
+        body="""    histogram:
+      width: {value: 1000.0, unit: "kpc / Myr"}
 """,
     )
 
@@ -363,10 +371,10 @@ def test_read_rejects_even_histogram_bin_count(tmp_path: Path) -> None:
     _write_user_config(
         user_path,
         output_directory,
-        body="""        histogram:
-          width: {value: 1000.0, unit: "kpc / Myr"}
-          center: {value: 0.0, unit: "kpc / Myr"}
-          bins: 100
+        body="""    histogram:
+      width: {value: 1000.0, unit: "kpc / Myr"}
+      center: {value: 0.0, unit: "kpc / Myr"}
+      bins: 100
 """,
     )
 
@@ -467,24 +475,24 @@ def test_gauss_hermite_sets_resolve_independent_orders_and_systematics(
     _write_user_config(
         user_path,
         output_directory,
-        body="""      secondary:
-        type: gauss_hermite
-        maximum_gh_order: 5
-        observational_errors:
-          systematic_uncertainties:
-            v: {value: 1.0, unit: "kpc / Myr"}
-            sigma: {value: 2.0, unit: "kpc / Myr"}
-            h3: 0.03
-            h4: 0.04
-            h5: 0.05
-        data_file: secondary.ecsv
-        aperture_file: secondary_aperture.dat
-        bin_file: secondary_bins.dat
+        body="""  secondary:
+    type: gauss_hermite
+    maximum_gh_order: 5
+    observational_errors:
+      systematic_uncertainties:
+        v: {value: 1.0, unit: "kpc / Myr"}
+        sigma: {value: 2.0, unit: "kpc / Myr"}
+        h3: 0.03
+        h4: 0.04
+        h5: 0.05
+    data_file: secondary.ecsv
+    binning: observed
+    mge: light
 """,
     )
 
     config = Configuration().read(user_path, workspace_root=tmp_path)
-    kinematics = config.data["system_components"]["stars"]["kinematics"]
+    kinematics = config.data["kinematic_data"]
 
     assert kinematics["observed"]["maximum_gh_order"] == 4
     assert kinematics["secondary"]["maximum_gh_order"] == 5
@@ -507,7 +515,7 @@ def test_changed_gauss_hermite_order_requires_complete_systematics(
     _write_user_config(
         user_path,
         output_directory,
-        body="""        maximum_gh_order: 5
+        body="""    maximum_gh_order: 5
 """,
     )
 
@@ -523,14 +531,14 @@ def test_proper_motion_set_resolves_its_own_variance_scale(
     _write_user_config(
         user_path,
         output_directory,
-        body="""        observational_errors:
-          variance_scale: 1.5
+        body="""    observational_errors:
+      variance_scale: 1.5
 """,
         kinematics_type="proper_motions",
     )
 
     config = Configuration().read(user_path, workspace_root=tmp_path)
-    kinematics = config.data["system_components"]["stars"]["kinematics"]["observed"]
+    kinematics = config.data["kinematic_data"]["observed"]
 
     assert "maximum_gh_order" not in kinematics
     assert kinematics["observational_errors"] == {"variance_scale": 1.5}
@@ -542,13 +550,126 @@ def test_proper_motion_variance_scale_must_be_positive(tmp_path: Path) -> None:
     _write_user_config(
         user_path,
         output_directory,
-        body="""        observational_errors:
-          variance_scale: 0.0
+        body="""    observational_errors:
+      variance_scale: 0.0
 """,
         kinematics_type="proper_motions",
     )
 
     with pytest.raises(ValueError, match=r"variance_scale must be greater"):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_proper_motion_data_can_omit_mge_and_share_population_binning(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        kinematics_type="proper_motions",
+        body="""population_data:
+  stellar_population:
+    data_file: populations.ecsv
+    binning: observed
+""",
+    )
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    del user_data["kinematic_data"]["observed"]["mge"]
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert "mge" not in config.data["kinematic_data"]["observed"]
+    assert config.data["population_data"]["stellar_population"]["binning"] == "observed"
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "registry"),
+    [
+        ("potential", "mge", "MGEs"),
+        ("kinematic_data", "mge", "MGEs"),
+        ("kinematic_data", "binning", "spatial_binnings"),
+    ],
+)
+def test_read_rejects_unknown_registry_reference(
+    tmp_path: Path,
+    section: str,
+    field: str,
+    registry: str,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    entry = "stars" if section == "potential" else "observed"
+    user_data[section][entry][field] = "missing"
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=rf"unknown {registry} entry 'missing'"):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_unknown_population_binning_reference(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""population_data:
+  stellar_population:
+    data_file: populations.ecsv
+    binning: missing
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"unknown spatial_binnings entry 'missing'",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_light_mge_potential_requires_ml_parameter(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    del user_data["potential"]["stars"]["parameters"]["ml"]
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"parameters is missing required field: ml"):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_mass_mge_potential_rejects_ml_parameter(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    user_data["potential"]["stars"]["type"] = "triaxial_mass_mge"
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"parameters\.ml is invalid for a mass MGE"):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_invalid_potential_rescaling_range(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  potential_rescalings:
+    mass_scale_range:
+      minimum: 2.0
+      maximum: 1.0
+""",
+    )
+
+    with pytest.raises(ValueError, match=r"minimum must not exceed maximum"):
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
@@ -609,7 +730,7 @@ def test_configuration_session_logs_validation_failure(tmp_path: Path) -> None:
     _write_user_config(
         user_path,
         output_directory,
-        body="""        data_flie: misspelled.ecsv
+        body="""    data_flie: misspelled.ecsv
 """,
     )
 

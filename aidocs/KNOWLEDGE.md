@@ -45,9 +45,9 @@
 - The first unit-aware schema covers `cosmological_parameters.H0`,
   `system_attributes.distance`, explicit kinematics histogram width and center,
   Gauss-Hermite `v` and `sigma` systematic uncertainties, Plummer `m` and `a`,
-  and system `ml`. Linear parameter steps are converted; logarithmic parameter
-  values and bounds are shifted between reference units while log step sizes
-  remain unchanged.
+  and light-MGE potential `ml`. Linear parameter steps are converted;
+  logarithmic parameter values and bounds are shifted between reference units
+  while log step sizes remain unchanged.
 - MGE contents and quantities inside observational files are deliberately
   deferred to the later object-construction/data-loading phase. Configuration
   preparation does not open those files.
@@ -80,18 +80,24 @@
   input checksums because neither exists yet. A negative seed is recorded as
   `pending_generation`; the execution phase must update the effective seed.
 - The user profile must define the physical system, dynamically named
-  components and parameters, input directory, and output directory.
+  potential components and parameters, input directory, and output directory.
 - TNT user profiles use snake-case type identifiers and field names. Parameter
   search bounds belong under `generator_settings` as `lower_bound`,
   `upper_bound`, `step`, and `minimum_step`; display labels use `latex_label`.
-- Component MGE files are grouped under `mge` as `potential_file` and
-  `luminosity_file`. Explicit kinematics histogram metadata is grouped under
-  `histogram` as `width`, `center`, and `bins`; input paths use `data_file`,
-  `aperture_file`, and `bin_file`.
-- Defaults for properties of dynamically named components, parameters, and
-  kinematic data sets are declared under `dynamic_object_defaults`. The merge
-  layer applies them to each corresponding object unless the user overrides
-  the property on that object.
+- Scientific inputs use independent named registries: `MGEs` maps MGE names to
+  files; `spatial_binnings` maps names to `aperture_file`/`bin_file` pairs;
+  `potential` defines potential components; `kinematic_data` references a
+  binning and optionally an MGE; and `population_data` references a binning.
+  Preparation validates all cross-references without opening the files.
+- Potential types are `triaxial_light_mge`, `triaxial_mass_mge`, `nfw`, and
+  `plummer`. A light-MGE potential requires an `ml` parameter. A mass-MGE
+  potential rejects `ml` because its MGE already contains mass.
+- Explicit kinematics histogram metadata is grouped under `histogram` as
+  `width`, `center`, and `bins`.
+- Defaults for properties of dynamically named potential components and
+  parameters are declared under `dynamic_object_defaults`. The merge layer
+  applies them to each corresponding object unless the user overrides the
+  property on that object.
 - Policies that depend on a kinematics data-set type are declared under
   `kinematics_type_defaults`. The configuration resolver must select the
   matching type policy and then allow settings on the named data set to
@@ -128,6 +134,14 @@
   `fraction_of_sqrt_2n_observations`; the stopping criterion's
   `minimum_delta_chi2` accepts `absolute` or `relative`. This schema makes it
   impossible to specify both representations simultaneously.
+- `parameter_space_settings.potential_rescalings` controls optional scaling of
+  the complete assembled potential. It contains `enabled`, `range_count`, a
+  positive inclusive `mass_scale_range`, `spacing` (`linear` or
+  `logarithmic`), and `include_unscaled`. Scaling is independent of the
+  ordinary stellar `ml` parameter. Each scale is a separate model-table entry
+  with `potential_mass_scale_factor`; `include_unscaled` adds factor `1.0`
+  exactly once when needed. Disabled rescaling retains and validates its
+  settings but execution produces only the unscaled model.
 - Gauss-Hermite `maximum_gh_order` and observational-error policies belong to
   each dynamically named kinematics data set, not to global weight-solver
   settings. Type defaults use order 4 with neutral named systematic

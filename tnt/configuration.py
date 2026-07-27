@@ -333,35 +333,33 @@ def _apply_schema_defaults(config: ConfigDict) -> ConfigDict:
         "kinematics_type_defaults",
     )
 
-    component_defaults = _mapping_value(
-        dynamic_defaults, "component", "dynamic_object_defaults"
+    potential_defaults = _mapping_value(
+        dynamic_defaults, "potential", "dynamic_object_defaults"
     )
     parameter_defaults = _mapping_value(
         dynamic_defaults, "parameter", "dynamic_object_defaults"
     )
-    kinematics_defaults = _mapping_value(
-        dynamic_defaults, "kinematics", "dynamic_object_defaults"
-    )
 
-    components = _mapping_value(resolved, "system_components", "configuration")
-    resolved["system_components"] = {
-        name: _resolve_component(
+    potential = _mapping_value(resolved, "potential", "configuration")
+    resolved["potential"] = {
+        name: _resolve_potential(
             name,
-            component,
-            component_defaults,
+            settings,
+            potential_defaults,
             parameter_defaults,
-            kinematics_defaults,
-            kinematics_type_defaults,
         )
-        for name, component in components.items()
+        for name, settings in potential.items()
     }
 
-    system_parameters = _mapping_value(resolved, "system_parameters", "configuration")
-    resolved["system_parameters"] = _resolve_parameters(
-        system_parameters,
-        parameter_defaults,
-        "system_parameters",
-    )
+    kinematic_data = _mapping_value(resolved, "kinematic_data", "configuration")
+    resolved["kinematic_data"] = {
+        name: _resolve_kinematics(
+            name,
+            settings,
+            kinematics_type_defaults,
+        )
+        for name, settings in kinematic_data.items()
+    }
     return resolved
 
 
@@ -370,49 +368,31 @@ def _mapping_value(mapping: ConfigDict, key: str, parent: str) -> ConfigDict:
     return _require_mapping(mapping.get(key, {}), f"{parent}.{key}")
 
 
-def _resolve_component(
+def _resolve_potential(
     name: str,
-    component: Any,
-    component_defaults: ConfigDict,
+    settings: Any,
+    potential_defaults: ConfigDict,
     parameter_defaults: ConfigDict,
-    kinematics_defaults: ConfigDict,
-    kinematics_type_defaults: ConfigDict,
 ) -> ConfigDict:
-    """Resolve defaults for one dynamically named system component."""
-    component_mapping = _require_mapping(
-        component,
-        f"system_components.{name}",
+    """Resolve defaults for one dynamically named potential component."""
+    path = f"potential.{name}"
+    settings_mapping = _require_mapping(
+        settings,
+        path,
     )
-    resolved = _deep_merge(component_defaults, component_mapping)
+    resolved = _deep_merge(potential_defaults, settings_mapping)
 
     parameters = _mapping_value(
         resolved,
         "parameters",
-        f"system_components.{name}",
+        path,
     )
     if parameters or "parameters" in resolved:
         resolved["parameters"] = _resolve_parameters(
             parameters,
             parameter_defaults,
-            f"system_components.{name}.parameters",
+            f"{path}.parameters",
         )
-
-    kinematics = _mapping_value(
-        resolved,
-        "kinematics",
-        f"system_components.{name}",
-    )
-    if kinematics or "kinematics" in resolved:
-        resolved["kinematics"] = {
-            kinematics_name: _resolve_kinematics(
-                name,
-                kinematics_name,
-                settings,
-                kinematics_defaults,
-                kinematics_type_defaults,
-            )
-            for kinematics_name, settings in kinematics.items()
-        }
     return resolved
 
 
@@ -432,14 +412,12 @@ def _resolve_parameters(
 
 
 def _resolve_kinematics(
-    component_name: str,
     name: str,
     settings: Any,
-    kinematics_defaults: ConfigDict,
     kinematics_type_defaults: ConfigDict,
 ) -> ConfigDict:
     """Resolve common and type-specific defaults for one kinematics data set."""
-    path = f"system_components.{component_name}.kinematics.{name}"
+    path = f"kinematic_data.{name}"
     settings_mapping = _require_mapping(settings, path)
     _validate_explicit_histogram_completeness(settings_mapping, path)
     kinematics_type = settings_mapping.get("type")
@@ -464,8 +442,7 @@ def _resolve_kinematics(
         type_defaults = deepcopy(type_defaults)
         type_defaults.pop("histogram", None)
 
-    resolved = _deep_merge(kinematics_defaults, type_defaults)
-    return _deep_merge(resolved, settings_mapping)
+    return _deep_merge(type_defaults, settings_mapping)
 
 
 def _replace_explicit_systematic_uncertainties(

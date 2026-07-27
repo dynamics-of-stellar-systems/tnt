@@ -16,9 +16,13 @@ def test_default_config_is_packaged() -> None:
     assert "    total_mass: 1.0e-8" in config_text
     assert "    intrinsic_mass: 1.0e-16" in config_text
     assert "dynamic_object_defaults:" in config_text
-    assert "  component:\n    include: true" in config_text
+    assert "  potential:\n    include: true" in config_text
     assert "  parameter:\n    fixed: false\n    logarithmic: false" in config_text
-    assert "  kinematics:\n    with_pops: false" in config_text
+    assert "MGEs: {}" in config_text
+    assert "spatial_binnings: {}" in config_text
+    assert "potential: {}" in config_text
+    assert "kinematic_data: {}" in config_text
+    assert "population_data: {}" in config_text
     assert "kinematics_type_defaults:" in config_text
     assert '        v: {value: 0.0, unit: "km / s"}' in config_text
     assert '        sigma: {value: 0.0, unit: "km / s"}' in config_text
@@ -57,6 +61,11 @@ def test_default_config_is_packaged() -> None:
     assert "    min_delta_chi2_rel:" not in config_text
     assert "    threshold_del_chi2_abs:" not in config_text
     assert "    threshold_del_chi2_as_frac_of_sqrt2nobs:" not in config_text
+    assert "  potential_rescalings:" in config_text
+    assert "    enabled: false" in config_text
+    assert "    range_count: 10" in config_text
+    assert '    spacing: "logarithmic"' in config_text
+    assert "    include_unscaled: true" in config_text
     assert '  model_processing_order: "model_by_model"' in config_text
     assert "  orbit_family_integration_in_parallel: false" in config_text
     assert "  model_strategy:" not in config_text

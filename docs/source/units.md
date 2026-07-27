@@ -38,7 +38,7 @@ internal unit and even when the value is zero. Standalone quantities use a
 system_attributes:
   distance: {value: 39960.0, unit: "kpc"}
 
-kinematics:
+kinematic_data:
   central_spectroscopy:
     histogram:
       center: {value: 0.0, unit: "km / s"}
@@ -87,7 +87,8 @@ Configuration preparation currently normalizes:
 - explicit kinematics histogram `width` and `center` to internal speed;
 - Gauss-Hermite systematic uncertainties `v` and `sigma` to internal speed;
 - Plummer parameters `m` and `a` to internal mass and length; and
-- the system parameter `ml` to internal mass divided by internal power.
+- light-MGE potential parameter `ml` to internal mass divided by internal
+  power.
 
 The byte-for-byte `user_config.yaml` archive retains the user's notation. The
 generated `resolved_config.yaml` contains plain numbers in internal units, so

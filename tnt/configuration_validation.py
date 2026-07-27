@@ -10,22 +10,25 @@ from typing import Any
 ConfigDict = dict[str, Any]
 
 _TOP_LEVEL_KEYS = {
+    "MGEs",
     "analysis_settings",
     "cosmological_parameters",
     "execution_settings",
     "io_settings",
+    "kinematic_data",
     "logging_settings",
     "mge_settings",
     "numerics_settings",
     "orbit_library_settings",
     "parameter_space_settings",
+    "population_data",
+    "potential",
+    "spatial_binnings",
     "system_attributes",
-    "system_components",
-    "system_parameters",
     "units",
     "weight_solver_settings",
 }
-_COMPONENT_TYPES = {"nfw", "plummer", "triaxial_visible_component"}
+_POTENTIAL_TYPES = {"nfw", "plummer", "triaxial_light_mge", "triaxial_mass_mge"}
 _KINEMATICS_TYPES = {"bayes_losvd", "gauss_hermite", "proper_motions"}
 
 
@@ -45,7 +48,15 @@ def validate_resolved_configuration(config: ConfigDict) -> None:
     _reject_unknown_keys(config, _TOP_LEVEL_KEYS, "configuration")
     _require_keys(
         config,
-        {"system_attributes", "system_components", "system_parameters", "units"},
+        {
+            "MGEs",
+            "kinematic_data",
+            "population_data",
+            "potential",
+            "spatial_binnings",
+            "system_attributes",
+            "units",
+        },
         "configuration",
     )
 
@@ -57,11 +68,22 @@ def validate_resolved_configuration(config: ConfigDict) -> None:
     _validate_numerics_settings(_mapping(config, "numerics_settings", "configuration"))
     _validate_logging_settings(_mapping(config, "logging_settings", "configuration"))
     _validate_system_attributes(_mapping(config, "system_attributes", "configuration"))
-    _validate_components(_mapping(config, "system_components", "configuration"))
-    _validate_parameters(
-        _mapping(config, "system_parameters", "configuration"),
-        "system_parameters",
-        require_nonempty=True,
+    mges = _validate_mges(_mapping(config, "MGEs", "configuration"))
+    binnings = _validate_spatial_binnings(
+        _mapping(config, "spatial_binnings", "configuration")
+    )
+    _validate_potential(
+        _mapping(config, "potential", "configuration"),
+        mges,
+    )
+    _validate_kinematics(
+        _mapping(config, "kinematic_data", "configuration"),
+        binnings,
+        mges,
+    )
+    _validate_population_data(
+        _mapping(config, "population_data", "configuration"),
+        binnings,
     )
     _validate_orbit_library_settings(
         _mapping(config, "orbit_library_settings", "configuration")
@@ -182,23 +204,51 @@ def _validate_logging_settings(settings: ConfigDict) -> None:
     _logging_level(console_settings["level"], f"{console_path}.level")
 
 
-def _validate_components(components: ConfigDict) -> None:
-    path = "system_components"
-    if not components:
+def _validate_mges(mges: ConfigDict) -> set[str]:
+    """Validate the named Multi-Gaussian Expansion (MGE) file registry."""
+    path = "MGEs"
+    names: set[str] = set()
+    for name, filename in mges.items():
+        name = _dynamic_name(name, path)
+        _nonempty_string(filename, f"{path}.{name}")
+        names.add(name)
+    return names
+
+
+def _validate_spatial_binnings(binnings: ConfigDict) -> set[str]:
+    """Validate reusable aperture-and-bin definitions."""
+    path = "spatial_binnings"
+    names: set[str] = set()
+    for name, binning_value in binnings.items():
+        name = _dynamic_name(name, path)
+        binning_path = f"{path}.{name}"
+        binning = _require_mapping(binning_value, binning_path)
+        _reject_unknown_keys(binning, {"aperture_file", "bin_file"}, binning_path)
+        _require_keys(binning, {"aperture_file", "bin_file"}, binning_path)
+        for key in ("aperture_file", "bin_file"):
+            _nonempty_string(binning[key], f"{binning_path}.{key}")
+        names.add(name)
+    return names
+
+
+def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
+    """Validate the named potential components and their MGE references."""
+    path = "potential"
+    if not potential:
         raise ValueError(f"{path} must contain at least one component.")
-    for name, component_value in components.items():
+    for name, component_value in potential.items():
         name = _dynamic_name(name, path)
         component_path = f"{path}.{name}"
         component = _require_mapping(component_value, component_path)
         _reject_unknown_keys(
             component,
-            {"include", "kinematics", "mge", "parameters", "type"},
+            {"include", "mge", "parameters", "type"},
             component_path,
         )
         _require_keys(component, {"include", "type"}, component_path)
         component_type = _choice(
             component["type"],
-            _COMPONENT_TYPES,
+            _POTENTIAL_TYPES,
             f"{component_path}.type",
         )
         include = _boolean(component["include"], f"{component_path}.include")
@@ -212,28 +262,39 @@ def _validate_components(components: ConfigDict) -> None:
         elif include:
             raise ValueError(f"{component_path} is missing required field: parameters.")
 
-        if "mge" in component:
-            _validate_component_mge(
-                _mapping(component, "mge", component_path),
-                f"{component_path}.mge",
+        is_mge_potential = component_type in {
+            "triaxial_light_mge",
+            "triaxial_mass_mge",
+        }
+        if is_mge_potential:
+            if include:
+                _require_keys(component, {"mge"}, component_path)
+            if "mge" in component:
+                _validate_registry_reference(
+                    component["mge"],
+                    mge_names,
+                    f"{component_path}.mge",
+                    "MGEs",
+                )
+        elif "mge" in component:
+            raise ValueError(
+                f"{component_path}.mge is only valid for MGE potential types."
             )
-        if "kinematics" in component:
-            _validate_kinematics(
-                _mapping(component, "kinematics", component_path),
-                f"{component_path}.kinematics",
+
+        parameters = component.get("parameters")
+        parameter_names = set(parameters) if isinstance(parameters, dict) else set()
+        if (
+            include
+            and component_type == "triaxial_light_mge"
+            and "ml" not in parameter_names
+        ):
+            raise ValueError(
+                f"{component_path}.parameters is missing required field: ml."
             )
-
-        if include and component_type == "triaxial_visible_component":
-            _require_keys(component, {"kinematics", "mge"}, component_path)
-            if not component["kinematics"]:
-                raise ValueError(f"{component_path}.kinematics must not be empty.")
-
-
-def _validate_component_mge(mge: ConfigDict, path: str) -> None:
-    _reject_unknown_keys(mge, {"luminosity_file", "potential_file"}, path)
-    _require_keys(mge, {"luminosity_file", "potential_file"}, path)
-    for key in ("luminosity_file", "potential_file"):
-        _nonempty_string(mge[key], f"{path}.{key}")
+        if component_type == "triaxial_mass_mge" and "ml" in parameter_names:
+            raise ValueError(
+                f"{component_path}.parameters.ml is invalid for a mass MGE potential."
+            )
 
 
 def _validate_parameters(
@@ -297,7 +358,12 @@ def _validate_parameter_generator_settings(
     _nonnegative_number(settings["minimum_step"], f"{path}.minimum_step")
 
 
-def _validate_kinematics(kinematics: ConfigDict, path: str) -> None:
+def _validate_kinematics(
+    kinematics: ConfigDict,
+    binning_names: set[str],
+    mge_names: set[str],
+) -> None:
+    path = "kinematic_data"
     for name, settings_value in kinematics.items():
         name = _dynamic_name(name, path)
         settings_path = f"{path}.{name}"
@@ -305,21 +371,20 @@ def _validate_kinematics(kinematics: ConfigDict, path: str) -> None:
         _reject_unknown_keys(
             settings,
             {
-                "aperture_file",
-                "bin_file",
+                "binning",
                 "data_file",
                 "histogram",
                 "maximum_gh_order",
+                "mge",
                 "observational_errors",
                 "type",
                 "warning_thresholds",
-                "with_pops",
             },
             settings_path,
         )
         _require_keys(
             settings,
-            {"aperture_file", "bin_file", "data_file", "type", "with_pops"},
+            {"binning", "data_file", "type"},
             settings_path,
         )
         kinematics_type = _choice(
@@ -327,9 +392,20 @@ def _validate_kinematics(kinematics: ConfigDict, path: str) -> None:
             _KINEMATICS_TYPES,
             f"{settings_path}.type",
         )
-        _boolean(settings["with_pops"], f"{settings_path}.with_pops")
-        for key in ("aperture_file", "bin_file", "data_file"):
-            _nonempty_string(settings[key], f"{settings_path}.{key}")
+        _nonempty_string(settings["data_file"], f"{settings_path}.data_file")
+        _validate_registry_reference(
+            settings["binning"],
+            binning_names,
+            f"{settings_path}.binning",
+            "spatial_binnings",
+        )
+        if "mge" in settings:
+            _validate_registry_reference(
+                settings["mge"],
+                mge_names,
+                f"{settings_path}.mge",
+                "MGEs",
+            )
         _validate_kinematics_observational_settings(
             settings,
             settings_path,
@@ -351,6 +427,38 @@ def _validate_kinematics(kinematics: ConfigDict, path: str) -> None:
                 _mapping(settings, "warning_thresholds", settings_path),
                 f"{settings_path}.warning_thresholds",
             )
+
+
+def _validate_population_data(
+    populations: ConfigDict,
+    binning_names: set[str],
+) -> None:
+    """Validate population data sets and their reusable binning references."""
+    path = "population_data"
+    for name, settings_value in populations.items():
+        name = _dynamic_name(name, path)
+        settings_path = f"{path}.{name}"
+        settings = _require_mapping(settings_value, settings_path)
+        _reject_unknown_keys(settings, {"binning", "data_file"}, settings_path)
+        _require_keys(settings, {"binning", "data_file"}, settings_path)
+        _nonempty_string(settings["data_file"], f"{settings_path}.data_file")
+        _validate_registry_reference(
+            settings["binning"],
+            binning_names,
+            f"{settings_path}.binning",
+            "spatial_binnings",
+        )
+
+
+def _validate_registry_reference(
+    value: Any,
+    known_names: set[str],
+    path: str,
+    registry: str,
+) -> None:
+    name = _nonempty_string(value, path)
+    if name not in known_names:
+        raise ValueError(f"{path} references unknown {registry} entry {name!r}.")
 
 
 def _validate_kinematics_observational_settings(
@@ -592,7 +700,13 @@ def _validate_counter_rotating_cut(settings: ConfigDict, path: str) -> None:
 
 def _validate_parameter_space_settings(settings: ConfigDict) -> None:
     path = "parameter_space_settings"
-    keys = {"generator_settings", "generator_type", "stopping_criteria", "which_chi2"}
+    keys = {
+        "generator_settings",
+        "generator_type",
+        "potential_rescalings",
+        "stopping_criteria",
+        "which_chi2",
+    }
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
     _choice(settings["generator_type"], {"GridSearch"}, f"{path}.generator_type")
@@ -629,6 +743,39 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
         value = _integer(stopping[key], f"{path}.stopping_criteria.{key}")
         if value <= 0:
             raise ValueError(f"{path}.stopping_criteria.{key} must be positive.")
+
+    _validate_potential_rescalings(
+        _mapping(settings, "potential_rescalings", path),
+        f"{path}.potential_rescalings",
+    )
+
+
+def _validate_potential_rescalings(settings: ConfigDict, path: str) -> None:
+    keys = {
+        "enabled",
+        "include_unscaled",
+        "mass_scale_range",
+        "range_count",
+        "spacing",
+    }
+    _reject_unknown_keys(settings, keys, path)
+    _require_keys(settings, keys, path)
+    _boolean(settings["enabled"], f"{path}.enabled")
+    _boolean(settings["include_unscaled"], f"{path}.include_unscaled")
+
+    range_count = _integer(settings["range_count"], f"{path}.range_count")
+    if range_count <= 0:
+        raise ValueError(f"{path}.range_count must be positive.")
+
+    mass_scale_range = _mapping(settings, "mass_scale_range", path)
+    range_path = f"{path}.mass_scale_range"
+    _reject_unknown_keys(mass_scale_range, {"maximum", "minimum"}, range_path)
+    _require_keys(mass_scale_range, {"maximum", "minimum"}, range_path)
+    minimum = _positive_number(mass_scale_range["minimum"], f"{range_path}.minimum")
+    maximum = _positive_number(mass_scale_range["maximum"], f"{range_path}.maximum")
+    if minimum > maximum:
+        raise ValueError(f"{range_path}.minimum must not exceed maximum.")
+    _choice(settings["spacing"], {"linear", "logarithmic"}, f"{path}.spacing")
 
 
 def _validate_tagged_threshold(

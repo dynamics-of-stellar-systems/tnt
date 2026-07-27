@@ -1,14 +1,22 @@
 # TNT development configuration for NGC6278.
 #
 # TNT recursively merges this user profile over the packaged defaults before
-# resolving dynamically named components, parameters, and kinematics data sets.
+# resolving dynamically named potential components and kinematics data sets.
 ---
 
 system_attributes:
   distance: {value: 39.96, unit: "Mpc"}
   name: "NGC6278"
 
-system_components:
+MGEs:
+  mge_lum: "mge.ecsv"
+
+spatial_binnings:
+  kinset1_binning:
+    aperture_file: "aperture.dat"
+    bin_file: "bins.dat"
+
+potential:
   bh:
     type: "plummer"
     include: true
@@ -56,8 +64,9 @@ system_components:
         latex_label: "$\\log(M_{200}/M_\\mathrm{stars})$"
 
   stars:
-    type: "triaxial_visible_component"
+    type: "triaxial_light_mge"
     include: true
+    mge: "mge_lum"
     parameters:
       q:
         generator_settings:
@@ -86,39 +95,36 @@ system_components:
         fixed: true
         value: 0.9999
         latex_label: "$u_\\mathrm{min}$"
-    mge:
-      potential_file: "mge.ecsv"
-      luminosity_file: "mge.ecsv"
-    kinematics:
-      kinset1:
-        type: "gauss_hermite"
-        maximum_gh_order: 4
-        observational_errors:
-          systematic_uncertainties:
-            v: {value: 0.0, unit: "km / s"}
-            sigma: {value: 0.0, unit: "km / s"}
-            h3: 0.0
-            h4: 0.0
-        histogram:
-          width: {value: 2719.8215332031, unit: "km / s"}
-          center: {value: 0.0, unit: "km / s"}
-          bins: 203
-        data_file: "gauss_hermite_kins.ecsv"
-        aperture_file: "aperture.dat"
-        bin_file: "bins.dat"
-        with_pops: false
+      ml:
+        unit: "Msun / Lsun"
+        generator_settings:
+          lower_bound: 1.0
+          upper_bound: 9.0
+          step: 4.0
+          minimum_step: 0.5
+        fixed: false
+        value: 5.0
+        latex_label: "$Y_\\mathrm{r}$"
 
-system_parameters:
-  ml:
-    unit: "Msun / Lsun"
-    generator_settings:
-      lower_bound: 1.0
-      upper_bound: 9.0
-      step: 4.0
-      minimum_step: 0.5
-    fixed: false
-    value: 5.0
-    latex_label: "$Y_\\mathrm{r}$"
+kinematic_data:
+  kinset1:
+    type: "gauss_hermite"
+    binning: "kinset1_binning"
+    mge: "mge_lum"
+    maximum_gh_order: 4
+    observational_errors:
+      systematic_uncertainties:
+        v: {value: 0.0, unit: "km / s"}
+        sigma: {value: 0.0, unit: "km / s"}
+        h3: 0.0
+        h4: 0.0
+    histogram:
+      width: {value: 2719.8215332031, unit: "km / s"}
+      center: {value: 0.0, unit: "km / s"}
+      bins: 203
+    data_file: "gauss_hermite_kins.ecsv"
+
+population_data: {}
 
 orbit_library_settings:
   nE: 6
@@ -152,6 +158,14 @@ weight_solver_settings:
 parameter_space_settings:
   generator_type: "GridSearch"
   which_chi2: "kinchi2"
+  potential_rescalings:
+    enabled: true
+    range_count: 10
+    mass_scale_range:
+      minimum: 0.1
+      maximum: 10.0
+    spacing: "logarithmic"
+    include_unscaled: true
   generator_settings:
     delta_chi2_threshold:
       mode: "fraction_of_sqrt_2n_observations"

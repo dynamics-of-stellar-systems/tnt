@@ -63,8 +63,8 @@ block.
 
 1. Loads the packaged `default_config.yaml` profile.
 2. Recursively merges the user profile over the packaged profile.
-3. Applies common defaults to every dynamically named component, parameter,
-   and kinematics data set.
+3. Applies common defaults to every dynamically named potential component and
+   parameter.
 4. Applies defaults selected by each kinematics data set's `type`.
 5. Validates the configured unit systems and converts supported unitful
    quantities to internal units.
@@ -88,6 +88,53 @@ derivation policy. Supplying only part of this explicit metadata is an error.
 See [Units](units.md) for the internal and display unit systems, accepted
 quantity syntax, and the fields currently normalized during preparation.
 
+## Scientific input registries
+
+TNT keeps reusable data definitions separate from model components. Entries
+refer to one another by name:
+
+```yaml
+MGEs:
+  stellar_light: "mge_lum.ecsv"
+
+spatial_binnings:
+  central_bins:
+    aperture_file: "aperture.dat"
+    bin_file: "bins.dat"
+
+potential:
+  stars:
+    type: "triaxial_light_mge"
+    mge: "stellar_light"
+    parameters:
+      ml:
+        value: 5.0
+        unit: "Msun / Lsun"
+
+kinematic_data:
+  central_spectroscopy:
+    type: "gauss_hermite"
+    data_file: "gauss_hermite.ecsv"
+    binning: "central_bins"
+    mge: "stellar_light"
+
+population_data:
+  stellar_populations:
+    data_file: "populations.ecsv"
+    binning: "central_bins"
+```
+
+`MGEs` is the named multi-Gaussian expansion file registry.
+`spatial_binnings` lets kinematic and population data share one aperture/bin
+definition without duplicating paths. A kinematic data set may optionally
+reference an MGE; this is not required for proper-motion data.
+
+The supported potential types are `triaxial_light_mge`,
+`triaxial_mass_mge`, `nfw`, and `plummer`. A light-MGE potential requires an
+`ml` mass-to-light parameter. A mass-MGE potential must not declare `ml`,
+because its input MGE already represents mass. MGE contents and their physical
+units are inspected only in the later object-construction phase.
+
 ## Per-data-set kinematics settings
 
 Observational error policies and fitting order belong to each named kinematics
@@ -96,9 +143,11 @@ assumptions. Type-specific defaults supply neutral settings, which a data set
 can override:
 
 ```yaml
-kinematics:
+kinematic_data:
   central_spectroscopy:
     type: "gauss_hermite"
+    binning: "central_bins"
+    data_file: "gauss_hermite.ecsv"
     maximum_gh_order: 4
     observational_errors:
       systematic_uncertainties:
@@ -109,6 +158,8 @@ kinematics:
 
   proper_motion_catalogue:
     type: "proper_motions"
+    binning: "central_bins"
+    data_file: "proper_motions.ecsv"
     observational_errors:
       variance_scale: 1.0
 ```
@@ -130,6 +181,36 @@ tagged thresholds. It also checks data-only numerical constraints, including
 parameter bounds, positive worker counts, orbit-grid limits, and positive odd
 explicit histogram bin counts. Per-kinematics checks cover Gauss-Hermite order,
 complete systematic-uncertainty mappings, and proper-motion variance scaling.
+It also checks that references from potentials and observational data resolve
+to existing MGE and spatial-binning entries.
+
+## Potential rescaling
+
+Potential rescaling is configured independently of the ordinary `ml`
+parameter:
+
+```yaml
+parameter_space_settings:
+  potential_rescalings:
+    enabled: true
+    range_count: 10
+    mass_scale_range:
+      minimum: 0.1
+      maximum: 10.0
+    spacing: "logarithmic"
+    include_unscaled: true
+```
+
+The scaling factor applies to the complete assembled potential, after its
+ordinary component parameters—including `ml`—have been applied. `spacing`
+accepts `linear` or `logarithmic`; the minimum and maximum are inclusive.
+`include_unscaled: true` ensures that factor `1.0` is included once, even if it
+is not one of the generated values. Each scaled potential will be a separate
+entry in the all-models table and should record an explicit
+`potential_mass_scale_factor`.
+
+When `enabled` is false, TNT retains and validates the remaining settings but
+the later execution phase produces only the unscaled model.
 
 Errors identify the configuration path containing the invalid value. The
 resolved file is written only after every preparation-stage check succeeds.

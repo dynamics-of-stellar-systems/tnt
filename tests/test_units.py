@@ -103,7 +103,7 @@ def test_normalize_supported_configuration_quantities() -> None:
         "system_attributes": {
             "distance": {"value": 2.0, "unit": "Mpc"},
         },
-        "system_components": {
+        "potential": {
             "bh": {
                 "type": "plummer",
                 "parameters": {
@@ -132,31 +132,31 @@ def test_normalize_supported_configuration_quantities() -> None:
                 },
             },
             "stars": {
-                "type": "triaxial_visible_component",
-                "kinematics": {
-                    "observed": {
-                        "type": "gauss_hermite",
-                        "histogram": {
-                            "width": {"value": 1000.0, "unit": "km / s"},
-                            "center": {"value": 10.0, "unit": "km / s"},
-                        },
-                        "observational_errors": {
-                            "systematic_uncertainties": {
-                                "v": {"value": 2.0, "unit": "km / s"},
-                                "sigma": {"value": 3.0, "unit": "kpc / Myr"},
-                                "h3": 0.0,
-                            }
-                        },
+                "type": "triaxial_light_mge",
+                "parameters": {
+                    "ml": {
+                        "value": 5.0,
+                        "logarithmic": False,
+                        "unit": "Msun / Lsun",
                     }
                 },
             },
         },
-        "system_parameters": {
-            "ml": {
-                "value": 5.0,
-                "logarithmic": False,
-                "unit": "Msun / Lsun",
-            }
+        "kinematic_data": {
+            "observed": {
+                "type": "gauss_hermite",
+                "histogram": {
+                    "width": {"value": 1000.0, "unit": "km / s"},
+                    "center": {"value": 10.0, "unit": "km / s"},
+                },
+                "observational_errors": {
+                    "systematic_uncertainties": {
+                        "v": {"value": 2.0, "unit": "km / s"},
+                        "sigma": {"value": 3.0, "unit": "kpc / Myr"},
+                        "h3": 0.0,
+                    }
+                },
+            },
         },
     }
 
@@ -168,7 +168,7 @@ def test_normalize_supported_configuration_quantities() -> None:
     assert normalized["cosmological_parameters"]["H0"] == pytest.approx(
         7.158985155319864e-05
     )
-    bh_parameters = normalized["system_components"]["bh"]["parameters"]
+    bh_parameters = normalized["potential"]["bh"]["parameters"]
     assert bh_parameters["a"]["value"] == pytest.approx(0.5)
     assert bh_parameters["a"]["generator_settings"]["step"] == pytest.approx(0.1)
     assert bh_parameters["m"]["value"] == pytest.approx(10.0 + mass_offset)
@@ -177,18 +177,16 @@ def test_normalize_supported_configuration_quantities() -> None:
     )
     assert bh_parameters["m"]["generator_settings"]["step"] == 0.5
     assert "unit" not in bh_parameters["m"]
-    histogram = normalized["system_components"]["stars"]["kinematics"]["observed"][
-        "histogram"
-    ]
+    histogram = normalized["kinematic_data"]["observed"]["histogram"]
     assert histogram["width"] == pytest.approx(1000.0 * speed_factor)
     assert histogram["center"] == pytest.approx(10.0 * speed_factor)
-    systematics = normalized["system_components"]["stars"]["kinematics"]["observed"][
-        "observational_errors"
-    ]["systematic_uncertainties"]
+    systematics = normalized["kinematic_data"]["observed"]["observational_errors"][
+        "systematic_uncertainties"
+    ]
     assert systematics["v"] == pytest.approx(2.0 * speed_factor)
     assert systematics["sigma"] == 3.0
-    assert normalized["system_parameters"]["ml"]["value"] == 5.0
-    assert "unit" not in normalized["system_parameters"]["ml"]
+    assert normalized["potential"]["stars"]["parameters"]["ml"]["value"] == 5.0
+    assert "unit" not in normalized["potential"]["stars"]["parameters"]["ml"]
     assert config["system_attributes"]["distance"]["unit"] == "Mpc"
 
 
@@ -197,7 +195,7 @@ def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:
     config = {
         "cosmological_parameters": {},
         "system_attributes": {},
-        "system_components": {
+        "potential": {
             "halo": {
                 "type": "nfw",
                 "parameters": {
@@ -209,7 +207,7 @@ def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:
                 },
             }
         },
-        "system_parameters": {},
+        "kinematic_data": {},
     }
 
     with pytest.raises(ValueError, match=r"parameters\.c\.unit is not supported"):
@@ -217,7 +215,7 @@ def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:
 
 
 @pytest.mark.parametrize(
-    ("components", "system_parameters", "error"),
+    ("potential", "error"),
     [
         (
             {
@@ -231,32 +229,34 @@ def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:
                     },
                 }
             },
-            {},
-            r"system_components\.bh\.parameters\.m.*required field: unit",
+            r"potential\.bh\.parameters\.m.*required field: unit",
         ),
         (
-            {},
             {
-                "ml": {
-                    "value": 5.0,
-                    "logarithmic": False,
+                "stars": {
+                    "type": "triaxial_light_mge",
+                    "parameters": {
+                        "ml": {
+                            "value": 5.0,
+                            "logarithmic": False,
+                        }
+                    },
                 }
             },
-            r"system_parameters\.ml.*required field: unit",
+            r"potential\.stars\.parameters\.ml.*required field: unit",
         ),
     ],
 )
 def test_unitful_parameter_requires_unit(
-    components: dict,
-    system_parameters: dict,
+    potential: dict,
     error: str,
 ) -> None:
     systems = build_unit_systems(_unit_settings())
     config = {
         "cosmological_parameters": {},
         "system_attributes": {},
-        "system_components": components,
-        "system_parameters": system_parameters,
+        "potential": potential,
+        "kinematic_data": {},
     }
 
     with pytest.raises(ValueError, match=error):
