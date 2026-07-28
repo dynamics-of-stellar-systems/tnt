@@ -14,5 +14,13 @@ documentation for details.
 .. toctree::
    :maxdepth: 2
 
-   overview
+   configuration
+   units
+   logging
 
+.. toctree::
+   :maxdepth: 1
+   :caption: More Information
+
+   more_info/team
+   more_info/license

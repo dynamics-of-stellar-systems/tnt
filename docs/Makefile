@@ -4,7 +4,9 @@
 # You can set these variables from the command line, and also
 # from the environment for the first two.
 SPHINXOPTS    ?=
-SPHINXBUILD   ?= sphinx-build
+# Prefer an explicit override, then the project virtual environment. Use an
+# executable on PATH only when the project environment has no Sphinx install.
+SPHINXBUILD   ?= $(if $(wildcard ../.venv/bin/sphinx-build),../.venv/bin/sphinx-build,$(or $(shell command -v sphinx-build 2>/dev/null),sphinx-build))
 SOURCEDIR     = source
 BUILDDIR      = build
 

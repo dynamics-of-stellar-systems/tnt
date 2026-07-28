@@ -1,0 +1,205 @@
+# TNT default configuration profile, version 1.
+#
+# TNT will recursively merge this profile with a user configuration before
+# constructing a model. The user configuration must provide the physical
+# system, component definitions, input directory, and output directory.
+#
+# If histogram metadata is omitted for a kinematic data set, TNT derives it
+# from the observations using data-type-specific rules.
+
+# Every unitful field must state its unit explicitly. Standalone quantities use
+# {value: ..., unit: ...}; unitful parameters use a sibling unit field.
+# Display units are presentation preferences and do not change stored values.
+units:
+  internal:
+    length: "kpc"
+    time: "Myr"
+    mass: "Msun"
+    angle: "rad"
+    power: "Lsun"
+  display:
+    angle: "arcsec"
+    speed: "km / s"
+
+cosmological_parameters:
+  H0: {value: 70.0, unit: "km / (s Mpc)"}
+
+# Apply this numerical-stability cap uniformly to every multi-Gaussian
+# expansion (MGE). Values above the cap are replaced and must trigger a warning.
+mge_settings:
+  axial_ratio_cap: 0.9999
+
+# Shared numerical policies. Keeping these values explicit makes model
+# identity checks and solver constraints reproducible across implementations.
+numerics_settings:
+  model_comparison_relative_tolerance: 1.0e-10
+  parameter_grid_relative_tolerance: 1.0e-6
+  constraint_error_floors:
+    total_mass: 1.0e-8
+    intrinsic_mass: 1.0e-16
+
+# Operational logging defaults. Logging is configured explicitly by the
+# application or execution entry point; reading a configuration has no logging
+# side effects. Each enabled run gets a timestamped logfile below the output
+# directory.
+logging_settings:
+  file:
+    enabled: true
+    level: "DEBUG"
+    directory: "logs"
+  console:
+    enabled: true
+    level: "INFO"
+
+# These values apply to every dynamically named object of the corresponding
+# type unless the user overrides the property on that object.
+dynamic_object_defaults:
+  potential:
+    include: true
+  parameter:
+    fixed: false
+    logarithmic: false
+
+# Defaults selected by the type of each dynamically named kinematics data set.
+# User-supplied values on an individual data set override these policies.
+kinematics_type_defaults:
+  gauss_hermite:
+    # Highest Gauss-Hermite order constrained for this observational data set.
+    maximum_gh_order: 4
+    observational_errors:
+      # Add these data-set-specific systematic uncertainties in quadrature.
+      systematic_uncertainties:
+        v: {value: 0.0, unit: "km / s"}
+        sigma: {value: 0.0, unit: "km / s"}
+        h3: 0.0
+        h4: 0.0
+    histogram:
+      # Total width is 2 * max(abs(v) + sigma_extent * sigma).
+      sigma_extent: 3.0
+      # The approximate bin width is this fraction of the minimum sigma.
+      bin_width_sigma_fraction: 0.1
+      center: {value: 0.0, unit: "km / s"}
+  bayes_losvd:
+    histogram:
+      # Scale relative to the symmetric width covering the observed LOSVD.
+      width_scale: 1.0
+      # A factor of 1 uses the observed LOSVD velocity spacing.
+      oversampling_factor: 1.0
+      center: {value: 0.0, unit: "km / s"}
+      systemic_velocity: "flux_weighted"
+  proper_motions:
+    observational_errors:
+      # Multiplier for the observational error variances. The corresponding
+      # uncertainties are multiplied by its square root; 1.0 is neutral.
+      variance_scale: 1.0
+    warning_thresholds:
+      # Warn if velocity-bin width / global velocity dispersion exceeds this.
+      max_bin_width_sigma_ratio: 0.25
+      # Warn if histogram width / global velocity dispersion falls below this.
+      min_histogram_width_sigma_ratio: 5.0
+
+# Named scientific inputs and model components describe the system being
+# modelled and therefore have no package-wide entries.
+MGEs: {}
+spatial_binnings: {}
+potential: {}
+kinematic_data: {}
+population_data: {}
+
+orbit_library_settings:
+  nE: 6
+  nI2: 5
+  nI3: 4
+  dithering: 1
+  quad_nr: 10
+  quad_nth: 6
+  quad_nph: 6
+  orbital_periods: 200
+  sampling: 50000
+  starting_orbit: 1
+  number_orbits: -1
+  accuracy: 1.0e-5
+  # A negative value generates a seed; zero or a positive integer uses that
+  # value as the seed for a reproducible run.
+  random_seed: -1
+
+weight_solver_settings:
+  type: "NNLS"
+  nnls_solver: "scipy"
+  maxiter_factor: 3
+  counter_rotating_orbit_cut:
+    enabled: false
+    # Require substantial observed rotation: abs(v_observed) / sigma.
+    min_abs_observed_velocity_over_sigma: 1.5
+    # Require a substantial orbit-to-observation velocity difference.
+    min_orbit_velocity_difference_over_sigma: 3.0
+    require_opposite_velocity_sign: true
+    # Require the orbit to meet the cut conditions in at least this many
+    # apertures.
+    min_affected_apertures: 2
+    # A cut orbit receives h1 = h1_penalty_scale / histogram_bin_width.
+    h1_penalty_scale: 3.0
+  regularisation: 0
+  lum_intr_rel_err: 0.01
+  sb_proj_rel_err: 0.01
+  reattempt_failures: true
+
+parameter_space_settings:
+  generator_type: "GridSearch"
+  which_chi2: "kinchi2"
+  potential_rescalings:
+    # Scale the fully assembled potential independently of its ordinary
+    # component parameters. Disabled settings remain present and validated.
+    enabled: false
+    range_count: 10
+    mass_scale_range:
+      minimum: 0.1
+      maximum: 10.0
+    spacing: "logarithmic"
+    # Ensure that mass scale factor 1.0 is represented exactly once.
+    include_unscaled: true
+  generator_settings:
+    # Modes: "absolute" or "fraction_of_sqrt_2n_observations".
+    delta_chi2_threshold:
+      mode: "fraction_of_sqrt_2n_observations"
+      value: 0.1
+  stopping_criteria:
+    # Modes: "absolute" or "relative".
+    minimum_delta_chi2:
+      mode: "absolute"
+      value: 0.5
+    n_max_mods: 3
+    n_max_iter: 10
+
+analysis_settings:
+  orbit_decomposition:
+    # Circularity lambda_z thresholds. The hot component lies between the
+    # counter-rotating warm maximum and the warm minimum.
+    circularity_thresholds:
+      cold_min: 0.8
+      warm_min: 0.25
+      counter_rotating_warm_max: -0.25
+      counter_rotating_cold_max: -0.8
+    component_naming: "bulge_disk"
+    cache: true
+    write_component_weights: false
+  kinematic_moments:
+    # Derive mean velocity and dispersion by fitting a Gaussian to the LOSVD.
+    velocity_dispersion_method: "gaussian_fit"
+
+# The user profile must add input_directory and output_directory. Keeping them
+# absent prevents an incomplete configuration from writing into the current
+# working directory accidentally.
+io_settings:
+  all_models_file: "all_models.ecsv"
+
+execution_settings:
+  orbit_workers: "all_available"
+  weight_workers: "all_available"
+  external_chi2_workers: "all_available"
+  # "model_by_model" completes orbit integration and weight solving for each
+  # model in turn. "stage_by_stage" integrates all models' orbit libraries
+  # before starting the weight-solving stage.
+  model_processing_order: "model_by_model"
+  # Whether the box- and tube-orbit families are integrated concurrently.
+  orbit_family_integration_in_parallel: false

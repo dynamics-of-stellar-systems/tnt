@@ -7,8 +7,8 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = "TNT"
-copyright = "2026, Prashin Jethwa, Thomas Maindl"
-author = "Prashin Jethwa, Thomas Maindl"
+copyright = "2026, Glenn van de Ven and other contributors"
+author = "Glenn van de Ven, Prashin Jethwa, Thomas Maindl"
 release = "0.1.0"
 
 # -- General configuration ---------------------------------------------------
@@ -26,4 +26,3 @@ exclude_patterns = []
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = "pydata_sphinx_theme"
-html_static_path = ["_static"]
