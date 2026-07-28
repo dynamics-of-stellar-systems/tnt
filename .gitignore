@@ -10,6 +10,7 @@ docs/build/
 .coverage
 .mypy_cache/
 .ruff_cache/
+.coverage
 
 .ipynb_checkpoints/
 

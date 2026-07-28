@@ -1,0 +1,17 @@
+distance: 30.5 Mpc
+
+units:
+  internal:
+    length: kpc
+    time: Myr
+    mass: Msun
+    angle: rad
+    power: Lsun
+
+  display:
+    angle: arcsec
+    speed: km / s
+
+mges:
+  light: 'mge_lum.ecsv'
+  mass: 'mge_mass.ecsv'

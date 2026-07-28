@@ -1,0 +1,23 @@
+# %ECSV 0.9
+# ---
+# datatype:
+# - name: I
+#   unit: Msun / arcsec2
+#   datatype: float64
+# - name: sigma
+#   unit: arcsec
+#   datatype: float64
+# - name: q
+#   unit: ''
+#   datatype: float64
+# - name: PA_twist
+#   unit: deg
+#   datatype: float64
+# schema: astropy-2.0
+I sigma q PA_twist
+54129.63 0.42169 0.91205 0.0
+5893.71 1.98443 0.83017 0.0
+981.36 2.61098 0.9999 0.0
+1120.84 6.98721 0.60214 0.0
+32.19 18.02233 0.9999 0.0
+201.47 22.11045 0.60214 0.0
