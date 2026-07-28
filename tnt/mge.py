@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar, Self
 
@@ -540,3 +541,32 @@ def read_mge(path: str | Path, unit_system: AbstractUnitSystem) -> AbstractMGE:
         f"Could not infer MGE kind for {path}: its I column has unit "
         f"{intensity_unit!r}, which is not equivalent to any of {expected!r}."
     )
+
+
+def build_mges(
+    mges: Mapping[str, str],
+    input_directory: str | Path,
+    unit_system: AbstractUnitSystem,
+) -> dict[str, AbstractMGE]:
+    """Build the named MGEs from a resolved configuration's ``MGEs`` mapping.
+
+    Each MGE's kind (light or mass) is inferred from its file's declared
+    units -- see `read_mge`. This deliberately takes already-resolved,
+    plain-data inputs rather than a `tnt.configuration.Configuration`, since
+    that class explicitly holds no instantiated runtime objects.
+
+    Args:
+        mges: Mapping of unique identifiers to ECSV filenames, e.g. a
+            resolved configuration's ``MGEs`` section.
+        input_directory: Directory that each filename is resolved against,
+            e.g. a resolved configuration's ``io_settings.input_directory``.
+        unit_system: The unit system to convert each MGE's columns into.
+
+    Returns:
+        A dict mapping each identifier to its `LightMGE` or `MassMGE`.
+    """
+    directory = Path(input_directory)
+    return {
+        name: read_mge(directory / filename, unit_system)
+        for name, filename in mges.items()
+    }

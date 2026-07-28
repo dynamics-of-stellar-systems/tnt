@@ -7,7 +7,14 @@ import numpy as np
 import pytest
 import unxt as u
 
-from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, SphericalGrid, read_mge
+from tnt.mge import (
+    Deprojected3DMGE,
+    LightMGE,
+    MassMGE,
+    SphericalGrid,
+    build_mges,
+    read_mge,
+)
 
 FIXTURES_DIR = Path(__file__).parents[1] / "integration_tests" / "fixtures"
 
@@ -58,6 +65,21 @@ def test_read_mge_infers_mass_kind():
 
     assert isinstance(mge, MassMGE)
     assert mge.I.unit == u.unit("Msun / rad2")
+
+
+def test_build_mges_reads_each_named_file():
+    mges = build_mges(
+        {"light": "mge_lum.ecsv", "mass": "mge_mass.ecsv"},
+        FIXTURES_DIR,
+        _internal_unit_system(),
+    )
+
+    assert isinstance(mges["light"], LightMGE)
+    assert isinstance(mges["mass"], MassMGE)
+
+
+def test_build_mges_without_entries_returns_empty_dict():
+    assert build_mges({}, FIXTURES_DIR, _internal_unit_system()) == {}
 
 
 @pytest.mark.parametrize("bad_q", [0.0, -0.5, 1.5])
