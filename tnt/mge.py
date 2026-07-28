@@ -13,7 +13,7 @@ from astropy.table import QTable
 from jax.scipy.special import erf
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt import units
+from tnt import quantity_conversions
 
 
 class AbstractMGE(eqx.Module):
@@ -98,7 +98,7 @@ class AbstractMGE(eqx.Module):
         Returns:
             A new MGE with `sigma` in `distance`'s unit and `I` converted to match.
         """
-        sigma_physical = units.angular_to_physical(self.sigma, distance)
+        sigma_physical = quantity_conversions.angular_to_physical(self.sigma, distance)
         solid_angle = Quantity(1.0, f"{self.sigma.unit}2")
         I_physical = self.I * solid_angle / distance**2  # noqa: N806
 
@@ -117,7 +117,7 @@ class AbstractMGE(eqx.Module):
         Returns:
             A new MGE with `sigma` in radians and `I` converted to match.
         """
-        sigma_angular = units.physical_to_angular(self.sigma, distance)
+        sigma_angular = quantity_conversions.physical_to_angular(self.sigma, distance)
         solid_angle = Quantity(1.0, f"{sigma_angular.unit}2")
         I_angular = self.I * distance**2 / solid_angle  # noqa: N806
 

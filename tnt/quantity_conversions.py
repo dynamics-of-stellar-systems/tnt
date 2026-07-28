@@ -1,4 +1,4 @@
-"""General angle-to-physical-length conversions, used across the project."""
+"""Angle-to-physical-length quantity conversions, used across the project."""
 
 from unxt import Quantity
 
