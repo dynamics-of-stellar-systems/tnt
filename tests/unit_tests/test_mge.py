@@ -16,17 +16,88 @@ from tnt.mge import (
     read_mge,
 )
 
-FIXTURES_DIR = Path(__file__).parents[1] / "integration_tests" / "fixtures"
-
 
 def _internal_unit_system() -> u.AbstractUnitSystem:
     return u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
 
 
-def test_read_converts_light_columns_to_unit_system():
+def _write_ecsv(
+    path: Path,
+    *,
+    intensity_unit: str,
+    rows: list[tuple[float, float, float, float]],
+) -> None:
+    """Write a minimal MGE ECSV file with the given intensity unit and rows."""
+    header = (
+        "# %ECSV 0.9\n"
+        "# ---\n"
+        "# datatype:\n"
+        f"# - {{name: I, unit: {intensity_unit}, datatype: float64}}\n"
+        "# - {name: sigma, unit: arcsec, datatype: float64}\n"
+        "# - {name: q, unit: '', datatype: float64}\n"
+        "# - {name: PA_twist, unit: deg, datatype: float64}\n"
+        "# schema: astropy-2.0\n"
+        "I sigma q PA_twist\n"
+    )
+    body = "".join(f"{i} {s} {q} {pa}\n" for i, s, q, pa in rows)
+    path.write_text(header + body)
+
+
+# The multi-component rows below match what used to be a checked-in fixture
+# file (tests/integration_tests/fixtures/mge_lum.ecsv / mge_mass.ecsv), now
+# defined directly here so unit tests don't reach into another test
+# directory's data for something they can just as easily construct inline.
+_LIGHT_ROWS = [
+    (26819.14, 0.49416, 0.89541, 0.0),
+    (2456.39, 2.04299, 0.79093, 0.0),
+    (456.8, 2.44313, 0.9999, 0.0),
+    (645.49, 6.5305, 0.55097, 0.0),
+    (14.73, 17.41488, 0.9999, 0.0),
+    (123.85, 21.84711, 0.55097, 0.0),
+]
+_MASS_ROWS = [
+    (54129.63, 0.42169, 0.91205, 0.0),
+    (5893.71, 1.98443, 0.83017, 0.0),
+    (981.36, 2.61098, 0.9999, 0.0),
+    (1120.84, 6.98721, 0.60214, 0.0),
+    (32.19, 18.02233, 0.9999, 0.0),
+    (201.47, 22.11045, 0.60214, 0.0),
+]
+
+
+def _multi_component_light_mge() -> LightMGE:
+    """A multi-component LightMGE with realistic, varied q values.
+
+    Same values as `_LIGHT_ROWS`, converted to radians up front (matching
+    what `LightMGE.read` would produce for `_internal_unit_system`'s "rad"
+    angle unit) and constructed directly rather than read from a file -- for
+    tests that just need some realistic LightMGE to operate on, as opposed to
+    testing file-reading behaviour itself.
+
+    `angular_to_physical`/`physical_to_angular` only give correct results for
+    an angle unit of exactly "rad" (their `solid_angle` shortcut assumes it),
+    which is why this doesn't just store the raw arcsec/deg values directly:
+    real MGEs are always converted to "rad" by `.read()` before those methods
+    would ever see them.
+    """
+    intensity, sigma, q, pa_twist = zip(*_LIGHT_ROWS, strict=True)
+    sigma_arcsec = u.Quantity(jnp.array(sigma), "arcsec")
+    intensity_per_arcsec2 = u.Quantity(jnp.array(intensity), "Lsun / arcsec2")
+    pa_twist_deg = u.Quantity(jnp.array(pa_twist), "deg")
+    return LightMGE(
+        I=u.Quantity(intensity_per_arcsec2.ustrip("Lsun / rad2"), "Lsun / rad2"),
+        sigma=u.Quantity(sigma_arcsec.ustrip("rad"), "rad"),
+        q=u.Quantity(jnp.array(q), ""),
+        PA_twist=u.Quantity(pa_twist_deg.ustrip("rad"), "rad"),
+    )
+
+
+def test_read_converts_light_columns_to_unit_system(tmp_path):
+    path = tmp_path / "mge_lum.ecsv"
+    _write_ecsv(path, intensity_unit="Lsun / arcsec2", rows=_LIGHT_ROWS)
     unit_system = _internal_unit_system()
 
-    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", unit_system)
+    mge = LightMGE.read(path, unit_system)
 
     assert mge.I.unit == u.unit("Lsun / rad2")
     assert mge.sigma.unit == u.unit("rad")
@@ -38,10 +109,12 @@ def test_read_converts_light_columns_to_unit_system():
     )
 
 
-def test_read_converts_mass_columns_to_unit_system():
+def test_read_converts_mass_columns_to_unit_system(tmp_path):
+    path = tmp_path / "mge_mass.ecsv"
+    _write_ecsv(path, intensity_unit="Msun / arcsec2", rows=_MASS_ROWS)
     unit_system = _internal_unit_system()
 
-    mge = MassMGE.read(FIXTURES_DIR / "mge_mass.ecsv", unit_system)
+    mge = MassMGE.read(path, unit_system)
 
     assert mge.I.unit == u.unit("Msun / rad2")
     assert mge.sigma.unit == u.unit("rad")
@@ -53,24 +126,41 @@ def test_read_converts_mass_columns_to_unit_system():
     )
 
 
-def test_read_mge_infers_light_kind():
-    mge = read_mge(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+def test_read_mge_infers_light_kind(tmp_path):
+    path = tmp_path / "mge.ecsv"
+    _write_ecsv(path, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, 0.9, 0.0)])
+
+    mge = read_mge(path, _internal_unit_system())
 
     assert isinstance(mge, LightMGE)
     assert mge.I.unit == u.unit("Lsun / rad2")
 
 
-def test_read_mge_infers_mass_kind():
-    mge = read_mge(FIXTURES_DIR / "mge_mass.ecsv", _internal_unit_system())
+def test_read_mge_infers_mass_kind(tmp_path):
+    path = tmp_path / "mge.ecsv"
+    _write_ecsv(path, intensity_unit="Msun / arcsec2", rows=[(1.0, 1.0, 0.9, 0.0)])
+
+    mge = read_mge(path, _internal_unit_system())
 
     assert isinstance(mge, MassMGE)
     assert mge.I.unit == u.unit("Msun / rad2")
 
 
-def test_build_mges_reads_each_named_file():
+def test_build_mges_reads_each_named_file(tmp_path):
+    _write_ecsv(
+        tmp_path / "light.ecsv",
+        intensity_unit="Lsun / arcsec2",
+        rows=[(1.0, 1.0, 0.9, 0.0)],
+    )
+    _write_ecsv(
+        tmp_path / "mass.ecsv",
+        intensity_unit="Msun / arcsec2",
+        rows=[(1.0, 1.0, 0.9, 0.0)],
+    )
+
     mges = build_mges(
-        {"light": "mge_lum.ecsv", "mass": "mge_mass.ecsv"},
-        FIXTURES_DIR,
+        {"light": "light.ecsv", "mass": "mass.ecsv"},
+        tmp_path,
         _internal_unit_system(),
     )
 
@@ -78,24 +168,15 @@ def test_build_mges_reads_each_named_file():
     assert isinstance(mges["mass"], MassMGE)
 
 
-def test_build_mges_without_entries_returns_empty_dict():
-    assert build_mges({}, FIXTURES_DIR, _internal_unit_system()) == {}
+def test_build_mges_without_entries_returns_empty_dict(tmp_path):
+    assert build_mges({}, tmp_path, _internal_unit_system()) == {}
 
 
 @pytest.mark.parametrize("bad_q", [0.0, -0.5, 1.5])
 def test_read_rejects_q_out_of_range(tmp_path, bad_q):
     bad_file = tmp_path / "bad_q.ecsv"
-    bad_file.write_text(
-        "# %ECSV 0.9\n"
-        "# ---\n"
-        "# datatype:\n"
-        "# - {name: I, unit: Lsun / arcsec2, datatype: float64}\n"
-        "# - {name: sigma, unit: arcsec, datatype: float64}\n"
-        "# - {name: q, unit: '', datatype: float64}\n"
-        "# - {name: PA_twist, unit: deg, datatype: float64}\n"
-        "# schema: astropy-2.0\n"
-        "I sigma q PA_twist\n"
-        f"1.0 1.0 {bad_q} 0.0\n"
+    _write_ecsv(
+        bad_file, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, bad_q, 0.0)]
     )
 
     with pytest.raises(ValueError, match="q must satisfy 0 < q <= 1"):
@@ -104,18 +185,7 @@ def test_read_rejects_q_out_of_range(tmp_path, bad_q):
 
 def test_read_accepts_q_equal_to_one(tmp_path):
     ok_file = tmp_path / "q_one.ecsv"
-    ok_file.write_text(
-        "# %ECSV 0.9\n"
-        "# ---\n"
-        "# datatype:\n"
-        "# - {name: I, unit: Lsun / arcsec2, datatype: float64}\n"
-        "# - {name: sigma, unit: arcsec, datatype: float64}\n"
-        "# - {name: q, unit: '', datatype: float64}\n"
-        "# - {name: PA_twist, unit: deg, datatype: float64}\n"
-        "# schema: astropy-2.0\n"
-        "I sigma q PA_twist\n"
-        "1.0 1.0 1.0 0.0\n"
-    )
+    _write_ecsv(ok_file, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, 1.0, 0.0)])
 
     mge = LightMGE.read(ok_file, _internal_unit_system())
 
@@ -124,25 +194,14 @@ def test_read_accepts_q_equal_to_one(tmp_path):
 
 def test_read_mge_rejects_unrecognized_units(tmp_path):
     bad_file = tmp_path / "bad.ecsv"
-    bad_file.write_text(
-        "# %ECSV 0.9\n"
-        "# ---\n"
-        "# datatype:\n"
-        "# - {name: I, unit: s, datatype: float64}\n"
-        "# - {name: sigma, unit: arcsec, datatype: float64}\n"
-        "# - {name: q, unit: '', datatype: float64}\n"
-        "# - {name: PA_twist, unit: deg, datatype: float64}\n"
-        "# schema: astropy-2.0\n"
-        "I sigma q PA_twist\n"
-        "1.0 1.0 1.0 0.0\n"
-    )
+    _write_ecsv(bad_file, intensity_unit="s", rows=[(1.0, 1.0, 1.0, 0.0)])
 
     with pytest.raises(ValueError, match="Could not infer MGE kind"):
         read_mge(bad_file, _internal_unit_system())
 
 
 def test_to_mass_with_constant_ratio():
-    light = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    light = _multi_component_light_mge()
     m_over_l = u.Quantity(2.5, "Msun / Lsun")
 
     mass = light.to_mass(m_over_l)
@@ -158,7 +217,7 @@ def test_to_mass_with_constant_ratio():
 
 
 def test_to_mass_with_per_component_ratio():
-    light = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    light = _multi_component_light_mge()
     ratios = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
     m_over_l = u.Quantity(ratios, "Msun / Lsun")
 
@@ -171,7 +230,7 @@ def test_to_mass_with_per_component_ratio():
 
 
 def test_to_mass_rejects_mismatched_component_count():
-    light = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    light = _multi_component_light_mge()
     m_over_l = u.Quantity(jnp.array([1.0, 2.0]), "Msun / Lsun")
 
     with pytest.raises(ValueError, match="m_over_l has 2 components"):
@@ -180,7 +239,7 @@ def test_to_mass_rejects_mismatched_component_count():
 
 def test_deproject_axisymmetric_edge_on_recovers_observed_q():
     distance = u.Quantity(30.5, "Mpc")
-    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
 
     deprojected = physical.deproject_axisymmetric(u.Quantity(90.0, "deg"))
@@ -193,7 +252,7 @@ def test_deproject_axisymmetric_edge_on_recovers_observed_q():
 
 def test_deproject_axisymmetric_conserves_total_flux():
     distance = u.Quantity(30.5, "Mpc")
-    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
     inclination = u.Quantity(60.0, "deg")
 
@@ -212,7 +271,7 @@ def test_deproject_axisymmetric_conserves_total_flux():
 
 
 def test_deproject_axisymmetric_requires_physical_units():
-    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    mge = _multi_component_light_mge()
 
     with pytest.raises(ValueError, match="physical .length. sigma"):
         mge.deproject_axisymmetric(u.Quantity(90.0, "deg"))
@@ -220,7 +279,7 @@ def test_deproject_axisymmetric_requires_physical_units():
 
 def test_deproject_axisymmetric_requires_zero_pa_twist():
     distance = u.Quantity(30.5, "Mpc")
-    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
     twisted = LightMGE(
         I=physical.I,
@@ -235,7 +294,7 @@ def test_deproject_axisymmetric_requires_zero_pa_twist():
 
 def test_deproject_axisymmetric_invalid_inclination_gives_nan():
     distance = u.Quantity(30.5, "Mpc")
-    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
 
     # Smallest q in the fixture is ~0.55, so an inclination close to face-on
@@ -316,7 +375,7 @@ def test_deproject_triaxial_conserves_total_flux():
 
 
 def test_deproject_triaxial_requires_physical_units():
-    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    mge = _multi_component_light_mge()
 
     with pytest.raises(ValueError, match="physical .length. sigma"):
         mge.deproject_triaxial(
@@ -413,14 +472,14 @@ def test_deproject_triaxial_global_psi_and_pa_twist_are_additive():
 
 
 def test_mge_is_frozen():
-    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    mge = _multi_component_light_mge()
 
     with pytest.raises(dataclasses.FrozenInstanceError):
         mge.q = mge.q
 
 
 def test_mge_is_a_jax_pytree():
-    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    mge = _multi_component_light_mge()
 
     doubled = jax.tree_util.tree_map(lambda leaf: leaf * 2, mge)
 
@@ -428,7 +487,7 @@ def test_mge_is_a_jax_pytree():
 
 
 def test_angular_to_physical_converts_sigma_and_intensity():
-    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    mge = _multi_component_light_mge()
     distance = u.Quantity(30.5, "Mpc")
 
     physical = mge.angular_to_physical(distance)
@@ -446,7 +505,7 @@ def test_angular_to_physical_converts_sigma_and_intensity():
 
 
 def test_angular_to_physical_leaves_q_and_pa_twist_unchanged():
-    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    mge = _multi_component_light_mge()
     distance = u.Quantity(30.5, "Mpc")
 
     physical = mge.angular_to_physical(distance)
@@ -458,7 +517,7 @@ def test_angular_to_physical_leaves_q_and_pa_twist_unchanged():
 
 
 def test_angular_physical_round_trip():
-    mge = LightMGE.read(FIXTURES_DIR / "mge_lum.ecsv", _internal_unit_system())
+    mge = _multi_component_light_mge()
     distance = u.Quantity(30.5, "Mpc")
 
     round_tripped = mge.angular_to_physical(distance).physical_to_angular(distance)
@@ -559,10 +618,14 @@ def test_spherical_mass_grid_conserves_total_mass_for_spherical_component():
         p=u.Quantity(jnp.array([1.0]), ""),
         q=u.Quantity(jnp.array([1.0]), ""),
     )
+    # n_r/n_theta/n_phi kept at the minimum allowed (3): the radial integral is
+    # exact and the angular integral uses fixed-order Gauss-Legendre quadrature
+    # per cell, so accuracy here is essentially independent of grid resolution
+    # -- finer grids only add JAX dispatch overhead, not tighter agreement.
     grid = SphericalGrid(
-        n_r=25,
-        n_theta=15,
-        n_phi=15,
+        n_r=3,
+        n_theta=3,
+        n_phi=3,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
     )
@@ -587,10 +650,12 @@ def test_spherical_mass_grid_conserves_total_mass_for_triaxial_multicomponent():
         p=u.Quantity(jnp.asarray(p), ""),
         q=u.Quantity(jnp.asarray(q), ""),
     )
+    # See the spherical-component test above for why n_r/n_theta/n_phi=3 (the
+    # minimum) is already as accurate as a much finer grid.
     grid = SphericalGrid(
-        n_r=30,
-        n_theta=20,
-        n_phi=20,
+        n_r=3,
+        n_theta=3,
+        n_phi=3,
         r_min=u.Quantity(0.05, "kpc"),
         r_max=u.Quantity(100.0, "kpc"),
     )
@@ -613,9 +678,9 @@ def test_spherical_mass_grid_reusable_across_components_with_different_length_un
         q=u.Quantity(jnp.array([1.0]), ""),
     )
     grid = SphericalGrid(
-        n_r=25,
-        n_theta=15,
-        n_phi=15,
+        n_r=3,
+        n_theta=3,
+        n_phi=3,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
     )
