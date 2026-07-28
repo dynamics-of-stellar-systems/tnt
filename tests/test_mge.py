@@ -449,3 +449,97 @@ def test_angular_physical_round_trip():
     assert jnp.allclose(
         round_tripped.PA_twist.ustrip("rad"), mge.PA_twist.ustrip("rad")
     )
+
+
+def _analytic_total_mass(
+    I: np.ndarray, sigma: np.ndarray, p: np.ndarray, q: np.ndarray  # noqa: E741, N803
+) -> np.ndarray:
+    return np.sum((2 * np.pi) ** 1.5 * sigma**3 * p * q * I)
+
+
+def test_mass_grid_shape():
+    mge = Deprojected3DMGE(
+        I=u.Quantity(jnp.array([3.0]), "Msun / kpc3"),
+        sigma=u.Quantity(jnp.array([2.0]), "kpc"),
+        p=u.Quantity(jnp.array([1.0]), ""),
+        q=u.Quantity(jnp.array([1.0]), ""),
+    )
+
+    grid = mge.mass_grid(
+        n_r=5,
+        n_theta=3,
+        n_phi=4,
+        r_min=u.Quantity(0.1, "kpc"),
+        r_max=u.Quantity(50.0, "kpc"),
+    )
+
+    assert grid.shape == (5, 3, 4)
+    assert grid.unit == u.unit("Msun")
+
+
+def test_mass_grid_conserves_total_mass_spherical():
+    # A spherical (p=q=1) component, checked against the closed-form total mass
+    # for a 3D Gaussian: (2 pi)^1.5 sigma^3 p q I.
+    mge = Deprojected3DMGE(
+        I=u.Quantity(jnp.array([3.0]), "Msun / kpc3"),
+        sigma=u.Quantity(jnp.array([2.0]), "kpc"),
+        p=u.Quantity(jnp.array([1.0]), ""),
+        q=u.Quantity(jnp.array([1.0]), ""),
+    )
+
+    grid = mge.mass_grid(
+        n_r=25,
+        n_theta=15,
+        n_phi=15,
+        r_min=u.Quantity(0.1, "kpc"),
+        r_max=u.Quantity(50.0, "kpc"),
+    )
+    total = 8 * jnp.sum(grid.ustrip("Msun"))
+
+    expected = _analytic_total_mass(
+        np.array([3.0]), np.array([2.0]), np.array([1.0]), np.array([1.0])
+    )
+    assert jnp.allclose(total, expected, rtol=1e-5)
+
+
+def test_mass_grid_conserves_total_mass_triaxial_multicomponent():
+    I = np.array([3.0, 1.5])  # noqa: E741, N806
+    sigma = np.array([2.0, 5.0])
+    p = np.array([0.8, 0.6])
+    q = np.array([0.5, 0.3])
+    mge = Deprojected3DMGE(
+        I=u.Quantity(jnp.asarray(I), "Msun / kpc3"),
+        sigma=u.Quantity(jnp.asarray(sigma), "kpc"),
+        p=u.Quantity(jnp.asarray(p), ""),
+        q=u.Quantity(jnp.asarray(q), ""),
+    )
+
+    grid = mge.mass_grid(
+        n_r=30,
+        n_theta=20,
+        n_phi=20,
+        r_min=u.Quantity(0.05, "kpc"),
+        r_max=u.Quantity(100.0, "kpc"),
+    )
+    total = 8 * jnp.sum(grid.ustrip("Msun"))
+
+    expected = _analytic_total_mass(I, sigma, p, q)
+    assert jnp.allclose(total, expected, rtol=1e-5)
+
+
+def test_mass_grid_rejects_too_few_radial_bins():
+    mge = Deprojected3DMGE(
+        I=u.Quantity(jnp.array([3.0]), "Msun / kpc3"),
+        sigma=u.Quantity(jnp.array([2.0]), "kpc"),
+        p=u.Quantity(jnp.array([1.0]), ""),
+        q=u.Quantity(jnp.array([1.0]), ""),
+    )
+
+    with pytest.raises(ValueError, match="n_r must be at least 2"):
+        mge.mass_grid(
+            n_r=1,
+            n_theta=3,
+            n_phi=3,
+            r_min=u.Quantity(0.1, "kpc"),
+            r_max=u.Quantity(50.0, "kpc"),
+        )

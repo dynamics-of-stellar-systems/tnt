@@ -8,10 +8,37 @@ from typing import ClassVar, Self
 import astropy.units as au
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from astropy.table import QTable
+from jax.scipy.special import erf
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt import units
+
+# Fixed-order Gauss-Legendre quadrature nodes/weights on [-1, 1], used for the
+# angular (theta, phi) integral in `Deprojected3DMGE.mass_grid`. A module-level
+# constant since the order doesn't depend on any call's inputs.
+_ANGULAR_QUAD_ORDER = 10
+_GAUSS_LEGENDRE_NODES, _GAUSS_LEGENDRE_WEIGHTS = np.polynomial.legendre.leggauss(
+    _ANGULAR_QUAD_ORDER
+)
+
+
+def _gaussian_radial_antiderivative(a: jnp.ndarray, r: jnp.ndarray) -> jnp.ndarray:
+    """Antiderivative of ``r**2 * exp(-a * r**2)`` with respect to ``r``.
+
+    Args:
+        a: The Gaussian's rate parameter (positive), broadcastable against `r`.
+        r: The radius (finite) at which to evaluate the antiderivative.
+
+    Returns:
+        ``integral_0^r r'**2 exp(-a r'**2) dr'`` up to the (shared, cancelling)
+        constant of integration -- i.e. valid for computing definite integrals
+        between finite radii, or between a finite radius and 0.
+    """
+    return -r / (2 * a) * jnp.exp(-a * r**2) + jnp.sqrt(jnp.pi) / (
+        4 * a**1.5
+    ) * erf(jnp.sqrt(a) * r)
 
 
 class AbstractMGE(eqx.Module):
@@ -326,6 +353,100 @@ class Deprojected3DMGE(eqx.Module):
     p: Quantity
     q: Quantity
 
+    def spherical_mass_grid(
+        self, n_r: int, n_theta: int, n_phi: int, r_min: Quantity, r_max: Quantity
+    ) -> Quantity:
+        """Mass in each cell of a spherical ``(r, theta, phi)`` grid, one octant.
+
+        The radial grid has `n_r` bins spanning ``(0, infinity)``: the innermost
+        bin is ``(0, r_min)``, the outermost is ``(r_max, infinity)``, and the
+        ``n_r - 2`` bins between them are logarithmically spaced from `r_min` to
+        `r_max`. Along any fixed direction the density is an exact 1D Gaussian in
+        ``r``, so every radial bin -- including the semi-infinite outermost one --
+        is integrated analytically via `erf`. The ``theta``/``phi`` integral within each
+        angular cell is done with fixed-order Gauss-Legendre quadrature.
+
+        Args:
+            n_r: Number of radial bins; must be at least 2.
+            n_theta: Number of polar-angle bins.
+            n_phi: Number of azimuthal-angle bins.
+            r_min: Inner edge of the logarithmically spaced radial region.
+            r_max: Outer edge of the logarithmically spaced radial region.
+
+        Returns:
+            A `Quantity` of shape ``(n_r, n_theta, n_phi)`` giving the mass in
+            each cell of the octant grid.
+
+        Raises:
+            ValueError: If `n_r` is less than 2.
+        """
+        if n_r < 2:
+            raise ValueError(f"n_r must be at least 2, got {n_r}")
+
+        length_unit = self.sigma.unit
+        r_min_v = r_min.ustrip(length_unit)
+        r_max_v = r_max.ustrip(length_unit)
+
+        interior_edges = jnp.geomspace(r_min_v, r_max_v, n_r - 1)
+        finite_edges = jnp.concatenate([jnp.zeros(1), interior_edges])  # (n_r,)
+
+        nodes = jnp.asarray(_GAUSS_LEGENDRE_NODES)
+        weights = jnp.asarray(_GAUSS_LEGENDRE_WEIGHTS)
+
+        theta_edges = jnp.linspace(0.0, jnp.pi / 2, n_theta + 1)
+        theta_lo, theta_hi = theta_edges[:-1], theta_edges[1:]
+        theta_mid, theta_half = (theta_hi + theta_lo) / 2, (theta_hi - theta_lo) / 2
+        theta_nodes = theta_mid[:, None] + theta_half[:, None] * nodes[None, :]
+        theta_weights = theta_half[:, None] * weights[None, :]  # (n_theta, Q)
+
+        phi_edges = jnp.linspace(0.0, jnp.pi / 2, n_phi + 1)
+        phi_lo, phi_hi = phi_edges[:-1], phi_edges[1:]
+        phi_mid, phi_half = (phi_hi + phi_lo) / 2, (phi_hi - phi_lo) / 2
+        phi_nodes = phi_mid[:, None] + phi_half[:, None] * nodes[None, :]
+        phi_weights = phi_half[:, None] * weights[None, :]  # (n_phi, Q)
+
+        sin_theta = jnp.sin(theta_nodes)  # (n_theta, Q)
+        cos_theta = jnp.cos(theta_nodes)
+        cos_phi = jnp.cos(phi_nodes)  # (n_phi, Q)
+        sin_phi = jnp.sin(phi_nodes)
+
+        # Direction-dependent factors of each component's rate parameter a(theta,
+        # phi), such that a * r**2 = (x**2 + y**2/p**2 + z**2/q**2) / (2 sigma**2)
+        # -- broadcast to (n_theta, Q, n_phi, Q).
+        x2 = (sin_theta[:, :, None, None] * cos_phi[None, None, :, :]) ** 2
+        y2 = (sin_theta[:, :, None, None] * sin_phi[None, None, :, :]) ** 2
+        z2 = jnp.broadcast_to(cos_theta[:, :, None, None] ** 2, x2.shape)
+
+        sigma = self.sigma.ustrip(length_unit)  # (G,)
+        p = self.p.ustrip("")  # (G,)
+        q = self.q.ustrip("")  # (G,)
+        I = self.I.ustrip(self.I.unit)  # noqa: E741, N806
+
+        # Add a leading components axis: (G, n_theta, Q, n_phi, Q).
+        shape = (-1, 1, 1, 1, 1)
+        a = (
+            x2 + y2 / p.reshape(shape) ** 2 + z2 / q.reshape(shape) ** 2
+        ) / (2 * sigma.reshape(shape) ** 2)
+
+        # Radial integral per component and direction, for every finite edge,
+        # then differenced into per-bin integrals; the last bin runs to infinity.
+        antideriv = _gaussian_radial_antiderivative(a[..., None], finite_edges)
+        finite_bins = antideriv[..., 1:] - antideriv[..., :-1]  # (..., n_r - 1)
+        full_integral = jnp.sqrt(jnp.pi) / (4 * a**1.5)
+        last_bin = full_integral - antideriv[..., -1]
+        radial = jnp.concatenate([finite_bins, last_bin[..., None]], axis=-1)
+
+        # Weight by each component's amplitude and sum over components.
+        r_integrand = jnp.sum(I.reshape(shape + (1,)) * radial, axis=0)
+        integrand = r_integrand * sin_theta[:, :, None, None, None]
+
+        mass = jnp.einsum(
+            "ja,kb,jakbn->njk", theta_weights, phi_weights, integrand
+        )
+
+        mass_unit = self.I.unit * length_unit**3
+        return Quantity(mass, mass_unit)
+
 
 _MGE_CLASSES: tuple[type[AbstractMGE], ...] = (LightMGE, MassMGE)
 
@@ -335,8 +456,7 @@ def read_mge(path: str | Path, unit_system: AbstractUnitSystem) -> AbstractMGE:
 
     The kind is inferred from the declared unit of the file's ``I`` column: whichever of
     `LightMGE` (power/angle**2) or `MassMGE` (mass/angle**2) it is dimensionally
-    consistent with. This makes the check meaningful -- a file with the wrong kind of
-    units for its intended use is rejected here, rather than silently accepted.
+    consistent with.
 
     Args:
         path: Path to the ECSV file.
