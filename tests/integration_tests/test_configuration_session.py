@@ -8,29 +8,17 @@ section at once, through the same lifecycle a real TNT execution uses.
 
 from pathlib import Path
 
-import yaml
-
 import tnt
 
-CONFIGURATION_PATH = Path(__file__).with_name("configuration.yaml")
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def test_configuration_session_resolves_full_example_configuration(
+    example_configuration_path: Path,
     tmp_path: Path,
 ) -> None:
-    # Point input_directory at the real fixtures directory (output_directory
-    # stays under tmp_path, so nothing is written into the repo) by writing a
-    # copy of the example configuration with that one field overridden --
-    # nothing in this module actually reads from input_directory yet, but a
-    # real, existing path here is still more honest than a placeholder.
-    raw_config = yaml.safe_load(CONFIGURATION_PATH.read_text(encoding="utf-8"))
-    raw_config["io_settings"]["input_directory"] = str(FIXTURES_DIR)
-    user_config_path = tmp_path / "configuration.yaml"
-    user_config_path.write_text(yaml.safe_dump(raw_config), encoding="utf-8")
-
     with tnt.configuration_session(
-        user_config_path, workspace_root=tmp_path
+        example_configuration_path, workspace_root=tmp_path
     ) as config:
         assert isinstance(config, tnt.Configuration)
 

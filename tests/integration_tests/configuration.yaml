@@ -9,7 +9,7 @@ system_attributes:
   name: "NGC6278"
 
 MGEs:
-  mge_lum: "mge.ecsv"
+  mge_lum: "mge_lum.ecsv"
 
 spatial_binnings:
   kinset1_binning:
