@@ -9,7 +9,7 @@ import unxt as u
 
 from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, SphericalGrid, read_mge
 
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
+FIXTURES_DIR = Path(__file__).parents[1] / "integration_tests" / "fixtures"
 
 
 def _internal_unit_system() -> u.AbstractUnitSystem:

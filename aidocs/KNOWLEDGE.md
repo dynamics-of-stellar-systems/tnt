@@ -206,9 +206,11 @@
 - Worker processes call `tnt.configure_worker_logging()` with the parent
   session's queue. Only the parent listener writes to the logfile and terminal,
   avoiding concurrent writes from multiple processes.
-- `dev_tests/config_test.py` demonstrates the bootstrap lifecycle with
-  `tnt.configuration_session()`; running it records configuration preparation
-  below the configured output directory while printing the resolved YAML.
+- `tests/integration_tests/test_configuration_session.py` exercises the
+  bootstrap lifecycle with `tnt.configuration_session()` against a complete
+  example profile (`configuration.yaml`, alongside it), covering every
+  top-level configuration section at once, unlike the synthetic per-feature
+  configurations in `tests/unit_tests/test_configuration.py`.
 
 ## Relationship to DYNAMITE
 
