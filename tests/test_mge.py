@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import unxt as u
 
-from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, read_mge
+from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, SphericalGrid, read_mge
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -457,15 +457,8 @@ def _analytic_total_mass(
     return np.sum((2 * np.pi) ** 1.5 * sigma**3 * p * q * I)
 
 
-def test_mass_grid_shape():
-    mge = Deprojected3DMGE(
-        I=u.Quantity(jnp.array([3.0]), "Msun / kpc3"),
-        sigma=u.Quantity(jnp.array([2.0]), "kpc"),
-        p=u.Quantity(jnp.array([1.0]), ""),
-        q=u.Quantity(jnp.array([1.0]), ""),
-    )
-
-    grid = mge.mass_grid(
+def test_spherical_grid_init_shapes_and_bounds():
+    grid = SphericalGrid(
         n_r=5,
         n_theta=3,
         n_phi=4,
@@ -473,11 +466,69 @@ def test_mass_grid_shape():
         r_max=u.Quantity(50.0, "kpc"),
     )
 
-    assert grid.shape == (5, 3, 4)
-    assert grid.unit == u.unit("Msun")
+    assert (grid.n_r, grid.n_theta, grid.n_phi) == (5, 3, 4)
+    assert grid.r_edges.shape == (6,)
+    assert grid.cos_theta_edges.shape == (4,)
+    assert grid.phi_edges.shape == (5,)
+
+    assert grid.r_edges.ustrip("kpc")[0] == 0.0
+    assert jnp.isinf(grid.r_edges.ustrip("kpc")[-1])
+    assert jnp.allclose(grid.cos_theta_edges.ustrip("")[0], 1.0)
+    assert jnp.allclose(grid.cos_theta_edges.ustrip("")[-1], 0.0)
+    assert jnp.allclose(grid.phi_edges.ustrip("rad")[0], 0.0)
+    assert jnp.allclose(grid.phi_edges.ustrip("rad")[-1], jnp.pi / 2)
 
 
-def test_mass_grid_conserves_total_mass_spherical():
+def test_spherical_grid_init_n_r_3_uses_both_r_min_and_r_max():
+    # With the minimum allowed n_r=3, the two interior edges are exactly
+    # r_min and r_max -- neither bound is silently dropped.
+    grid = SphericalGrid(
+        n_r=3,
+        n_theta=3,
+        n_phi=3,
+        r_min=u.Quantity(0.1, "kpc"),
+        r_max=u.Quantity(50.0, "kpc"),
+    )
+
+    assert jnp.allclose(
+        grid.r_edges.ustrip("kpc"), jnp.array([0.0, 0.1, 50.0, jnp.inf])
+    )
+
+
+@pytest.mark.parametrize("n_r", [1, 2])
+def test_spherical_grid_init_rejects_too_few_radial_bins(n_r):
+    with pytest.raises(ValueError, match="n_r must be at least 3"):
+        SphericalGrid(
+            n_r=n_r,
+            n_theta=3,
+            n_phi=3,
+            r_min=u.Quantity(0.1, "kpc"),
+            r_max=u.Quantity(50.0, "kpc"),
+        )
+
+
+def test_spherical_mass_grid_shape():
+    mge = Deprojected3DMGE(
+        I=u.Quantity(jnp.array([3.0]), "Msun / kpc3"),
+        sigma=u.Quantity(jnp.array([2.0]), "kpc"),
+        p=u.Quantity(jnp.array([1.0]), ""),
+        q=u.Quantity(jnp.array([1.0]), ""),
+    )
+    grid = SphericalGrid(
+        n_r=5,
+        n_theta=3,
+        n_phi=4,
+        r_min=u.Quantity(0.1, "kpc"),
+        r_max=u.Quantity(50.0, "kpc"),
+    )
+
+    masses = mge.spherical_mass_grid(grid)
+
+    assert masses.shape == (5, 3, 4)
+    assert masses.unit == u.unit("Msun")
+
+
+def test_spherical_mass_grid_conserves_total_mass_for_spherical_component():
     # A spherical (p=q=1) component, checked against the closed-form total mass
     # for a 3D Gaussian: (2 pi)^1.5 sigma^3 p q I.
     mge = Deprojected3DMGE(
@@ -486,15 +537,16 @@ def test_mass_grid_conserves_total_mass_spherical():
         p=u.Quantity(jnp.array([1.0]), ""),
         q=u.Quantity(jnp.array([1.0]), ""),
     )
-
-    grid = mge.mass_grid(
+    grid = SphericalGrid(
         n_r=25,
         n_theta=15,
         n_phi=15,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
     )
-    total = 8 * jnp.sum(grid.ustrip("Msun"))
+
+    masses = mge.spherical_mass_grid(grid)
+    total = 8 * jnp.sum(masses.ustrip("Msun"))
 
     expected = _analytic_total_mass(
         np.array([3.0]), np.array([2.0]), np.array([1.0]), np.array([1.0])
@@ -502,7 +554,7 @@ def test_mass_grid_conserves_total_mass_spherical():
     assert jnp.allclose(total, expected, rtol=1e-5)
 
 
-def test_mass_grid_conserves_total_mass_triaxial_multicomponent():
+def test_spherical_mass_grid_conserves_total_mass_for_triaxial_multicomponent():
     I = np.array([3.0, 1.5])  # noqa: E741, N806
     sigma = np.array([2.0, 5.0])
     p = np.array([0.8, 0.6])
@@ -513,33 +565,44 @@ def test_mass_grid_conserves_total_mass_triaxial_multicomponent():
         p=u.Quantity(jnp.asarray(p), ""),
         q=u.Quantity(jnp.asarray(q), ""),
     )
-
-    grid = mge.mass_grid(
+    grid = SphericalGrid(
         n_r=30,
         n_theta=20,
         n_phi=20,
         r_min=u.Quantity(0.05, "kpc"),
         r_max=u.Quantity(100.0, "kpc"),
     )
-    total = 8 * jnp.sum(grid.ustrip("Msun"))
+
+    masses = mge.spherical_mass_grid(grid)
+    total = 8 * jnp.sum(masses.ustrip("Msun"))
 
     expected = _analytic_total_mass(I, sigma, p, q)
     assert jnp.allclose(total, expected, rtol=1e-5)
 
 
-def test_mass_grid_rejects_too_few_radial_bins():
+def test_spherical_mass_grid_reusable_across_components_with_different_length_units():
+    # The grid's own length unit need not match sigma's -- spherical_mass_grid
+    # should convert internally, so the same grid can bin quantities from MGEs
+    # expressed in different (but compatible) length units.
     mge = Deprojected3DMGE(
-        I=u.Quantity(jnp.array([3.0]), "Msun / kpc3"),
-        sigma=u.Quantity(jnp.array([2.0]), "kpc"),
+        I=u.Quantity(jnp.array([3.0]), "Msun / pc3"),
+        sigma=u.Quantity(jnp.array([2000.0]), "pc"),
         p=u.Quantity(jnp.array([1.0]), ""),
         q=u.Quantity(jnp.array([1.0]), ""),
     )
+    grid = SphericalGrid(
+        n_r=25,
+        n_theta=15,
+        n_phi=15,
+        r_min=u.Quantity(0.1, "kpc"),
+        r_max=u.Quantity(50.0, "kpc"),
+    )
 
-    with pytest.raises(ValueError, match="n_r must be at least 2"):
-        mge.mass_grid(
-            n_r=1,
-            n_theta=3,
-            n_phi=3,
-            r_min=u.Quantity(0.1, "kpc"),
-            r_max=u.Quantity(50.0, "kpc"),
-        )
+    masses = mge.spherical_mass_grid(grid)
+    total = 8 * jnp.sum(masses.ustrip("Msun"))
+
+    # sigma and I here, in mutually consistent pc-based units.
+    expected = _analytic_total_mass(
+        np.array([3.0]), np.array([2000.0]), np.array([1.0]), np.array([1.0])
+    )
+    assert jnp.allclose(total, expected, rtol=1e-5)

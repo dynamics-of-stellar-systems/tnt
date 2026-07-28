@@ -15,31 +15,6 @@ from unxt import AbstractUnitSystem, Quantity
 
 from tnt import units
 
-# Fixed-order Gauss-Legendre quadrature nodes/weights on [-1, 1], used for the
-# angular (theta, phi) integral in `Deprojected3DMGE.mass_grid`. A module-level
-# constant since the order doesn't depend on any call's inputs.
-_ANGULAR_QUAD_ORDER = 10
-_GAUSS_LEGENDRE_NODES, _GAUSS_LEGENDRE_WEIGHTS = np.polynomial.legendre.leggauss(
-    _ANGULAR_QUAD_ORDER
-)
-
-
-def _gaussian_radial_antiderivative(a: jnp.ndarray, r: jnp.ndarray) -> jnp.ndarray:
-    """Antiderivative of ``r**2 * exp(-a * r**2)`` with respect to ``r``.
-
-    Args:
-        a: The Gaussian's rate parameter (positive), broadcastable against `r`.
-        r: The radius (finite) at which to evaluate the antiderivative.
-
-    Returns:
-        ``integral_0^r r'**2 exp(-a r'**2) dr'`` up to the (shared, cancelling)
-        constant of integration -- i.e. valid for computing definite integrals
-        between finite radii, or between a finite radius and 0.
-    """
-    return -r / (2 * a) * jnp.exp(-a * r**2) + jnp.sqrt(jnp.pi) / (
-        4 * a**1.5
-    ) * erf(jnp.sqrt(a) * r)
-
 
 class AbstractMGE(eqx.Module):
     """Shared structure and behaviour for MGE models.
@@ -337,6 +312,97 @@ class MassMGE(AbstractMGE):
     _intensity_attr: ClassVar[str] = "mass"
 
 
+# Fixed-order Gauss-Legendre quadrature nodes/weights on [-1, 1], used for the
+# angular (theta, phi) integral in `Deprojected3DMGE.spherical_mass_grid`. A
+# module-level constant since the order doesn't depend on any call's inputs.
+_ANGULAR_QUAD_ORDER = 10
+_GAUSS_LEGENDRE_NODES, _GAUSS_LEGENDRE_WEIGHTS = np.polynomial.legendre.leggauss(
+    _ANGULAR_QUAD_ORDER
+)
+
+
+def _gaussian_radial_antiderivative(a: jnp.ndarray, r: jnp.ndarray) -> jnp.ndarray:
+    """Antiderivative of ``r**2 * exp(-a * r**2)`` with respect to ``r``.
+
+    Args:
+        a: The Gaussian's rate parameter (positive), broadcastable against `r`.
+        r: The radius (finite) at which to evaluate the antiderivative.
+
+    Returns:
+        ``integral_0^r r'**2 exp(-a r'**2) dr'`` up to the (shared, cancelling)
+        constant of integration -- i.e. valid for computing definite integrals
+        between finite radii, or between a finite radius and 0.
+    """
+    return -r / (2 * a) * jnp.exp(-a * r**2) + jnp.sqrt(jnp.pi) / (
+        4 * a**1.5
+    ) * erf(jnp.sqrt(a) * r)
+
+
+class SphericalGrid(eqx.Module):
+    """Cell edges of a spherical ``(r, theta, phi)`` grid, one octant.
+
+    `r_edges` has ``n_r + 1`` edges bounding ``n_r`` bins spanning ``(0,
+    infinity)``: ``r_edges[0] == 0``, ``r_edges[-1] == inf``, and the bins
+    between are logarithmically spaced from `r_min` to `r_max`.
+
+    `theta` bins (`cos_theta_edges`, ``n_theta + 1`` edges) are spaced linearly
+    in ``cos(theta)`` rather than `theta` itself -- from ``cos(0) = 1`` to
+    ``cos(pi/2) = 0`` -- so that every (theta, phi) cell spans equal solid
+    angle at fixed r. Quenneville, Liepold & Ma (2021) sec. 4.4 found this 
+    necessary to avoid under-sampling mass near the poles.
+    
+    `phi_edges` (``n_phi + 1`` edges) is linearly spaced over ``[0,pi/2]``.
+    """
+
+    r_edges: Quantity
+    cos_theta_edges: Quantity
+    phi_edges: Quantity
+
+    def __init__(
+        self, n_r: int, n_theta: int, n_phi: int, r_min: Quantity, r_max: Quantity
+    ) -> None:
+        """Build the grid's cell edges.
+
+        Args:
+            n_r: Number of radial bins; must be at least 2.
+            n_theta: Number of polar-angle bins.
+            n_phi: Number of azimuthal-angle bins.
+            r_min: Inner edge of the logarithmically spaced radial region.
+            r_max: Outer edge of the logarithmically spaced radial region.
+
+        Raises:
+            ValueError: If `n_r` is less than 3. (With only 2 bins, the single
+                interior edge can't be both `r_min` and `r_max`.)
+        """
+        if n_r < 3:
+            raise ValueError(f"n_r must be at least 3, got {n_r}")
+
+        length_unit = r_min.unit
+        r_min_v = r_min.ustrip(length_unit)
+        r_max_v = r_max.ustrip(length_unit)
+
+        interior_edges = jnp.geomspace(r_min_v, r_max_v, n_r - 1)
+        r_edges = jnp.concatenate(
+            [jnp.zeros(1), interior_edges, jnp.array([jnp.inf])]
+        )
+
+        self.r_edges = Quantity(r_edges, length_unit)
+        self.cos_theta_edges = Quantity(jnp.linspace(1.0, 0.0, n_theta + 1), "")
+        self.phi_edges = Quantity(jnp.linspace(0.0, jnp.pi / 2, n_phi + 1), "rad")
+
+    @property
+    def n_r(self) -> int:
+        return self.r_edges.shape[0] - 1
+
+    @property
+    def n_theta(self) -> int:
+        return self.cos_theta_edges.shape[0] - 1
+
+    @property
+    def n_phi(self) -> int:
+        return self.phi_edges.shape[0] - 1
+
+
 class Deprojected3DMGE(eqx.Module):
     """An intrinsic (3D) MGE, produced by deprojecting a `LightMGE`/`MassMGE`.
 
@@ -353,60 +419,49 @@ class Deprojected3DMGE(eqx.Module):
     p: Quantity
     q: Quantity
 
-    def spherical_mass_grid(
-        self, n_r: int, n_theta: int, n_phi: int, r_min: Quantity, r_max: Quantity
-    ) -> Quantity:
-        """Mass in each cell of a spherical ``(r, theta, phi)`` grid, one octant.
+    def spherical_mass_grid(self, grid: SphericalGrid) -> Quantity:
+        """Mass in each cell of a `SphericalGrid` (one octant).
 
-        The radial grid has `n_r` bins spanning ``(0, infinity)``: the innermost
-        bin is ``(0, r_min)``, the outermost is ``(r_max, infinity)``, and the
-        ``n_r - 2`` bins between them are logarithmically spaced from `r_min` to
-        `r_max`. Along any fixed direction the density is an exact 1D Gaussian in
-        ``r``, so every radial bin -- including the semi-infinite outermost one --
-        is integrated analytically via `erf`. The ``theta``/``phi`` integral within each
-        angular cell is done with fixed-order Gauss-Legendre quadrature.
+        Along any fixed direction the density is an exact 1D Gaussian in ``r``,
+        so every radial bin -- including the semi-infinite outermost one -- is
+        integrated analytically via `erf`. The ``theta``/``phi`` integral within
+        each angular cell is done with fixed-order Gauss-Legendre quadrature.
 
         Args:
-            n_r: Number of radial bins; must be at least 2.
-            n_theta: Number of polar-angle bins.
-            n_phi: Number of azimuthal-angle bins.
-            r_min: Inner edge of the logarithmically spaced radial region.
-            r_max: Outer edge of the logarithmically spaced radial region.
+            grid: The spherical grid to bin the mass into, from
+                `SphericalGrid`.
 
         Returns:
-            A `Quantity` of shape ``(n_r, n_theta, n_phi)`` giving the mass in
-            each cell of the octant grid.
-
-        Raises:
-            ValueError: If `n_r` is less than 2.
+            A `Quantity` of shape ``(grid.n_r, grid.n_theta, grid.n_phi)``
+            giving the mass in each cell of the octant grid.
         """
-        if n_r < 2:
-            raise ValueError(f"n_r must be at least 2, got {n_r}")
-
-        length_unit = self.sigma.unit
-        r_min_v = r_min.ustrip(length_unit)
-        r_max_v = r_max.ustrip(length_unit)
-
-        interior_edges = jnp.geomspace(r_min_v, r_max_v, n_r - 1)
-        finite_edges = jnp.concatenate([jnp.zeros(1), interior_edges])  # (n_r,)
+        length_unit = grid.r_edges.unit
+        finite_edges = grid.r_edges.ustrip(length_unit)[:-1]  # drop the r=inf edge
 
         nodes = jnp.asarray(_GAUSS_LEGENDRE_NODES)
         weights = jnp.asarray(_GAUSS_LEGENDRE_WEIGHTS)
 
-        theta_edges = jnp.linspace(0.0, jnp.pi / 2, n_theta + 1)
-        theta_lo, theta_hi = theta_edges[:-1], theta_edges[1:]
-        theta_mid, theta_half = (theta_hi + theta_lo) / 2, (theta_hi - theta_lo) / 2
-        theta_nodes = theta_mid[:, None] + theta_half[:, None] * nodes[None, :]
-        theta_weights = theta_half[:, None] * weights[None, :]  # (n_theta, Q)
+        # The sin(theta) dtheta Jacobian is exactly -d(cos(theta)), so
+        # quadrature nodes/weights in cos(theta) already include it -- no extra
+        # sin(theta) factor is needed when this is later contracted against the
+        # integrand.
+        cos_theta_edges = grid.cos_theta_edges.ustrip("")
+        cos_theta_lo, cos_theta_hi = cos_theta_edges[1:], cos_theta_edges[:-1]
+        cos_theta_mid = (cos_theta_hi + cos_theta_lo) / 2
+        cos_theta_half = (cos_theta_hi - cos_theta_lo) / 2
+        cos_theta_nodes = (
+            cos_theta_mid[:, None] + cos_theta_half[:, None] * nodes[None, :]
+        )
+        theta_weights = cos_theta_half[:, None] * weights[None, :]  # (n_theta, Q)
 
-        phi_edges = jnp.linspace(0.0, jnp.pi / 2, n_phi + 1)
+        phi_edges = grid.phi_edges.ustrip("rad")
         phi_lo, phi_hi = phi_edges[:-1], phi_edges[1:]
         phi_mid, phi_half = (phi_hi + phi_lo) / 2, (phi_hi - phi_lo) / 2
         phi_nodes = phi_mid[:, None] + phi_half[:, None] * nodes[None, :]
         phi_weights = phi_half[:, None] * weights[None, :]  # (n_phi, Q)
 
-        sin_theta = jnp.sin(theta_nodes)  # (n_theta, Q)
-        cos_theta = jnp.cos(theta_nodes)
+        cos_theta = cos_theta_nodes  # (n_theta, Q)
+        sin_theta = jnp.sqrt(1 - cos_theta_nodes**2)
         cos_phi = jnp.cos(phi_nodes)  # (n_phi, Q)
         sin_phi = jnp.sin(phi_nodes)
 
@@ -436,9 +491,10 @@ class Deprojected3DMGE(eqx.Module):
         last_bin = full_integral - antideriv[..., -1]
         radial = jnp.concatenate([finite_bins, last_bin[..., None]], axis=-1)
 
-        # Weight by each component's amplitude and sum over components.
-        r_integrand = jnp.sum(I.reshape(shape + (1,)) * radial, axis=0)
-        integrand = r_integrand * sin_theta[:, :, None, None, None]
+        # Weight by each component's amplitude and sum over components. No
+        # explicit sin(theta) factor is needed here: theta_weights already
+        # include it, via the cos(theta) quadrature above.
+        integrand = jnp.sum(I.reshape(shape + (1,)) * radial, axis=0)
 
         mass = jnp.einsum(
             "ja,kb,jakbn->njk", theta_weights, phi_weights, integrand
