@@ -25,8 +25,12 @@ MGEs:
   light: luminosity.ecsv
 spatial_binnings:
   observed:
-    aperture_file: aperture.dat
-    bin_file: bins.dat
+    min_x: {{value: -29.5, unit: "arcsec"}}
+    min_y: {{value: -26.5, unit: "arcsec"}}
+    x_extent: {{value: 58.0, unit: "arcsec"}}
+    y_extent: {{value: 52.0, unit: "arcsec"}}
+    PA: {{value: 126.0, unit: "deg"}}
+    bins_file: bins.npy
 potential:
   stars:
     type: triaxial_light_mge

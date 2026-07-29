@@ -15,6 +15,7 @@ from jax.scipy.special import erf
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt import quantity_conversions
+from tnt.spatial_binnings import SphericalGrid
 
 
 class AbstractMGE(eqx.Module):
@@ -105,25 +106,6 @@ class AbstractMGE(eqx.Module):
 
         return type(self)(
             I=I_physical, sigma=sigma_physical, q=self.q, PA_twist=self.PA_twist
-        )
-
-    def physical_to_angular(self, distance: Quantity) -> Self:
-        """Convert `sigma` and `I` from physical (length) to angular units.
-
-        Inverse of `angular_to_physical`.
-
-        Args:
-            distance: The distance to the object.
-
-        Returns:
-            A new MGE with `sigma` in radians and `I` converted to match.
-        """
-        sigma_angular = quantity_conversions.physical_to_angular(self.sigma, distance)
-        solid_angle = Quantity(1.0, f"{sigma_angular.unit}2")
-        I_angular = self.I * distance**2 / solid_angle  # noqa: N806
-
-        return type(self)(
-            I=I_angular, sigma=sigma_angular, q=self.q, PA_twist=self.PA_twist
         )
 
     def deproject_axisymmetric(self, inclination: Quantity) -> Deprojected3DMGE:
@@ -337,71 +319,6 @@ def _gaussian_radial_antiderivative(a: jnp.ndarray, r: jnp.ndarray) -> jnp.ndarr
     return -r / (2 * a) * jnp.exp(-a * r**2) + jnp.sqrt(jnp.pi) / (
         4 * a**1.5
     ) * erf(jnp.sqrt(a) * r)
-
-
-class SphericalGrid(eqx.Module):
-    """Cell edges of a spherical ``(r, theta, phi)`` grid, one octant.
-
-    `r_edges` has ``n_r + 1`` edges bounding ``n_r`` bins spanning ``(0,
-    infinity)``: ``r_edges[0] == 0``, ``r_edges[-1] == inf``, and the bins
-    between are logarithmically spaced from `r_min` to `r_max`.
-
-    `theta` bins (`cos_theta_edges`, ``n_theta + 1`` edges) are spaced linearly
-    in ``cos(theta)`` rather than `theta` itself -- from ``cos(0) = 1`` to
-    ``cos(pi/2) = 0`` -- so that every (theta, phi) cell spans equal solid
-    angle at fixed r. Quenneville, Liepold & Ma (2021) sec. 4.4 found this 
-    necessary to avoid under-sampling mass near the poles.
-    
-    `phi_edges` (``n_phi + 1`` edges) is linearly spaced over ``[0,pi/2]``.
-    """
-
-    r_edges: Quantity
-    cos_theta_edges: Quantity
-    phi_edges: Quantity
-
-    def __init__(
-        self, n_r: int, n_theta: int, n_phi: int, r_min: Quantity, r_max: Quantity
-    ) -> None:
-        """Build the grid's cell edges.
-
-        Args:
-            n_r: Number of radial bins; must be at least 2.
-            n_theta: Number of polar-angle bins.
-            n_phi: Number of azimuthal-angle bins.
-            r_min: Inner edge of the logarithmically spaced radial region.
-            r_max: Outer edge of the logarithmically spaced radial region.
-
-        Raises:
-            ValueError: If `n_r` is less than 3. (With only 2 bins, the single
-                interior edge can't be both `r_min` and `r_max`.)
-        """
-        if n_r < 3:
-            raise ValueError(f"n_r must be at least 3, got {n_r}")
-
-        length_unit = r_min.unit
-        r_min_v = r_min.ustrip(length_unit)
-        r_max_v = r_max.ustrip(length_unit)
-
-        interior_edges = jnp.geomspace(r_min_v, r_max_v, n_r - 1)
-        r_edges = jnp.concatenate(
-            [jnp.zeros(1), interior_edges, jnp.array([jnp.inf])]
-        )
-
-        self.r_edges = Quantity(r_edges, length_unit)
-        self.cos_theta_edges = Quantity(jnp.linspace(1.0, 0.0, n_theta + 1), "")
-        self.phi_edges = Quantity(jnp.linspace(0.0, jnp.pi / 2, n_phi + 1), "rad")
-
-    @property
-    def n_r(self) -> int:
-        return self.r_edges.shape[0] - 1
-
-    @property
-    def n_theta(self) -> int:
-        return self.cos_theta_edges.shape[0] - 1
-
-    @property
-    def n_phi(self) -> int:
-        return self.phi_edges.shape[0] - 1
 
 
 class Deprojected3DMGE(eqx.Module):

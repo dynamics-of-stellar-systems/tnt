@@ -11,10 +11,10 @@ from tnt.mge import (
     Deprojected3DMGE,
     LightMGE,
     MassMGE,
-    SphericalGrid,
     build_mges,
     read_mge,
 )
+from tnt.spatial_binnings import SphericalGrid
 
 
 def _internal_unit_system() -> u.AbstractUnitSystem:
@@ -74,11 +74,11 @@ def _multi_component_light_mge() -> LightMGE:
     tests that just need some realistic LightMGE to operate on, as opposed to
     testing file-reading behaviour itself.
 
-    `angular_to_physical`/`physical_to_angular` only give correct results for
-    an angle unit of exactly "rad" (their `solid_angle` shortcut assumes it),
-    which is why this doesn't just store the raw arcsec/deg values directly:
-    real MGEs are always converted to "rad" by `.read()` before those methods
-    would ever see them.
+    `angular_to_physical` only gives correct results for an angle unit of
+    exactly "rad" (its `solid_angle` shortcut assumes it), which is why this
+    doesn't just store the raw arcsec/deg values directly: real MGEs are
+    always converted to "rad" by `.read()` before that method would ever see
+    them.
     """
     intensity, sigma, q, pa_twist = zip(*_LIGHT_ROWS, strict=True)
     sigma_arcsec = u.Quantity(jnp.array(sigma), "arcsec")
@@ -513,22 +513,6 @@ def test_angular_to_physical_leaves_q_and_pa_twist_unchanged():
     assert jnp.allclose(physical.q.ustrip(""), mge.q.ustrip(""))
     assert jnp.allclose(
         physical.PA_twist.ustrip("rad"), mge.PA_twist.ustrip("rad")
-    )
-
-
-def test_angular_physical_round_trip():
-    mge = _multi_component_light_mge()
-    distance = u.Quantity(30.5, "Mpc")
-
-    round_tripped = mge.angular_to_physical(distance).physical_to_angular(distance)
-
-    assert jnp.allclose(round_tripped.sigma.ustrip("rad"), mge.sigma.ustrip("rad"))
-    assert jnp.allclose(
-        round_tripped.I.ustrip("Lsun / rad2"), mge.I.ustrip("Lsun / rad2")
-    )
-    assert jnp.allclose(round_tripped.q.ustrip(""), mge.q.ustrip(""))
-    assert jnp.allclose(
-        round_tripped.PA_twist.ustrip("rad"), mge.PA_twist.ustrip("rad")
     )
 
 
