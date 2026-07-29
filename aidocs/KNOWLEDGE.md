@@ -55,6 +55,11 @@
   `pyproject.toml`: the latest available JAX wheel is in the 0.4 series, and
   `unxt` 1.1.1 requires matching older Quax, Quaxed, Plum, Astropy, and NumPy
   APIs on that platform.
+- Retrieve units from `unxt` unit systems by physical dimension rather than
+  generated attribute names. In particular, the luminosity dimension is
+  exposed as `radiant_flux` by the Intel-macOS `unxt` stack and as `power` by
+  newer versions; dimension-based lookup supports both without platform
+  branching.
 - Mapping values merge recursively, while user scalars and lists replace
   defaults. User values have final precedence. Schema-only
   `dynamic_object_defaults` and `kinematics_type_defaults` sections are
