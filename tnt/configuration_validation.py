@@ -216,52 +216,18 @@ def _validate_mges(mges: ConfigDict) -> set[str]:
 
 
 def _validate_spatial_binnings(binnings: ConfigDict) -> set[str]:
-    """Validate reusable projected-plane aperture-and-bin definitions.
+    """Collect the names of reusable projected-plane binning definitions.
 
-    `min_x`, `min_y`, `x_extent`, `y_extent`, and `PA` are checked here only
-    structurally (each an explicit ``{value, unit}`` mapping with a numeric
-    value). Whether the declared unit is a valid, angle-dimensioned unit is
-    checked later, when `tnt.spatial_binnings.build_spatial_binnings`
-    actually constructs a `ProjectedBinning` -- mirroring how an MGE's column
-    units are only checked when its file is actually read, not at
-    configuration-validation time. `bins_file` names a ``.npy`` file
-    (relative to ``io_settings.input_directory``) holding a 2D
-    ``(npix_x, npix_y)`` array of integer bin IDs, so pixel counts are
-    inferred from that array's shape rather than declared here.
+    Each binning's own fields are validated by `ProjectedBinning` itself
+    (see `tnt.spatial_binnings.ProjectedBinning.from_settings`) rather than
+    here -- this only collects names so other sections can validate their
+    ``spatial_binnings`` references against a known registry.
     """
     path = "spatial_binnings"
     names: set[str] = set()
-    keys = {"min_x", "min_y", "x_extent", "y_extent", "PA", "bins_file"}
-    for name, binning_value in binnings.items():
-        name = _dynamic_name(name, path)
-        binning_path = f"{path}.{name}"
-        binning = _require_mapping(binning_value, binning_path)
-        _reject_unknown_keys(binning, keys, binning_path)
-        _require_keys(binning, keys, binning_path)
-        for key in ("min_x", "min_y", "PA"):
-            _explicit_quantity(binning[key], f"{binning_path}.{key}", positive=False)
-        for key in ("x_extent", "y_extent"):
-            _explicit_quantity(binning[key], f"{binning_path}.{key}", positive=True)
-        _nonempty_string(binning["bins_file"], f"{binning_path}.bins_file")
-        names.add(name)
+    for name in binnings:
+        names.add(_dynamic_name(name, path))
     return names
-
-
-def _explicit_quantity(value: Any, path: str, *, positive: bool) -> None:
-    """Check an explicit ``{value, unit}`` mapping's shape, not its unit.
-
-    The unit string itself is left unvalidated here -- unit parsing and
-    dimension checking happen later, wherever the value is actually
-    converted into a unit system's units.
-    """
-    mapping = _require_mapping(value, path)
-    _reject_unknown_keys(mapping, {"value", "unit"}, path)
-    _require_keys(mapping, {"value", "unit"}, path)
-    if positive:
-        _positive_number(mapping["value"], f"{path}.value")
-    else:
-        _number(mapping["value"], f"{path}.value")
-    _nonempty_string(mapping["unit"], f"{path}.unit")
 
 
 def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
