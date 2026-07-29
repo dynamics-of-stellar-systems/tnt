@@ -9,7 +9,6 @@ from typing import ClassVar, Self
 import astropy.units as au
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 from astropy.table import QTable
 from jax.ops import segment_sum
 from jax.scipy.special import erf
@@ -17,16 +16,6 @@ from unxt import AbstractUnitSystem, Quantity
 
 from tnt import quantity_conversions
 from tnt.spatial_binnings import ProjectedBinning, SphericalGrid
-
-# Fixed-order Gauss-Legendre quadrature nodes/weights on [-1, 1], shared by
-# every integral in this module that isn't fully analytic: the aperture-pixel
-# integral in `AbstractMGE.get_projected_mass`, and the angular (theta, phi)
-# integral in `Deprojected3DMGE.spherical_mass_grid`. A module-level constant
-# since the order doesn't depend on any call's inputs.
-_QUAD_ORDER = 10
-_GAUSS_LEGENDRE_NODES, _GAUSS_LEGENDRE_WEIGHTS = np.polynomial.legendre.leggauss(
-    _QUAD_ORDER
-)
 
 
 class AbstractMGE(eqx.Module):
@@ -153,22 +142,6 @@ class AbstractMGE(eqx.Module):
                 coordinates aren't dimensionally consistent.
         """
         coord_unit = binning.min_x.unit
-        x_edges = binning.min_x.ustrip(coord_unit) + jnp.linspace(
-            0.0, binning.x_extent.ustrip(coord_unit), binning.npix_x + 1
-        )
-        y_edges = binning.min_y.ustrip(coord_unit) + jnp.linspace(
-            0.0, binning.y_extent.ustrip(coord_unit), binning.npix_y + 1
-        )
-
-        nodes = jnp.asarray(_GAUSS_LEGENDRE_NODES)
-        weights = jnp.asarray(_GAUSS_LEGENDRE_WEIGHTS)
-
-        x_lo, x_hi = x_edges[:-1], x_edges[1:]
-        x_mid, x_half = (x_hi + x_lo) / 2, (x_hi - x_lo) / 2
-        x_nodes = x_mid[:, None] + x_half[:, None] * nodes[None, :]  # (Nx, Q)
-        x_weights = x_half[:, None] * weights[None, :]  # (Nx, Q)
-
-        y_lo, y_hi = y_edges[:-1], y_edges[1:]  # (Ny,)
 
         # Add a leading components axis: everything below broadcasts to
         # (G, Nx, Q, Ny).
@@ -186,22 +159,22 @@ class AbstractMGE(eqx.Module):
         # intrinsic axial ratio `p`, just reusing the paper's own notation.
         cappellari_p = jnp.sqrt(1 + q**2 + (1 - q**2) * jnp.cos(2 * alpha))
 
-        x = x_nodes[None, :, :, None]  # (1, Nx, Q, 1)
+        x = binning.x_nodes[None, :, :, None]  # (1, Nx, Q, 1)
 
         def erf_arg(y: jnp.ndarray) -> jnp.ndarray:
             return ((1 - q**2) * x * jnp.sin(2 * alpha) - cappellari_p**2 * y) / (
                 2 * cappellari_p * q * sigma
             )
 
-        erf_diff = erf_arg(y_lo[None, None, None, :])
-        erf_diff = erf(erf_diff) - erf(erf_arg(y_hi[None, None, None, :]))
+        erf_diff = erf_arg(binning.y_lo[None, None, None, :])
+        erf_diff = erf(erf_diff) - erf(erf_arg(binning.y_hi[None, None, None, :]))
         exponent = jnp.exp(-((x / (cappellari_p * sigma)) ** 2))
 
         integrand = (
             I * q * sigma * jnp.sqrt(jnp.pi) / cappellari_p * erf_diff * exponent
         )  # (G, Nx, Q, Ny)
 
-        pixel_mass = jnp.einsum("iq,giqj->ij", x_weights, integrand)  # (Nx, Ny)
+        pixel_mass = jnp.einsum("iq,giqj->ij", binning.x_weights, integrand)  # (Nx, Ny)
 
         n_bins = int(jnp.max(binning.bins))
         binned = segment_sum(
@@ -450,32 +423,10 @@ class Deprojected3DMGE(eqx.Module):
         length_unit = grid.r_edges.unit
         finite_edges = grid.r_edges.ustrip(length_unit)[:-1]  # drop the r=inf edge
 
-        nodes = jnp.asarray(_GAUSS_LEGENDRE_NODES)
-        weights = jnp.asarray(_GAUSS_LEGENDRE_WEIGHTS)
-
-        # The sin(theta) dtheta Jacobian is exactly -d(cos(theta)), so
-        # quadrature nodes/weights in cos(theta) already include it -- no extra
-        # sin(theta) factor is needed when this is later contracted against the
-        # integrand.
-        cos_theta_edges = grid.cos_theta_edges.ustrip("")
-        cos_theta_lo, cos_theta_hi = cos_theta_edges[1:], cos_theta_edges[:-1]
-        cos_theta_mid = (cos_theta_hi + cos_theta_lo) / 2
-        cos_theta_half = (cos_theta_hi - cos_theta_lo) / 2
-        cos_theta_nodes = (
-            cos_theta_mid[:, None] + cos_theta_half[:, None] * nodes[None, :]
-        )
-        theta_weights = cos_theta_half[:, None] * weights[None, :]  # (n_theta, Q)
-
-        phi_edges = grid.phi_edges.ustrip("rad")
-        phi_lo, phi_hi = phi_edges[:-1], phi_edges[1:]
-        phi_mid, phi_half = (phi_hi + phi_lo) / 2, (phi_hi - phi_lo) / 2
-        phi_nodes = phi_mid[:, None] + phi_half[:, None] * nodes[None, :]
-        phi_weights = phi_half[:, None] * weights[None, :]  # (n_phi, Q)
-
-        cos_theta = cos_theta_nodes  # (n_theta, Q)
-        sin_theta = jnp.sqrt(1 - cos_theta_nodes**2)
-        cos_phi = jnp.cos(phi_nodes)  # (n_phi, Q)
-        sin_phi = jnp.sin(phi_nodes)
+        cos_theta = grid.cos_theta_nodes  # (n_theta, Q)
+        sin_theta = jnp.sqrt(1 - grid.cos_theta_nodes**2)
+        cos_phi = jnp.cos(grid.phi_nodes)  # (n_phi, Q)
+        sin_phi = jnp.sin(grid.phi_nodes)
 
         # Direction-dependent factors of each component's rate parameter a(theta,
         # phi), such that a * r**2 = (x**2 + y**2/p**2 + z**2/q**2) / (2 sigma**2)
@@ -509,7 +460,7 @@ class Deprojected3DMGE(eqx.Module):
         integrand = jnp.sum(I.reshape(shape + (1,)) * radial, axis=0)
 
         mass = jnp.einsum(
-            "ja,kb,jakbn->njk", theta_weights, phi_weights, integrand
+            "ja,kb,jakbn->njk", grid.theta_weights, grid.phi_weights, integrand
         )
 
         mass_unit = self.I.unit * length_unit**3

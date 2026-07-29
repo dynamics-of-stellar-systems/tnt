@@ -27,7 +27,10 @@ def test_build_named_inputs_from_resolved_configuration(
     assert isinstance(mges["mge_lum"], LightMGE)
 
     binnings = build_spatial_binnings(
-        resolved["spatial_binnings"], input_directory, unit_system
+        resolved["spatial_binnings"],
+        input_directory,
+        unit_system,
+        resolved["mge_settings"]["projected_mass_quad_order"],
     )
     binning = binnings["kinset1_binning"]
     assert isinstance(binning, ProjectedBinning)

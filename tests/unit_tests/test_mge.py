@@ -517,6 +517,9 @@ def test_angular_to_physical_leaves_q_and_pa_twist_unchanged():
     )
 
 
+_PROJECTED_MASS_QUAD_ORDER = 10
+
+
 def _projected_binning(
     *, min_x, min_y, x_extent, y_extent, pa, bins
 ) -> ProjectedBinning:
@@ -530,6 +533,7 @@ def _projected_binning(
         },
         bins,
         _internal_unit_system(),
+        _PROJECTED_MASS_QUAD_ORDER,
     )
 
 
@@ -722,6 +726,9 @@ def _analytic_total_mass(
     return np.sum((2 * np.pi) ** 1.5 * sigma**3 * p * q * I)
 
 
+_SPHERICAL_QUAD_ORDER = 10
+
+
 def test_spherical_grid_init_shapes_and_bounds():
     grid = SphericalGrid(
         n_r=5,
@@ -729,6 +736,7 @@ def test_spherical_grid_init_shapes_and_bounds():
         n_phi=4,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
+        quad_order=_SPHERICAL_QUAD_ORDER,
     )
 
     assert (grid.n_r, grid.n_theta, grid.n_phi) == (5, 3, 4)
@@ -753,6 +761,7 @@ def test_spherical_grid_init_n_r_3_uses_both_r_min_and_r_max():
         n_phi=3,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
+        quad_order=_SPHERICAL_QUAD_ORDER,
     )
 
     assert jnp.allclose(
@@ -769,6 +778,7 @@ def test_spherical_grid_init_rejects_too_few_radial_bins(n_r):
             n_phi=3,
             r_min=u.Quantity(0.1, "kpc"),
             r_max=u.Quantity(50.0, "kpc"),
+            quad_order=_SPHERICAL_QUAD_ORDER,
         )
 
 
@@ -785,6 +795,7 @@ def test_spherical_mass_grid_shape():
         n_phi=4,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
+        quad_order=_SPHERICAL_QUAD_ORDER,
     )
 
     masses = mge.spherical_mass_grid(grid)
@@ -812,6 +823,7 @@ def test_spherical_mass_grid_conserves_total_mass_for_spherical_component():
         n_phi=3,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
+        quad_order=_SPHERICAL_QUAD_ORDER,
     )
 
     masses = mge.spherical_mass_grid(grid)
@@ -842,6 +854,7 @@ def test_spherical_mass_grid_conserves_total_mass_for_triaxial_multicomponent():
         n_phi=3,
         r_min=u.Quantity(0.05, "kpc"),
         r_max=u.Quantity(100.0, "kpc"),
+        quad_order=_SPHERICAL_QUAD_ORDER,
     )
 
     masses = mge.spherical_mass_grid(grid)
@@ -867,6 +880,7 @@ def test_spherical_mass_grid_reusable_across_components_with_different_length_un
         n_phi=3,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
+        quad_order=_SPHERICAL_QUAD_ORDER,
     )
 
     masses = mge.spherical_mass_grid(grid)

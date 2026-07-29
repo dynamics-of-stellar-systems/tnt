@@ -125,13 +125,13 @@ def _validate_units(settings: ConfigDict) -> None:
 
 def _validate_mge_settings(settings: ConfigDict) -> None:
     path = "mge_settings"
-    _reject_unknown_keys(settings, {"axial_ratio_cap"}, path)
-    _require_keys(settings, {"axial_ratio_cap"}, path)
-    cap = _number(settings["axial_ratio_cap"], f"{path}.axial_ratio_cap")
-    if not 0 < cap <= 1:
-        raise ValueError(
-            f"{path}.axial_ratio_cap must be greater than 0 and at most 1."
-        )
+    keys = {"intrinsic_mass_quad_order", "projected_mass_quad_order"}
+    _reject_unknown_keys(settings, keys, path)
+    _require_keys(settings, keys, path)
+    for key in keys:
+        order = _integer(settings[key], f"{path}.{key}")
+        if order <= 0:
+            raise ValueError(f"{path}.{key} must be a positive integer.")
 
 
 def _validate_numerics_settings(settings: ConfigDict) -> None:

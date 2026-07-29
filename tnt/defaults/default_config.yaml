@@ -24,10 +24,13 @@ units:
 cosmological_parameters:
   H0: {value: 70.0, unit: "km / (s Mpc)"}
 
-# Apply this numerical-stability cap uniformly to every multi-Gaussian
-# expansion (MGE). Values above the cap are replaced and must trigger a warning.
+# Fixed-order Gauss-Legendre quadrature orders for the two MGE integrals that
+# aren't fully analytic: the intrinsic (3D) mass in a spherical grid cell
+# (Deprojected3DMGE.spherical_mass_grid) and the projected (2D) mass in an
+# aperture-grid pixel (AbstractMGE.get_projected_mass).
 mge_settings:
-  axial_ratio_cap: 0.9999
+  intrinsic_mass_quad_order: 10
+  projected_mass_quad_order: 10
 
 # Shared numerical policies. Keeping these values explicit makes model
 # identity checks and solver constraints reproducible across implementations.
