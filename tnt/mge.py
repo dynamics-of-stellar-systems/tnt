@@ -11,11 +11,22 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from astropy.table import QTable
+from jax.ops import segment_sum
 from jax.scipy.special import erf
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt import quantity_conversions
-from tnt.spatial_binnings import SphericalGrid
+from tnt.spatial_binnings import ProjectedBinning, SphericalGrid
+
+# Fixed-order Gauss-Legendre quadrature nodes/weights on [-1, 1], shared by
+# every integral in this module that isn't fully analytic: the aperture-pixel
+# integral in `AbstractMGE.get_projected_mass`, and the angular (theta, phi)
+# integral in `Deprojected3DMGE.spherical_mass_grid`. A module-level constant
+# since the order doesn't depend on any call's inputs.
+_QUAD_ORDER = 10
+_GAUSS_LEGENDRE_NODES, _GAUSS_LEGENDRE_WEIGHTS = np.polynomial.legendre.leggauss(
+    _QUAD_ORDER
+)
 
 
 class AbstractMGE(eqx.Module):
@@ -107,6 +118,98 @@ class AbstractMGE(eqx.Module):
         return type(self)(
             I=I_physical, sigma=sigma_physical, q=self.q, PA_twist=self.PA_twist
         )
+
+    def get_projected_mass(self, binning: ProjectedBinning) -> Quantity:
+        """This MGE's total in each bin of a `ProjectedBinning`.
+
+        Each Gaussian component's surface density is integrated over every
+        pixel of `binning`'s aperture grid -- exactly in one direction via
+        `erf`, and via fixed-order Gauss-Legendre quadrature in the other,
+        since a rotated 2D Gaussian's integral over an axis-aligned
+        rectangle has no closed form in general (Cappellari 2002 appendix
+        B, eqs. B6-B7) -- and the resulting per-pixel totals are then summed
+        into their assigned bins. Pixels with bin ID 0 (unbinned, see
+        `ProjectedBinning`) don't contribute to any bin.
+
+        `binning`'s `PA` is measured counterclockwise from the aperture
+        grid's x-axis to each component's own major axis (`PA_twist` away
+        from a reference component, as elsewhere in this module).
+
+        Args:
+            binning: The projected-plane aperture grid and pixel-to-bin
+                assignment to integrate this MGE over. Its coordinates
+                (`min_x`, `min_y`, `x_extent`, `y_extent`) must be
+                dimensionally consistent with `sigma` -- both angular, or
+                both converted to the same physical unit via
+                `angular_to_physical`/`ProjectedBinning.angular_to_physical`.
+
+        Returns:
+            A `Quantity` of shape ``(n_bins,)`` giving each bin's total,
+            ordered by increasing bin ID (bin 1 first). ``n_bins`` is
+            `binning`'s largest bin ID.
+
+        Raises:
+            astropy.units.UnitConversionError: If `sigma` and `binning`'s
+                coordinates aren't dimensionally consistent.
+        """
+        coord_unit = binning.min_x.unit
+        x_edges = binning.min_x.ustrip(coord_unit) + jnp.linspace(
+            0.0, binning.x_extent.ustrip(coord_unit), binning.npix_x + 1
+        )
+        y_edges = binning.min_y.ustrip(coord_unit) + jnp.linspace(
+            0.0, binning.y_extent.ustrip(coord_unit), binning.npix_y + 1
+        )
+
+        nodes = jnp.asarray(_GAUSS_LEGENDRE_NODES)
+        weights = jnp.asarray(_GAUSS_LEGENDRE_WEIGHTS)
+
+        x_lo, x_hi = x_edges[:-1], x_edges[1:]
+        x_mid, x_half = (x_hi + x_lo) / 2, (x_hi - x_lo) / 2
+        x_nodes = x_mid[:, None] + x_half[:, None] * nodes[None, :]  # (Nx, Q)
+        x_weights = x_half[:, None] * weights[None, :]  # (Nx, Q)
+
+        y_lo, y_hi = y_edges[:-1], y_edges[1:]  # (Ny,)
+
+        # Add a leading components axis: everything below broadcasts to
+        # (G, Nx, Q, Ny).
+        shape = (-1, 1, 1, 1)
+        sigma = self.sigma.ustrip(coord_unit).reshape(shape)
+        q = self.q.ustrip("").reshape(shape)
+        I = self.I.ustrip(self.I.unit).reshape(shape)  # noqa: E741
+        alpha = (
+            binning.PA.ustrip("rad")
+            - jnp.pi / 2
+            + self.PA_twist.ustrip("rad").reshape(shape)
+        )
+
+        # Cappellari (2002) appendix B3's "p" -- unrelated to `Deprojected3DMGE`'s
+        # intrinsic axial ratio `p`, just reusing the paper's own notation.
+        cappellari_p = jnp.sqrt(1 + q**2 + (1 - q**2) * jnp.cos(2 * alpha))
+
+        x = x_nodes[None, :, :, None]  # (1, Nx, Q, 1)
+
+        def erf_arg(y: jnp.ndarray) -> jnp.ndarray:
+            return ((1 - q**2) * x * jnp.sin(2 * alpha) - cappellari_p**2 * y) / (
+                2 * cappellari_p * q * sigma
+            )
+
+        erf_diff = erf_arg(y_lo[None, None, None, :])
+        erf_diff = erf(erf_diff) - erf(erf_arg(y_hi[None, None, None, :]))
+        exponent = jnp.exp(-((x / (cappellari_p * sigma)) ** 2))
+
+        integrand = (
+            I * q * sigma * jnp.sqrt(jnp.pi) / cappellari_p * erf_diff * exponent
+        )  # (G, Nx, Q, Ny)
+
+        pixel_mass = jnp.einsum("iq,giqj->ij", x_weights, integrand)  # (Nx, Ny)
+
+        n_bins = int(jnp.max(binning.bins))
+        binned = segment_sum(
+            pixel_mass.ravel(), binning.bins.ravel(), num_segments=n_bins + 1
+        )
+
+        mass_unit = self.I.unit * coord_unit**2
+        return Quantity(binned[1:], mass_unit)
 
     def deproject_axisymmetric(self, inclination: Quantity) -> Deprojected3DMGE:
         """Deproject to an intrinsic 3D MGE, assuming axisymmetry.
@@ -293,15 +396,6 @@ class MassMGE(AbstractMGE):
     """An MGE of a mass surface-density distribution (``I`` in e.g. Msun/arcsec2)."""
 
     _intensity_attr: ClassVar[str] = "mass"
-
-
-# Fixed-order Gauss-Legendre quadrature nodes/weights on [-1, 1], used for the
-# angular (theta, phi) integral in `Deprojected3DMGE.spherical_mass_grid`. A
-# module-level constant since the order doesn't depend on any call's inputs.
-_ANGULAR_QUAD_ORDER = 10
-_GAUSS_LEGENDRE_NODES, _GAUSS_LEGENDRE_WEIGHTS = np.polynomial.legendre.leggauss(
-    _ANGULAR_QUAD_ORDER
-)
 
 
 def _gaussian_radial_antiderivative(a: jnp.ndarray, r: jnp.ndarray) -> jnp.ndarray:
