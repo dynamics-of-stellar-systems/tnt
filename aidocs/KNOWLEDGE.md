@@ -51,6 +51,9 @@
 - MGE contents and quantities inside observational files are deliberately
   deferred to the later object-construction/data-loading phase. Configuration
   preparation does not open those files.
+- `tnt.mge.build_mges()` is the explicit runtime boundary that loads the
+  resolved `MGEs` registry into named `LightMGE` and `MassMGE` objects.
+  `Configuration` continues to contain no instantiated scientific objects.
 - Intel macOS needs the compatibility constraints recorded in
   `pyproject.toml`: the latest available JAX wheel is in the 0.4 series, and
   `unxt` 1.1.1 requires matching older Quax, Quaxed, Plum, Astropy, and NumPy
