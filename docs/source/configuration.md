@@ -135,6 +135,31 @@ The supported potential types are `triaxial_light_mge`,
 because its input MGE already represents mass. MGE contents and their physical
 units are inspected only in the later object-construction phase.
 
+## Loading configured MGEs
+
+Configuration preparation validates the named `MGEs` registry but does not
+open MGE files or construct scientific objects. After resolving a
+configuration, load the registered MGEs explicitly:
+
+```python
+from tnt import Configuration
+from tnt.mge import build_mges
+
+config = Configuration().read("configuration.yaml")
+resolved = config.as_dict()
+
+mges = build_mges(
+    resolved["MGEs"],
+    resolved["io_settings"]["input_directory"],
+    config.unit_systems.internal,
+)
+```
+
+The returned dictionary uses the configured MGE names as keys. Each value is
+a `LightMGE` or `MassMGE`, inferred from the physical unit of the ECSV `I`
+column. File contents and units are validated during this runtime-loading
+step, so loading can fail even after configuration preparation succeeded.
+
 ## Per-data-set kinematics settings
 
 Observational error policies and fitting order belong to each named kinematics

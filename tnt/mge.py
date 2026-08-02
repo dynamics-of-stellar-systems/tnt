@@ -9,6 +9,7 @@ from typing import ClassVar, Self
 import astropy.units as au
 import equinox as eqx
 import jax.numpy as jnp
+import unxt as u
 from astropy.table import QTable
 from jax.ops import segment_sum
 from jax.scipy.special import erf
@@ -37,6 +38,14 @@ class AbstractMGE(eqx.Module):
     PA_twist: Quantity
 
     @classmethod
+    def _surface_intensity_unit(cls, unit_system: AbstractUnitSystem) -> au.UnitBase:
+        """Return this MGE kind's surface-intensity unit."""
+        return (
+            unit_system[u.dimension(cls._intensity_attr)]
+            / unit_system[u.dimension("angle")] ** 2
+        )
+
+    @classmethod
     def from_qtable(cls, table: QTable, unit_system: AbstractUnitSystem) -> Self:
         """Build an MGE from a table, validating and converting its columns.
 
@@ -53,9 +62,7 @@ class AbstractMGE(eqx.Module):
                 dimensionally consistent with the expected physical type.
             ValueError: If any ``q`` value is outside ``(0, 1]``.
         """
-        intensity_unit = (
-            getattr(unit_system, cls._intensity_attr) / unit_system.angle**2
-        )
+        intensity_unit = cls._surface_intensity_unit(unit_system)
         target_units = {
             "I": intensity_unit,
             "sigma": unit_system.angle,
@@ -491,14 +498,11 @@ def read_mge(path: str | Path, unit_system: AbstractUnitSystem) -> AbstractMGE:
     intensity_unit = table["I"].unit
 
     for cls in _MGE_CLASSES:
-        target_unit = getattr(unit_system, cls._intensity_attr) / unit_system.angle**2
+        target_unit = cls._surface_intensity_unit(unit_system)
         if intensity_unit.is_equivalent(target_unit):
             return cls.from_qtable(table, unit_system)
 
-    expected = [
-        getattr(unit_system, cls._intensity_attr) / unit_system.angle**2
-        for cls in _MGE_CLASSES
-    ]
+    expected = [cls._surface_intensity_unit(unit_system) for cls in _MGE_CLASSES]
     raise ValueError(
         f"Could not infer MGE kind for {path}: its I column has unit "
         f"{intensity_unit!r}, which is not equivalent to any of {expected!r}."
