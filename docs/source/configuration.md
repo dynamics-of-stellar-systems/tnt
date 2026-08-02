@@ -99,8 +99,12 @@ MGEs:
 
 spatial_binnings:
   central_bins:
-    aperture_file: "aperture.dat"
-    bin_file: "bins.dat"
+    min_x: {value: -29.5, unit: "arcsec"}
+    min_y: {value: -26.5, unit: "arcsec"}
+    x_extent: {value: 58.0, unit: "arcsec"}
+    y_extent: {value: 52.0, unit: "arcsec"}
+    PA: {value: 126.0, unit: "deg"}
+    bins_file: "bins.npy"
 
 potential:
   stars:
@@ -125,9 +129,16 @@ population_data:
 ```
 
 `MGEs` is the named multi-Gaussian expansion file registry.
-`spatial_binnings` lets kinematic and population data share one aperture/bin
-definition without duplicating paths. A kinematic data set may optionally
-reference an MGE; this is not required for proper-motion data.
+`spatial_binnings` lets kinematic and population data share one projected
+aperture definition. The four coordinate fields define a regular rectangular
+pixel grid, while `PA` gives the galaxy major-axis position angle measured
+counterclockwise from the grid's x-axis. Each is an explicit angular
+`{value, unit}` quantity. `bins_file` is resolved relative to
+`io_settings.input_directory` and must contain a two-dimensional NumPy array
+with shape `(npix_x, npix_y)`. Its non-negative integers assign pixels to bins;
+ID 0 marks pixels that are not assigned to a bin. The pixel counts are inferred
+from the array shape. A kinematic data set may optionally reference an MGE;
+this is not required for proper-motion data.
 
 The supported potential types are `triaxial_light_mge`,
 `triaxial_mass_mge`, `nfw`, and `plummer`. A light-MGE potential requires an
@@ -159,6 +170,43 @@ The returned dictionary uses the configured MGE names as keys. Each value is
 a `LightMGE` or `MassMGE`, inferred from the physical unit of the ECSV `I`
 column. File contents and units are validated during this runtime-loading
 step, so loading can fail even after configuration preparation succeeded.
+
+## Loading configured spatial binnings
+
+Like MGEs, spatial binnings become scientific objects only after configuration
+preparation. Build the named registry explicitly from the resolved settings:
+
+```python
+from tnt import Configuration
+from tnt.spatial_binnings import build_spatial_binnings
+
+config = Configuration().read("configuration.yaml")
+resolved = config.as_dict()
+
+binnings = build_spatial_binnings(
+    resolved["spatial_binnings"],
+    resolved["io_settings"]["input_directory"],
+    config.unit_systems.internal,
+    resolved["mge_settings"]["projected_mass_quad_order"],
+)
+```
+
+The returned dictionary uses the configured binning names as keys and contains
+`ProjectedBinning` values. This loading step opens each `.npy` file, validates
+the inline geometry and pixel-to-bin array, converts the geometry to the
+internal angle unit, and precomputes pixel edges and quadrature nodes.
+
+`AbstractMGE.get_projected_mass()` integrates an MGE over a
+`ProjectedBinning` and returns the total in each positive bin ID. Convert both
+objects with their `angular_to_physical()` methods before integration when
+working in physical rather than angular coordinates.
+
+The fixed Gauss-Legendre quadrature orders are configured under
+`mge_settings`. `intrinsic_mass_quad_order` applies to intrinsic
+three-dimensional integration on a `SphericalGrid`, and
+`projected_mass_quad_order` applies to projected pixel integration. Both must
+be positive integers; higher orders trade additional computation for greater
+integration accuracy.
 
 ## Per-data-set kinematics settings
 
@@ -200,14 +248,22 @@ not weight-solver settings in TNT and are rejected as unknown fields.
 
 ## Validation
 
-Preparation rejects duplicate YAML keys, unknown fields, missing required
-fields, incorrect value types, unsupported enumerated values, and inconsistent
-tagged thresholds. It also checks data-only numerical constraints, including
+Preparation rejects duplicate YAML keys and, for schemas owned by the
+preparation layer, unknown fields, missing required fields, incorrect value
+types, unsupported enumerated values, and inconsistent tagged thresholds. It
+also checks data-only numerical constraints, including
 parameter bounds, positive worker counts, orbit-grid limits, and positive odd
 explicit histogram bin counts. Per-kinematics checks cover Gauss-Hermite order,
 complete systematic-uncertainty mappings, and proper-motion variance scaling.
 It also checks that references from potentials and observational data resolve
 to existing MGE and spatial-binning entries.
+
+Preparation collects spatial-binning names for those cross-reference checks,
+but deliberately leaves each entry's geometry, units, `bins_file`, and loaded
+array validation to `ProjectedBinning.from_settings()` and
+`build_spatial_binnings()`. Consequently, a malformed spatial-binning entry can
+pass preparation and fail during runtime-object construction with a more
+specific error.
 
 ## Potential rescaling
 
