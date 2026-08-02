@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import ClassVar, Self
 
@@ -9,6 +10,7 @@ import astropy.units as au
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import unxt as u
 from astropy.table import QTable
 from jax.scipy.special import erf
 from unxt import AbstractUnitSystem, Quantity
@@ -35,6 +37,14 @@ class AbstractMGE(eqx.Module):
     PA_twist: Quantity
 
     @classmethod
+    def _surface_intensity_unit(cls, unit_system: AbstractUnitSystem) -> au.UnitBase:
+        """Return this MGE kind's surface-intensity unit."""
+        return (
+            unit_system[u.dimension(cls._intensity_attr)]
+            / unit_system[u.dimension("angle")] ** 2
+        )
+
+    @classmethod
     def from_qtable(cls, table: QTable, unit_system: AbstractUnitSystem) -> Self:
         """Build an MGE from a table, validating and converting its columns.
 
@@ -51,9 +61,7 @@ class AbstractMGE(eqx.Module):
                 dimensionally consistent with the expected physical type.
             ValueError: If any ``q`` value is outside ``(0, 1]``.
         """
-        intensity_unit = (
-            getattr(unit_system, cls._intensity_attr) / unit_system.angle**2
-        )
+        intensity_unit = cls._surface_intensity_unit(unit_system)
         target_units = {
             "I": intensity_unit,
             "sigma": unit_system.angle,
@@ -528,15 +536,41 @@ def read_mge(path: str | Path, unit_system: AbstractUnitSystem) -> AbstractMGE:
     intensity_unit = table["I"].unit
 
     for cls in _MGE_CLASSES:
-        target_unit = getattr(unit_system, cls._intensity_attr) / unit_system.angle**2
+        target_unit = cls._surface_intensity_unit(unit_system)
         if intensity_unit.is_equivalent(target_unit):
             return cls.from_qtable(table, unit_system)
 
-    expected = [
-        getattr(unit_system, cls._intensity_attr) / unit_system.angle**2
-        for cls in _MGE_CLASSES
-    ]
+    expected = [cls._surface_intensity_unit(unit_system) for cls in _MGE_CLASSES]
     raise ValueError(
         f"Could not infer MGE kind for {path}: its I column has unit "
         f"{intensity_unit!r}, which is not equivalent to any of {expected!r}."
     )
+
+
+def build_mges(
+    mges: Mapping[str, str],
+    input_directory: str | Path,
+    unit_system: AbstractUnitSystem,
+) -> dict[str, AbstractMGE]:
+    """Build the named MGEs from a resolved configuration's ``MGEs`` mapping.
+
+    Each MGE's kind (light or mass) is inferred from its file's declared
+    units -- see `read_mge`. This deliberately takes already-resolved,
+    plain-data inputs rather than a `tnt.configuration.Configuration`, since
+    that class explicitly holds no instantiated runtime objects.
+
+    Args:
+        mges: Mapping of unique identifiers to ECSV filenames, e.g. a
+            resolved configuration's ``MGEs`` section.
+        input_directory: Directory that each filename is resolved against,
+            e.g. a resolved configuration's ``io_settings.input_directory``.
+        unit_system: The unit system to convert each MGE's columns into.
+
+    Returns:
+        A dict mapping each identifier to its `LightMGE` or `MassMGE`.
+    """
+    directory = Path(input_directory)
+    return {
+        name: read_mge(directory / filename, unit_system)
+        for name, filename in mges.items()
+    }
