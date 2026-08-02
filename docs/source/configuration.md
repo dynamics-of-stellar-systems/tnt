@@ -193,8 +193,9 @@ binnings = build_spatial_binnings(
 
 The returned dictionary uses the configured binning names as keys and contains
 `ProjectedBinning` values. This loading step opens each `.npy` file, validates
-the inline geometry and pixel-to-bin array, converts the geometry to the
-internal angle unit, and precomputes pixel edges and quadrature nodes.
+the exact entry schema and inline geometry, and rejects empty or otherwise
+invalid pixel-to-bin arrays. It converts the geometry to the internal angle
+unit and precomputes pixel edges and quadrature nodes.
 
 `AbstractMGE.get_projected_mass()` integrates an MGE over a
 `ProjectedBinning` and returns the total in each positive bin ID. Convert both
@@ -262,8 +263,9 @@ Preparation collects spatial-binning names for those cross-reference checks,
 but deliberately leaves each entry's geometry, units, `bins_file`, and loaded
 array validation to `ProjectedBinning.from_settings()` and
 `build_spatial_binnings()`. Consequently, a malformed spatial-binning entry can
-pass preparation and fail during runtime-object construction with a more
-specific error.
+pass preparation, but runtime construction rejects non-mapping entries,
+missing or unknown fields, invalid `bins_file` values, malformed quantities,
+and empty or invalid bin arrays with a named-entry error.
 
 ## Potential rescaling
 

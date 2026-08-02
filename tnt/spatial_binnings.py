@@ -135,6 +135,7 @@ _QUANTITY_FIELDS = {
     "y_extent": True,
     "PA": False,
 }
+_SETTINGS_FIELDS = set(_QUANTITY_FIELDS) | {"bins_file"}
 
 
 class ProjectedBinning(eqx.Module):
@@ -240,20 +241,19 @@ class ProjectedBinning(eqx.Module):
             `unit_system`'s angle unit.
 
         Raises:
-            TypeError: If a declared value isn't a number, or `bins` isn't
-                integer-valued.
-            ValueError: If a required field is missing or malformed, a
-                declared value is non-finite or (for `x_extent`/`y_extent`)
-                not positive, a declared unit string doesn't parse, `bins`
-                isn't 2D, or `bins` contains a negative bin ID.
+            TypeError: If the settings aren't a mapping, a declared value
+                isn't a number, `bins_file` is present but not a non-empty
+                string, or `bins` isn't integer-valued.
+            ValueError: If a required field is missing, an unknown field is
+                present, a declared value is malformed, non-finite, or (for
+                `x_extent`/`y_extent`) not positive, a declared unit string
+                doesn't parse, or `bins` is not a non-empty 2D array of
+                non-negative IDs.
             astropy.units.UnitConversionError: If a declared unit isn't
                 dimensionally an angle.
         """
-        angle = unit_system.angle
-        quantities = {
-            key: _declared_angle_quantity(settings, key, angle, positive=positive)
-            for key, positive in _QUANTITY_FIELDS.items()
-        }
+        settings = _validated_settings(settings, require_bins_file=False)
+        quantities = _declared_quantities(settings, unit_system.angle)
         return cls(
             bins=_validated_bins(bins), quad_order=quad_order, **quantities
         )
@@ -294,45 +294,93 @@ class ProjectedBinning(eqx.Module):
         )
 
 
+def _validated_settings(
+    settings: Any,
+    *,
+    require_bins_file: bool,
+    path: str = "ProjectedBinning",
+) -> Mapping[str, Any]:
+    """Validate one spatial-binning entry's top-level schema."""
+    if not isinstance(settings, Mapping):
+        raise TypeError(f"{path} must be a mapping.")
+
+    required_fields = set(_QUANTITY_FIELDS)
+    if require_bins_file:
+        required_fields.add("bins_file")
+    missing = required_fields - set(settings)
+    if missing:
+        if len(missing) == 1:
+            field = next(iter(missing))
+            raise ValueError(f"{path} is missing required field: {field}.")
+        missing_fields = ", ".join(sorted(missing))
+        raise ValueError(f"{path} is missing required field(s): {missing_fields}.")
+
+    unknown = set(settings) - _SETTINGS_FIELDS
+    if unknown:
+        unknown_fields = ", ".join(sorted(str(key) for key in unknown))
+        raise ValueError(f"{path} contains unknown field(s): {unknown_fields}.")
+
+    if "bins_file" in settings:
+        bins_file = settings["bins_file"]
+        if not isinstance(bins_file, str) or not bins_file.strip():
+            raise TypeError(f"{path}.bins_file must be a non-empty string.")
+    return settings
+
+
+def _declared_quantities(
+    settings: Mapping[str, Any], angle: Any, *, path: str = "ProjectedBinning"
+) -> dict[str, Quantity]:
+    """Validate and convert all declared spatial-binning quantities."""
+    return {
+        key: _declared_angle_quantity(
+            settings, key, angle, positive=positive, path=path
+        )
+        for key, positive in _QUANTITY_FIELDS.items()
+    }
+
+
 def _declared_angle_quantity(
     settings: Mapping[str, Any],
     key: str,
     angle: Any,
     *,
     positive: bool,
+    path: str,
 ) -> Quantity:
     """Parse, validate, and convert one declared ``{value, unit}`` field."""
-    if key not in settings:
-        raise ValueError(f"ProjectedBinning is missing required field: {key}.")
     field = settings[key]
     if not isinstance(field, Mapping) or set(field) != {"value", "unit"}:
         raise ValueError(
-            f"ProjectedBinning.{key} must be a mapping with exactly 'value' "
+            f"{path}.{key} must be a mapping with exactly 'value' "
             "and 'unit' keys."
         )
     value = field["value"]
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise TypeError(f"ProjectedBinning.{key}.value must be a number.")
+        raise TypeError(f"{path}.{key}.value must be a number.")
     if not math.isfinite(value):
-        raise ValueError(f"ProjectedBinning.{key}.value must be finite.")
+        raise ValueError(f"{path}.{key}.value must be finite.")
     if positive and value <= 0:
-        raise ValueError(f"ProjectedBinning.{key} must be greater than zero.")
+        raise ValueError(f"{path}.{key} must be greater than zero.")
 
     return Quantity(float(value), field["unit"]).uconvert(angle)
 
 
-def _validated_bins(bins: Any) -> jnp.ndarray:
+def _validated_bins(
+    bins: Any, *, path: str = "ProjectedBinning.bins"
+) -> jnp.ndarray:
     """Check that `bins` is a 2D array of non-negative integer bin IDs."""
     array = jnp.asarray(bins)
     if array.ndim != 2:
         raise ValueError(
-            "ProjectedBinning.bins must be a 2D (npix_x, npix_y) array, got "
-            f"shape {array.shape}."
+            f"{path} must be a 2D (npix_x, npix_y) array, got shape "
+            f"{array.shape}."
         )
+    if 0 in array.shape:
+        raise ValueError(f"{path} dimensions must not be empty.")
     if not jnp.issubdtype(array.dtype, jnp.integer):
-        raise TypeError("ProjectedBinning.bins must have an integer dtype.")
+        raise TypeError(f"{path} must have an integer dtype.")
     if bool(jnp.any(array < 0)):
-        raise ValueError("ProjectedBinning.bins must not contain negative bin IDs.")
+        raise ValueError(f"{path} must not contain negative bin IDs.")
     return array
 
 
@@ -346,8 +394,8 @@ def build_spatial_binnings(
 
     Each binning's aperture geometry (`min_x`, `min_y`, `x_extent`,
     `y_extent`, `PA`) comes from the configuration itself rather than a data
-    file, and is validated and converted by `ProjectedBinning.from_settings`
-    -- only its ``bins_file`` is read from disk here.
+    file. The same schema and quantity validators as
+    `ProjectedBinning.from_settings` run before its ``bins_file`` is read.
 
     Args:
         spatial_binnings: Mapping of unique identifiers to each binning's
@@ -366,12 +414,19 @@ def build_spatial_binnings(
         A dict mapping each identifier to its `ProjectedBinning`.
     """
     directory = Path(input_directory)
-    return {
-        name: ProjectedBinning.from_settings(
-            settings,
-            jnp.asarray(np.load(directory / settings["bins_file"])),
-            unit_system,
-            quad_order,
+    binnings: dict[str, ProjectedBinning] = {}
+    for name, raw_settings in spatial_binnings.items():
+        path = f"spatial_binnings.{name}"
+        settings = _validated_settings(
+            raw_settings, require_bins_file=True, path=path
         )
-        for name, settings in spatial_binnings.items()
-    }
+        quantities = _declared_quantities(
+            settings, unit_system.angle, path=path
+        )
+        bins = _validated_bins(
+            np.load(directory / settings["bins_file"]), path=f"{path}.bins"
+        )
+        binnings[name] = ProjectedBinning(
+            bins=bins, quad_order=quad_order, **quantities
+        )
+    return binnings

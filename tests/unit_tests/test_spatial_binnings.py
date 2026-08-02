@@ -48,6 +48,74 @@ def test_build_spatial_binnings_without_entries_returns_empty_dict(tmp_path):
     )
 
 
+def test_build_spatial_binnings_rejects_non_mapping_entry(tmp_path):
+    with pytest.raises(
+        TypeError, match=r"spatial_binnings\.observed must be a mapping"
+    ):
+        build_spatial_binnings(
+            {"observed": None}, tmp_path, _internal_unit_system(), _QUAD_ORDER
+        )
+
+
+def test_build_spatial_binnings_rejects_missing_bins_file(tmp_path):
+    settings = _settings()
+    del settings["bins_file"]
+
+    with pytest.raises(ValueError, match="missing required field: bins_file"):
+        build_spatial_binnings(
+            {"observed": settings}, tmp_path, _internal_unit_system(), _QUAD_ORDER
+        )
+
+
+@pytest.mark.parametrize("bins_file", ["", "   ", 123])
+def test_build_spatial_binnings_rejects_invalid_bins_file(tmp_path, bins_file):
+    with pytest.raises(TypeError, match="bins_file must be a non-empty string"):
+        build_spatial_binnings(
+            {"observed": _settings(bins_file=bins_file)},
+            tmp_path,
+            _internal_unit_system(),
+            _QUAD_ORDER,
+        )
+
+
+def test_build_spatial_binnings_validates_geometry_before_opening_file(tmp_path):
+    settings = _settings(bins_file="missing.npy")
+    del settings["PA"]
+
+    with pytest.raises(ValueError, match="missing required field: PA"):
+        build_spatial_binnings(
+            {"observed": settings}, tmp_path, _internal_unit_system(), _QUAD_ORDER
+        )
+
+
+def test_build_spatial_binnings_rejects_unknown_field(tmp_path):
+    with pytest.raises(
+        ValueError,
+        match=r"spatial_binnings\.observed contains unknown field.*unexpected",
+    ):
+        build_spatial_binnings(
+            {"observed": _settings(unexpected=123)},
+            tmp_path,
+            _internal_unit_system(),
+            _QUAD_ORDER,
+        )
+
+
+def test_build_spatial_binnings_rejects_empty_loaded_bins(tmp_path):
+    np.save(tmp_path / "bins.npy", np.zeros((0, 2), dtype=int))
+
+    with pytest.raises(
+        ValueError,
+        match=r"spatial_binnings\.observed\.bins dimensions must not be empty",
+    ):
+        build_spatial_binnings(
+            {"observed": _settings()},
+            tmp_path,
+            _internal_unit_system(),
+            _QUAD_ORDER,
+        )
+
+
 def test_from_settings_converts_declared_units(tmp_path):
     bins = np.zeros((2, 2), dtype=int)
     settings = _settings(
@@ -90,6 +158,16 @@ def test_from_settings_rejects_missing_field():
     del settings["PA"]
 
     with pytest.raises(ValueError, match="missing required field: PA"):
+        ProjectedBinning.from_settings(
+            settings, bins, _internal_unit_system(), _QUAD_ORDER
+        )
+
+
+def test_from_settings_rejects_unknown_field():
+    bins = np.zeros((2, 2), dtype=int)
+    settings = _settings(unexpected=123)
+
+    with pytest.raises(ValueError, match="contains unknown field.*unexpected"):
         ProjectedBinning.from_settings(
             settings, bins, _internal_unit_system(), _QUAD_ORDER
         )
@@ -150,6 +228,16 @@ def test_from_settings_rejects_non_2d_bins():
     bins = np.zeros((2, 2, 2), dtype=int)
 
     with pytest.raises(ValueError, match="must be a 2D"):
+        ProjectedBinning.from_settings(
+            _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+        )
+
+
+@pytest.mark.parametrize("shape", [(0, 0), (0, 2), (2, 0)])
+def test_from_settings_rejects_empty_bins(shape):
+    bins = np.zeros(shape, dtype=int)
+
+    with pytest.raises(ValueError, match="dimensions must not be empty"):
         ProjectedBinning.from_settings(
             _settings(), bins, _internal_unit_system(), _QUAD_ORDER
         )

@@ -29,7 +29,9 @@
   resolved file is written. Spatial-binning entry fields are an explicit
   exception: preparation collects their names for cross-reference validation,
   while `ProjectedBinning.from_settings()` and `build_spatial_binnings()` own
-  their geometry, units, `bins_file`, and loaded-array validation.
+  their exact entry schema, geometry, units, `bins_file`, and loaded-array
+  validation. Runtime construction rejects non-mapping entries, missing and
+  unknown fields, invalid filenames, and empty or otherwise invalid bin maps.
   Runtime-object, observational-data, MGE-content, and optional-dependency
   checks remain the responsibility of the later execution phase. Legacy
   deprecation-and-ignore warnings are intentionally not reproduced.
@@ -107,8 +109,9 @@
   cross-references without opening the files.
 - `tnt.spatial_binnings.build_spatial_binnings()` is the explicit runtime
   boundary that loads the resolved `spatial_binnings` registry into named
-  `ProjectedBinning` objects. It validates geometry and bin arrays, converts
-  coordinates to the internal angle unit, and precomputes pixel quadrature.
+  `ProjectedBinning` objects. It validates the complete entry before file
+  access, validates the loaded non-empty bin array, converts coordinates to
+  the internal angle unit, and precomputes pixel quadrature.
 - `AbstractMGE.get_projected_mass()` integrates projected MGE totals into the
   positive bin IDs of a `ProjectedBinning`; bin ID 0 is excluded. The MGE and
   binning coordinate units must be dimensionally consistent.
