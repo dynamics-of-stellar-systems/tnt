@@ -188,9 +188,8 @@ class AbstractMGE(eqx.Module):
 
         pixel_mass = jnp.einsum("iq,giqj->ij", binning.x_weights, integrand)  # (Nx, Ny)
 
-        n_bins = int(jnp.max(binning.bins))
         binned = segment_sum(
-            pixel_mass.ravel(), binning.bins.ravel(), num_segments=n_bins + 1
+            pixel_mass.ravel(), binning.bins.ravel(), num_segments=binning.n_bins + 1
         )
 
         mass_unit = self.I.unit * coord_unit**2

@@ -153,6 +153,12 @@ class ProjectedBinning(eqx.Module):
     precomputed here, in `min_x`'s unit, so that integrating over this grid
     repeatedly -- e.g. `AbstractMGE.get_projected_mass` for many different
     MGEs -- doesn't redo this construction on every call.
+
+    `n_bins` (`bins`'s largest ID) is precomputed here too, as a static
+    (non-array) Python `int`, so that `AbstractMGE.get_projected_mass` never
+    needs to concretize `bins` itself to size its `segment_sum` -- keeping it
+    usable under `jax.jit` even when other `get_projected_mass` inputs (the
+    MGE's parameters) are traced.
     """
 
     min_x: Quantity
@@ -161,6 +167,7 @@ class ProjectedBinning(eqx.Module):
     y_extent: Quantity
     PA: Quantity
     bins: jnp.ndarray
+    n_bins: int = eqx.field(static=True)
     x_lo: jnp.ndarray
     x_hi: jnp.ndarray
     y_lo: jnp.ndarray
@@ -198,6 +205,7 @@ class ProjectedBinning(eqx.Module):
         self.y_extent = y_extent
         self.PA = PA
         self.bins = bins
+        self.n_bins = int(jnp.max(bins))
 
         coord_unit = min_x.unit
         npix_x, npix_y = bins.shape[0], bins.shape[1]
