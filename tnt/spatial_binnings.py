@@ -376,7 +376,13 @@ def _declared_angle_quantity(
 def _validated_bins(
     bins: Any, *, path: str = "ProjectedBinning.bins"
 ) -> jnp.ndarray:
-    """Check that `bins` is a 2D array of non-negative integer bin IDs."""
+    """Check `bins` is a 2D array of non-negative, contiguous integer bin IDs.
+
+    "Contiguous" means its positive IDs run ``1, 2, ..., n_bins`` with no gaps
+    -- `AbstractMGE.get_projected_mass` returns one value per ID in that
+    range, so a missing ID would silently waste a `segment_sum` slot (sized
+    up to the largest ID) rather than signal the corrupt bin map.
+    """
     array = jnp.asarray(bins)
     if array.ndim != 2:
         raise ValueError(
@@ -389,6 +395,12 @@ def _validated_bins(
         raise TypeError(f"{path} must have an integer dtype.")
     if bool(jnp.any(array < 0)):
         raise ValueError(f"{path} must not contain negative bin IDs.")
+    positive_ids = jnp.unique(array[array > 0])
+    if not jnp.array_equal(positive_ids, jnp.arange(1, positive_ids.size + 1)):
+        raise ValueError(
+            f"{path}'s positive bin IDs must be contiguous, running from 1 to "
+            f"their maximum with no gaps; got {sorted(int(i) for i in positive_ids)}."
+        )
     return array
 
 
