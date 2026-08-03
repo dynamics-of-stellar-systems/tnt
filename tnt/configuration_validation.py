@@ -125,13 +125,13 @@ def _validate_units(settings: ConfigDict) -> None:
 
 def _validate_mge_settings(settings: ConfigDict) -> None:
     path = "mge_settings"
-    _reject_unknown_keys(settings, {"axial_ratio_cap"}, path)
-    _require_keys(settings, {"axial_ratio_cap"}, path)
-    cap = _number(settings["axial_ratio_cap"], f"{path}.axial_ratio_cap")
-    if not 0 < cap <= 1:
-        raise ValueError(
-            f"{path}.axial_ratio_cap must be greater than 0 and at most 1."
-        )
+    keys = {"intrinsic_mass_quad_order", "projected_mass_quad_order"}
+    _reject_unknown_keys(settings, keys, path)
+    _require_keys(settings, keys, path)
+    for key in keys:
+        order = _integer(settings[key], f"{path}.{key}")
+        if order <= 0:
+            raise ValueError(f"{path}.{key} must be a positive integer.")
 
 
 def _validate_numerics_settings(settings: ConfigDict) -> None:
@@ -216,18 +216,17 @@ def _validate_mges(mges: ConfigDict) -> set[str]:
 
 
 def _validate_spatial_binnings(binnings: ConfigDict) -> set[str]:
-    """Validate reusable aperture-and-bin definitions."""
+    """Collect the names of reusable projected-plane binning definitions.
+
+    Each binning's own fields are validated by `ProjectedBinning` itself
+    (see `tnt.spatial_binnings.ProjectedBinning.from_settings`) rather than
+    here -- this only collects names so other sections can validate their
+    ``spatial_binnings`` references against a known registry.
+    """
     path = "spatial_binnings"
     names: set[str] = set()
-    for name, binning_value in binnings.items():
-        name = _dynamic_name(name, path)
-        binning_path = f"{path}.{name}"
-        binning = _require_mapping(binning_value, binning_path)
-        _reject_unknown_keys(binning, {"aperture_file", "bin_file"}, binning_path)
-        _require_keys(binning, {"aperture_file", "bin_file"}, binning_path)
-        for key in ("aperture_file", "bin_file"):
-            _nonempty_string(binning[key], f"{binning_path}.{key}")
-        names.add(name)
+    for name in binnings:
+        names.add(_dynamic_name(name, path))
     return names
 
 

@@ -24,8 +24,14 @@
   and `run_manifest.yaml` below `<output_directory>/config_repository/`. It
   does not instantiate scientific runtime objects.
 - Preparation-stage validation rejects duplicate keys, unknown or missing
-  fields, invalid types and enumerations, malformed tagged thresholds, and
-  basic numerical inconsistencies before the resolved file is written.
+  fields in preparation-owned schemas, invalid types and enumerations,
+  malformed tagged thresholds, and basic numerical inconsistencies before the
+  resolved file is written. Spatial-binning entry fields are an explicit
+  exception: preparation collects their names for cross-reference validation,
+  while `ProjectedBinning.from_settings()` and `build_spatial_binnings()` own
+  their exact entry schema, geometry, units, `bins_file`, and loaded-array
+  validation. Runtime construction rejects non-mapping entries, missing and
+  unknown fields, invalid filenames, and empty or otherwise invalid bin maps.
   Runtime-object, observational-data, MGE-content, and optional-dependency
   checks remain the responsibility of the later execution phase. Legacy
   deprecation-and-ignore warnings are intentionally not reproduced.
@@ -89,14 +95,26 @@
   `pending_generation`; the execution phase must update the effective seed.
 - The user profile must define the physical system, dynamically named
   potential components and parameters, input directory, and output directory.
-- TNT user profiles use snake-case type identifiers and field names. Parameter
-  search bounds belong under `generator_settings` as `lower_bound`,
-  `upper_bound`, `step`, and `minimum_step`; display labels use `latex_label`.
+- TNT user profiles generally use snake-case type identifiers and field names.
+  The established `MGEs` registry name and projected-binning `PA` field are
+  current schema exceptions. Parameter search bounds belong under
+  `generator_settings` as `lower_bound`, `upper_bound`, `step`, and
+  `minimum_step`; display labels use `latex_label`.
 - Scientific inputs use independent named registries: `MGEs` maps MGE names to
-  files; `spatial_binnings` maps names to `aperture_file`/`bin_file` pairs;
-  `potential` defines potential components; `kinematic_data` references a
-  binning and optionally an MGE; and `population_data` references a binning.
-  Preparation validates all cross-references without opening the files.
+  files; `spatial_binnings` maps names to inline rectangular aperture geometry
+  (`min_x`, `min_y`, `x_extent`, `y_extent`, and `PA`) plus a `bins_file`
+  containing a 2D NumPy pixel-to-bin map; `potential` defines potential
+  components; `kinematic_data` references a binning and optionally an MGE; and
+  `population_data` references a binning. Preparation validates all
+  cross-references without opening the files.
+- `tnt.spatial_binnings.build_spatial_binnings()` is the explicit runtime
+  boundary that loads the resolved `spatial_binnings` registry into named
+  `ProjectedBinning` objects. It validates the complete entry before file
+  access, validates the loaded non-empty bin array, converts coordinates to
+  the internal angle unit, and precomputes pixel quadrature.
+- `AbstractMGE.get_projected_mass()` integrates projected MGE totals into the
+  positive bin IDs of a `ProjectedBinning`; bin ID 0 is excluded. The MGE and
+  binning coordinate units must be dimensionally consistent.
 - Potential types are `triaxial_light_mge`, `triaxial_mass_mge`, `nfw`, and
   `plummer`. A light-MGE potential requires an `ml` parameter. A mass-MGE
   potential rejects `ml` because its MGE already contains mass.
@@ -123,11 +141,15 @@
   `cosmological_parameters`; they are not attributes of the modelled system.
 - The present-day Hubble parameter is named `H0`, distinguishing it from the
   Hubble parameter at other cosmological times.
-- `mge_settings.axial_ratio_cap` is a global numerical-stability policy for
-  every multi-Gaussian expansion (MGE), not a per-component default. Values
-  above the cap are replaced by the cap, and the implementation must warn
-  about every adjustment. The resolved model data must preserve the adjusted
-  values for reproducibility.
+- `mge_settings.intrinsic_mass_quad_order` and
+  `mge_settings.projected_mass_quad_order` are positive fixed Gauss-Legendre
+  quadrature orders for intrinsic spherical-grid and projected pixel
+  integration, respectively. The packaged defaults are both 10.
+- `SphericalGrid` is defined in `tnt.spatial_binnings`; code importing it from
+  `tnt.mge` must update its import. The unused inverse conversion
+  `AbstractMGE.physical_to_angular()` and
+  `quantity_conversions.physical_to_angular()` have been removed; runtime code
+  retains the angular-to-physical direction used by current workflows.
 - Shared comparison tolerances and constraint-error floors belong under
   `numerics_settings`. Model comparison uses a relative tolerance of `1e-10`,
   while parameter-grid comparisons use `1e-6`. Total-mass and intrinsic-mass

@@ -99,3 +99,10 @@ MGE (multi-Gaussian expansion) contents and quantities read from observational
 data files are intentionally not converted during configuration preparation.
 Those files are not opened at this stage; their unit handling belongs to the
 later object-construction and data-loading phase.
+
+Projected spatial-binning geometry is also converted during runtime-object
+construction rather than preparation. Its `min_x`, `min_y`, `x_extent`,
+`y_extent`, and `PA` fields still use explicit `{value, unit}` mappings in the
+resolved configuration. `ProjectedBinning.from_settings()` validates that
+these are angular quantities and converts them to the internal angle unit when
+`build_spatial_binnings()` loads the binning registry.
