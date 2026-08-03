@@ -145,7 +145,8 @@ class ProjectedBinning(eqx.Module):
     give its extent, so pixels span ``(min_x, min_x + x_extent)`` by ``(min_y,
     min_y + y_extent)``. `PA` is the position angle of the galaxy's major
     axis. `bins` is a ``(npix_x, npix_y)`` array of integer bin IDs, one per
-    pixel; a value of 0 marks a pixel with no associated bin.
+    pixel; a value of 0 marks a pixel with no associated bin, and the positive
+    IDs must be contiguous, running ``1, 2, ..., n_bins`` with no gaps.
 
     `x_lo`/`x_hi` and `y_lo`/`y_hi` are each pixel's edges along x and y, and
     `x_nodes`/`x_weights` are fixed-order Gauss-Legendre quadrature nodes and
@@ -256,7 +257,7 @@ class ProjectedBinning(eqx.Module):
                 present, a declared value is malformed, non-finite, or (for
                 `x_extent`/`y_extent`) not positive, a declared unit string
                 doesn't parse, or `bins` is not a non-empty 2D array of
-                non-negative IDs.
+                non-negative, contiguous IDs.
             astropy.units.UnitConversionError: If a declared unit isn't
                 dimensionally an angle.
         """
