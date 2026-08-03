@@ -49,8 +49,9 @@ kinematic_data:
     data_file: observed.ecsv
 {body}
 orbit_library_settings:
-  logrmin: -0.2
-  logrmax: 2.0
+  orbit_sampler:
+    logrmin: -0.2
+    logrmax: 2.0
 {orbit_body}
 io_settings:
   input_directory: input
@@ -67,8 +68,7 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
         user_path,
         output_directory,
         body="""weight_solver_settings:
-  counter_rotating_orbit_cut:
-    enabled: true
+  reattempt_failures: false
 """,
     )
 
@@ -140,9 +140,8 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
         "spacing": "logarithmic",
         "include_unscaled": True,
     }
-    cut = written["weight_solver_settings"]["counter_rotating_orbit_cut"]
-    assert cut["enabled"] is True
-    assert cut["min_affected_apertures"] == 2
+    assert written["weight_solver_settings"]["reattempt_failures"] is False
+    assert written["weight_solver_settings"]["maxiter_factor"] == 3
     assert "number_GH" not in written["weight_solver_settings"]
     assert "GH_sys_err" not in written["weight_solver_settings"]
     assert "PM_sys_err_factor" not in written["weight_solver_settings"]
@@ -394,10 +393,12 @@ def test_read_rejects_orbit_grid_with_too_few_i2_values(
     _write_user_config(
         user_path,
         output_directory,
-        orbit_body="  nI2: 3\n",
+        orbit_body="    nI2: 3\n",
     )
 
-    with pytest.raises(ValueError, match=r"orbit_library_settings\.nI2"):
+    with pytest.raises(
+        ValueError, match=r"orbit_library_settings\.orbit_sampler\.nI2"
+    ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
 

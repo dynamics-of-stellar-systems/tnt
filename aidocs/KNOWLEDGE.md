@@ -183,16 +183,6 @@
   its square root; it must be positive and `1.0` is neutral.
 - The former weight-solver keys `number_GH`, `GH_sys_err`, and
   `PM_sys_err_factor` are not part of the TNT schema.
-- Counter-rotating orbit-cut settings form a nested
-  `weight_solver_settings.counter_rotating_orbit_cut` block. The block owns
-  its enable switch, velocity thresholds, opposite-sign requirement, minimum
-  affected-aperture count, and h1 penalty scale.
-- The default counter-rotating cut requires at least two affected apertures.
-  The reference implementation's comment says that orbits flagged in zero or
-  one aperture are ignored, but its condition is `naperture_cut < 1`, which
-  only ignores zero and therefore admits a single affected aperture. TNT's
-  `min_affected_apertures: 2` follows the stated intent. Preserve this choice
-  during implementation unless the scientific policy is deliberately revised.
 - `execution_settings.model_processing_order` accepts `model_by_model` or
   `stage_by_stage`. The former completes orbit integration and weight solving
   for each model in turn; the latter integrates all models' orbit libraries

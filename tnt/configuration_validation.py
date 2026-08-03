@@ -294,6 +294,28 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
             raise ValueError(
                 f"{component_path}.parameters.ml is invalid for a mass MGE potential."
             )
+        # mge_mass_scale is a mass MGE's analogue of a light MGE's ml -- a
+        # mass-normalization parameter on top of an otherwise-fixed shape.
+        # It's typically `fixed`, but nothing requires that: see
+        # AbstractPotentialComponent.rescale in tnt/potential.py for why a
+        # fixed mass parameter can still move under potential_rescalings.
+        if (
+            include
+            and component_type == "triaxial_mass_mge"
+            and "mge_mass_scale" not in parameter_names
+        ):
+            raise ValueError(
+                f"{component_path}.parameters is missing required field: "
+                "mge_mass_scale."
+            )
+        if (
+            component_type == "triaxial_light_mge"
+            and "mge_mass_scale" in parameter_names
+        ):
+            raise ValueError(
+                f"{component_path}.parameters.mge_mass_scale is invalid for a "
+                "light MGE potential."
+            )
 
 
 def _validate_parameters(
@@ -596,55 +618,92 @@ def _validate_orbit_library_settings(settings: ConfigDict) -> None:
     keys = {
         "accuracy",
         "dithering",
-        "logrmax",
-        "logrmin",
-        "nE",
-        "nI2",
-        "nI3",
-        "number_orbits",
+        "n_stored_timesteps",
+        "orbit_sampler",
         "orbital_periods",
         "quad_nph",
         "quad_nr",
         "quad_nth",
         "random_seed",
-        "sampling",
         "starting_orbit",
     }
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
     for key in (
-        "nE",
-        "nI3",
-        "dithering",
         "quad_nph",
         "quad_nr",
         "quad_nth",
-        "sampling",
+        "n_stored_timesteps",
         "starting_orbit",
     ):
+        value = _integer(settings[key], f"{path}.{key}")
+        if value <= 0:
+            raise ValueError(f"{path}.{key} must be a positive integer.")
+    _validate_orbit_sampler(
+        _mapping(settings, "orbit_sampler", path), f"{path}.orbit_sampler"
+    )
+    _validate_dithering(_mapping(settings, "dithering", path), f"{path}.dithering")
+    _integer(settings["random_seed"], f"{path}.random_seed")
+    _positive_number(settings["orbital_periods"], f"{path}.orbital_periods")
+    _positive_number(settings["accuracy"], f"{path}.accuracy")
+
+
+_ORBIT_SAMPLER_TYPES = {"Grid", "Random"}
+
+
+def _validate_orbit_sampler(settings: ConfigDict, path: str) -> None:
+    """Validate an `orbit_library_settings.orbit_sampler` entry.
+
+    `logrmin`/`logrmax` (the radial log-extent orbits are sampled within)
+    are required for every scheme. Only `Grid`'s further fields (`nE`/
+    `nI2`/`nI3`) are otherwise known and checked here -- `Random`'s own
+    settings are still undecided, mirroring
+    `weight_solver_settings.nnls_solver`.
+    """
+    _require_keys(settings, {"type", "logrmin", "logrmax"}, path)
+    sampler_type = _choice(settings["type"], _ORBIT_SAMPLER_TYPES, f"{path}.type")
+    logrmin = _number(settings["logrmin"], f"{path}.logrmin")
+    logrmax = _number(settings["logrmax"], f"{path}.logrmax")
+    if logrmin >= logrmax:
+        raise ValueError(f"{path}.logrmin must be less than logrmax.")
+    if sampler_type != "Grid":
+        return
+    keys = {"type", "logrmin", "logrmax", "nE", "nI2", "nI3"}
+    _reject_unknown_keys(settings, keys, path)
+    _require_keys(settings, keys, path)
+    for key in ("nE", "nI3"):
         value = _integer(settings[key], f"{path}.{key}")
         if value <= 0:
             raise ValueError(f"{path}.{key} must be a positive integer.")
     n_i2 = _integer(settings["nI2"], f"{path}.nI2")
     if n_i2 < 4:
         raise ValueError(f"{path}.nI2 must be at least 4.")
-    _integer(settings["number_orbits"], f"{path}.number_orbits")
-    number_orbits = settings["number_orbits"]
-    if number_orbits != -1 and number_orbits <= 0:
-        raise ValueError(f"{path}.number_orbits must be -1 or a positive integer.")
-    _integer(settings["random_seed"], f"{path}.random_seed")
-    _positive_number(settings["orbital_periods"], f"{path}.orbital_periods")
-    _positive_number(settings["accuracy"], f"{path}.accuracy")
-    logrmin = _number(settings["logrmin"], f"{path}.logrmin")
-    logrmax = _number(settings["logrmax"], f"{path}.logrmax")
-    if logrmin >= logrmax:
-        raise ValueError(f"{path}.logrmin must be less than logrmax.")
+
+
+_DITHERING_TYPES = {"Cubic"}
+
+
+def _validate_dithering(settings: ConfigDict, path: str) -> None:
+    """Validate an `orbit_library_settings.dithering` entry.
+
+    Only `Cubic`'s field (`n_dither`) is known and checked here; there's no
+    other dithering scheme yet.
+    """
+    _require_keys(settings, {"type"}, path)
+    dithering_type = _choice(settings["type"], _DITHERING_TYPES, f"{path}.type")
+    if dithering_type != "Cubic":
+        return
+    keys = {"type", "n_dither"}
+    _reject_unknown_keys(settings, keys, path)
+    _require_keys(settings, keys, path)
+    value = _integer(settings["n_dither"], f"{path}.n_dither")
+    if value <= 0:
+        raise ValueError(f"{path}.n_dither must be a positive integer.")
 
 
 def _validate_weight_solver_settings(settings: ConfigDict) -> None:
     path = "weight_solver_settings"
     keys = {
-        "counter_rotating_orbit_cut",
         "lum_intr_rel_err",
         "maxiter_factor",
         "nnls_solver",
@@ -656,45 +715,16 @@ def _validate_weight_solver_settings(settings: ConfigDict) -> None:
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
     _choice(settings["type"], {"NNLS"}, f"{path}.type")
-    _choice(settings["nnls_solver"], {"cvxopt", "scipy"}, f"{path}.nnls_solver")
+    # cvxopt/scipy are no longer supported -- only JAX-native NNLS solvers
+    # will be. Which one(s) is still undecided, so this only checks that a
+    # name was given; tighten to a `_choice` over the real options once
+    # chosen.
+    _nonempty_string(settings["nnls_solver"], f"{path}.nnls_solver")
     _positive_number(settings["maxiter_factor"], f"{path}.maxiter_factor")
     _nonnegative_number(settings["regularisation"], f"{path}.regularisation")
     for key in ("lum_intr_rel_err", "sb_proj_rel_err"):
         _nonnegative_number(settings[key], f"{path}.{key}")
     _boolean(settings["reattempt_failures"], f"{path}.reattempt_failures")
-    _validate_counter_rotating_cut(
-        _mapping(settings, "counter_rotating_orbit_cut", path),
-        f"{path}.counter_rotating_orbit_cut",
-    )
-
-
-def _validate_counter_rotating_cut(settings: ConfigDict, path: str) -> None:
-    keys = {
-        "enabled",
-        "h1_penalty_scale",
-        "min_abs_observed_velocity_over_sigma",
-        "min_affected_apertures",
-        "min_orbit_velocity_difference_over_sigma",
-        "require_opposite_velocity_sign",
-    }
-    _reject_unknown_keys(settings, keys, path)
-    _require_keys(settings, keys, path)
-    _boolean(settings["enabled"], f"{path}.enabled")
-    _boolean(
-        settings["require_opposite_velocity_sign"],
-        f"{path}.require_opposite_velocity_sign",
-    )
-    for key in (
-        "h1_penalty_scale",
-        "min_abs_observed_velocity_over_sigma",
-        "min_orbit_velocity_difference_over_sigma",
-    ):
-        _positive_number(settings[key], f"{path}.{key}")
-    apertures = _integer(
-        settings["min_affected_apertures"], f"{path}.min_affected_apertures"
-    )
-    if apertures <= 0:
-        raise ValueError(f"{path}.min_affected_apertures must be positive.")
 
 
 def _validate_parameter_space_settings(settings: ConfigDict) -> None:
