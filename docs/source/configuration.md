@@ -68,7 +68,9 @@ block.
 4. Applies defaults selected by each kinematics data set's `type`.
 5. Validates the configured unit systems and converts supported unitful
    quantities to internal units.
-6. Validates the resolved data without constructing runtime objects.
+6. Validates the generic resolved schema and registry references without
+   constructing runtime objects. Type-specific kinematics validation is
+   deferred to kinematics construction.
 7. Preserves the original user YAML, portable resolved configuration, and run
    manifest below `<output_directory>/config_repository/`.
 
@@ -195,19 +197,55 @@ cover `v`, `sigma`, and every coefficient through `maximum_gh_order`.
 Proper-motion `variance_scale` multiplies error variances and must be positive;
 its neutral value is `1.0`.
 
+## Constructing kinematics
+
+After configuration preparation, build the observational runtime objects from
+the resolved registries:
+
+```python
+from tnt.kinematics import build_kinematics
+
+kinematics = build_kinematics(
+    config.data["kinematic_data"],
+    config.data["io_settings"]["input_directory"],
+    config.unit_systems.internal,
+    spatial_binnings,
+    mges,
+)
+```
+
+`spatial_binnings` and `mges` are name-to-object mappings constructed earlier
+in the runtime setup. Each kinematics object retains the referenced shared
+objects rather than reopening or duplicating them. An MGE reference remains
+optional; a spatial-binning reference is required.
+
+Gauss-Hermite and Bayesian LOSVD inputs are ECSV files. Gauss-Hermite files
+contain `vbin_id`, unitful `v`, `dv`, `sigma`, and `dsigma` columns, followed by
+dimensionless `hN` and `dhN` pairs. Bayesian LOSVD files contain
+`binID_dynamite`, `bin_flux`, and paired `losvd_N`/`dlosvd_N` columns; their
+metadata declares `vcent`, `dv`, and `velocity_unit`.
+
+Proper-motion inputs use an NPZ archive containing `PM_2dhist`,
+`PM_2dhist_sigma`, `binID_dynamite`, `nstarbin`, `vxrange`, `vyrange`, and the
+scalar string `velocity_unit`. TNT validates odd two-dimensional velocity-bin
+counts and positive uncertainties, normalizes each spatial-bin distribution,
+and applies `variance_scale` to its error variances.
+
 The former global `number_GH`, `GH_sys_err`, and `PM_sys_err_factor` fields are
 not weight-solver settings in TNT and are rejected as unknown fields.
 
 ## Validation
 
-Preparation rejects duplicate YAML keys, unknown fields, missing required
-fields, incorrect value types, unsupported enumerated values, and inconsistent
-tagged thresholds. It also checks data-only numerical constraints, including
-parameter bounds, positive worker counts, orbit-grid limits, and positive odd
-explicit histogram bin counts. Per-kinematics checks cover Gauss-Hermite order,
-complete systematic-uncertainty mappings, and proper-motion variance scaling.
-It also checks that references from potentials and observational data resolve
-to existing MGE and spatial-binning entries.
+Preparation rejects duplicate YAML keys, generic unknown fields, missing
+required registry fields, incorrect generic value types, unsupported type
+identifiers, and inconsistent tagged thresholds. It also checks non-kinematics
+data-only numerical constraints, including parameter bounds, positive worker
+counts, and orbit-grid limits. Concrete kinematics constructors check explicit
+histogram bin counts, Gauss-Hermite order and systematic-uncertainty mappings,
+Bayesian LOSVD policies, proper-motion variance scaling and warning thresholds,
+and all observational file contents. Preparation still checks that references
+from potentials and observational data resolve to existing MGE and
+spatial-binning entries.
 
 ## Potential rescaling
 
@@ -240,7 +278,7 @@ the later execution phase produces only the unscaled model.
 Errors identify the configuration path containing the invalid value. The
 resolved file is written only after every preparation-stage check succeeds.
 
-These checks do not instantiate system components, inspect observational data
+Preparation does not instantiate system components, inspect observational data
 or MGE files, or verify optional runtime dependencies. Those checks belong to
 the later execution phase. TNT also does not reproduce warnings for deprecated
 configuration fields from predecessor software; unsupported fields are

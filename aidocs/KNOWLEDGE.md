@@ -23,11 +23,13 @@
   data, and atomically preserves `user_config.yaml`, `resolved_config.yaml`,
   and `run_manifest.yaml` below `<output_directory>/config_repository/`. It
   does not instantiate scientific runtime objects.
-- Preparation-stage validation rejects duplicate keys, unknown or missing
-  fields, invalid types and enumerations, malformed tagged thresholds, and
-  basic numerical inconsistencies before the resolved file is written.
-  Runtime-object, observational-data, MGE-content, and optional-dependency
-  checks remain the responsibility of the later execution phase. Legacy
+- Preparation-stage validation rejects duplicate keys, generic unknown or
+  missing fields, invalid types and enumerations, malformed tagged thresholds,
+  broken registry references, and basic non-kinematics numerical
+  inconsistencies before the resolved file is written. Concrete kinematics
+  constructors validate their type-specific parameters and observational file
+  contents. Other runtime-object, MGE-content, and optional-dependency checks
+  remain the responsibility of the execution phase. Legacy
   deprecation-and-ignore warnings are intentionally not reproduced.
 - TNT uses `unxt` for configuration units. The required
   `units.internal` block defines length, time, mass, angle, and power;
@@ -49,8 +51,11 @@
   logarithmic parameter values and bounds are shifted between reference units
   while log step sizes remain unchanged.
 - MGE contents and quantities inside observational files are deliberately
-  deferred to the later object-construction/data-loading phase. Configuration
-  preparation does not open those files.
+  deferred to the object-construction/data-loading phase. Configuration
+  preparation does not open those files. `tnt.kinematics.build_kinematics`
+  constructs named `GaussHermite`, `BayesLOSVD`, and `ProperMotions` objects;
+  it converts unitful observations into the internal unit system and retains
+  JAX arrays in immutable Equinox modules.
 - `tnt.mge.build_mges()` is the explicit runtime boundary that loads the
   resolved `MGEs` registry into named `LightMGE` and `MassMGE` objects.
   `Configuration` continues to contain no instantiated scientific objects.
@@ -97,6 +102,25 @@
   `potential` defines potential components; `kinematic_data` references a
   binning and optionally an MGE; and `population_data` references a binning.
   Preparation validates all cross-references without opening the files.
+- `build_kinematics` accepts already-built spatial-binning and MGE registries,
+  resolves each data set's named references to the shared runtime objects, and
+  returns a name-to-object mapping. Kinematics may omit `mge`; `binning` is
+  required. Until the spatial-binning work is merged, callers may supply the
+  corresponding resolved binning values as placeholders.
+- Gauss-Hermite ECSV files require `vbin_id`, unitful `v`, `dv`, `sigma`, and
+  `dsigma` columns plus dimensionless `hN`/`dhN` pairs. Configured systematic
+  uncertainties are added in quadrature. Missing higher-order pairs are
+  represented by zero coefficients only when the corresponding configured
+  systematic uncertainty is positive.
+- Bayesian LOSVD ECSV files use DYNAMITE-compatible `binID_dynamite`,
+  `bin_flux`, `losvd_N`, and `dlosvd_N` columns. Metadata must contain `vcent`,
+  `dv`, and an explicit `velocity_unit`; TNT converts the velocity grid and
+  applies the configured flux-weighted systemic centering.
+- Proper-motion input retains DYNAMITE's NPZ array layout (`PM_2dhist`,
+  `PM_2dhist_sigma`, `binID_dynamite`, `nstarbin`, `vxrange`, and `vyrange`)
+  and adds a required scalar `velocity_unit`. Construction validates and
+  normalizes each 2D distribution, scales uncertainties by the square root of
+  `variance_scale`, and emits configured sampling warnings.
 - Potential types are `triaxial_light_mge`, `triaxial_mass_mge`, `nfw`, and
   `plummer`. A light-MGE potential requires an `ml` parameter. A mass-MGE
   potential rejects `ml` because its MGE already contains mass.

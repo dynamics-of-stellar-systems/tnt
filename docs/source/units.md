@@ -97,5 +97,11 @@ and easy to serialize.
 
 MGE (multi-Gaussian expansion) contents and quantities read from observational
 data files are intentionally not converted during configuration preparation.
-Those files are not opened at this stage; their unit handling belongs to the
-later object-construction and data-loading phase.
+Those files are not opened at this stage. MGE and kinematics constructors
+validate their declared units and convert arrays into the internal unit system.
+
+Gauss-Hermite velocity columns declare units directly in ECSV. Bayesian LOSVD
+ECSV metadata declares a `velocity_unit` applying to `vcent` and `dv`.
+Proper-motion NPZ archives contain a scalar string `velocity_unit` applying to
+`vxrange` and `vyrange`. Dimensionless moments, distributions, and relative
+uncertainties do not carry a unit.
