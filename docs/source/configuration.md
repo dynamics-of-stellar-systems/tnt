@@ -132,7 +132,9 @@ population_data:
 `spatial_binnings` lets kinematic and population data share one projected
 aperture definition. The four coordinate fields define a regular rectangular
 pixel grid, while `PA` gives the galaxy major-axis position angle measured
-counterclockwise from the grid's x-axis. Each is an explicit angular
+counterclockwise from the grid's y-axis (the Cappellari/van den Bosch
+convention also used by an MGE's `PA_twist`), not the grid's x-axis. Each is
+an explicit angular
 `{value, unit}` quantity. `bins_file` is resolved relative to
 `io_settings.input_directory` and must contain a two-dimensional NumPy array
 with shape `(npix_x, npix_y)`. Its non-negative integers assign pixels to bins;
