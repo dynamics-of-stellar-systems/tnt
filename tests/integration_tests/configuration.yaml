@@ -13,8 +13,12 @@ MGEs:
 
 spatial_binnings:
   kinset1_binning:
-    aperture_file: "aperture.dat"
-    bin_file: "bins.dat"
+    min_x: {value: -29.5, unit: "arcsec"}
+    min_y: {value: -26.5, unit: "arcsec"}
+    x_extent: {value: 58.0, unit: "arcsec"}
+    y_extent: {value: 52.0, unit: "arcsec"}
+    PA: {value: 126.0, unit: "deg"}
+    bins_file: "bins.npy"
 
 potential:
   bh:
@@ -127,29 +131,30 @@ kinematic_data:
 population_data: {}
 
 orbit_library_settings:
-  nE: 6
-  logrmin: -0.101275
-  logrmax: 1.99123
-  nI2: 5
-  nI3: 4
-  dithering: 1
+  orbit_sampler:
+    type: "Grid"
+    logrmin: -0.101275
+    logrmax: 1.99123
+    nE: 6
+    nI2: 5
+    nI3: 4
+  dithering:
+    type: "Cubic"
+    n_dither: 1
   quad_nr: 10
   quad_nth: 6
   quad_nph: 6
   orbital_periods: 200
-  sampling: 50000
+  n_stored_timesteps: 50000
   starting_orbit: 1
-  number_orbits: -1
   accuracy: 1.0e-5
   # A nonnegative integer is an explicit reproducible seed.
   random_seed: 4242
 
 weight_solver_settings:
   type: "NNLS"
-  nnls_solver: "scipy"
+  nnls_solver: "TBD"
   maxiter_factor: 3
-  counter_rotating_orbit_cut:
-    enabled: true
   regularisation: 0
   lum_intr_rel_err: 0.01
   sb_proj_rel_err: 0.02

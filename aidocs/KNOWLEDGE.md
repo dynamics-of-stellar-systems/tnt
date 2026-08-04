@@ -23,13 +23,19 @@
   data, and atomically preserves `user_config.yaml`, `resolved_config.yaml`,
   and `run_manifest.yaml` below `<output_directory>/config_repository/`. It
   does not instantiate scientific runtime objects.
-- Preparation-stage validation rejects duplicate keys, generic unknown or
-  missing fields, invalid types and enumerations, malformed tagged thresholds,
-  broken registry references, and basic non-kinematics numerical
-  inconsistencies before the resolved file is written. Concrete kinematics
-  constructors validate their type-specific parameters and observational file
-  contents. Other runtime-object, MGE-content, and optional-dependency checks
-  remain the responsibility of the execution phase. Legacy
+- Preparation-stage validation rejects duplicate keys, unknown or missing
+  fields in preparation-owned schemas, invalid types and enumerations,
+  malformed tagged thresholds, and basic numerical inconsistencies before the
+  resolved file is written. Spatial-binning entry fields are an explicit
+  exception: preparation collects their names for cross-reference validation,
+  while `ProjectedBinning.from_settings()` and `build_spatial_binnings()` own
+  their exact entry schema, geometry, units, `bins_file`, and loaded-array
+  validation. Runtime construction rejects non-mapping entries, missing and
+  unknown fields, invalid filenames, and empty or otherwise invalid bin maps.
+  Concrete kinematics constructors likewise validate type-specific parameters
+  and observational file contents. Other runtime-object, MGE-content, and
+  optional-dependency checks remain the responsibility of the execution phase.
+  Legacy
   deprecation-and-ignore warnings are intentionally not reproduced.
 - TNT uses `unxt` for configuration units. The required
   `units.internal` block defines length, time, mass, angle, and power;
@@ -94,19 +100,40 @@
   `pending_generation`; the execution phase must update the effective seed.
 - The user profile must define the physical system, dynamically named
   potential components and parameters, input directory, and output directory.
-- TNT user profiles use snake-case type identifiers and field names. Parameter
-  search bounds belong under `generator_settings` as `lower_bound`,
-  `upper_bound`, `step`, and `minimum_step`; display labels use `latex_label`.
+- TNT user profiles generally use snake-case type identifiers and field names.
+  The established `MGEs` registry name and projected-binning `PA` field are
+  current schema exceptions. Parameter search bounds belong under
+  `generator_settings` as `lower_bound`, `upper_bound`, `step`, and
+  `minimum_step`; display labels use `latex_label`.
 - Scientific inputs use independent named registries: `MGEs` maps MGE names to
-  files; `spatial_binnings` maps names to `aperture_file`/`bin_file` pairs;
-  `potential` defines potential components; `kinematic_data` references a
-  binning and optionally an MGE; and `population_data` references a binning.
-  Preparation validates all cross-references without opening the files.
-- `build_kinematics` accepts already-built spatial-binning and MGE registries,
-  resolves each data set's named references to the shared runtime objects, and
-  returns a name-to-object mapping. Kinematics may omit `mge`; `binning` is
-  required. Until the spatial-binning work is merged, callers may supply the
-  corresponding resolved binning values as placeholders.
+  files; `spatial_binnings` maps names to inline rectangular aperture geometry
+  (`min_x`, `min_y`, `x_extent`, `y_extent`, and `PA`) plus a `bins_file`
+  containing a 2D NumPy pixel-to-bin map; `potential` defines potential
+  components; `kinematic_data` references a binning and optionally an MGE; and
+  `population_data` references a binning. Preparation validates all
+  cross-references without opening the files.
+- `tnt.spatial_binnings.build_spatial_binnings()` is the explicit runtime
+  boundary that loads the resolved `spatial_binnings` registry into named
+  `ProjectedBinning` objects. It validates the complete entry before file
+  access, validates the loaded non-empty bin array, converts coordinates to
+  the internal angle unit, and precomputes pixel quadrature.
+- `AbstractMGE.get_projected_mass()` integrates projected MGE totals into the
+  positive bin IDs of a `ProjectedBinning`; bin ID 0 is excluded. The MGE and
+  binning coordinate units must be dimensionally consistent.
+- `build_kinematics` requires already-built `ProjectedBinning` objects and
+  optional `LightMGE`/`MassMGE` objects, resolves each data set's named
+  references to those shared runtime objects, and returns a name-to-object
+  mapping. Its runtime boundary rejects incorrectly typed registry values.
+- `AbstractKinematics.binning` is strictly a `ProjectedBinning`; its optional
+  `mge` is strictly a `LightMGE` or `MassMGE`. Each concrete kinematics class
+  owns its configuration identifier in `_type`, and the builder's dispatch
+  registry is derived from those subclasses with duplicate detection rather
+  than maintained independently.
+- `AbstractKinematics.design_matrix()` defines the weight-solver projection
+  boundary introduced by the model-architecture scaffold. It deliberately
+  raises `NotImplementedError` until orbit integration and the concrete
+  kinematics projections are implemented; observational values and
+  uncertainties already have a shared base-class interface.
 - Gauss-Hermite ECSV files require `vbin_id`, unitful `v`, `dv`, `sigma`, and
   `dsigma` columns plus dimensionless `hN`/`dhN` pairs. Configured systematic
   uncertainties are added in quadrature. Missing higher-order pairs are
@@ -147,11 +174,15 @@
   `cosmological_parameters`; they are not attributes of the modelled system.
 - The present-day Hubble parameter is named `H0`, distinguishing it from the
   Hubble parameter at other cosmological times.
-- `mge_settings.axial_ratio_cap` is a global numerical-stability policy for
-  every multi-Gaussian expansion (MGE), not a per-component default. Values
-  above the cap are replaced by the cap, and the implementation must warn
-  about every adjustment. The resolved model data must preserve the adjusted
-  values for reproducibility.
+- `mge_settings.intrinsic_mass_quad_order` and
+  `mge_settings.projected_mass_quad_order` are positive fixed Gauss-Legendre
+  quadrature orders for intrinsic spherical-grid and projected pixel
+  integration, respectively. The packaged defaults are both 10.
+- `SphericalGrid` is defined in `tnt.spatial_binnings`; code importing it from
+  `tnt.mge` must update its import. The unused inverse conversion
+  `AbstractMGE.physical_to_angular()` and
+  `quantity_conversions.physical_to_angular()` have been removed; runtime code
+  retains the angular-to-physical direction used by current workflows.
 - Shared comparison tolerances and constraint-error floors belong under
   `numerics_settings`. Model comparison uses a relative tolerance of `1e-10`,
   while parameter-grid comparisons use `1e-6`. Total-mass and intrinsic-mass
@@ -185,16 +216,6 @@
   its square root; it must be positive and `1.0` is neutral.
 - The former weight-solver keys `number_GH`, `GH_sys_err`, and
   `PM_sys_err_factor` are not part of the TNT schema.
-- Counter-rotating orbit-cut settings form a nested
-  `weight_solver_settings.counter_rotating_orbit_cut` block. The block owns
-  its enable switch, velocity thresholds, opposite-sign requirement, minimum
-  affected-aperture count, and h1 penalty scale.
-- The default counter-rotating cut requires at least two affected apertures.
-  The reference implementation's comment says that orbits flagged in zero or
-  one aperture are ignored, but its condition is `naperture_cut < 1`, which
-  only ignores zero and therefore admits a single affected aperture. TNT's
-  `min_affected_apertures: 2` follows the stated intent. Preserve this choice
-  during implementation unless the scientific policy is deliberately revised.
 - `execution_settings.model_processing_order` accepts `model_by_model` or
   `stage_by_stage`. The former completes orbit integration and weight solving
   for each model in turn; the latter integrates all models' orbit libraries

@@ -6,7 +6,7 @@ import logging
 import math
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 import astropy.units as au
 import equinox as eqx
@@ -16,7 +16,11 @@ import unxt as u
 from astropy.table import QTable
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt.mge import AbstractMGE
+from tnt.mge import LightMGE, MassMGE
+from tnt.spatial_binnings import ProjectedBinning
+
+if TYPE_CHECKING:
+    from tnt.orbit_library import OrbitLibrary
 
 ConfigMapping = Mapping[str, Any]
 _LOGGER = logging.getLogger(__name__)
@@ -63,10 +67,11 @@ class Histogram2D(eqx.Module):
 class AbstractKinematics(eqx.Module):
     """Shared runtime state for a named kinematics data set."""
 
+    _type: ClassVar[str]
     name: str = eqx.field(static=True)
     data_file: Path = eqx.field(static=True)
-    binning: Any
-    mge: AbstractMGE | None
+    binning: ProjectedBinning
+    mge: LightMGE | MassMGE | None
     histogram: Histogram | Histogram2D
     bin_ids: jnp.ndarray
 
@@ -75,10 +80,26 @@ class AbstractKinematics(eqx.Module):
         """Return the number of observed spatial bins."""
         return int(self.bin_ids.shape[0])
 
+    def observed_values_and_uncertainties(
+        self,
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Return observations and uncertainties in solver column order."""
+        raise NotImplementedError
+
+    def design_matrix(self, orbit_library: OrbitLibrary) -> jnp.ndarray:
+        """Project an orbit library into this data set's observables.
+
+        This interface belongs to the model-architecture scaffold. Concrete
+        projections will be implemented with the orbit integration and weight
+        solving layers; until then, calling it fails explicitly.
+        """
+        raise NotImplementedError
+
 
 class GaussHermite(AbstractKinematics):
     """Line-of-sight kinematics represented by Gauss-Hermite moments."""
 
+    _type: ClassVar[str] = "gauss_hermite"
     _allowed_settings: ClassVar[set[str]] = {
         "binning",
         "data_file",
@@ -104,8 +125,8 @@ class GaussHermite(AbstractKinematics):
         name: str,
         settings: ConfigMapping,
         data_file: Path,
-        binning: Any,
-        mge: AbstractMGE | None,
+        binning: ProjectedBinning,
+        mge: LightMGE | MassMGE | None,
         unit_system: AbstractUnitSystem,
     ) -> Self:
         """Read and construct one configured Gauss-Hermite data set."""
@@ -194,6 +215,7 @@ class GaussHermite(AbstractKinematics):
 class BayesLOSVD(AbstractKinematics):
     """Line-of-sight velocity distributions sampled in velocity bins."""
 
+    _type: ClassVar[str] = "bayes_losvd"
     _allowed_settings: ClassVar[set[str]] = {
         "binning",
         "data_file",
@@ -217,8 +239,8 @@ class BayesLOSVD(AbstractKinematics):
         name: str,
         settings: ConfigMapping,
         data_file: Path,
-        binning: Any,
-        mge: AbstractMGE | None,
+        binning: ProjectedBinning,
+        mge: LightMGE | MassMGE | None,
         unit_system: AbstractUnitSystem,
     ) -> Self:
         """Read and construct one configured Bayesian LOSVD data set."""
@@ -281,6 +303,7 @@ class BayesLOSVD(AbstractKinematics):
 class ProperMotions(AbstractKinematics):
     """Two-dimensional proper-motion velocity distributions."""
 
+    _type: ClassVar[str] = "proper_motions"
     _allowed_settings: ClassVar[set[str]] = {
         "binning",
         "data_file",
@@ -303,8 +326,8 @@ class ProperMotions(AbstractKinematics):
         name: str,
         settings: ConfigMapping,
         data_file: Path,
-        binning: Any,
-        mge: AbstractMGE | None,
+        binning: ProjectedBinning,
+        mge: LightMGE | MassMGE | None,
         unit_system: AbstractUnitSystem,
     ) -> Self:
         """Read and construct one configured proper-motion data set."""
@@ -378,19 +401,31 @@ class ProperMotions(AbstractKinematics):
         return self.distribution.reshape(shape), self.uncertainty.reshape(shape)
 
 
-_KINEMATICS_CLASSES: dict[str, type[AbstractKinematics]] = {
-    "bayes_losvd": BayesLOSVD,
-    "gauss_hermite": GaussHermite,
-    "proper_motions": ProperMotions,
-}
+def _kinematics_class_registry() -> dict[str, type[AbstractKinematics]]:
+    """Derive the configured type registry from concrete subclasses."""
+    registry: dict[str, type[AbstractKinematics]] = {}
+    for cls in AbstractKinematics.__subclasses__():
+        kind = getattr(cls, "_type", None)
+        if not isinstance(kind, str) or not kind:
+            raise TypeError(f"{cls.__name__}._type must be a non-empty string.")
+        if kind in registry:
+            raise ValueError(
+                f"Duplicate kinematics type {kind!r} on "
+                f"{registry[kind].__name__} and {cls.__name__}."
+            )
+        registry[kind] = cls
+    return registry
+
+
+_KINEMATICS_CLASSES = _kinematics_class_registry()
 
 
 def build_kinematics(
     kinematic_data: Mapping[str, ConfigMapping],
     input_directory: str | Path,
     unit_system: AbstractUnitSystem,
-    spatial_binnings: Mapping[str, Any],
-    mges: Mapping[str, AbstractMGE] | None = None,
+    spatial_binnings: Mapping[str, ProjectedBinning],
+    mges: Mapping[str, LightMGE | MassMGE] | None = None,
 ) -> dict[str, AbstractKinematics]:
     """Build named kinematics objects from resolved configuration data.
 
@@ -406,7 +441,9 @@ def build_kinematics(
         A mapping from configured names to concrete kinematics objects.
     """
     directory = Path(input_directory)
-    available_mges = {} if mges is None else mges
+    available_mges: Mapping[str, LightMGE | MassMGE] = (
+        {} if mges is None else mges
+    )
     built: dict[str, AbstractKinematics] = {}
     for name, settings_value in kinematic_data.items():
         path = f"kinematic_data.{name}"
@@ -427,13 +464,23 @@ def build_kinematics(
         binning_name = _string(
             _required(settings, "binning", path), f"{path}.binning"
         )
-        binning = _resolve_reference(
-            spatial_binnings, binning_name, f"{path}.binning", "spatial_binnings"
+        binning = _resolve_typed_reference(
+            spatial_binnings,
+            binning_name,
+            f"{path}.binning",
+            "spatial_binnings",
+            ProjectedBinning,
         )
         mge = None
         if "mge" in settings:
             mge_name = _string(settings["mge"], f"{path}.mge")
-            mge = _resolve_reference(available_mges, mge_name, f"{path}.mge", "MGEs")
+            mge = _resolve_typed_reference(
+                available_mges,
+                mge_name,
+                f"{path}.mge",
+                "MGEs",
+                (LightMGE, MassMGE),
+            )
         data_file = Path(filename)
         if not data_file.is_absolute():
             data_file = directory / data_file
@@ -511,6 +558,26 @@ def _resolve_reference(
         raise ValueError(
             f"{path} references unknown {registry_name} entry {name!r}."
         ) from error
+
+
+def _resolve_typed_reference(
+    registry: Mapping[str, Any],
+    name: str,
+    path: str,
+    registry_name: str,
+    expected_type: type[Any] | tuple[type[Any], ...],
+) -> Any:
+    """Resolve a named object and enforce its runtime type."""
+    value = _resolve_reference(registry, name, path, registry_name)
+    if not isinstance(value, expected_type):
+        if isinstance(expected_type, tuple):
+            expected = " or ".join(cls.__name__ for cls in expected_type)
+        else:
+            expected = expected_type.__name__
+        raise TypeError(
+            f"{path} must resolve to {expected}, got {type(value).__name__}."
+        )
+    return value
 
 
 def _read_bin_ids(table: QTable, column: str, data_file: Path) -> jnp.ndarray:

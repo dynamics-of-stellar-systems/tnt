@@ -7,17 +7,32 @@ import pytest
 import unxt as u
 from astropy.table import QTable
 
+import tnt.kinematics as kinematics_module
 from tnt.kinematics import (
+    AbstractKinematics,
     BayesLOSVD,
     GaussHermite,
     Histogram2D,
     ProperMotions,
     build_kinematics,
 )
+from tnt.spatial_binnings import ProjectedBinning
 
 
 def _unit_system() -> u.AbstractUnitSystem:
     return u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
+
+
+def _binning() -> ProjectedBinning:
+    return ProjectedBinning(
+        min_x=u.Quantity(0.0, "rad"),
+        min_y=u.Quantity(0.0, "rad"),
+        x_extent=u.Quantity(1.0, "rad"),
+        y_extent=u.Quantity(1.0, "rad"),
+        PA=u.Quantity(0.0, "rad"),
+        bins=jnp.array([[1, 2]]),
+        quad_order=2,
+    )
 
 
 def _common_settings(data_file: Path, kind: str) -> dict[str, object]:
@@ -67,15 +82,16 @@ def test_build_gauss_hermite_converts_units_and_applies_systematics(
         }
     )
 
+    binning = _binning()
     result = build_kinematics(
         {"gh": settings},
         tmp_path,
         _unit_system(),
-        {"observed": "shared-binning"},
+        {"observed": binning},
     )["gh"]
 
     assert isinstance(result, GaussHermite)
-    assert result.binning == "shared-binning"
+    assert result.binning is binning
     assert result.velocity.unit == u.unit("kpc / Myr")
     assert result.coefficients.shape == (2, 2)
     assert result.histogram.bins % 2 == 1
@@ -111,7 +127,7 @@ def test_gauss_hermite_adds_missing_higher_order_with_systematic(
     )
 
     result = build_kinematics(
-        {"gh": settings}, tmp_path, _unit_system(), {"observed": object()}
+        {"gh": settings}, tmp_path, _unit_system(), {"observed": _binning()}
     )["gh"]
 
     assert jnp.allclose(result.coefficients[:, 2], 0.0)
@@ -141,7 +157,7 @@ def test_gauss_hermite_rejects_incomplete_systematics_at_construction(
 
     with pytest.raises(ValueError, match=r"missing required field\(s\): h5"):
         build_kinematics(
-            {"gh": settings}, tmp_path, _unit_system(), {"observed": object()}
+            {"gh": settings}, tmp_path, _unit_system(), {"observed": _binning()}
         )
 
 
@@ -168,7 +184,7 @@ def test_gauss_hermite_rejects_even_histogram_at_construction(
 
     with pytest.raises(ValueError, match="bins must be a positive odd integer"):
         build_kinematics(
-            {"gh": settings}, tmp_path, _unit_system(), {"observed": object()}
+            {"gh": settings}, tmp_path, _unit_system(), {"observed": _binning()}
         )
 
 
@@ -199,14 +215,16 @@ def test_build_bayes_losvd_centers_systemic_velocity(tmp_path: Path) -> None:
         "systemic_velocity": "flux_weighted",
     }
 
+    binning = _binning()
     result = build_kinematics(
         {"bayes": settings},
         tmp_path,
         _unit_system(),
-        {"observed": "shared-binning"},
+        {"observed": binning},
     )["bayes"]
 
     assert isinstance(result, BayesLOSVD)
+    assert result.binning is binning
     assert result.losvd.shape == (2, 3)
     assert result.velocity_centers.unit == u.unit("kpc / Myr")
     flux_weighted_mean = jnp.sum(
@@ -246,7 +264,7 @@ def test_build_proper_motions_normalizes_and_scales_errors(tmp_path: Path) -> No
     )
 
     result = build_kinematics(
-        {"pm": settings}, tmp_path, _unit_system(), {"observed": object()}
+        {"pm": settings}, tmp_path, _unit_system(), {"observed": _binning()}
     )["pm"]
 
     assert isinstance(result, ProperMotions)
@@ -276,7 +294,7 @@ def test_proper_motions_rejects_variance_scale_at_construction(
 
     with pytest.raises(ValueError, match="variance_scale must be greater than zero"):
         build_kinematics(
-            {"pm": settings}, tmp_path, _unit_system(), {"observed": object()}
+            {"pm": settings}, tmp_path, _unit_system(), {"observed": _binning()}
         )
 
 
@@ -287,3 +305,35 @@ def test_build_kinematics_rejects_unknown_binning_before_reading_file(
 
     with pytest.raises(ValueError, match="unknown spatial_binnings entry 'observed'"):
         build_kinematics({"gh": settings}, tmp_path, _unit_system(), {})
+
+
+def test_kinematics_registry_is_derived_from_subclass_types() -> None:
+    expected = {cls._type: cls for cls in AbstractKinematics.__subclasses__()}
+
+    assert kinematics_module._KINEMATICS_CLASSES == expected
+
+
+def test_build_kinematics_rejects_non_projected_binning(tmp_path: Path) -> None:
+    settings = _common_settings(tmp_path / "missing.ecsv", "gauss_hermite")
+
+    with pytest.raises(TypeError, match="must resolve to ProjectedBinning"):
+        build_kinematics(
+            {"gh": settings},
+            tmp_path,
+            _unit_system(),
+            {"observed": "not-a-binning"},  # type: ignore[dict-item]
+        )
+
+
+def test_build_kinematics_rejects_non_mge_reference(tmp_path: Path) -> None:
+    settings = _common_settings(tmp_path / "missing.ecsv", "gauss_hermite")
+    settings["mge"] = "light"
+
+    with pytest.raises(TypeError, match="must resolve to LightMGE or MassMGE"):
+        build_kinematics(
+            {"gh": settings},
+            tmp_path,
+            _unit_system(),
+            {"observed": _binning()},
+            {"light": object()},  # type: ignore[dict-item]
+        )

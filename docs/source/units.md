@@ -105,3 +105,10 @@ ECSV metadata declares a `velocity_unit` applying to `vcent` and `dv`.
 Proper-motion NPZ archives contain a scalar string `velocity_unit` applying to
 `vxrange` and `vyrange`. Dimensionless moments, distributions, and relative
 uncertainties do not carry a unit.
+
+Projected spatial-binning geometry is also converted during runtime-object
+construction rather than preparation. Its `min_x`, `min_y`, `x_extent`,
+`y_extent`, and `PA` fields still use explicit `{value, unit}` mappings in the
+resolved configuration. `ProjectedBinning.from_settings()` validates that
+these are angular quantities and converts them to the internal angle unit when
+`build_spatial_binnings()` loads the binning registry.

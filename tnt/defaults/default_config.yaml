@@ -24,10 +24,13 @@ units:
 cosmological_parameters:
   H0: {value: 70.0, unit: "km / (s Mpc)"}
 
-# Apply this numerical-stability cap uniformly to every multi-Gaussian
-# expansion (MGE). Values above the cap are replaced and must trigger a warning.
+# Fixed-order Gauss-Legendre quadrature orders for the two MGE integrals that
+# aren't fully analytic: the intrinsic (3D) mass in a spherical grid cell
+# (Deprojected3DMGE.spherical_mass_grid) and the projected (2D) mass in an
+# aperture-grid pixel (AbstractMGE.get_projected_mass).
 mge_settings:
-  axial_ratio_cap: 0.9999
+  intrinsic_mass_quad_order: 10
+  projected_mass_quad_order: 10
 
 # Shared numerical policies. Keeping these values explicit makes model
 # identity checks and solver constraints reproducible across implementations.
@@ -56,6 +59,13 @@ logging_settings:
 dynamic_object_defaults:
   potential:
     include: true
+  # `fixed` only stops the parameter generator from proposing independent
+  # values for a parameter across shape points. It does not exempt a
+  # potential component's mass parameter (ml, mge_mass_scale, ...) from
+  # parameter_space_settings.potential_rescalings, which still rescales it --
+  # every component's mass parameter must move together, fixed or not, or the
+  # potential's shape would silently no longer match its orbit library. See
+  # AbstractPotentialComponent.rescale in tnt/potential.py.
   parameter:
     fixed: false
     logarithmic: false
@@ -107,17 +117,20 @@ kinematic_data: {}
 population_data: {}
 
 orbit_library_settings:
-  nE: 6
-  nI2: 5
-  nI3: 4
-  dithering: 1
+  orbit_sampler:
+    type: "Grid"
+    nE: 6
+    nI2: 5
+    nI3: 4
+  dithering:
+    type: "Cubic"
+    n_dither: 1
   quad_nr: 10
   quad_nth: 6
   quad_nph: 6
   orbital_periods: 200
-  sampling: 50000
+  n_stored_timesteps: 50000
   starting_orbit: 1
-  number_orbits: -1
   accuracy: 1.0e-5
   # A negative value generates a seed; zero or a positive integer uses that
   # value as the seed for a reproducible run.
@@ -125,20 +138,11 @@ orbit_library_settings:
 
 weight_solver_settings:
   type: "NNLS"
-  nnls_solver: "scipy"
+  # cvxopt/scipy are no longer supported -- only JAX-native NNLS solvers
+  # will be. Which one(s) is still undecided; "TBD" is a placeholder, not a
+  # real option.
+  nnls_solver: "TBD"
   maxiter_factor: 3
-  counter_rotating_orbit_cut:
-    enabled: false
-    # Require substantial observed rotation: abs(v_observed) / sigma.
-    min_abs_observed_velocity_over_sigma: 1.5
-    # Require a substantial orbit-to-observation velocity difference.
-    min_orbit_velocity_difference_over_sigma: 3.0
-    require_opposite_velocity_sign: true
-    # Require the orbit to meet the cut conditions in at least this many
-    # apertures.
-    min_affected_apertures: 2
-    # A cut orbit receives h1 = h1_penalty_scale / histogram_bin_width.
-    h1_penalty_scale: 3.0
   regularisation: 0
   lum_intr_rel_err: 0.01
   sb_proj_rel_err: 0.01

@@ -6,15 +6,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 import unxt as u
+from scipy import integrate
 
 from tnt.mge import (
     Deprojected3DMGE,
     LightMGE,
     MassMGE,
-    SphericalGrid,
     build_mges,
     read_mge,
 )
+from tnt.spatial_binnings import ProjectedBinning, SphericalGrid
 
 
 def _internal_unit_system() -> u.AbstractUnitSystem:
@@ -74,11 +75,11 @@ def _multi_component_light_mge() -> LightMGE:
     tests that just need some realistic LightMGE to operate on, as opposed to
     testing file-reading behaviour itself.
 
-    `angular_to_physical`/`physical_to_angular` only give correct results for
-    an angle unit of exactly "rad" (their `solid_angle` shortcut assumes it),
-    which is why this doesn't just store the raw arcsec/deg values directly:
-    real MGEs are always converted to "rad" by `.read()` before those methods
-    would ever see them.
+    `angular_to_physical` only gives correct results for an angle unit of
+    exactly "rad" (its `solid_angle` shortcut assumes it), which is why this
+    doesn't just store the raw arcsec/deg values directly: real MGEs are
+    always converted to "rad" by `.read()` before that method would ever see
+    them.
     """
     intensity, sigma, q, pa_twist = zip(*_LIGHT_ROWS, strict=True)
     sigma_arcsec = u.Quantity(jnp.array(sigma), "arcsec")
@@ -516,19 +517,206 @@ def test_angular_to_physical_leaves_q_and_pa_twist_unchanged():
     )
 
 
-def test_angular_physical_round_trip():
-    mge = _multi_component_light_mge()
+_PROJECTED_MASS_QUAD_ORDER = 10
+
+
+def _projected_binning(
+    *, min_x, min_y, x_extent, y_extent, pa, bins
+) -> ProjectedBinning:
+    return ProjectedBinning.from_settings(
+        {
+            "min_x": {"value": min_x, "unit": "rad"},
+            "min_y": {"value": min_y, "unit": "rad"},
+            "x_extent": {"value": x_extent, "unit": "rad"},
+            "y_extent": {"value": y_extent, "unit": "rad"},
+            "PA": {"value": pa, "unit": "rad"},
+        },
+        bins,
+        _internal_unit_system(),
+        _PROJECTED_MASS_QUAD_ORDER,
+    )
+
+
+def _brute_force_aperture_mass(  # noqa: N803
+    I, sigma, q, pa_twist, pa, x_edges, y_edges
+):
+    """Independently integrate a multi-component MGE over a pixel grid.
+
+    Uses `scipy.integrate.dblquad` directly on each component's surface
+    density, rotated into the pixel grid's frame by hand (no tnt code
+    involved), as ground truth for `AbstractMGE.get_projected_mass`.
+    """
+    n_x, n_y = len(x_edges) - 1, len(y_edges) - 1
+    mass = np.zeros((n_x, n_y))
+    for k in range(len(I)):
+        alpha = pa - np.pi / 2 + pa_twist[k]
+
+        def surface_density(x, y, k=k, alpha=alpha):
+            x_major = x * np.cos(alpha) + y * np.sin(alpha)
+            y_minor = -x * np.sin(alpha) + y * np.cos(alpha)
+            return I[k] * np.exp(
+                -(x_major**2 + (y_minor / q[k]) ** 2) / (2 * sigma[k] ** 2)
+            )
+
+        for i in range(n_x):
+            for j in range(n_y):
+                val, _ = integrate.dblquad(
+                    lambda y, x, sd=surface_density: sd(x, y),
+                    x_edges[i],
+                    x_edges[i + 1],
+                    y_edges[j],
+                    y_edges[j + 1],
+                    epsabs=1e-14,
+                    epsrel=1e-12,
+                )
+                mass[i, j] += val
+    return mass
+
+
+@pytest.mark.parametrize(
+    ("I", "sigma", "q", "pa_twist", "pa"),
+    [
+        ([3.0], [0.02], [0.4], [0.3], 1.1),
+        ([3.0], [0.02], [1.0], [0.0], 0.0),
+        ([2.0, 4.0], [0.015, 0.03], [0.6, 0.3], [0.0, 0.5], 0.7),
+    ],
+)
+def test_get_projected_mass_matches_independent_numeric_integral(  # noqa: N803
+    I, sigma, q, pa_twist, pa
+):
+    mge = LightMGE(
+        I=u.Quantity(jnp.array(I), "Lsun / rad2"),
+        sigma=u.Quantity(jnp.array(sigma), "rad"),
+        q=u.Quantity(jnp.array(q), ""),
+        PA_twist=u.Quantity(jnp.array(pa_twist), "rad"),
+    )
+    n_x, n_y = 4, 3
+    min_x, min_y = -0.05, -0.04
+    x_extent, y_extent = 0.1, 0.08
+    x_edges = min_x + np.linspace(0, x_extent, n_x + 1)
+    y_edges = min_y + np.linspace(0, y_extent, n_y + 1)
+    bins = 1 + np.arange(n_x * n_y).reshape(n_x, n_y)
+    binning = _projected_binning(
+        min_x=min_x,
+        min_y=min_y,
+        x_extent=x_extent,
+        y_extent=y_extent,
+        pa=pa,
+        bins=bins,
+    )
+
+    mass = mge.get_projected_mass(binning)
+
+    expected_grid = _brute_force_aperture_mass(
+        I, sigma, q, pa_twist, pa, x_edges, y_edges
+    )
+    expected = expected_grid.ravel()[np.argsort(bins.ravel())]
+    assert mass.unit == u.unit("Lsun")
+    assert jnp.allclose(mass.ustrip("Lsun"), expected, rtol=1e-5)
+
+
+def test_get_projected_mass_conserves_total_flux_for_circular_component():
+    mge = LightMGE(
+        I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
+        sigma=u.Quantity(jnp.array([0.01]), "rad"),
+        q=u.Quantity(jnp.array([1.0]), ""),
+        PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+    )
+    bins = np.ones((60, 60), dtype=int)
+    binning = _projected_binning(
+        min_x=-1.0, min_y=-1.0, x_extent=2.0, y_extent=2.0, pa=0.3, bins=bins
+    )
+
+    mass = mge.get_projected_mass(binning)
+
+    expected = 2 * np.pi * 5.0 * 1.0 * 0.01**2
+    assert jnp.allclose(mass.ustrip("Lsun"), expected, rtol=1e-6)
+
+
+def test_get_projected_mass_excludes_unbinned_pixels():
+    mge = LightMGE(
+        I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
+        sigma=u.Quantity(jnp.array([0.01]), "rad"),
+        q=u.Quantity(jnp.array([1.0]), ""),
+        PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+    )
+    bins = np.array([[0, 1], [1, 0]])
+    binning = _projected_binning(
+        min_x=-0.02, min_y=-0.02, x_extent=0.04, y_extent=0.04, pa=0.0, bins=bins
+    )
+
+    mass = mge.get_projected_mass(binning)
+
+    assert mass.shape == (1,)
+
+
+def test_get_projected_mass_aggregates_multiple_pixels_per_bin():
+    mge = LightMGE(
+        I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
+        sigma=u.Quantity(jnp.array([0.01]), "rad"),
+        q=u.Quantity(jnp.array([0.7]), ""),
+        PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+    )
+    single_bin = np.ones((4, 4), dtype=int)
+    per_pixel_bins = 1 + np.arange(16).reshape(4, 4)
+    binning_kwargs = {
+        "min_x": -0.02,
+        "min_y": -0.02,
+        "x_extent": 0.04,
+        "y_extent": 0.04,
+        "pa": 0.2,
+    }
+
+    combined = mge.get_projected_mass(
+        _projected_binning(bins=single_bin, **binning_kwargs)
+    )
+    separate = mge.get_projected_mass(
+        _projected_binning(bins=per_pixel_bins, **binning_kwargs)
+    )
+
+    assert jnp.allclose(combined.ustrip("Lsun"), jnp.sum(separate.ustrip("Lsun")))
+
+
+def test_get_projected_mass_requires_consistent_units():
+    mge = LightMGE(
+        I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
+        sigma=u.Quantity(jnp.array([0.01]), "rad"),
+        q=u.Quantity(jnp.array([1.0]), ""),
+        PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+    )
+    binning = _projected_binning(
+        min_x=-1.0,
+        min_y=-1.0,
+        x_extent=2.0,
+        y_extent=2.0,
+        pa=0.0,
+        bins=np.ones((3, 3), dtype=int),
+    ).angular_to_physical(u.Quantity(30.5, "Mpc"))
+
+    with pytest.raises(ValueError, match="not convertible"):
+        mge.get_projected_mass(binning)
+
+
+def test_get_projected_mass_invariant_under_matching_physical_conversion():
+    mge = LightMGE(
+        I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / rad2"),
+        sigma=u.Quantity(jnp.array([0.01, 0.02]), "rad"),
+        q=u.Quantity(jnp.array([0.6, 0.9]), ""),
+        PA_twist=u.Quantity(jnp.array([0.0, 0.4]), "rad"),
+    )
+    bins = 1 + np.arange(9).reshape(3, 3)
+    binning = _projected_binning(
+        min_x=-0.05, min_y=-0.05, x_extent=0.1, y_extent=0.1, pa=0.5, bins=bins
+    )
     distance = u.Quantity(30.5, "Mpc")
 
-    round_tripped = mge.angular_to_physical(distance).physical_to_angular(distance)
-
-    assert jnp.allclose(round_tripped.sigma.ustrip("rad"), mge.sigma.ustrip("rad"))
-    assert jnp.allclose(
-        round_tripped.I.ustrip("Lsun / rad2"), mge.I.ustrip("Lsun / rad2")
+    angular_mass = mge.get_projected_mass(binning)
+    physical_mass = mge.angular_to_physical(distance).get_projected_mass(
+        binning.angular_to_physical(distance)
     )
-    assert jnp.allclose(round_tripped.q.ustrip(""), mge.q.ustrip(""))
+
     assert jnp.allclose(
-        round_tripped.PA_twist.ustrip("rad"), mge.PA_twist.ustrip("rad")
+        angular_mass.ustrip("Lsun"), physical_mass.ustrip("Lsun"), rtol=1e-6
     )
 
 
@@ -538,6 +726,9 @@ def _analytic_total_mass(
     return np.sum((2 * np.pi) ** 1.5 * sigma**3 * p * q * I)
 
 
+_SPHERICAL_QUAD_ORDER = 10
+
+
 def test_spherical_grid_init_shapes_and_bounds():
     grid = SphericalGrid(
         n_r=5,
@@ -545,6 +736,7 @@ def test_spherical_grid_init_shapes_and_bounds():
         n_phi=4,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
+        quad_order=_SPHERICAL_QUAD_ORDER,
     )
 
     assert (grid.n_r, grid.n_theta, grid.n_phi) == (5, 3, 4)
@@ -569,6 +761,7 @@ def test_spherical_grid_init_n_r_3_uses_both_r_min_and_r_max():
         n_phi=3,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
+        quad_order=_SPHERICAL_QUAD_ORDER,
     )
 
     assert jnp.allclose(
@@ -585,6 +778,7 @@ def test_spherical_grid_init_rejects_too_few_radial_bins(n_r):
             n_phi=3,
             r_min=u.Quantity(0.1, "kpc"),
             r_max=u.Quantity(50.0, "kpc"),
+            quad_order=_SPHERICAL_QUAD_ORDER,
         )
 
 
@@ -601,6 +795,7 @@ def test_spherical_mass_grid_shape():
         n_phi=4,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
+        quad_order=_SPHERICAL_QUAD_ORDER,
     )
 
     masses = mge.spherical_mass_grid(grid)
@@ -628,6 +823,7 @@ def test_spherical_mass_grid_conserves_total_mass_for_spherical_component():
         n_phi=3,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
+        quad_order=_SPHERICAL_QUAD_ORDER,
     )
 
     masses = mge.spherical_mass_grid(grid)
@@ -658,6 +854,7 @@ def test_spherical_mass_grid_conserves_total_mass_for_triaxial_multicomponent():
         n_phi=3,
         r_min=u.Quantity(0.05, "kpc"),
         r_max=u.Quantity(100.0, "kpc"),
+        quad_order=_SPHERICAL_QUAD_ORDER,
     )
 
     masses = mge.spherical_mass_grid(grid)
@@ -683,6 +880,7 @@ def test_spherical_mass_grid_reusable_across_components_with_different_length_un
         n_phi=3,
         r_min=u.Quantity(0.1, "kpc"),
         r_max=u.Quantity(50.0, "kpc"),
+        quad_order=_SPHERICAL_QUAD_ORDER,
     )
 
     masses = mge.spherical_mass_grid(grid)

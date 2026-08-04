@@ -4,10 +4,13 @@ Fresh analysis (diffed the branches directly, not a recap of a prior discussion)
 
 ## Bottom line
 
-No git merge conflict is expected -- the two branches don't touch overlapping
-lines. But there's a real architectural collision: both independently built a
-kinematics abstraction, under different names/shapes. Nothing will force this
-to surface during the merge, so it needs to be reconciled deliberately.
+The Python implementation merges without textual conflicts, but the branches
+overlap in `aidocs/KNOWLEDGE.md`, `docs/source/configuration.md`, and
+`docs/source/units.md`; those documentation conflicts need a deliberate
+semantic resolution. There is also a real architectural collision: both
+independently built a kinematics abstraction, under different names/shapes.
+It must be reconciled deliberately even though Git does not flag the duplicate
+Python APIs.
 
 **Decision: `tnt/kinematics.py` (read_kinematics) is canonical.** It's the
 real, tested implementation; `tnt/kinematic_data.py`'s scaffold should be
@@ -88,3 +91,23 @@ with `read_kinematics`'s changes. Git will merge this file cleanly.
    `AbstractWeightSolver`, the `kinematic_data.py` scaffold itself). Once
    present, `_KINEMATICS_CLASSES` could even be derived from subclasses'
    `_type` rather than hand-maintained, though that's optional polish.
+
+## Resolution (2026-08-04)
+
+The action list was implemented while merging `model-architecture-scaffold`
+into `read_kinematics`, with two clarified decisions:
+
+- Item 2 applies to `weight_solver.py` and `model_iterator.py`; the original
+  reference to `all_models.py` was incorrect. The related `orbit_library.py`
+  documentation was updated as well.
+- Item 3 adds the explicit `AbstractKinematics.design_matrix()` contract, but
+  concrete numerical projections remain intentionally unimplemented until the
+  orbit-integration and weight-solving scaffolds are implemented.
+- Item 5 uses strict `ProjectedBinning` and `LightMGE | MassMGE | None` fields,
+  plus runtime checks when named references are resolved.
+- Item 6 is implemented fully: concrete subclasses own `_type`, and the
+  dispatch registry is derived from them with missing/duplicate checks.
+
+`tnt/kinematic_data.py` was retired, architecture consumers now use
+`tnt.kinematics.AbstractKinematics`, and runtime construction standardizes on
+`build_kinematics` after the MGE and spatial-binning registries are built.
