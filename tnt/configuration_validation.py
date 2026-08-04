@@ -408,7 +408,7 @@ def _validate_kinematics(
             {"binning", "data_file", "type"},
             settings_path,
         )
-        kinematics_type = _choice(
+        _choice(
             settings["type"],
             _KINEMATICS_TYPES,
             f"{settings_path}.type",
@@ -427,27 +427,9 @@ def _validate_kinematics(
                 f"{settings_path}.mge",
                 "MGEs",
             )
-        _validate_kinematics_observational_settings(
-            settings,
-            settings_path,
-            kinematics_type,
-        )
-        if "histogram" in settings:
-            _validate_histogram(
-                _mapping(settings, "histogram", settings_path),
-                f"{settings_path}.histogram",
-                kinematics_type,
-            )
-        if "warning_thresholds" in settings:
-            if kinematics_type != "proper_motions":
-                raise ValueError(
-                    f"{settings_path}.warning_thresholds is only valid for "
-                    "proper_motions."
-                )
-            _validate_proper_motion_warning_thresholds(
-                _mapping(settings, "warning_thresholds", settings_path),
-                f"{settings_path}.warning_thresholds",
-            )
+        # Type-specific settings are validated when the concrete runtime
+        # object is instantiated by tnt.kinematics.build_kinematics. This
+        # preparation layer retains only generic schema and reference checks.
 
 
 def _validate_population_data(
@@ -480,137 +462,6 @@ def _validate_registry_reference(
     name = _nonempty_string(value, path)
     if name not in known_names:
         raise ValueError(f"{path} references unknown {registry} entry {name!r}.")
-
-
-def _validate_kinematics_observational_settings(
-    settings: ConfigDict,
-    path: str,
-    kinematics_type: str,
-) -> None:
-    """Validate type-specific fitting order and observational-error policy."""
-    if kinematics_type == "gauss_hermite":
-        _require_keys(settings, {"maximum_gh_order", "observational_errors"}, path)
-        maximum_order = _integer(
-            settings["maximum_gh_order"],
-            f"{path}.maximum_gh_order",
-        )
-        if maximum_order < 2:
-            raise ValueError(f"{path}.maximum_gh_order must be at least 2.")
-        _validate_gauss_hermite_errors(
-            _mapping(settings, "observational_errors", path),
-            f"{path}.observational_errors",
-            maximum_order,
-        )
-        return
-
-    if "maximum_gh_order" in settings:
-        raise ValueError(f"{path}.maximum_gh_order is only valid for gauss_hermite.")
-    if kinematics_type == "proper_motions":
-        _require_keys(settings, {"observational_errors"}, path)
-        _validate_proper_motion_errors(
-            _mapping(settings, "observational_errors", path),
-            f"{path}.observational_errors",
-        )
-    elif "observational_errors" in settings:
-        raise ValueError(
-            f"{path}.observational_errors is not supported for {kinematics_type}."
-        )
-
-
-def _validate_gauss_hermite_errors(
-    errors: ConfigDict,
-    path: str,
-    maximum_order: int,
-) -> None:
-    """Validate named systematic uncertainties through one GH order."""
-    _reject_unknown_keys(errors, {"systematic_uncertainties"}, path)
-    _require_keys(errors, {"systematic_uncertainties"}, path)
-    systematics = _mapping(errors, "systematic_uncertainties", path)
-    systematics_path = f"{path}.systematic_uncertainties"
-    expected_keys = {"v", "sigma"} | {
-        f"h{order}" for order in range(3, maximum_order + 1)
-    }
-    _reject_unknown_keys(systematics, expected_keys, systematics_path)
-    _require_keys(systematics, expected_keys, systematics_path)
-    for key in expected_keys:
-        _nonnegative_number(systematics[key], f"{systematics_path}.{key}")
-
-
-def _validate_proper_motion_errors(errors: ConfigDict, path: str) -> None:
-    """Validate a proper-motion observational variance scale."""
-    _reject_unknown_keys(errors, {"variance_scale"}, path)
-    _require_keys(errors, {"variance_scale"}, path)
-    _positive_number(errors["variance_scale"], f"{path}.variance_scale")
-
-
-def _validate_histogram(
-    histogram: ConfigDict,
-    path: str,
-    kinematics_type: str,
-) -> None:
-    explicit_keys = {"bins", "center", "width"}
-    derived_keys = {
-        "bin_width_sigma_fraction",
-        "center",
-        "oversampling_factor",
-        "sigma_extent",
-        "systemic_velocity",
-        "width_scale",
-    }
-    _reject_unknown_keys(histogram, explicit_keys | derived_keys, path)
-    if explicit_keys.issubset(histogram):
-        if set(histogram) != explicit_keys:
-            raise ValueError(
-                f"{path} must contain only width, center, and bins when "
-                "explicit histogram metadata is used."
-            )
-        _positive_number(histogram["width"], f"{path}.width")
-        _number(histogram["center"], f"{path}.center")
-        bins = _integer(histogram["bins"], f"{path}.bins")
-        if bins <= 0 or bins % 2 == 0:
-            raise ValueError(f"{path}.bins must be a positive odd integer.")
-        return
-
-    if kinematics_type == "gauss_hermite":
-        allowed = {"bin_width_sigma_fraction", "center", "sigma_extent"}
-        _reject_unknown_keys(histogram, allowed, path)
-        _require_keys(histogram, allowed, path)
-        _positive_number(histogram["sigma_extent"], f"{path}.sigma_extent")
-        _positive_number(
-            histogram["bin_width_sigma_fraction"],
-            f"{path}.bin_width_sigma_fraction",
-        )
-        _number(histogram["center"], f"{path}.center")
-    elif kinematics_type == "bayes_losvd":
-        allowed = {"center", "oversampling_factor", "systemic_velocity", "width_scale"}
-        _reject_unknown_keys(histogram, allowed, path)
-        _require_keys(histogram, allowed, path)
-        _positive_number(histogram["width_scale"], f"{path}.width_scale")
-        _positive_number(
-            histogram["oversampling_factor"],
-            f"{path}.oversampling_factor",
-        )
-        _number(histogram["center"], f"{path}.center")
-        _choice(
-            histogram["systemic_velocity"],
-            {"flux_weighted"},
-            f"{path}.systemic_velocity",
-        )
-    else:
-        raise ValueError(
-            f"{path} for proper_motions must use explicit width, center, and bins."
-        )
-
-
-def _validate_proper_motion_warning_thresholds(
-    thresholds: ConfigDict,
-    path: str,
-) -> None:
-    keys = {"max_bin_width_sigma_ratio", "min_histogram_width_sigma_ratio"}
-    _reject_unknown_keys(thresholds, keys, path)
-    _require_keys(thresholds, keys, path)
-    for key in keys:
-        _positive_number(thresholds[key], f"{path}.{key}")
 
 
 def _validate_orbit_library_settings(settings: ConfigDict) -> None:

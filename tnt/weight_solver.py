@@ -11,7 +11,7 @@ from typing import Any, ClassVar
 import equinox as eqx
 import jax.numpy as jnp
 
-from tnt.kinematic_data import AbstractKinematicData
+from tnt.kinematics import AbstractKinematics
 from tnt.orbit_library import OrbitLibrary
 
 
@@ -22,7 +22,7 @@ class OrbitWeights(eqx.Module):
 
 
 class WeightSolverResult(eqx.Module):
-    """The outcome of solving one `OrbitLibrary` against `AbstractKinematicData`.
+    """The outcome of solving one `OrbitLibrary` against `AbstractKinematics`.
 
     `chi2` holds every metric computed alongside the weights, e.g. `"chi2"`,
     `"kinchi2"`, `"kinmapchi2"` (`parameter_space_settings.which_chi2`
@@ -44,7 +44,7 @@ class AbstractWeightSolver(eqx.Module):
     def solve(
         self,
         orbit_library: OrbitLibrary,
-        kinematic_data: Sequence[AbstractKinematicData],
+        kinematic_data: Sequence[AbstractKinematics],
     ) -> WeightSolverResult:
         """Solve for orbit weights and chi2 metrics against every data set."""
         raise NotImplementedError
@@ -68,7 +68,7 @@ class NNLSWeightSolver(AbstractWeightSolver):
     def solve(
         self,
         orbit_library: OrbitLibrary,
-        kinematic_data: Sequence[AbstractKinematicData],
+        kinematic_data: Sequence[AbstractKinematics],
     ) -> WeightSolverResult:
         raise NotImplementedError
 

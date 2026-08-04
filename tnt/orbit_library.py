@@ -155,8 +155,8 @@ class OrbitLibrary(eqx.Module):
     its trajectory, each point a phase-space vector `(x, y, z, vx, vy, vz)`.
 
     Deliberately has no `project`/binning-aware method -- projecting orbits
-    onto a `ProjectedBinning` is `AbstractKinematicData.design_matrix`'s
-    responsibility (`tnt.kinematic_data`), so it isn't duplicated here.
+    onto a `ProjectedBinning` is `AbstractKinematics.design_matrix`'s
+    responsibility (`tnt.kinematics`), so it isn't duplicated here.
     """
 
     orbits: jnp.ndarray
