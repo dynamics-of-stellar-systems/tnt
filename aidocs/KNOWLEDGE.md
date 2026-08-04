@@ -32,8 +32,10 @@
   their exact entry schema, geometry, units, `bins_file`, and loaded-array
   validation. Runtime construction rejects non-mapping entries, missing and
   unknown fields, invalid filenames, and empty or otherwise invalid bin maps.
-  Runtime-object, observational-data, MGE-content, and optional-dependency
-  checks remain the responsibility of the later execution phase. Legacy
+  Concrete kinematics constructors likewise validate type-specific parameters
+  and observational file contents. Other runtime-object, MGE-content, and
+  optional-dependency checks remain the responsibility of the execution phase.
+  Legacy
   deprecation-and-ignore warnings are intentionally not reproduced.
 - TNT uses `unxt` for configuration units. The required
   `units.internal` block defines length, time, mass, angle, and power;
@@ -55,8 +57,11 @@
   logarithmic parameter values and bounds are shifted between reference units
   while log step sizes remain unchanged.
 - MGE contents and quantities inside observational files are deliberately
-  deferred to the later object-construction/data-loading phase. Configuration
-  preparation does not open those files.
+  deferred to the object-construction/data-loading phase. Configuration
+  preparation does not open those files. `tnt.kinematics.build_kinematics`
+  constructs named `GaussHermite`, `BayesLOSVD`, and `ProperMotions` objects;
+  it converts unitful observations into the internal unit system and retains
+  JAX arrays in immutable Equinox modules.
 - `tnt.mge.build_mges()` is the explicit runtime boundary that loads the
   resolved `MGEs` registry into named `LightMGE` and `MassMGE` objects.
   `Configuration` continues to contain no instantiated scientific objects.
@@ -115,6 +120,34 @@
 - `AbstractMGE.get_projected_mass()` integrates projected MGE totals into the
   positive bin IDs of a `ProjectedBinning`; bin ID 0 is excluded. The MGE and
   binning coordinate units must be dimensionally consistent.
+- `build_kinematics` requires already-built `ProjectedBinning` objects and
+  optional `LightMGE`/`MassMGE` objects, resolves each data set's named
+  references to those shared runtime objects, and returns a name-to-object
+  mapping. Its runtime boundary rejects incorrectly typed registry values.
+- `AbstractKinematics.binning` is strictly a `ProjectedBinning`; its optional
+  `mge` is strictly a `LightMGE` or `MassMGE`. Each concrete kinematics class
+  owns its configuration identifier in `_type`, and the builder's dispatch
+  registry is derived from those subclasses with duplicate detection rather
+  than maintained independently.
+- `AbstractKinematics.design_matrix()` defines the weight-solver projection
+  boundary introduced by the model-architecture scaffold. It deliberately
+  raises `NotImplementedError` until orbit integration and the concrete
+  kinematics projections are implemented; observational values and
+  uncertainties already have a shared base-class interface.
+- Gauss-Hermite ECSV files require `vbin_id`, unitful `v`, `dv`, `sigma`, and
+  `dsigma` columns plus dimensionless `hN`/`dhN` pairs. Configured systematic
+  uncertainties are added in quadrature. Missing higher-order pairs are
+  represented by zero coefficients only when the corresponding configured
+  systematic uncertainty is positive.
+- Bayesian LOSVD ECSV files use DYNAMITE-compatible `binID_dynamite`,
+  `bin_flux`, `losvd_N`, and `dlosvd_N` columns. Metadata must contain `vcent`,
+  `dv`, and an explicit `velocity_unit`; TNT converts the velocity grid and
+  applies the configured flux-weighted systemic centering.
+- Proper-motion input retains DYNAMITE's NPZ array layout (`PM_2dhist`,
+  `PM_2dhist_sigma`, `binID_dynamite`, `nstarbin`, `vxrange`, and `vyrange`)
+  and adds a required scalar `velocity_unit`. Construction validates and
+  normalizes each 2D distribution, scales uncertainties by the square root of
+  `variance_scale`, and emits configured sampling warnings.
 - Potential types are `triaxial_light_mge`, `triaxial_mass_mge`, `nfw`, and
   `plummer`. A light-MGE potential requires an `ml` parameter. A mass-MGE
   potential rejects `ml` because its MGE already contains mass.
@@ -183,16 +216,6 @@
   its square root; it must be positive and `1.0` is neutral.
 - The former weight-solver keys `number_GH`, `GH_sys_err`, and
   `PM_sys_err_factor` are not part of the TNT schema.
-- Counter-rotating orbit-cut settings form a nested
-  `weight_solver_settings.counter_rotating_orbit_cut` block. The block owns
-  its enable switch, velocity thresholds, opposite-sign requirement, minimum
-  affected-aperture count, and h1 penalty scale.
-- The default counter-rotating cut requires at least two affected apertures.
-  The reference implementation's comment says that orbits flagged in zero or
-  one aperture are ignored, but its condition is `naperture_cut < 1`, which
-  only ignores zero and therefore admits a single affected aperture. TNT's
-  `min_affected_apertures: 2` follows the stated intent. Preserve this choice
-  during implementation unless the scientific policy is deliberately revised.
 - `execution_settings.model_processing_order` accepts `model_by_model` or
   `stage_by_stage`. The former completes orbit integration and weight solving
   for each model in turn; the latter integrates all models' orbit libraries

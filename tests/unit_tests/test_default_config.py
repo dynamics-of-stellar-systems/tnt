@@ -37,13 +37,6 @@ def test_default_config_is_packaged() -> None:
     assert '      systemic_velocity: "flux_weighted"' in config_text
     assert "      max_bin_width_sigma_ratio: 0.25" in config_text
     assert "      min_histogram_width_sigma_ratio: 5.0" in config_text
-    assert "  counter_rotating_orbit_cut:" in config_text
-    assert "    enabled: false" in config_text
-    assert "    min_abs_observed_velocity_over_sigma: 1.5" in config_text
-    assert "    min_orbit_velocity_difference_over_sigma: 3.0" in config_text
-    assert "    require_opposite_velocity_sign: true" in config_text
-    assert "    min_affected_apertures: 2" in config_text
-    assert "    h1_penalty_scale: 3.0" in config_text
     assert "analysis_settings:" in config_text
     assert "      cold_min: 0.8" in config_text
     assert "      warm_min: 0.25" in config_text
@@ -73,3 +66,4 @@ def test_default_config_is_packaged() -> None:
     assert "  orbit_family_integration_in_parallel: false" in config_text
     assert "  model_strategy:" not in config_text
     assert "  orbit_libraries_in_parallel:" not in config_text
+    assert "counter_rotating_orbit_cut" not in config_text

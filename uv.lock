@@ -206,6 +206,65 @@ wheels = [
 ]
 
 [[package]]
+name = "coordinax"
+version = "0.20.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
+    "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
+]
+dependencies = [
+    { name = "astropy", version = "7.0.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "dataclassish" },
+    { name = "equinox", version = "0.11.10", source = { registry = "https://pypi.org/simple" } },
+    { name = "jax", version = "0.4.35", source = { registry = "https://pypi.org/simple" } },
+    { name = "jaxlib", version = "0.4.35", source = { registry = "https://pypi.org/simple" } },
+    { name = "jaxtyping" },
+    { name = "optional-dependencies" },
+    { name = "plum-dispatch", version = "2.5.8", source = { registry = "https://pypi.org/simple" } },
+    { name = "quax", version = "0.0.5", source = { registry = "https://pypi.org/simple" } },
+    { name = "quaxed", version = "0.8.3", source = { registry = "https://pypi.org/simple" } },
+    { name = "unxt", version = "1.1.1", source = { registry = "https://pypi.org/simple" } },
+    { name = "xmmutablemap" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1d/2d/67827d6f371703d094d21da3183e61c78f584c2e79dfbca06ef99a384026/coordinax-0.20.0.tar.gz", hash = "sha256:ebc6d65af92182553afeee5b332679cad19fa54ba48a82652b07fdf8fff14a2f", size = 181085, upload-time = "2025-02-06T04:00:24.772Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6b/28/617ac49433ac9f5db31e133369658dc047bdb0eb5165b5dcb95108c65e0e/coordinax-0.20.0-py3-none-any.whl", hash = "sha256:dc8e1745dbbe6262e66201659440bde061d61ad526e47321d7b633d839d132b6", size = 178286, upload-time = "2025-02-06T04:00:23.147Z" },
+]
+
+[[package]]
+name = "coordinax"
+version = "0.23.3"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "(python_full_version >= '3.14' and platform_machine != 'x86_64') or (python_full_version >= '3.14' and sys_platform != 'darwin')",
+    "(python_full_version == '3.13.*' and platform_machine != 'x86_64') or (python_full_version == '3.13.*' and sys_platform != 'darwin')",
+    "(python_full_version < '3.13' and platform_machine != 'x86_64') or (python_full_version < '3.13' and sys_platform != 'darwin')",
+]
+dependencies = [
+    { name = "astropy", version = "8.0.1", source = { registry = "https://pypi.org/simple" } },
+    { name = "beartype" },
+    { name = "dataclassish" },
+    { name = "equinox", version = "0.13.8", source = { registry = "https://pypi.org/simple" } },
+    { name = "jax", version = "0.11.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "jaxlib", version = "0.11.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "jaxtyping" },
+    { name = "optional-dependencies" },
+    { name = "plum" },
+    { name = "quax", version = "0.4.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "quax-blocks" },
+    { name = "quaxed", version = "0.10.5", source = { registry = "https://pypi.org/simple" } },
+    { name = "typing-extensions" },
+    { name = "unxt", version = "1.11.4", source = { registry = "https://pypi.org/simple" } },
+    { name = "wadler-lindig" },
+    { name = "xmmutablemap" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/00/99c32e07b37624384d5515f2d4cbdf9f1ff46ee6746cd402f6883fb2df94/coordinax-0.23.3.tar.gz", hash = "sha256:48eb3f63a5bd7475039e9562c22c51318435e4a8e3c0d29192137f00e66f94e5", size = 757498, upload-time = "2026-05-09T20:21:02.189Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/47/b2/6e655239636458e9ff363e0c1a3caddefaddea2990ed8f32f82e156bd664/coordinax-0.23.3-py3-none-any.whl", hash = "sha256:115d411963f907728ae25528c69e490937657aa9e787e130c0c97458df5ab8dd", size = 195043, upload-time = "2026-05-09T20:21:00.35Z" },
+]
+
+[[package]]
 name = "coverage"
 version = "7.15.2"
 source = { registry = "https://pypi.org/simple" }
@@ -290,6 +349,26 @@ wheels = [
 ]
 
 [[package]]
+name = "diffrax"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "equinox", version = "0.11.10", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "equinox", version = "0.13.8", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "jax", version = "0.4.35", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "jax", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "jaxtyping" },
+    { name = "lineax" },
+    { name = "optimistix" },
+    { name = "typeguard" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8a/a0/9e267168294679e68f893a6f1fbcc58f83e784260d3cd0a80a0fbc95bb54/diffrax-0.6.1.tar.gz", hash = "sha256:d8d0ba24bcf8b2556eb47342ef1b623aebde2ac1199d68f4507c87c8b1fcb8bf", size = 146377, upload-time = "2024-12-10T03:39:37.154Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/86/40d6f248c83b7c8b0c199836b3e9b88ef86d34c5ea343384579a05bb8041/diffrax-0.6.1-py3-none-any.whl", hash = "sha256:54bfa2030c0d5048eb54a99ccbae9c0a5c4ad244c5edd42d559cc4228e8fba3c", size = 186594, upload-time = "2024-12-10T03:39:35.35Z" },
+]
+
+[[package]]
 name = "docutils"
 version = "0.22.4"
 source = { registry = "https://pypi.org/simple" }
@@ -334,6 +413,38 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/ff/522336d2f8264f2ad97119710b76e2cddf66145d03a1e89899175d26b192/equinox-0.13.8.tar.gz", hash = "sha256:dd075050018e2dd02e252e9d29d3060f7e67f085622d8d27a8e89e24bb8523db", size = 145257, upload-time = "2026-05-05T10:03:43.258Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ae/d6/69a76c8ccdef14af687c497040292a46e59fc7a0ab24724b60e50ca61030/equinox-0.13.8-py3-none-any.whl", hash = "sha256:ca004348533cc30a63ebe8823d7dd4bb626dce17743d40bbddb89b402ef2a240", size = 185813, upload-time = "2026-05-05T10:03:41.673Z" },
+]
+
+[[package]]
+name = "galax"
+version = "0.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "astropy", version = "7.0.2", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "astropy", version = "8.0.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "beartype" },
+    { name = "coordinax", version = "0.20.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "coordinax", version = "0.23.3", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "diffrax" },
+    { name = "equinox", version = "0.11.10", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "equinox", version = "0.13.8", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "jax", version = "0.4.35", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "jax", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "jaxlib", version = "0.4.35", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "jaxlib", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "lazy-loader" },
+    { name = "packaging" },
+    { name = "quax", version = "0.0.5", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "quax", version = "0.4.2", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "quaxed", version = "0.8.3", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "quaxed", version = "0.10.5", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "typing-extensions" },
+    { name = "unxt", version = "1.1.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "unxt", version = "1.11.4", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0a/6d/ed86ef7fc38a0b745bb6ef971ff041a05c2a5a1a493555b36b542211541c/galax-0.0.2.tar.gz", hash = "sha256:937a4806e7175363e3cc39448fba006966b7fd29c858165d89e303e74d706685", size = 113009, upload-time = "2024-06-10T18:39:32.537Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/a6/d7a45aca03750587b7c0a0784d6139cc2648593dc8ccc48e8984beab1e02/galax-0.0.2-py3-none-any.whl", hash = "sha256:147d21f17a11622daccc97fdb130e1bb08ab272ea8655a5d03df8603588eca1c", size = 107694, upload-time = "2024-06-10T18:39:31.043Z" },
 ]
 
 [[package]]
@@ -488,6 +599,35 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b/jinja2-3.1.6.tar.gz", hash = "sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d", size = 245115, upload-time = "2025-03-05T20:05:02.478Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl", hash = "sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67", size = 134899, upload-time = "2025-03-05T20:05:00.369Z" },
+]
+
+[[package]]
+name = "lazy-loader"
+version = "0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/49/ac/21a1f8aa3777f5658576777ea76bfb124b702c520bbe90edf4ae9915eafa/lazy_loader-0.5.tar.gz", hash = "sha256:717f9179a0dbed357012ddad50a5ad3d5e4d9a0b8712680d4e687f5e6e6ed9b3", size = 15294, upload-time = "2026-03-06T15:45:09.054Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/a1/8d812e53a5da1687abb10445275d41a8b13adb781bbf7196ddbcf8d88505/lazy_loader-0.5-py3-none-any.whl", hash = "sha256:ab0ea149e9c554d4ffeeb21105ac60bed7f3b4fd69b1d2360a4add51b170b005", size = 8044, upload-time = "2026-03-06T15:45:07.668Z" },
+]
+
+[[package]]
+name = "lineax"
+version = "0.0.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "equinox", version = "0.11.10", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "equinox", version = "0.13.8", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "jax", version = "0.4.35", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "jax", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "jaxtyping" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/db/3b/8a35825d11b2b52e8204c2d195decac43dcc4196e9fa7082275959582a73/lineax-0.0.7.tar.gz", hash = "sha256:e43549a8d202432d4668afe54866741a0214ccb363487bacb2a980f72840ea48", size = 44663, upload-time = "2024-10-21T10:54:53.495Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/81/7e/3404d9c62795777c537de076f06828d80e24284efbcbeb6000f33220e401/lineax-0.0.7-py3-none-any.whl", hash = "sha256:c261977fd2104010ff34b7353deef22961da3ca46f341f158567dc2bbb8c2372", size = 67277, upload-time = "2024-10-21T10:54:51.904Z" },
 ]
 
 [[package]]
@@ -739,6 +879,24 @@ wheels = [
 ]
 
 [[package]]
+name = "optimistix"
+version = "0.0.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "equinox", version = "0.11.10", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "equinox", version = "0.13.8", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "jax", version = "0.4.35", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
+    { name = "jax", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "jaxtyping" },
+    { name = "lineax" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/78/ec/0d51681732f15ccb8e2a546d7358a4d56132016b73b822a52b54e3a2450e/optimistix-0.0.10.tar.gz", hash = "sha256:80a481d66d64c9445eaf74158b71d65a9087b7e038f0c4bc7714ef5ff6350050", size = 55112, upload-time = "2025-01-03T23:48:28.361Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/9c/4672a90dfd2ce7d40428759c9aaed0164a9a90010349f607aa5e29132766/optimistix-0.0.10-py3-none-any.whl", hash = "sha256:f10eb93d24311aca21fb6d1e74f39a4a38f976d5accbd577ef1705218609bfdc", size = 84274, upload-time = "2025-01-03T23:48:26.117Z" },
+]
+
+[[package]]
 name = "optional-dependencies"
 version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -778,6 +936,26 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
+]
+
+[[package]]
+name = "plum"
+version = "2.9.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "beartype" },
+    { name = "rich" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7a/18/5f07cdf83147a739dcadfb6c1e17c26f4ffe0ca41a3c96dbfa20a7a74812/plum-2.9.0.tar.gz", hash = "sha256:c3f7c0294d8194bc54e5948d86ecd74ae9869f0f6326472cb24063a1befe400d", size = 244490, upload-time = "2026-04-28T08:39:25.203Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/39/af6727d3c64ab627b7f7a5ccb593ae8eb46d9c6fa1d1f44fb1a5653aa69d/plum-2.9.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:dfeb3db3a91468d10dd19fb17d7c0a9e77b489fea567294a875dfc0ff73b63e3", size = 175056, upload-time = "2026-04-28T08:39:16.017Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/38/3d7b97f1cd38db377718a078a6273fa2c07f6b83f2fcd3285be91980a3b6/plum-2.9.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0abac91e0732614e6495191721b6b50c118e2294099087f3552f783767154c12", size = 205876, upload-time = "2026-04-28T08:39:17.238Z" },
+    { url = "https://files.pythonhosted.org/packages/44/6d/3e1051c7c88a53a91ce7788eea5f08b952e39aab958068018740030e13c5/plum-2.9.0-cp312-cp312-win_amd64.whl", hash = "sha256:19bf8313af75d19ca4c37cfd119b5e55899bba0282dfb91a90e70828d3098dc6", size = 152487, upload-time = "2026-04-28T08:39:18.455Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/b1/4a0147f290b3a067249456b63e76f336f42aa378b64e20809628cb103668/plum-2.9.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:1d38955ab44a8ffe9e7b73801a4cac9db593d7a8a3e56bbb818ff2b5a3667f06", size = 174380, upload-time = "2026-04-28T08:39:19.597Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/5e/211281f42345847841bd14f8f6508a799ae11c59a0e4ad1b6f3469e124ec/plum-2.9.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:bae72041c67e303078387f6376be6e5bc20eca477c242e59ced7cc2b29939f09", size = 204624, upload-time = "2026-04-28T08:39:21.034Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/02/baa3115e07b14f7f598ce84ab22bc75cceec9419d047f2b8a70bf6ee21a7/plum-2.9.0-cp313-cp313-win_amd64.whl", hash = "sha256:aa6d12fd43278b7700d7c37f80d75c3878641f7571ecd8008bba236d1aaf9ab3", size = 152547, upload-time = "2026-04-28T08:39:22.252Z" },
+    { url = "https://files.pythonhosted.org/packages/f7/d5/90283068ef65329bc103924aa76c566f5716635303be3a60cb237e12926c/plum-2.9.0-py3-none-any.whl", hash = "sha256:92838bb6df686471c4c63692a3a7f05eed147b127fd10f57e49133d223d0e419", size = 45251, upload-time = "2026-04-28T08:39:23.666Z" },
 ]
 
 [[package]]
@@ -1281,6 +1459,7 @@ dependencies = [
     { name = "astropy", version = "8.0.1", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "equinox", version = "0.11.10", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
     { name = "equinox", version = "0.13.8", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "galax" },
     { name = "jax", version = "0.4.35", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
     { name = "jax", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
@@ -1309,6 +1488,7 @@ requires-dist = [
     { name = "astropy", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = ">=7,<7.1" },
     { name = "equinox", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'", specifier = ">=0.13.8" },
     { name = "equinox", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = ">=0.11.10,<0.12" },
+    { name = "galax", specifier = ">=0.0.2" },
     { name = "jax", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'", specifier = ">=0.4.30" },
     { name = "jax", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = ">0.4.32,<0.4.36" },
     { name = "numpy", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = ">=1.24,<2" },
@@ -1338,6 +1518,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/57/a9/a2584b8313b89f94869ddb3c4074617a691de1812a614d2d50e32ca5a7a6/traitlets-5.15.1.tar.gz", hash = "sha256:7b1c07854fe25acb39e009bae49f11b79ff6cbb2f27999104e9110e7a6b53722", size = 163344, upload-time = "2026-06-03T12:26:06.181Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/96/8d/1080ee4c231f361b6ce4470d556c8c435b67c7e0753aaa641497ee92f88b/traitlets-5.15.1-py3-none-any.whl", hash = "sha256:770a53705f84b81ac107e83a1b3328ff2dae16094d8fc3cfc004e4b22dfd8e92", size = 85858, upload-time = "2026-06-03T12:26:04.395Z" },
+]
+
+[[package]]
+name = "typeguard"
+version = "2.13.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3a/38/c61bfcf62a7b572b5e9363a802ff92559cb427ee963048e1442e3aef7490/typeguard-2.13.3.tar.gz", hash = "sha256:00edaa8da3a133674796cf5ea87d9f4b4c367d77476e185e80251cc13dfbb8c4", size = 40604, upload-time = "2021-12-10T21:09:39.158Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9a/bb/d43e5c75054e53efce310e79d63df0ac3f25e34c926be5dffb7d283fb2a8/typeguard-2.13.3-py3-none-any.whl", hash = "sha256:5e3e3be01e887e7eafae5af63d1f36c849aaa94e3a0112097312aabfa16284f1", size = 17605, upload-time = "2021-12-10T21:09:37.844Z" },
 ]
 
 [[package]]

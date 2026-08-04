@@ -49,8 +49,9 @@ kinematic_data:
     data_file: observed.ecsv
 {body}
 orbit_library_settings:
-  logrmin: -0.2
-  logrmax: 2.0
+  orbit_sampler:
+    logrmin: -0.2
+    logrmax: 2.0
 {orbit_body}
 io_settings:
   input_directory: input
@@ -67,8 +68,7 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
         user_path,
         output_directory,
         body="""weight_solver_settings:
-  counter_rotating_orbit_cut:
-    enabled: true
+  reattempt_failures: false
 """,
     )
 
@@ -140,9 +140,8 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
         "spacing": "logarithmic",
         "include_unscaled": True,
     }
-    cut = written["weight_solver_settings"]["counter_rotating_orbit_cut"]
-    assert cut["enabled"] is True
-    assert cut["min_affected_apertures"] == 2
+    assert written["weight_solver_settings"]["reattempt_failures"] is False
+    assert written["weight_solver_settings"]["maxiter_factor"] == 3
     assert "number_GH" not in written["weight_solver_settings"]
     assert "GH_sys_err" not in written["weight_solver_settings"]
     assert "PM_sys_err_factor" not in written["weight_solver_settings"]
@@ -369,7 +368,7 @@ def test_read_rejects_partial_explicit_histogram(tmp_path: Path) -> None:
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
-def test_read_rejects_even_histogram_bin_count(tmp_path: Path) -> None:
+def test_read_defers_even_histogram_bin_count_to_runtime(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"
     _write_user_config(
@@ -382,8 +381,9 @@ def test_read_rejects_even_histogram_bin_count(tmp_path: Path) -> None:
 """,
     )
 
-    with pytest.raises(ValueError, match="bins must be a positive odd integer"):
-        Configuration().read(user_path, workspace_root=tmp_path)
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert config.data["kinematic_data"]["observed"]["histogram"]["bins"] == 100
 
 
 def test_read_rejects_orbit_grid_with_too_few_i2_values(
@@ -394,10 +394,12 @@ def test_read_rejects_orbit_grid_with_too_few_i2_values(
     _write_user_config(
         user_path,
         output_directory,
-        orbit_body="  nI2: 3\n",
+        orbit_body="    nI2: 3\n",
     )
 
-    with pytest.raises(ValueError, match=r"orbit_library_settings\.nI2"):
+    with pytest.raises(
+        ValueError, match=r"orbit_library_settings\.orbit_sampler\.nI2"
+    ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
@@ -511,7 +513,7 @@ def test_gauss_hermite_sets_resolve_independent_orders_and_systematics(
     }
 
 
-def test_changed_gauss_hermite_order_requires_complete_systematics(
+def test_read_defers_gauss_hermite_systematics_completeness_to_runtime(
     tmp_path: Path,
 ) -> None:
     user_path = tmp_path / "user.yaml"
@@ -523,8 +525,12 @@ def test_changed_gauss_hermite_order_requires_complete_systematics(
 """,
     )
 
-    with pytest.raises(ValueError, match=r"missing required field\(s\): h5"):
-        Configuration().read(user_path, workspace_root=tmp_path)
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    systematics = config.data["kinematic_data"]["observed"][
+        "observational_errors"
+    ]["systematic_uncertainties"]
+    assert "h5" not in systematics
 
 
 def test_proper_motion_set_resolves_its_own_variance_scale(
@@ -548,7 +554,7 @@ def test_proper_motion_set_resolves_its_own_variance_scale(
     assert kinematics["observational_errors"] == {"variance_scale": 1.5}
 
 
-def test_proper_motion_variance_scale_must_be_positive(tmp_path: Path) -> None:
+def test_read_defers_proper_motion_variance_scale_to_runtime(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"
     _write_user_config(
@@ -560,8 +566,11 @@ def test_proper_motion_variance_scale_must_be_positive(tmp_path: Path) -> None:
         kinematics_type="proper_motions",
     )
 
-    with pytest.raises(ValueError, match=r"variance_scale must be greater"):
-        Configuration().read(user_path, workspace_root=tmp_path)
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert config.data["kinematic_data"]["observed"]["observational_errors"] == {
+        "variance_scale": 0.0
+    }
 
 
 def test_proper_motion_data_can_omit_mge_and_share_population_binning(

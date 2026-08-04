@@ -1,0 +1,16 @@
+# %ECSV 1.0
+# ---
+# datatype:
+# - {name: vbin_id, datatype: int64}
+# - {name: v, unit: km / s, datatype: float64}
+# - {name: dv, unit: km / s, datatype: float64}
+# - {name: sigma, unit: km / s, datatype: float64}
+# - {name: dsigma, unit: km / s, datatype: float64}
+# - {name: h3, datatype: float64}
+# - {name: dh3, datatype: float64}
+# - {name: h4, datatype: float64}
+# - {name: dh4, datatype: float64}
+# schema: astropy-2.0
+vbin_id v dv sigma dsigma h3 dh3 h4 dh4
+1 65.0 4.0 122.0 5.0 0.035 0.012 -0.018 0.014
+2 -42.0 5.0 105.0 6.0 -0.027 0.013 0.021 0.015
