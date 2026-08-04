@@ -747,9 +747,11 @@ def test_configuration_session_logs_validation_failure(tmp_path: Path) -> None:
 """,
     )
 
-    with pytest.raises(ValueError, match="data_flie"):
-        with configuration_session(user_path, workspace_root=tmp_path):
-            pass
+    with (
+        pytest.raises(ValueError, match="data_flie"),
+        configuration_session(user_path, workspace_root=tmp_path),
+    ):
+        pass
 
     logfiles = list((output_directory / "logs").glob("tnt-*.log"))
     assert len(logfiles) == 1

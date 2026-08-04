@@ -11,7 +11,7 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 from importlib.metadata import PackageNotFoundError, version
 from importlib.resources import files
@@ -570,7 +570,7 @@ def _build_run_manifest(
     )
     return {
         "manifest_version": 1,
-        "prepared_at_utc": datetime.now(timezone.utc).isoformat(),
+        "prepared_at_utc": datetime.now(UTC).isoformat(),
         "tnt": {
             "version": _package_version("tnt"),
             **_git_provenance(),

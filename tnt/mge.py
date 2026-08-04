@@ -32,7 +32,7 @@ class AbstractMGE(eqx.Module):
 
     _intensity_attr: ClassVar[str]
 
-    I: Quantity  # noqa: E741
+    I: Quantity
     sigma: Quantity
     q: Quantity
     PA_twist: Quantity
@@ -109,7 +109,7 @@ class AbstractMGE(eqx.Module):
         """
         sigma_physical = quantity_conversions.angular_to_physical(self.sigma, distance)
         solid_angle = Quantity(1.0, f"{self.sigma.unit}2")
-        I_physical = self.I * solid_angle / distance**2  # noqa: N806
+        I_physical = self.I * solid_angle / distance**2
 
         return type(self)(
             I=I_physical, sigma=sigma_physical, q=self.q, PA_twist=self.PA_twist
@@ -155,7 +155,7 @@ class AbstractMGE(eqx.Module):
         shape = (-1, 1, 1, 1)
         sigma = self.sigma.ustrip(coord_unit).reshape(shape)
         q = self.q.ustrip("").reshape(shape)
-        I = self.I.ustrip(self.I.unit).reshape(shape)  # noqa: E741
+        I = self.I.ustrip(self.I.unit).reshape(shape)
         alpha = (
             binning.PA.ustrip("rad")
             - jnp.pi / 2
@@ -235,7 +235,7 @@ class AbstractMGE(eqx.Module):
         q_obs = self.q.ustrip("")
         q_intr = jnp.sqrt(q_obs**2 - cos_i**2) / sin_i
 
-        I_3d = self.I * (q_obs / (jnp.sqrt(2 * jnp.pi) * q_intr)) / self.sigma  # noqa: N806
+        I_3d = self.I * (q_obs / (jnp.sqrt(2 * jnp.pi) * q_intr)) / self.sigma
 
         return Deprojected3DMGE(
             I=I_3d,
@@ -327,7 +327,7 @@ class AbstractMGE(eqx.Module):
         )
         sigma_intr = self.sigma / u
 
-        I_3d = (  # noqa: N806
+        I_3d = (
             self.I
             * (u**3 * q_obs / (jnp.sqrt(2 * jnp.pi) * p_intr * q_intr))
             / self.sigma
@@ -406,7 +406,7 @@ class Deprojected3DMGE(eqx.Module):
     no intermediate axis.
     """
 
-    I: Quantity  # noqa: E741
+    I: Quantity
     sigma: Quantity
     p: Quantity
     q: Quantity
@@ -445,7 +445,7 @@ class Deprojected3DMGE(eqx.Module):
         sigma = self.sigma.ustrip(length_unit)  # (G,)
         p = self.p.ustrip("")  # (G,)
         q = self.q.ustrip("")  # (G,)
-        I = self.I.ustrip(self.I.unit)  # noqa: E741, N806
+        I = self.I.ustrip(self.I.unit)
 
         # Add a leading components axis: (G, n_theta, Q, n_phi, Q).
         shape = (-1, 1, 1, 1, 1)

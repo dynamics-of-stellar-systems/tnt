@@ -537,7 +537,7 @@ def _projected_binning(
     )
 
 
-def _brute_force_aperture_mass(  # noqa: N803
+def _brute_force_aperture_mass(
     I, sigma, q, pa_twist, pa, x_edges, y_edges
 ):
     """Independently integrate a multi-component MGE over a pixel grid.
@@ -581,7 +581,7 @@ def _brute_force_aperture_mass(  # noqa: N803
         ([2.0, 4.0], [0.015, 0.03], [0.6, 0.3], [0.0, 0.5], 0.7),
     ],
 )
-def test_get_projected_mass_matches_independent_numeric_integral(  # noqa: N803
+def test_get_projected_mass_matches_independent_numeric_integral(
     I, sigma, q, pa_twist, pa
 ):
     mge = LightMGE(
@@ -721,7 +721,7 @@ def test_get_projected_mass_invariant_under_matching_physical_conversion():
 
 
 def _analytic_total_mass(
-    I: np.ndarray, sigma: np.ndarray, p: np.ndarray, q: np.ndarray  # noqa: E741, N803
+    I: np.ndarray, sigma: np.ndarray, p: np.ndarray, q: np.ndarray
 ) -> np.ndarray:
     return np.sum((2 * np.pi) ** 1.5 * sigma**3 * p * q * I)
 
@@ -836,7 +836,7 @@ def test_spherical_mass_grid_conserves_total_mass_for_spherical_component():
 
 
 def test_spherical_mass_grid_conserves_total_mass_for_triaxial_multicomponent():
-    I = np.array([3.0, 1.5])  # noqa: E741, N806
+    I = np.array([3.0, 1.5])
     sigma = np.array([2.0, 5.0])
     p = np.array([0.8, 0.6])
     q = np.array([0.5, 0.3])
