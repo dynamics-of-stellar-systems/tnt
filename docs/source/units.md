@@ -97,14 +97,20 @@ and easy to serialize.
 
 MGE (multi-Gaussian expansion) contents and quantities read from observational
 data files are intentionally not converted during configuration preparation.
-Those files are not opened at this stage. MGE and kinematics constructors
-validate their declared units and convert arrays into the internal unit system.
+Those files are not opened at this stage. MGE, kinematics, and population
+constructors validate their declared units and convert arrays into the internal
+unit system.
 
 Gauss-Hermite velocity columns declare units directly in ECSV. Bayesian LOSVD
 ECSV metadata declares a `velocity_unit` applying to `vcent` and `dv`.
 Proper-motion NPZ archives contain a scalar string `velocity_unit` applying to
 `vxrange` and `vyrange`. Dimensionless moments, distributions, and relative
 uncertainties do not carry a unit.
+
+Population ECSV files may mix properties with different physical dimensions.
+Each `property`/`dproperty` pair must declare equivalent units when unitful;
+the pair is converted to the matching internal unit. A pair without declared
+units is treated as dimensionless.
 
 Projected spatial-binning geometry is also converted during runtime-object
 construction rather than preparation. Its `min_x`, `min_y`, `x_extent`,

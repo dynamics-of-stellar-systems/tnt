@@ -69,8 +69,8 @@ block.
 5. Validates the configured unit systems and converts supported unitful
    quantities to internal units.
 6. Validates the generic resolved schema and registry references without
-   constructing runtime objects. Type-specific kinematics validation is
-   deferred to kinematics construction.
+   constructing runtime objects. Type-specific kinematics and population-file
+   validation is deferred to runtime construction.
 7. Preserves the original user YAML, portable resolved configuration, and run
    manifest below `<output_directory>/config_repository/`.
 
@@ -141,6 +141,11 @@ with shape `(npix_x, npix_y)`. Its non-negative integers assign pixels to bins;
 ID 0 marks pixels that are not assigned to a bin. The pixel counts are inferred
 from the array shape. A kinematic data set may optionally reference an MGE;
 this is not required for proper-motion data.
+
+Population observations must always be supplied through their own
+`population_data.<name>.data_file`. TNT does not support population columns
+embedded in a kinematics data file, even when both data sets use the same
+`spatial_binnings` entry.
 
 The supported potential types are `triaxial_light_mge`,
 `triaxial_mass_mge`, `nfw`, and `plummer`. A light-MGE potential requires an
@@ -293,6 +298,36 @@ scalar string `velocity_unit`. TNT validates odd two-dimensional velocity-bin
 counts and positive uncertainties, normalizes each spatial-bin distribution,
 and applies `variance_scale` to its error variances.
 
+## Constructing populations
+
+Population runtime objects use the same already-built spatial-binning
+registry, but they do not use the MGE registry:
+
+```python
+from tnt.populations import build_populations
+
+populations = build_populations(
+    config.data["population_data"],
+    input_directory,
+    unit_system,
+    spatial_binnings,
+)
+```
+
+Each returned `Populations` object retains its shared `ProjectedBinning` and
+stores its observations as JAX-backed `unxt.Quantity` arrays. A population
+ECSV file requires a positive unique `vbin_id` column and at least one paired
+population property and uncertainty, for example `age`/`dage` or
+`metallicity`/`dmetallicity`. Property names are otherwise unrestricted.
+Declared units on each pair must be equivalent and are converted into the
+internal unit system; columns without declared units are dimensionless. All
+values must be finite and all uncertainties must be strictly positive.
+
+Population bin IDs may cover a subset of the positive IDs in the referenced
+binning, but they cannot refer to IDs absent from it. Population objects do not
+contain an MGE. A population file must also be different from every configured
+kinematics file; sharing only the `spatial_binnings` entry is supported.
+
 The former global `number_GH`, `GH_sys_err`, and `PM_sys_err_factor` fields are
 not weight-solver settings in TNT and are rejected as unknown fields.
 
@@ -302,9 +337,10 @@ Preparation rejects duplicate YAML keys, generic unknown fields, missing
 required registry fields, incorrect generic value types, unsupported type
 identifiers, and inconsistent tagged thresholds. It also checks non-kinematics
 data-only numerical constraints, including parameter bounds, positive worker
-counts, and orbit-grid limits. Concrete kinematics constructors check explicit
-histogram bin counts, Gauss-Hermite order and systematic-uncertainty mappings,
-Bayesian LOSVD policies, proper-motion variance scaling and warning thresholds,
+counts, and orbit-grid limits. Concrete kinematics and population constructors
+check explicit histogram bin counts, Gauss-Hermite order and
+systematic-uncertainty mappings, Bayesian LOSVD policies, proper-motion
+variance scaling and warning thresholds, population value/uncertainty pairs,
 and all observational file contents. Preparation still checks that references
 from potentials and observational data resolve to existing MGE and
 spatial-binning entries.

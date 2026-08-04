@@ -644,6 +644,26 @@ def test_read_rejects_unknown_population_binning_reference(tmp_path: Path) -> No
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
+def test_read_rejects_population_data_in_kinematics_file(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""population_data:
+  stellar_population:
+    data_file: observed.ecsv
+    binning: observed
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="data_file must be separate from every kinematic_data file",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
 def test_light_mge_potential_requires_ml_parameter(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"

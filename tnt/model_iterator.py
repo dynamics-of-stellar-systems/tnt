@@ -13,6 +13,7 @@ from tnt.kinematics import AbstractKinematics
 from tnt.model import Model
 from tnt.orbit_library import AbstractOrbitDithering, AbstractOrbitSampler
 from tnt.parameter_generator import AbstractParameterGenerator, ParameterSet
+from tnt.populations import Populations
 from tnt.weight_solver import AbstractWeightSolver
 
 
@@ -27,6 +28,7 @@ class ModelIterator:
 
     potential_settings: Mapping[str, Mapping[str, Any]]
     kinematic_data: Mapping[str, AbstractKinematics]
+    population_data: Mapping[str, Populations]
     weight_solver: AbstractWeightSolver
     parameter_generator: AbstractParameterGenerator
     orbit_library_settings: Mapping[str, Any]
@@ -41,9 +43,10 @@ class ModelIterator:
         """Build a `ModelIterator` from a fully resolved configuration.
 
         Runtime construction is ordered by dependency: build named MGEs,
-        build named spatial binnings, then call `build_kinematics` with both
-        registries and `io_settings.input_directory` before constructing the
-        iterator's remaining model-search services.
+        build named spatial binnings, then call `build_kinematics` and
+        `build_populations` with their shared registries and
+        `io_settings.input_directory` before constructing the iterator's
+        remaining model-search services.
         """
         raise NotImplementedError
 

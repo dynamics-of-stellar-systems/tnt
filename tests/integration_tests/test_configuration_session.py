@@ -26,6 +26,10 @@ def test_configuration_session_resolves_full_example_configuration(
         assert resolved["system_attributes"]["name"] == "NGC6278"
         assert resolved["potential"]["stars"]["mge"] == "mge_lum"
         assert resolved["kinematic_data"]["kinset1"]["mge"] == "mge_lum"
+        assert (
+            resolved["population_data"]["stellar_populations"]["data_file"]
+            == "populations.ecsv"
+        )
         assert Path(resolved["io_settings"]["input_directory"]) == FIXTURES_DIR
 
         portable = config.as_portable_dict()

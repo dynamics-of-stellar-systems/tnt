@@ -76,14 +76,16 @@ def validate_resolved_configuration(config: ConfigDict) -> None:
         _mapping(config, "potential", "configuration"),
         mges,
     )
-    _validate_kinematics(
-        _mapping(config, "kinematic_data", "configuration"),
+    kinematic_data = _mapping(config, "kinematic_data", "configuration")
+    kinematic_files = _validate_kinematics(
+        kinematic_data,
         binnings,
         mges,
     )
     _validate_population_data(
         _mapping(config, "population_data", "configuration"),
         binnings,
+        kinematic_files,
     )
     _validate_orbit_library_settings(
         _mapping(config, "orbit_library_settings", "configuration")
@@ -383,8 +385,9 @@ def _validate_kinematics(
     kinematics: ConfigDict,
     binning_names: set[str],
     mge_names: set[str],
-) -> None:
+) -> set[Path]:
     path = "kinematic_data"
+    data_files: set[Path] = set()
     for name, settings_value in kinematics.items():
         name = _dynamic_name(name, path)
         settings_path = f"{path}.{name}"
@@ -413,7 +416,10 @@ def _validate_kinematics(
             _KINEMATICS_TYPES,
             f"{settings_path}.type",
         )
-        _nonempty_string(settings["data_file"], f"{settings_path}.data_file")
+        filename = _nonempty_string(
+            settings["data_file"], f"{settings_path}.data_file"
+        )
+        data_files.add(Path(filename))
         _validate_registry_reference(
             settings["binning"],
             binning_names,
@@ -430,11 +436,13 @@ def _validate_kinematics(
         # Type-specific settings are validated when the concrete runtime
         # object is instantiated by tnt.kinematics.build_kinematics. This
         # preparation layer retains only generic schema and reference checks.
+    return data_files
 
 
 def _validate_population_data(
     populations: ConfigDict,
     binning_names: set[str],
+    kinematic_files: set[Path],
 ) -> None:
     """Validate population data sets and their reusable binning references."""
     path = "population_data"
@@ -444,7 +452,14 @@ def _validate_population_data(
         settings = _require_mapping(settings_value, settings_path)
         _reject_unknown_keys(settings, {"binning", "data_file"}, settings_path)
         _require_keys(settings, {"binning", "data_file"}, settings_path)
-        _nonempty_string(settings["data_file"], f"{settings_path}.data_file")
+        filename = _nonempty_string(
+            settings["data_file"], f"{settings_path}.data_file"
+        )
+        if Path(filename) in kinematic_files:
+            raise ValueError(
+                f"{settings_path}.data_file must be separate from every "
+                "kinematic_data file."
+            )
         _validate_registry_reference(
             settings["binning"],
             binning_names,
