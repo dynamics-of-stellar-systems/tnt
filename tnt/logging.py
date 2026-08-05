@@ -9,10 +9,10 @@ import sys
 import threading
 import time
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Self
 
 _LOGGER_NAME = "tnt"
 _OWNED_HANDLER_ATTRIBUTE = "_tnt_owned_handler"
@@ -74,7 +74,7 @@ class LoggingSession:
                 _ACTIVE_SESSION = None
             self._closed = True
 
-    def __enter__(self) -> LoggingSession:
+    def __enter__(self) -> Self:
         """Return this active logging session."""
         return self
 
@@ -258,7 +258,7 @@ def _create_logfile_path(output_directory: Path, relative_directory: Path) -> Pa
     """Create the log directory and return a unique timestamped path."""
     log_directory = output_directory / relative_directory
     log_directory.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     return log_directory / f"tnt-{timestamp}.log"
 
 

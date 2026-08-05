@@ -183,7 +183,7 @@ class ProjectedBinning(eqx.Module):
         min_y: Quantity,
         x_extent: Quantity,
         y_extent: Quantity,
-        PA: Quantity,  # noqa: N803
+        PA: Quantity,
         bins: jnp.ndarray,
         quad_order: int,
     ) -> None:

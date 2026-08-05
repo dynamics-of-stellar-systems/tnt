@@ -373,7 +373,8 @@ def _validate_parameter_generator_settings(
         raise ValueError(f"{path}.lower_bound must not exceed upper_bound.")
     if not lower <= value <= upper:
         raise ValueError(
-            f"The parameter value at {path.rsplit('.', 1)[0]}.value must lie within its bounds."
+            f"The parameter value at {path.rsplit('.', 1)[0]}.value must lie "
+            "within its bounds."
         )
     _positive_number(settings["step"], f"{path}.step")
     _nonnegative_number(settings["minimum_step"], f"{path}.minimum_step")
@@ -728,7 +729,8 @@ def _validate_analysis_settings(settings: ConfigDict) -> None:
         < values["cold_min"]
     ):
         raise ValueError(
-            f"{threshold_path} values must be strictly increasing from counter-rotating cold to cold."
+            f"{threshold_path} values must be strictly increasing from "
+            "counter-rotating cold to cold."
         )
     moments = _mapping(settings, "kinematic_moments", path)
     moments_path = f"{path}.kinematic_moments"

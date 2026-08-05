@@ -10,9 +10,9 @@ __all__ = [
     "Configuration",
     "LoggingSession",
     "UnitSystems",
+    "configuration_session",
     "configure_logging",
     "configure_worker_logging",
-    "configuration_session",
 ]
 
 _package_logger = _logging.getLogger(__name__)
