@@ -145,7 +145,8 @@ class ProjectedBinning(eqx.Module):
     give its extent, so pixels span ``(min_x, min_x + x_extent)`` by ``(min_y,
     min_y + y_extent)``. `PA` is the position angle of the galaxy's major
     axis. `bins` is a ``(npix_x, npix_y)`` array of integer bin IDs, one per
-    pixel; a value of 0 marks a pixel with no associated bin.
+    pixel; a value of 0 marks a pixel with no associated bin, and the positive
+    IDs must be contiguous, running ``1, 2, ..., n_bins`` with no gaps.
 
     `x_lo`/`x_hi` and `y_lo`/`y_hi` are each pixel's edges along x and y, and
     `x_nodes`/`x_weights` are fixed-order Gauss-Legendre quadrature nodes and
@@ -153,6 +154,12 @@ class ProjectedBinning(eqx.Module):
     precomputed here, in `min_x`'s unit, so that integrating over this grid
     repeatedly -- e.g. `AbstractMGE.get_projected_mass` for many different
     MGEs -- doesn't redo this construction on every call.
+
+    `n_bins` (`bins`'s largest ID) is precomputed here too, as a static
+    (non-array) Python `int`, so that `AbstractMGE.get_projected_mass` never
+    needs to concretize `bins` itself to size its `segment_sum` -- keeping it
+    usable under `jax.jit` even when other `get_projected_mass` inputs (the
+    MGE's parameters) are traced.
     """
 
     min_x: Quantity
@@ -161,6 +168,7 @@ class ProjectedBinning(eqx.Module):
     y_extent: Quantity
     PA: Quantity
     bins: jnp.ndarray
+    n_bins: int = eqx.field(static=True)
     x_lo: jnp.ndarray
     x_hi: jnp.ndarray
     y_lo: jnp.ndarray
@@ -175,7 +183,7 @@ class ProjectedBinning(eqx.Module):
         min_y: Quantity,
         x_extent: Quantity,
         y_extent: Quantity,
-        PA: Quantity,  # noqa: N803
+        PA: Quantity,
         bins: jnp.ndarray,
         quad_order: int,
     ) -> None:
@@ -198,6 +206,7 @@ class ProjectedBinning(eqx.Module):
         self.y_extent = y_extent
         self.PA = PA
         self.bins = bins
+        self.n_bins = int(jnp.max(bins))
 
         coord_unit = min_x.unit
         npix_x, npix_y = bins.shape[0], bins.shape[1]
@@ -248,7 +257,7 @@ class ProjectedBinning(eqx.Module):
                 present, a declared value is malformed, non-finite, or (for
                 `x_extent`/`y_extent`) not positive, a declared unit string
                 doesn't parse, or `bins` is not a non-empty 2D array of
-                non-negative IDs.
+                non-negative, contiguous IDs.
             astropy.units.UnitConversionError: If a declared unit isn't
                 dimensionally an angle.
         """
@@ -368,7 +377,13 @@ def _declared_angle_quantity(
 def _validated_bins(
     bins: Any, *, path: str = "ProjectedBinning.bins"
 ) -> jnp.ndarray:
-    """Check that `bins` is a 2D array of non-negative integer bin IDs."""
+    """Check `bins` is a 2D array of non-negative, contiguous integer bin IDs.
+
+    "Contiguous" means its positive IDs run ``1, 2, ..., n_bins`` with no gaps
+    -- `AbstractMGE.get_projected_mass` returns one value per ID in that
+    range, so a missing ID would silently waste a `segment_sum` slot (sized
+    up to the largest ID) rather than signal the corrupt bin map.
+    """
     array = jnp.asarray(bins)
     if array.ndim != 2:
         raise ValueError(
@@ -381,6 +396,12 @@ def _validated_bins(
         raise TypeError(f"{path} must have an integer dtype.")
     if bool(jnp.any(array < 0)):
         raise ValueError(f"{path} must not contain negative bin IDs.")
+    positive_ids = jnp.unique(array[array > 0])
+    if not jnp.array_equal(positive_ids, jnp.arange(1, positive_ids.size + 1)):
+        raise ValueError(
+            f"{path}'s positive bin IDs must be contiguous, running from 1 to "
+            f"their maximum with no gaps; got {sorted(int(i) for i in positive_ids)}."
+        )
     return array
 
 

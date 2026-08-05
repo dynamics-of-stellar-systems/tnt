@@ -134,13 +134,16 @@ population_data:
 `spatial_binnings` lets kinematic and population data share one projected
 aperture definition. The four coordinate fields define a regular rectangular
 pixel grid, while `PA` gives the galaxy major-axis position angle measured
-counterclockwise from the grid's x-axis. Each is an explicit angular
+counterclockwise from the grid's y-axis (the Cappellari/van den Bosch
+convention also used by an MGE's `PA_twist`), not the grid's x-axis. Each is
+an explicit angular
 `{value, unit}` quantity. `bins_file` is resolved relative to
 `io_settings.input_directory` and must contain a two-dimensional NumPy array
 with shape `(npix_x, npix_y)`. Its non-negative integers assign pixels to bins;
-ID 0 marks pixels that are not assigned to a bin. The pixel counts are inferred
-from the array shape. A kinematic data set may optionally reference an MGE;
-this is not required for proper-motion data.
+ID 0 marks pixels that are not assigned to a bin, and the positive IDs must be
+contiguous, running `1, 2, ..., n_bins` with no gaps. The pixel counts are
+inferred from the array shape. A kinematic data set may optionally reference
+an MGE; this is not required for proper-motion data.
 
 Population observations must always be supplied through their own
 `population_data.<name>.data_file`. TNT does not support population columns
@@ -200,9 +203,9 @@ binnings = build_spatial_binnings(
 
 The returned dictionary uses the configured binning names as keys and contains
 `ProjectedBinning` values. This loading step opens each `.npy` file, validates
-the exact entry schema and inline geometry, and rejects empty or otherwise
-invalid pixel-to-bin arrays. It converts the geometry to the internal angle
-unit and precomputes pixel edges and quadrature nodes.
+the exact entry schema and inline geometry, and rejects empty, negative, or
+non-contiguous pixel-to-bin arrays. It converts the geometry to the internal
+angle unit and precomputes pixel edges and quadrature nodes.
 
 `AbstractMGE.get_projected_mass()` integrates an MGE over a
 `ProjectedBinning` and returns the total in each positive bin ID. Convert both
