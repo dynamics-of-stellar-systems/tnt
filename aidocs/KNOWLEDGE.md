@@ -11,6 +11,13 @@
 - Use the Google style for function and class docstrings.
 - Keep individual methods to 100 lines or fewer as a soft limit; exceeding it
   slightly is acceptable when necessary.
+- `tnt/config_parsing.py` holds shared helpers for parsing/validating
+  resolved configuration data (mapping/required-field/reject-unknown/
+  string/number checks, named cross-reference resolution, bin-ID reading).
+  If a helper like this ends up reimplemented in more than one module,
+  move the shared logic there instead of leaving the copies to drift --
+  see its module docstring for the full rationale and existing contents
+  before adding a near-duplicate.
 
 ## Configuration defaults
 
