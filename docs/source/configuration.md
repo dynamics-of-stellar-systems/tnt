@@ -370,19 +370,16 @@ parameter_space_settings:
       minimum: 0.1
       maximum: 10.0
     spacing: "logarithmic"
-    include_unscaled: true
 ```
 
 The scaling factor applies to the complete assembled potential, after its
 ordinary component parameters—including `ml`—have been applied. `spacing`
 accepts `linear` or `logarithmic`; the minimum and maximum are inclusive.
-`include_unscaled: true` ensures that factor `1.0` is included once, even if it
-is not one of the generated values. Each scaled potential will be a separate
-entry in the all-models table and should record an explicit
-`potential_mass_scale_factor`.
 
-When `enabled` is false, TNT retains and validates the remaining settings but
-the later execution phase produces only the unscaled model.
+When `enabled` is false, TNT retains and validates the remaining settings, but
+the later execution phase produces only the unscaled model. See
+[Model search](model_search.md) for how rescaled potentials are evaluated and
+recorded at runtime.
 
 Errors identify the configuration path containing the invalid value. The
 resolved file is written only after every preparation-stage check succeeds.

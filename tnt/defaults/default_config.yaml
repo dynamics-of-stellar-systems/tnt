@@ -162,8 +162,6 @@ parameter_space_settings:
       minimum: 0.1
       maximum: 10.0
     spacing: "logarithmic"
-    # Ensure that mass scale factor 1.0 is represented exactly once.
-    include_unscaled: true
   generator_settings:
     # Modes: "absolute" or "fraction_of_sqrt_2n_observations".
     delta_chi2_threshold:

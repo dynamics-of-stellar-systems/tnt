@@ -138,7 +138,6 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
         "range_count": 10,
         "mass_scale_range": {"minimum": 0.1, "maximum": 10.0},
         "spacing": "logarithmic",
-        "include_unscaled": True,
     }
     assert written["weight_solver_settings"]["reattempt_failures"] is False
     assert written["weight_solver_settings"]["maxiter_factor"] == 3

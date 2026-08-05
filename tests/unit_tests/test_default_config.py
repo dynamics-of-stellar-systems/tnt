@@ -61,7 +61,6 @@ def test_default_config_is_packaged() -> None:
     assert "    enabled: false" in config_text
     assert "    range_count: 10" in config_text
     assert '    spacing: "logarithmic"' in config_text
-    assert "    include_unscaled: true" in config_text
     assert '  model_processing_order: "model_by_model"' in config_text
     assert "  orbit_family_integration_in_parallel: false" in config_text
     assert "  model_strategy:" not in config_text

@@ -1,0 +1,356 @@
+"""Unit tests for `ModelIterator`'s control flow, using fake collaborators.
+
+Real orbit integration, weight solving, and potential-building are all
+still unimplemented (see `tnt.model_iterator`'s module docstring). These
+tests exercise `ModelIterator`'s own logic -- the generate/evaluate/record/
+stop loop, mass-scale rescaling, failure handling, and logging -- against
+small fakes standing in for `Potential`/`OrbitLibrary`/`AbstractWeightSolver`.
+
+`tnt.potential` imports `galax.potential` at module level, and this venv's
+installed `galax`/`equinox` versions are mutually incompatible
+(`ImportError: cannot import name '_has_dataclass_init' from
+'equinox._module'`) -- an unrelated, pre-existing environment issue. Stub
+out `galax`/`galax.potential` before importing anything from `tnt` that
+would pull in that chain, so these tests can run regardless. Remove this
+stub once the real dependency conflict is fixed.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+import types
+from pathlib import Path
+from typing import Any, NamedTuple
+
+import pytest
+
+if "galax" not in sys.modules:
+    _fake_galax = types.ModuleType("galax")
+    _fake_galax_potential = types.ModuleType("galax.potential")
+
+    class _FakeAbstractPotentialBase:
+        pass
+
+    _fake_galax_potential.AbstractPotentialBase = _FakeAbstractPotentialBase
+    _fake_galax.potential = _fake_galax_potential
+    sys.modules["galax"] = _fake_galax
+    sys.modules["galax.potential"] = _fake_galax_potential
+
+import tnt.model_iterator as model_iterator_module
+from tnt.model_iterator import ModelIterator
+
+# ---------------------------------------------------------------------------
+# Fakes standing in for Potential / OrbitLibrary / AbstractWeightSolver.
+# ---------------------------------------------------------------------------
+
+
+class FakePotential:
+    def __init__(self, mass: float = 1.0, fail_orbit_library: bool = False) -> None:
+        self.mass = mass
+        self.fail_orbit_library = fail_orbit_library
+        self.components: dict[str, Any] = {}
+
+    def generate_orbit_library(
+        self, settings: Any, sampler: Any, dithering: Any
+    ) -> Any:
+        if self.fail_orbit_library:
+            raise RuntimeError("orbit integration failed")
+        return FakeOrbitLibrary(self.mass)
+
+    def rescale(self, mass_scale: float) -> FakePotential:
+        return FakePotential(mass=self.mass * mass_scale)
+
+
+class FakeOrbitLibrary:
+    def __init__(self, mass: float) -> None:
+        self.mass = mass
+
+    def rescaled(self, mass_scale: float) -> FakeOrbitLibrary:
+        return FakeOrbitLibrary(self.mass * mass_scale)
+
+
+class _FakeWeightResult(NamedTuple):
+    weights: str
+    chi2: dict[str, float]
+
+
+class FakeWeightSolver:
+    """`chi2["chi2"] == 10.0 / orbit_library.mass`, so the mass is recoverable."""
+
+    def __init__(self, fail_on_mass: frozenset[float] = frozenset()) -> None:
+        self.fail_on_mass = fail_on_mass
+
+    def solve(
+        self, orbit_library: FakeOrbitLibrary, kinematic_data: Any
+    ) -> _FakeWeightResult:
+        if orbit_library.mass in self.fail_on_mass:
+            raise RuntimeError("weight solve failed")
+        return _FakeWeightResult(
+            weights="weights", chi2={"chi2": 10.0 / orbit_library.mass}
+        )
+
+
+class FakeParameterGenerator:
+    """Proposes one `ParameterSet` per round, for `n_rounds` rounds, then stops."""
+
+    def __init__(self, n_rounds: int) -> None:
+        self.n_rounds = n_rounds
+        self.calls = 0
+
+    def generate_parameters(self, all_models: Any) -> list[dict[str, dict[str, float]]]:
+        self.calls += 1
+        if self.calls > self.n_rounds:
+            return []
+        return [{"bh": {"m": 1.0}}]
+
+
+def _make_iterator(**overrides: Any) -> ModelIterator:
+    iterator = ModelIterator.__new__(ModelIterator)
+    iterator.potential_settings = {}
+    iterator.mges = {}
+    iterator.kinematic_data = {}
+    iterator.weight_solver = FakeWeightSolver()
+    iterator.orbit_library_settings = {}
+    iterator.orbit_sampler = None
+    iterator.orbit_dithering = None
+    iterator.potential_rescalings = {"enabled": False}
+    iterator.parameter_generator = FakeParameterGenerator(n_rounds=1)
+    iterator.stopping_criteria = {"n_max_iter": 10, "n_max_mods": 10}
+    iterator.which_chi2 = "chi2"
+    iterator.resolved_config_path = Path("/archive/resolved_config.yaml")
+    for name, value in overrides.items():
+        setattr(iterator, name, value)
+    return iterator
+
+
+def _patch_build_potential(
+    monkeypatch: pytest.MonkeyPatch, potential: FakePotential
+) -> None:
+    monkeypatch.setattr(
+        model_iterator_module, "build_potential", lambda settings, mges: potential
+    )
+
+
+# ---------------------------------------------------------------------------
+# _evaluate / _solve
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_returns_solved_model_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    iterator = _make_iterator()
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+
+    (model,) = iterator._evaluate({"bh": {"m": 1.0}})
+
+    assert model.orblib_done
+    assert model.weights_done
+    assert model.chi2 == {"chi2": 10.0}
+    assert model.weights == "weights"
+
+
+def test_evaluate_logs_and_flags_orbit_integration_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    iterator = _make_iterator()
+    _patch_build_potential(monkeypatch, FakePotential(fail_orbit_library=True))
+
+    with caplog.at_level(logging.WARNING, logger="tnt.model_iterator"):
+        (model,) = iterator._evaluate({"bh": {"m": 1.0}})
+
+    assert model.orblib_done is False
+    assert model.weights_done is False
+    assert model.weights is None
+    assert model.chi2 is None
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING
+    assert "orbit integration failed" in record.message.lower()
+    assert "{'bh': {'m': 1.0}}" in record.message
+
+
+def test_evaluate_logs_and_flags_weight_solve_failure(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    iterator = _make_iterator(
+        weight_solver=FakeWeightSolver(fail_on_mass=frozenset({1.0}))
+    )
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+
+    with caplog.at_level(logging.WARNING, logger="tnt.model_iterator"):
+        (model,) = iterator._evaluate({"bh": {"m": 1.0}})
+
+    assert model.orblib_done is True
+    assert model.weights_done is False
+    assert model.chi2 is None
+    [record] = caplog.records
+    assert "weight solve failed" in record.message.lower()
+    assert "mass_scale=1.0" in record.message
+
+
+def test_evaluate_adds_rescaled_models_without_duplicating_the_unscaled_point(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    iterator = _make_iterator(
+        potential_rescalings={
+            "enabled": True,
+            "mass_scale_range": {"minimum": 0.5, "maximum": 2.0},
+            "range_count": 4,  # linspace(0.5, 2.0, 4) == [0.5, 1.0, 1.5, 2.0]
+            "spacing": "linear",
+        }
+    )
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+
+    models = iterator._evaluate({"bh": {"m": 1.0}})
+
+    masses = sorted(10.0 / model.chi2["chi2"] for model in models)
+    assert masses == [0.5, 1.0, 1.5, 2.0]
+    assert all(model.orblib_done and model.weights_done for model in models)
+
+
+def test_evaluate_logs_mass_scale_of_a_failed_rescaled_model(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    iterator = _make_iterator(
+        weight_solver=FakeWeightSolver(fail_on_mass=frozenset({1.5, 2.0})),
+        potential_rescalings={
+            "enabled": True,
+            "mass_scale_range": {"minimum": 0.5, "maximum": 2.0},
+            "range_count": 4,
+            "spacing": "linear",
+        },
+    )
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+
+    with caplog.at_level(logging.WARNING, logger="tnt.model_iterator"):
+        models = iterator._evaluate({"bh": {"m": 1.0}})
+
+    failed = [model for model in models if not model.weights_done]
+    succeeded = [model for model in models if model.weights_done]
+    assert len(failed) == 2
+    assert len(succeeded) == 2
+    logged_mass_scales = {record.message for record in caplog.records}
+    assert any("mass_scale=1.5" in message for message in logged_mass_scales)
+    assert any("mass_scale=2.0" in message for message in logged_mass_scales)
+
+
+# ---------------------------------------------------------------------------
+# mass_scales
+# ---------------------------------------------------------------------------
+
+
+def test_mass_scales_excludes_the_unscaled_point_and_is_cached() -> None:
+    iterator = _make_iterator(
+        potential_rescalings={
+            "enabled": True,
+            "mass_scale_range": {"minimum": 0.5, "maximum": 2.0},
+            "range_count": 4,
+            "spacing": "linear",
+        }
+    )
+
+    scales = iterator.mass_scales
+
+    assert 1.0 not in scales
+    assert scales == (0.5, 1.5, 2.0)
+    assert iterator.mass_scales is scales  # cached_property: computed once
+
+
+# ---------------------------------------------------------------------------
+# run
+# ---------------------------------------------------------------------------
+
+
+def test_run_stops_when_generator_proposes_nothing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    iterator = _make_iterator(parameter_generator=FakeParameterGenerator(n_rounds=2))
+    monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+
+    with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):
+        models, config_log = iterator.run()
+
+    assert len(models) == 2
+    assert models.n_iterations() == 2
+    assert len(config_log) == 2
+    assert list(config_log.table["iteration"]) == [0, 1]
+    assert "proposed nothing more" in caplog.text
+    assert "Stopped after 2 iteration(s), 2 model(s) total." in caplog.text
+
+
+def test_run_respects_n_max_mods(monkeypatch: pytest.MonkeyPatch) -> None:
+    iterator = _make_iterator(
+        parameter_generator=FakeParameterGenerator(n_rounds=10),
+        stopping_criteria={"n_max_iter": 10, "n_max_mods": 2},
+    )
+    monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+
+    models, config_log = iterator.run()
+
+    assert len(models) == 2
+    assert len(config_log) == 2
+
+
+def test_run_records_one_config_log_row_per_iteration_not_per_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    iterator = _make_iterator(
+        parameter_generator=FakeParameterGenerator(n_rounds=2),
+        potential_rescalings={
+            "enabled": True,
+            "mass_scale_range": {"minimum": 0.5, "maximum": 2.0},
+            "range_count": 4,
+            "spacing": "linear",
+        },
+    )
+    monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+
+    models, config_log = iterator.run()
+
+    assert len(models) == 2 * 4  # 2 rounds, 1 base + 3 rescaled models each
+    assert len(config_log) == 2  # still one row per round
+
+
+def test_run_resumes_cumulative_counts_and_config_log_across_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    iterator = _make_iterator(
+        parameter_generator=FakeParameterGenerator(n_rounds=2),
+        resolved_config_path=Path("/archive/run1/resolved_config.yaml"),
+    )
+    monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+
+    models, config_log = iterator.run()
+    assert len(models) == 2
+
+    iterator.parameter_generator = FakeParameterGenerator(n_rounds=2)
+    iterator.resolved_config_path = Path("/archive/run2/resolved_config.yaml")
+    models, config_log = iterator.run(models, config_log)
+
+    assert len(models) == 4
+    assert models.n_iterations() == 4
+    assert len(config_log) == 4
+    paths = list(config_log.table["resolved_config_path"])
+    assert paths[:2] == [str(Path("/archive/run1/resolved_config.yaml"))] * 2
+    assert paths[2:] == [str(Path("/archive/run2/resolved_config.yaml"))] * 2
+
+
+def test_run_logs_improving_chi2_stopping_reason(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    iterator = _make_iterator(parameter_generator=FakeParameterGenerator(n_rounds=10))
+    monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: True)
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+
+    with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):
+        models, _ = iterator.run()
+
+    # previous_best_chi2 starts None, so the delta-chi2 check can't fire
+    # until the *second* round -- it's what stops the third round from running.
+    assert len(models) == 2
+    assert "chi2 stopped improving" in caplog.text

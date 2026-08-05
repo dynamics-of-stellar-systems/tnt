@@ -164,7 +164,7 @@ weight_solver_settings:
   reattempt_failures: true
 
 parameter_space_settings:
-  generator_type: "GridSearch"
+  generator_type: "SinglePoint"
   which_chi2: "kinchi2"
   potential_rescalings:
     enabled: true
@@ -173,11 +173,7 @@ parameter_space_settings:
       minimum: 0.1
       maximum: 10.0
     spacing: "logarithmic"
-    include_unscaled: true
-  generator_settings:
-    delta_chi2_threshold:
-      mode: "fraction_of_sqrt_2n_observations"
-      value: 0.1
+  generator_settings: {}
   stopping_criteria:
     minimum_delta_chi2:
       mode: "absolute"

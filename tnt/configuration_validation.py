@@ -610,6 +610,19 @@ def _validate_weight_solver_settings(settings: ConfigDict) -> None:
     _boolean(settings["reattempt_failures"], f"{path}.reattempt_failures")
 
 
+# Which `generator_settings` keys each `generator_type` requires. Mirrors
+# each `tnt.parameter_generator.AbstractParameterGenerator` subclass's own
+# `_required_generator_settings` -- kept as plain data here, rather than
+# imported from `tnt.parameter_generator`, since that module (transitively,
+# via `tnt.all_models`/`tnt.model`/`tnt.potential`) pulls in `galax`, which
+# this validation-only module should not depend on just to read
+# configuration.
+_GENERATOR_SETTINGS_KEYS = {
+    "GridSearch": frozenset({"delta_chi2_threshold"}),
+    "SinglePoint": frozenset(),
+}
+
+
 def _validate_parameter_space_settings(settings: ConfigDict) -> None:
     path = "parameter_space_settings"
     keys = {
@@ -621,22 +634,32 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
     }
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
-    _choice(settings["generator_type"], {"GridSearch"}, f"{path}.generator_type")
+    generator_type = _choice(
+        settings["generator_type"],
+        set(_GENERATOR_SETTINGS_KEYS),
+        f"{path}.generator_type",
+    )
     _choice(
         settings["which_chi2"], {"chi2", "kinchi2", "kinmapchi2"}, f"{path}.which_chi2"
     )
     generator = _required_mapping(settings, "generator_settings", path)
-    _reject_unknown_keys(
-        generator, {"delta_chi2_threshold"}, f"{path}.generator_settings"
-    )
-    _require_keys(generator, {"delta_chi2_threshold"}, f"{path}.generator_settings")
-    _validate_tagged_threshold(
-        _required_mapping(
-            generator, "delta_chi2_threshold", f"{path}.generator_settings"
-        ),
-        f"{path}.generator_settings.delta_chi2_threshold",
-        {"absolute", "fraction_of_sqrt_2n_observations"},
-    )
+    required_generator_keys = _GENERATOR_SETTINGS_KEYS[generator_type]
+    # Not `_reject_unknown_keys`: recursive default-merging can't remove a
+    # mapping key, so a user who overrides `generator_type` away from the
+    # packaged default's ("GridSearch") still inherits its
+    # `generator_settings.delta_chi2_threshold` unless they redeclare that
+    # exact key with a real value -- an empty `generator_settings: {}`
+    # override doesn't clear it. Keys beyond what this `generator_type`
+    # requires are therefore tolerated rather than rejected.
+    _require_keys(generator, required_generator_keys, f"{path}.generator_settings")
+    if "delta_chi2_threshold" in required_generator_keys:
+        _validate_tagged_threshold(
+            _required_mapping(
+                generator, "delta_chi2_threshold", f"{path}.generator_settings"
+            ),
+            f"{path}.generator_settings.delta_chi2_threshold",
+            {"absolute", "fraction_of_sqrt_2n_observations"},
+        )
     stopping = _required_mapping(settings, "stopping_criteria", path)
     _reject_unknown_keys(
         stopping,
@@ -667,7 +690,6 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
 def _validate_potential_rescalings(settings: ConfigDict, path: str) -> None:
     keys = {
         "enabled",
-        "include_unscaled",
         "mass_scale_range",
         "range_count",
         "spacing",
@@ -675,7 +697,6 @@ def _validate_potential_rescalings(settings: ConfigDict, path: str) -> None:
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
     _boolean(settings["enabled"], f"{path}.enabled")
-    _boolean(settings["include_unscaled"], f"{path}.include_unscaled")
 
     range_count = _integer(settings["range_count"], f"{path}.range_count")
     if range_count <= 0:
