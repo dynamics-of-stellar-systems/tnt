@@ -16,13 +16,24 @@ import unxt as u
 from astropy.table import QTable
 from unxt import AbstractUnitSystem, Quantity
 
+from tnt.config_parsing import (
+    ConfigMapping,
+    _finite,
+    _mapping,
+    _positive_finite,
+    _read_bin_ids,
+    _reject_unknown,
+    _required,
+    _resolve_typed_reference,
+    _string,
+    _validated_bin_ids,
+)
 from tnt.mge import LightMGE, MassMGE
 from tnt.spatial_binnings import ProjectedBinning
 
 if TYPE_CHECKING:
     from tnt.orbit_library import OrbitLibrary
 
-ConfigMapping = Mapping[str, Any]
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -495,31 +506,6 @@ def build_kinematics(
     return built
 
 
-def _mapping(value: Any, path: str) -> ConfigMapping:
-    if not isinstance(value, Mapping):
-        raise TypeError(f"{path} must be a mapping.")
-    return value
-
-
-def _required(settings: ConfigMapping, key: str, path: str) -> Any:
-    if key not in settings:
-        raise ValueError(f"{path} is missing required field: {key}.")
-    return settings[key]
-
-
-def _reject_unknown(settings: ConfigMapping, allowed: set[str], path: str) -> None:
-    unknown = set(settings) - allowed
-    if unknown:
-        names = ", ".join(sorted(unknown))
-        raise ValueError(f"{path} contains unknown field(s): {names}.")
-
-
-def _string(value: Any, path: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise TypeError(f"{path} must be a non-empty string.")
-    return value
-
-
 def _number(value: Any, path: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TypeError(f"{path} must be a number.")
@@ -547,54 +533,6 @@ def _nonnegative(value: Any, path: str) -> float:
     if result < 0:
         raise ValueError(f"{path} must be nonnegative.")
     return result
-
-
-def _resolve_reference(
-    registry: Mapping[str, Any], name: str, path: str, registry_name: str
-) -> Any:
-    try:
-        return registry[name]
-    except KeyError as error:
-        raise ValueError(
-            f"{path} references unknown {registry_name} entry {name!r}."
-        ) from error
-
-
-def _resolve_typed_reference(
-    registry: Mapping[str, Any],
-    name: str,
-    path: str,
-    registry_name: str,
-    expected_type: type[Any] | tuple[type[Any], ...],
-) -> Any:
-    """Resolve a named object and enforce its runtime type."""
-    value = _resolve_reference(registry, name, path, registry_name)
-    if not isinstance(value, expected_type):
-        if isinstance(expected_type, tuple):
-            expected = " or ".join(cls.__name__ for cls in expected_type)
-        else:
-            expected = expected_type.__name__
-        raise TypeError(
-            f"{path} must resolve to {expected}, got {type(value).__name__}."
-        )
-    return value
-
-
-def _read_bin_ids(table: QTable, column: str, data_file: Path) -> jnp.ndarray:
-    if column not in table.colnames:
-        raise ValueError(f"{data_file} is missing required column: {column}.")
-    return _validated_bin_ids(table[column], data_file)
-
-
-def _validated_bin_ids(values: Any, data_file: Path) -> jnp.ndarray:
-    array = np.asarray(values)
-    if array.ndim != 1 or array.size == 0:
-        raise ValueError(f"{data_file}: spatial bin IDs must be a non-empty vector.")
-    if not np.issubdtype(array.dtype, np.integer):
-        raise TypeError(f"{data_file}: spatial bin IDs must be integers.")
-    if np.any(array <= 0) or np.unique(array).size != array.size:
-        raise ValueError(f"{data_file}: spatial bin IDs must be positive and unique.")
-    return jnp.asarray(array)
 
 
 def _same_length(table: QTable, expected: int, data_file: Path) -> None:
@@ -630,17 +568,6 @@ def _read_dimensionless_column(
     values = jnp.asarray(column)
     _finite(values, f"{data_file}: {name}")
     return values
-
-
-def _finite(values: Any, path: str) -> None:
-    if not bool(jnp.all(jnp.isfinite(values))):
-        raise ValueError(f"{path} must contain only finite values.")
-
-
-def _positive_finite(values: Any, path: str) -> None:
-    _finite(values, path)
-    if not bool(jnp.all(jnp.asarray(values) > 0)):
-        raise ValueError(f"{path} must contain only positive values.")
 
 
 def _nonnegative_finite(values: Any, path: str) -> None:

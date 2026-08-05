@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Self
+from typing import Self
 
 import astropy.units as au
 import equinox as eqx
@@ -14,9 +14,18 @@ import unxt as u
 from astropy.table import QTable
 from unxt import AbstractUnitSystem, Quantity
 
+from tnt.config_parsing import (
+    ConfigMapping,
+    _finite,
+    _mapping,
+    _positive_finite,
+    _read_bin_ids,
+    _reject_unknown,
+    _required,
+    _resolve_typed_reference,
+    _string,
+)
 from tnt.spatial_binnings import ProjectedBinning
-
-ConfigMapping = Mapping[str, Any]
 
 
 class Populations(eqx.Module):
@@ -71,7 +80,7 @@ class Populations(eqx.Module):
         path = f"population_data.{name}"
         _reject_unknown(settings, {"binning", "data_file"}, path)
         table = QTable.read(data_file, format="ascii.ecsv")
-        bin_ids = _read_bin_ids(table, data_file)
+        bin_ids = _read_bin_ids(table, "vbin_id", data_file)
         _validate_bin_ids_against_binning(bin_ids, binning, data_file)
         property_names = _population_property_names(table, data_file)
 
@@ -145,66 +154,6 @@ def build_populations(
     return built
 
 
-def _mapping(value: Any, path: str) -> ConfigMapping:
-    if not isinstance(value, Mapping):
-        raise TypeError(f"{path} must be a mapping.")
-    return value
-
-
-def _required(settings: ConfigMapping, key: str, path: str) -> Any:
-    if key not in settings:
-        raise ValueError(f"{path} is missing required field: {key}.")
-    return settings[key]
-
-
-def _reject_unknown(settings: ConfigMapping, allowed: set[str], path: str) -> None:
-    unknown = set(settings) - allowed
-    if unknown:
-        names = ", ".join(sorted(unknown))
-        raise ValueError(f"{path} contains unknown field(s): {names}.")
-
-
-def _string(value: Any, path: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise TypeError(f"{path} must be a non-empty string.")
-    return value
-
-
-def _resolve_typed_reference(
-    registry: Mapping[str, Any],
-    name: str,
-    path: str,
-    registry_name: str,
-    expected_type: type[Any],
-) -> Any:
-    try:
-        value = registry[name]
-    except KeyError as error:
-        raise ValueError(
-            f"{path} references unknown {registry_name} entry {name!r}."
-        ) from error
-    if not isinstance(value, expected_type):
-        raise TypeError(
-            f"{path} must resolve to {expected_type.__name__}, "
-            f"got {type(value).__name__}."
-        )
-    return value
-
-
-def _read_bin_ids(table: QTable, data_file: Path) -> jnp.ndarray:
-    column = "vbin_id"
-    if column not in table.colnames:
-        raise ValueError(f"{data_file} is missing required column: {column}.")
-    values = np.asarray(table[column])
-    if values.ndim != 1 or values.size == 0:
-        raise ValueError(f"{data_file}: spatial bin IDs must be a non-empty vector.")
-    if not np.issubdtype(values.dtype, np.integer):
-        raise TypeError(f"{data_file}: spatial bin IDs must be integers.")
-    if np.any(values <= 0) or np.unique(values).size != values.size:
-        raise ValueError(f"{data_file}: spatial bin IDs must be positive and unique.")
-    return jnp.asarray(values)
-
-
 def _validate_bin_ids_against_binning(
     bin_ids: jnp.ndarray,
     binning: ProjectedBinning,
@@ -275,14 +224,3 @@ def _read_property_pair(
         uncertainties.ustrip(target_unit), f"{data_file}: {uncertainty_name}"
     )
     return values, uncertainties
-
-
-def _finite(values: Any, path: str) -> None:
-    if not bool(jnp.all(jnp.isfinite(values))):
-        raise ValueError(f"{path} must contain only finite values.")
-
-
-def _positive_finite(values: Any, path: str) -> None:
-    _finite(values, path)
-    if not bool(jnp.all(jnp.asarray(values) > 0)):
-        raise ValueError(f"{path} must contain only positive values.")
