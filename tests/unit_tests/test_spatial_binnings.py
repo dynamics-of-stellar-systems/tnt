@@ -261,6 +261,25 @@ def test_from_settings_rejects_negative_bin_ids():
         )
 
 
+def test_from_settings_rejects_non_contiguous_bin_ids():
+    bins = np.array([[0, 1], [3, 0]])  # ID 2 is missing.
+
+    with pytest.raises(ValueError, match="contiguous"):
+        ProjectedBinning.from_settings(
+            _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+        )
+
+
+def test_from_settings_accepts_contiguous_bin_ids_with_unbinned_pixels():
+    bins = np.array([[0, 1], [2, 0]])
+
+    binning = ProjectedBinning.from_settings(
+        _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+    )
+
+    assert binning.n_bins == 2
+
+
 @pytest.mark.parametrize(
     ("bins_shape", "expected_npix_x", "expected_npix_y"),
     [((5, 3), 5, 3), ((2, 7), 2, 7)],

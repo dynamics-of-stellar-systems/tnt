@@ -615,6 +615,45 @@ def test_get_projected_mass_matches_independent_numeric_integral(
     assert jnp.allclose(mass.ustrip("Lsun"), expected, rtol=1e-5)
 
 
+@pytest.mark.parametrize(
+    ("pa", "aligned_bin_idx"),
+    [
+        (0.0, 0),  # PA=0 -> major axis along y -> the y-strip bin gets more mass.
+        (np.pi / 2, 1),  # PA=90deg -> major axis along x -> the x-strip bin does.
+    ],
+)
+def test_get_projected_mass_pa_convention_matches_documented_axis(pa, aligned_bin_idx):
+    """PA is measured counterclockwise from the y-axis (docstring/configuration.md).
+
+    An elongated component (small `q`) with no twist should therefore have its
+    major axis along y at PA=0 and along x at PA=90deg -- checked here by
+    comparing the mass caught by a thin strip along each axis, independently
+    of the erf/quadrature integration formula itself.
+    """
+    mge = LightMGE(
+        I=u.Quantity(jnp.array([1.0]), "Lsun / rad2"),
+        sigma=u.Quantity(jnp.array([1.0]), "rad"),
+        q=u.Quantity(jnp.array([0.2]), ""),
+        PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+    )
+    n_x, n_y = 40, 40
+    min_x, min_y = -4.0, -4.0
+    x_extent, y_extent = 8.0, 8.0
+    x_centers = min_x + (np.arange(n_x) + 0.5) * (x_extent / n_x)
+    y_centers = min_y + (np.arange(n_y) + 0.5) * (y_extent / n_y)
+    half_width = 0.3
+    y_strip = np.abs(x_centers)[:, None] < half_width  # bin 1: thin in x, tall in y
+    x_strip = np.abs(y_centers)[None, :] < half_width  # bin 2: thin in y, wide in x
+    bins = np.where(y_strip, 1, np.where(x_strip & ~y_strip, 2, 0))
+    binning = _projected_binning(
+        min_x=min_x, min_y=min_y, x_extent=x_extent, y_extent=y_extent, pa=pa, bins=bins
+    )
+
+    mass = mge.get_projected_mass(binning).ustrip("Lsun")
+
+    assert mass[aligned_bin_idx] > mass[1 - aligned_bin_idx]
+
+
 def test_get_projected_mass_conserves_total_flux_for_circular_component():
     mge = LightMGE(
         I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
@@ -718,6 +757,37 @@ def test_get_projected_mass_invariant_under_matching_physical_conversion():
     assert jnp.allclose(
         angular_mass.ustrip("Lsun"), physical_mass.ustrip("Lsun"), rtol=1e-6
     )
+
+
+def test_get_projected_mass_is_jit_compatible():
+    """`num_segments` must come from `binning.n_bins`, not `int(jnp.max(bins))`.
+
+    Under `jax.jit`, `bins` (like every other leaf) is traced, so computing
+    `n_bins` from it inside `get_projected_mass` would raise
+    `ConcretizationTypeError` -- `ProjectedBinning.n_bins` must already be a
+    static Python `int`, precomputed at construction time.
+    """
+    mge = LightMGE(
+        I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / rad2"),
+        sigma=u.Quantity(jnp.array([0.01, 0.02]), "rad"),
+        q=u.Quantity(jnp.array([0.7, 0.9]), ""),
+        PA_twist=u.Quantity(jnp.array([0.0, 0.3]), "rad"),
+    )
+    binning = _projected_binning(
+        min_x=-0.02,
+        min_y=-0.02,
+        x_extent=0.04,
+        y_extent=0.04,
+        pa=0.2,
+        bins=np.array([[1, 2], [2, 1]]),
+    )
+
+    jitted_mass = jax.jit(lambda mge, binning: mge.get_projected_mass(binning))(
+        mge, binning
+    )
+    eager_mass = mge.get_projected_mass(binning)
+
+    assert jnp.allclose(jitted_mass.ustrip("Lsun"), eager_mass.ustrip("Lsun"))
 
 
 def _analytic_total_mass(

@@ -128,8 +128,10 @@ class AbstractMGE(eqx.Module):
         `ProjectedBinning`) don't contribute to any bin.
 
         `binning`'s `PA` is measured counterclockwise from the aperture
-        grid's x-axis to each component's own major axis (`PA_twist` away
-        from a reference component, as elsewhere in this module).
+        grid's y-axis to each component's own major axis, in the
+        Cappellari/van den Bosch convention used elsewhere in this module for
+        `psi` and `PA_twist` (opposite handedness to the "mathematical" angle
+        from the x-axis) -- `PA_twist` away from a reference component.
 
         Args:
             binning: The projected-plane aperture grid and pixel-to-bin
@@ -156,6 +158,9 @@ class AbstractMGE(eqx.Module):
         sigma = self.sigma.ustrip(coord_unit).reshape(shape)
         q = self.q.ustrip("").reshape(shape)
         I = self.I.ustrip(self.I.unit).reshape(shape)
+        # PA is measured from the y-axis (Cappellari/van den Bosch convention);
+        # the -pi/2 converts it to alpha, the "mathematical" angle from the
+        # x-axis that the integral below is expressed in.
         alpha = (
             binning.PA.ustrip("rad")
             - jnp.pi / 2
@@ -183,9 +188,8 @@ class AbstractMGE(eqx.Module):
 
         pixel_mass = jnp.einsum("iq,giqj->ij", binning.x_weights, integrand)  # (Nx, Ny)
 
-        n_bins = int(jnp.max(binning.bins))
         binned = segment_sum(
-            pixel_mass.ravel(), binning.bins.ravel(), num_segments=n_bins + 1
+            pixel_mass.ravel(), binning.bins.ravel(), num_segments=binning.n_bins + 1
         )
 
         mass_unit = self.I.unit * coord_unit**2
