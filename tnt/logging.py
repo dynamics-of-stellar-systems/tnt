@@ -14,6 +14,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
+from tnt.config_parsing import _required_mapping, _required_string
+
 _LOGGER_NAME = "tnt"
 _OWNED_HANDLER_ATTRIBUTE = "_tnt_owned_handler"
 _SESSION_LOCK = threading.RLock()
@@ -271,30 +273,6 @@ def _file_formatter() -> logging.Formatter:
     )
     formatter.converter = time.gmtime
     return formatter
-
-
-def _required_mapping(
-    mapping: Mapping[str, Any],
-    key: str,
-    parent: str,
-) -> Mapping[str, Any]:
-    """Return one required nested mapping."""
-    if key not in mapping:
-        raise ValueError(f"{parent} is missing required field: {key}.")
-    value = mapping[key]
-    if not isinstance(value, Mapping):
-        raise TypeError(f"{parent}.{key} must be a mapping.")
-    return value
-
-
-def _required_string(mapping: Mapping[str, Any], key: str, parent: str) -> str:
-    """Return one required non-empty string."""
-    if key not in mapping:
-        raise ValueError(f"{parent} is missing required field: {key}.")
-    value = mapping[key]
-    if not isinstance(value, str) or not value.strip():
-        raise TypeError(f"{parent}.{key} must be a non-empty string.")
-    return value
 
 
 def _required_bool(mapping: Mapping[str, Any], key: str, parent: str) -> bool:

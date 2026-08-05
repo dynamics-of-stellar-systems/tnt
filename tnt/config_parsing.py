@@ -1,16 +1,18 @@
-"""Shared helpers for building named runtime objects from resolved TNT
-configuration entries and their data files.
+"""Shared helpers for parsing and validating resolved TNT configuration data.
 
-Used by `tnt.kinematics` and `tnt.populations` (and any future module that
-reads a `<registry>.<name>` config entry plus a data file into a validated
-runtime object) -- as distinct from `tnt.configuration_validation`, which
-validates the whole resolved config's schema up front, before any data file
-is opened.
+Used across the package wherever a piece of resolved configuration --
+anywhere from the whole config dict (`tnt.configuration_validation`) down to
+one `<registry>.<name>` entry plus its data file (`tnt.kinematics`,
+`tnt.populations`) -- needs the same handful of primitives: check a value is
+a mapping, look up a required field, reject unknown fields, validate a
+number/string, or resolve a named cross-reference. Kept independent of any
+one caller's domain so it doesn't accumulate domain-specific logic itself.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import math
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -33,17 +35,68 @@ def _required(settings: ConfigMapping, key: str, path: str) -> Any:
     return settings[key]
 
 
-def _reject_unknown(settings: ConfigMapping, allowed: set[str], path: str) -> None:
-    unknown = set(settings) - allowed
+def _reject_unknown_keys(
+    mapping: ConfigMapping, allowed: Collection[str], path: str
+) -> None:
+    unknown = sorted(str(key) for key in mapping if key not in allowed)
     if unknown:
-        names = ", ".join(sorted(unknown))
-        raise ValueError(f"{path} contains unknown field(s): {names}.")
+        raise ValueError(f"{path} contains unknown field(s): {', '.join(unknown)}.")
+
+
+def _require_keys(mapping: ConfigMapping, required: set[str], path: str) -> None:
+    missing = sorted(required - set(mapping))
+    if missing:
+        raise ValueError(f"{path} is missing required field(s): {', '.join(missing)}.")
 
 
 def _string(value: Any, path: str) -> str:
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value.strip():
         raise TypeError(f"{path} must be a non-empty string.")
     return value
+
+
+def _required_mapping(mapping: ConfigMapping, key: str, path: str) -> ConfigMapping:
+    """Return one required nested mapping."""
+    return _mapping(_required(mapping, key, path), f"{path}.{key}")
+
+
+def _required_string(mapping: ConfigMapping, key: str, path: str) -> str:
+    """Return one required non-empty string."""
+    return _string(_required(mapping, key, path), f"{path}.{key}")
+
+
+def _optional_mapping(mapping: ConfigMapping, key: str, path: str) -> ConfigMapping:
+    """Return one nested mapping, defaulting a missing key to empty."""
+    return _mapping(mapping.get(key, {}), f"{path}.{key}")
+
+
+def _number(value: Any, path: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{path} must be a number.")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{path} must be finite.")
+    return number
+
+
+def _integer(value: Any, path: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{path} must be an integer.")
+    return value
+
+
+def _positive_number(value: Any, path: str) -> float:
+    number = _number(value, path)
+    if number <= 0:
+        raise ValueError(f"{path} must be greater than zero.")
+    return number
+
+
+def _nonnegative_number(value: Any, path: str) -> float:
+    number = _number(value, path)
+    if number < 0:
+        raise ValueError(f"{path} must not be negative.")
+    return number
 
 
 def _resolve_reference(

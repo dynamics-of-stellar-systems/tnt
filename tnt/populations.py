@@ -20,10 +20,9 @@ from tnt.config_parsing import (
     _mapping,
     _positive_finite,
     _read_bin_ids,
-    _reject_unknown,
-    _required,
+    _reject_unknown_keys,
+    _required_string,
     _resolve_typed_reference,
-    _string,
 )
 from tnt.spatial_binnings import ProjectedBinning
 
@@ -78,7 +77,7 @@ class Populations(eqx.Module):
     ) -> Self:
         """Read and construct one configured population data set."""
         path = f"population_data.{name}"
-        _reject_unknown(settings, {"binning", "data_file"}, path)
+        _reject_unknown_keys(settings, {"binning", "data_file"}, path)
         table = QTable.read(data_file, format="ascii.ecsv")
         bin_ids = _read_bin_ids(table, "vbin_id", data_file)
         _validate_bin_ids_against_binning(bin_ids, binning, data_file)
@@ -131,9 +130,9 @@ def build_populations(
         if not isinstance(name, str) or not name:
             raise ValueError("population_data names must be non-empty strings.")
         settings = _mapping(settings_value, path)
-        _reject_unknown(settings, {"binning", "data_file"}, path)
-        filename = _string(_required(settings, "data_file", path), f"{path}.data_file")
-        binning_name = _string(_required(settings, "binning", path), f"{path}.binning")
+        _reject_unknown_keys(settings, {"binning", "data_file"}, path)
+        filename = _required_string(settings, "data_file", path)
+        binning_name = _required_string(settings, "binning", path)
         binning = _resolve_typed_reference(
             spatial_binnings,
             binning_name,
