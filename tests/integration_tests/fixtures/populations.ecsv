@@ -1,0 +1,12 @@
+# %ECSV 1.0
+# ---
+# datatype:
+# - {name: vbin_id, datatype: int64}
+# - {name: age, unit: Gyr, datatype: float64}
+# - {name: dage, unit: Myr, datatype: float64}
+# - {name: metallicity, datatype: float64}
+# - {name: dmetallicity, datatype: float64}
+# schema: astropy-2.0
+vbin_id age dage metallicity dmetallicity
+1 10.0 500.0 0.1 0.01
+2 8.0 750.0 -0.2 0.02

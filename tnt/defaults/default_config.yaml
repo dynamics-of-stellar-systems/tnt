@@ -114,6 +114,8 @@ MGEs: {}
 spatial_binnings: {}
 potential: {}
 kinematic_data: {}
+# Each entry references its own ECSV data_file and a shared spatial_binning;
+# population data are never embedded in a kinematics file and do not use MGEs.
 population_data: {}
 
 orbit_library_settings:

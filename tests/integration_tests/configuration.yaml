@@ -128,7 +128,10 @@ kinematic_data:
       bins: 203
     data_file: "gauss_hermite_kins.ecsv"
 
-population_data: {}
+population_data:
+  stellar_populations:
+    data_file: "populations.ecsv"
+    binning: "kinset1_binning"
 
 orbit_library_settings:
   orbit_sampler:

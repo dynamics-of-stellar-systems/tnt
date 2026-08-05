@@ -11,6 +11,13 @@ from typing import Any
 
 import unxt as u
 
+from tnt.config_parsing import (
+    _mapping,
+    _optional_mapping,
+    _reject_unknown_keys,
+    _require_keys,
+)
+
 ConfigDict = dict[str, Any]
 
 _INTERNAL_DIMENSIONS = ("length", "time", "mass", "angle", "power")
@@ -85,7 +92,7 @@ def normalize_configuration_quantities(
     """Return a copy with supported quantities expressed in internal units."""
     resolved = deepcopy(_mapping(config, "configuration"))
 
-    cosmology = _nested_mapping(resolved, "cosmological_parameters", "configuration")
+    cosmology = _optional_mapping(resolved, "cosmological_parameters", "configuration")
     _normalize_field(
         cosmology,
         "H0",
@@ -94,12 +101,12 @@ def normalize_configuration_quantities(
         "cosmological_parameters",
     )
 
-    attributes = _nested_mapping(resolved, "system_attributes", "configuration")
+    attributes = _optional_mapping(resolved, "system_attributes", "configuration")
     _normalize_field(
         attributes, "distance", "length", unit_systems, "system_attributes"
     )
 
-    potential = _nested_mapping(resolved, "potential", "configuration")
+    potential = _optional_mapping(resolved, "potential", "configuration")
     for potential_name, potential_value in potential.items():
         potential_path = f"potential.{potential_name}"
         settings = _mapping(potential_value, potential_path)
@@ -114,7 +121,7 @@ def normalize_configuration_quantities(
                 f"{potential_path}.parameters",
             )
 
-    kinematic_data = _nested_mapping(resolved, "kinematic_data", "configuration")
+    kinematic_data = _optional_mapping(resolved, "kinematic_data", "configuration")
     _normalize_kinematics(
         kinematic_data,
         unit_systems,
@@ -299,30 +306,6 @@ def _validated_declared_unit(value: Any, dimension: str, path: str) -> Any:
     if not parsed.is_equivalent(reference):
         raise ValueError(f"{path} must describe {dimension.replace('_', ' ')}.")
     return parsed
-
-
-def _nested_mapping(mapping: ConfigDict, key: str, parent: str) -> ConfigDict:
-    return _mapping(mapping.get(key, {}), f"{parent}.{key}")
-
-
-def _mapping(value: Any, path: str) -> ConfigDict:
-    if not isinstance(value, dict):
-        raise TypeError(f"{path} must be a YAML mapping.")
-    return value
-
-
-def _reject_unknown_keys(
-    mapping: Mapping[str, Any], allowed: set[str] | frozenset[str], path: str
-) -> None:
-    unknown = sorted(set(mapping) - set(allowed))
-    if unknown:
-        raise ValueError(f"{path} contains unknown field(s): {', '.join(unknown)}.")
-
-
-def _require_keys(mapping: Mapping[str, Any], required: set[str], path: str) -> None:
-    missing = sorted(required - set(mapping))
-    if missing:
-        raise ValueError(f"{path} is missing required field(s): {', '.join(missing)}.")
 
 
 def _is_number(value: Any) -> bool:

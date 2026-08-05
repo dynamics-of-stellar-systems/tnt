@@ -11,6 +11,13 @@
 - Use the Google style for function and class docstrings.
 - Keep individual methods to 100 lines or fewer as a soft limit; exceeding it
   slightly is acceptable when necessary.
+- `tnt/config_parsing.py` holds shared helpers for parsing/validating
+  resolved configuration data (mapping/required-field/reject-unknown/
+  string/number checks, named cross-reference resolution, bin-ID reading).
+  If a helper like this ends up reimplemented in more than one module,
+  move the shared logic there instead of leaving the copies to drift --
+  see its module docstring for the full rationale and existing contents
+  before adding a near-duplicate.
 
 ## Configuration defaults
 
@@ -32,9 +39,10 @@
   their exact entry schema, geometry, units, `bins_file`, and loaded-array
   validation. Runtime construction rejects non-mapping entries, missing and
   unknown fields, invalid filenames, and empty or otherwise invalid bin maps.
-  Concrete kinematics constructors likewise validate type-specific parameters
-  and observational file contents. Other runtime-object, MGE-content, and
-  optional-dependency checks remain the responsibility of the execution phase.
+  Concrete kinematics and population constructors likewise validate their
+  observational file contents and type-specific runtime rules. Other
+  runtime-object, MGE-content, and optional-dependency checks remain the
+  responsibility of the execution phase.
   Legacy
   deprecation-and-ignore warnings are intentionally not reproduced.
 - TNT uses `unxt` for configuration units. The required
@@ -61,7 +69,8 @@
   preparation does not open those files. `tnt.kinematics.build_kinematics`
   constructs named `GaussHermite`, `BayesLOSVD`, and `ProperMotions` objects;
   it converts unitful observations into the internal unit system and retains
-  JAX arrays in immutable Equinox modules.
+  JAX arrays in immutable Equinox modules. Population observations are loaded
+  separately by `tnt.populations.build_populations()`.
 - `tnt.mge.build_mges()` is the explicit runtime boundary that loads the
   resolved `MGEs` registry into named `LightMGE` and `MassMGE` objects.
   `Configuration` continues to contain no instantiated scientific objects.
@@ -112,6 +121,18 @@
   components; `kinematic_data` references a binning and optionally an MGE; and
   `population_data` references a binning. Preparation validates all
   cross-references without opening the files.
+- Population observations must always use a separate
+  `population_data.<name>.data_file`. TNT does not support DYNAMITE's
+  `with_pops` pattern or population columns embedded in a kinematics file,
+  even when the population and kinematics data share a spatial binning.
+- `tnt.populations.build_populations()` loads each configured population ECSV
+  into an immutable JAX/Equinox `Populations` object. It resolves a strictly
+  typed `ProjectedBinning` but no MGE. Files require a positive unique
+  `vbin_id` and one or more `property`/`dproperty` column pairs. Paired units
+  must be equivalent; declared quantities are converted to the internal unit
+  system, unitless columns remain dimensionless, and uncertainties must be
+  positive. Observed bin IDs may be a subset of, but cannot fall outside, the
+  referenced binning.
 - `tnt.spatial_binnings.build_spatial_binnings()` is the explicit runtime
   boundary that loads the resolved `spatial_binnings` registry into named
   `ProjectedBinning` objects. It validates the complete entry before file

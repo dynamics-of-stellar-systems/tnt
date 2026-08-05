@@ -21,6 +21,7 @@ from typing import Any
 
 import yaml
 
+from tnt.config_parsing import _mapping, _optional_mapping
 from tnt.configuration_validation import validate_resolved_configuration
 from tnt.logging import configure_logging
 from tnt.units import (
@@ -102,7 +103,7 @@ class Configuration:
         _LOGGER.debug("Resolving configuration loaded from %s.", source_path)
         schema_resolved_config = _apply_schema_defaults(merged_config)
         unit_systems = build_unit_systems(
-            _mapping_value(schema_resolved_config, "units", "configuration")
+            _optional_mapping(schema_resolved_config, "units", "configuration")
         )
         schema_resolved_config = normalize_configuration_quantities(
             schema_resolved_config,
@@ -241,12 +242,12 @@ def _logging_bootstrap_configuration(
     workspace_root: Path,
 ) -> ConfigDict:
     """Extract validated-enough settings needed to start TNT logging."""
-    io_settings = _mapping_value(config, "io_settings", "configuration")
+    io_settings = _optional_mapping(config, "io_settings", "configuration")
     output_directory = io_settings.get("output_directory")
     if not isinstance(output_directory, str) or not output_directory.strip():
         raise ValueError("io_settings.output_directory must be a non-empty string.")
 
-    logging_settings = _mapping_value(config, "logging_settings", "configuration")
+    logging_settings = _optional_mapping(config, "logging_settings", "configuration")
     runtime_output = _materialize_path(output_directory, workspace_root)
     return {
         "io_settings": {
@@ -261,7 +262,7 @@ def _read_packaged_defaults() -> ConfigDict:
     default_resource = files("tnt.defaults").joinpath("default_config.yaml")
     with default_resource.open("r", encoding="utf-8") as stream:
         loaded = yaml.load(stream, Loader=_UniqueKeySafeLoader)
-    return _require_mapping(loaded, "packaged default configuration")
+    return _mapping(loaded, "packaged default configuration")
 
 
 def _read_yaml_bytes_mapping(content: bytes, description: str) -> ConfigDict:
@@ -271,7 +272,7 @@ def _read_yaml_bytes_mapping(content: bytes, description: str) -> ConfigDict:
     except UnicodeDecodeError as error:
         raise ValueError(f"{description} must be UTF-8 encoded.") from error
     loaded = yaml.load(text, Loader=_UniqueKeySafeLoader)
-    return _require_mapping(loaded, description)
+    return _mapping(loaded, description)
 
 
 class _UniqueKeySafeLoader(yaml.SafeLoader):
@@ -291,13 +292,6 @@ class _UniqueKeySafeLoader(yaml.SafeLoader):
                 raise ValueError(f"Duplicate configuration key {key!r} at line {line}.")
             seen.add(key)
         return super().construct_mapping(node, deep=deep)
-
-
-def _require_mapping(value: Any, description: str) -> ConfigDict:
-    """Return a mapping or raise a configuration-focused error."""
-    if not isinstance(value, dict):
-        raise TypeError(f"{description} must be a YAML mapping.")
-    return value
 
 
 def _deep_merge(base: ConfigDict, override: ConfigDict) -> ConfigDict:
@@ -324,23 +318,23 @@ def _is_explicit_quantity_mapping(value: ConfigDict) -> bool:
 def _apply_schema_defaults(config: ConfigDict) -> ConfigDict:
     """Apply defaults to dynamically named objects and remove schema metadata."""
     resolved = deepcopy(config)
-    dynamic_defaults = _require_mapping(
+    dynamic_defaults = _mapping(
         resolved.pop("dynamic_object_defaults", {}),
         "dynamic_object_defaults",
     )
-    kinematics_type_defaults = _require_mapping(
+    kinematics_type_defaults = _mapping(
         resolved.pop("kinematics_type_defaults", {}),
         "kinematics_type_defaults",
     )
 
-    potential_defaults = _mapping_value(
+    potential_defaults = _optional_mapping(
         dynamic_defaults, "potential", "dynamic_object_defaults"
     )
-    parameter_defaults = _mapping_value(
+    parameter_defaults = _optional_mapping(
         dynamic_defaults, "parameter", "dynamic_object_defaults"
     )
 
-    potential = _mapping_value(resolved, "potential", "configuration")
+    potential = _optional_mapping(resolved, "potential", "configuration")
     resolved["potential"] = {
         name: _resolve_potential(
             name,
@@ -351,7 +345,7 @@ def _apply_schema_defaults(config: ConfigDict) -> ConfigDict:
         for name, settings in potential.items()
     }
 
-    kinematic_data = _mapping_value(resolved, "kinematic_data", "configuration")
+    kinematic_data = _optional_mapping(resolved, "kinematic_data", "configuration")
     resolved["kinematic_data"] = {
         name: _resolve_kinematics(
             name,
@@ -363,11 +357,6 @@ def _apply_schema_defaults(config: ConfigDict) -> ConfigDict:
     return resolved
 
 
-def _mapping_value(mapping: ConfigDict, key: str, parent: str) -> ConfigDict:
-    """Get and type-check a nested mapping, defaulting an absent key to empty."""
-    return _require_mapping(mapping.get(key, {}), f"{parent}.{key}")
-
-
 def _resolve_potential(
     name: str,
     settings: Any,
@@ -376,13 +365,13 @@ def _resolve_potential(
 ) -> ConfigDict:
     """Resolve defaults for one dynamically named potential component."""
     path = f"potential.{name}"
-    settings_mapping = _require_mapping(
+    settings_mapping = _mapping(
         settings,
         path,
     )
     resolved = _deep_merge(potential_defaults, settings_mapping)
 
-    parameters = _mapping_value(
+    parameters = _optional_mapping(
         resolved,
         "parameters",
         path,
@@ -405,7 +394,7 @@ def _resolve_parameters(
     return {
         name: _deep_merge(
             parameter_defaults,
-            _require_mapping(settings, f"{path}.{name}"),
+            _mapping(settings, f"{path}.{name}"),
         )
         for name, settings in parameters.items()
     }
@@ -418,7 +407,7 @@ def _resolve_kinematics(
 ) -> ConfigDict:
     """Resolve common and type-specific defaults for one kinematics data set."""
     path = f"kinematic_data.{name}"
-    settings_mapping = _require_mapping(settings, path)
+    settings_mapping = _mapping(settings, path)
     _validate_explicit_histogram_completeness(settings_mapping, path)
     kinematics_type = settings_mapping.get("type")
     if not isinstance(kinematics_type, str) or not kinematics_type:
@@ -430,7 +419,7 @@ def _resolve_kinematics(
             f"expected one of: {allowed_types}."
         )
 
-    type_defaults = _require_mapping(
+    type_defaults = _mapping(
         kinematics_type_defaults[kinematics_type],
         f"kinematics_type_defaults.{kinematics_type}",
     )
@@ -511,8 +500,8 @@ def _resolve_io_directories(
     """Create runtime and portable forms of input and output directories."""
     runtime_config = deepcopy(config)
     portable_config = deepcopy(config)
-    runtime_io = _mapping_value(runtime_config, "io_settings", "configuration")
-    portable_io = _mapping_value(portable_config, "io_settings", "configuration")
+    runtime_io = _optional_mapping(runtime_config, "io_settings", "configuration")
+    portable_io = _optional_mapping(portable_config, "io_settings", "configuration")
     for key in ("input_directory", "output_directory"):
         value = portable_io.get(key)
         if not isinstance(value, str) or not value.strip():
@@ -556,8 +545,8 @@ def _build_run_manifest(
     resolved_config_bytes: bytes,
 ) -> ConfigDict:
     """Build provenance for this concrete configuration preparation."""
-    io_settings = _mapping_value(runtime_config, "io_settings", "configuration")
-    orbit_settings = _mapping_value(
+    io_settings = _optional_mapping(runtime_config, "io_settings", "configuration")
+    orbit_settings = _optional_mapping(
         runtime_config,
         "orbit_library_settings",
         "configuration",

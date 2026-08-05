@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
-import math
-from collections.abc import Collection
 from pathlib import Path
 from typing import Any
+
+from tnt.config_parsing import (
+    _integer,
+    _mapping,
+    _nonnegative_number,
+    _number,
+    _positive_number,
+    _reject_unknown_keys,
+    _require_keys,
+    _required_mapping,
+    _string,
+)
 
 ConfigDict = dict[str, Any]
 
@@ -60,44 +70,54 @@ def validate_resolved_configuration(config: ConfigDict) -> None:
         "configuration",
     )
 
-    _validate_units(_mapping(config, "units", "configuration"))
+    _validate_units(_required_mapping(config, "units", "configuration"))
     _validate_cosmological_parameters(
-        _mapping(config, "cosmological_parameters", "configuration")
+        _required_mapping(config, "cosmological_parameters", "configuration")
     )
-    _validate_mge_settings(_mapping(config, "mge_settings", "configuration"))
-    _validate_numerics_settings(_mapping(config, "numerics_settings", "configuration"))
-    _validate_logging_settings(_mapping(config, "logging_settings", "configuration"))
-    _validate_system_attributes(_mapping(config, "system_attributes", "configuration"))
-    mges = _validate_mges(_mapping(config, "MGEs", "configuration"))
+    _validate_mge_settings(_required_mapping(config, "mge_settings", "configuration"))
+    _validate_numerics_settings(
+        _required_mapping(config, "numerics_settings", "configuration")
+    )
+    _validate_logging_settings(
+        _required_mapping(config, "logging_settings", "configuration")
+    )
+    _validate_system_attributes(
+        _required_mapping(config, "system_attributes", "configuration")
+    )
+    mges = _validate_mges(_required_mapping(config, "MGEs", "configuration"))
     binnings = _validate_spatial_binnings(
-        _mapping(config, "spatial_binnings", "configuration")
+        _required_mapping(config, "spatial_binnings", "configuration")
     )
     _validate_potential(
-        _mapping(config, "potential", "configuration"),
+        _required_mapping(config, "potential", "configuration"),
         mges,
     )
-    _validate_kinematics(
-        _mapping(config, "kinematic_data", "configuration"),
+    kinematic_data = _required_mapping(config, "kinematic_data", "configuration")
+    kinematic_files = _validate_kinematics(
+        kinematic_data,
         binnings,
         mges,
     )
     _validate_population_data(
-        _mapping(config, "population_data", "configuration"),
+        _required_mapping(config, "population_data", "configuration"),
         binnings,
+        kinematic_files,
     )
     _validate_orbit_library_settings(
-        _mapping(config, "orbit_library_settings", "configuration")
+        _required_mapping(config, "orbit_library_settings", "configuration")
     )
     _validate_weight_solver_settings(
-        _mapping(config, "weight_solver_settings", "configuration")
+        _required_mapping(config, "weight_solver_settings", "configuration")
     )
     _validate_parameter_space_settings(
-        _mapping(config, "parameter_space_settings", "configuration")
+        _required_mapping(config, "parameter_space_settings", "configuration")
     )
-    _validate_analysis_settings(_mapping(config, "analysis_settings", "configuration"))
-    _validate_io_settings(_mapping(config, "io_settings", "configuration"))
+    _validate_analysis_settings(
+        _required_mapping(config, "analysis_settings", "configuration")
+    )
+    _validate_io_settings(_required_mapping(config, "io_settings", "configuration"))
     _validate_execution_settings(
-        _mapping(config, "execution_settings", "configuration")
+        _required_mapping(config, "execution_settings", "configuration")
     )
 
 
@@ -112,15 +132,15 @@ def _validate_units(settings: ConfigDict) -> None:
     path = "units"
     _reject_unknown_keys(settings, {"display", "internal"}, path)
     _require_keys(settings, {"display", "internal"}, path)
-    internal = _mapping(settings, "internal", path)
+    internal = _required_mapping(settings, "internal", path)
     internal_keys = {"angle", "length", "mass", "power", "time"}
     _reject_unknown_keys(internal, internal_keys, f"{path}.internal")
     _require_keys(internal, internal_keys, f"{path}.internal")
-    display = _mapping(settings, "display", path)
+    display = _required_mapping(settings, "display", path)
     _reject_unknown_keys(display, internal_keys | {"speed"}, f"{path}.display")
     for section_name, section in (("internal", internal), ("display", display)):
         for key, value in section.items():
-            _nonempty_string(value, f"{path}.{section_name}.{key}")
+            _string(value, f"{path}.{section_name}.{key}")
 
 
 def _validate_mge_settings(settings: ConfigDict) -> None:
@@ -159,7 +179,7 @@ def _validate_numerics_settings(settings: ConfigDict) -> None:
         "parameter_grid_relative_tolerance",
     ):
         _positive_number(settings.get(key), f"{path}.{key}")
-    floors = _mapping(settings, "constraint_error_floors", path)
+    floors = _required_mapping(settings, "constraint_error_floors", path)
     _reject_unknown_keys(
         floors, {"intrinsic_mass", "total_mass"}, f"{path}.constraint_error_floors"
     )
@@ -175,7 +195,7 @@ def _validate_system_attributes(attributes: ConfigDict) -> None:
     _reject_unknown_keys(attributes, {"distance", "name"}, path)
     _require_keys(attributes, {"distance", "name"}, path)
     _positive_number(attributes["distance"], f"{path}.distance")
-    _nonempty_string(attributes["name"], f"{path}.name")
+    _string(attributes["name"], f"{path}.name")
 
 
 def _validate_logging_settings(settings: ConfigDict) -> None:
@@ -183,20 +203,20 @@ def _validate_logging_settings(settings: ConfigDict) -> None:
     _reject_unknown_keys(settings, {"console", "file"}, path)
     _require_keys(settings, {"console", "file"}, path)
 
-    file_settings = _mapping(settings, "file", path)
+    file_settings = _required_mapping(settings, "file", path)
     file_path = f"{path}.file"
     _reject_unknown_keys(file_settings, {"directory", "enabled", "level"}, file_path)
     _require_keys(file_settings, {"directory", "enabled", "level"}, file_path)
     _boolean(file_settings["enabled"], f"{file_path}.enabled")
     _logging_level(file_settings["level"], f"{file_path}.level")
-    directory = _nonempty_string(file_settings["directory"], f"{file_path}.directory")
+    directory = _string(file_settings["directory"], f"{file_path}.directory")
     directory_path = Path(directory)
     if directory_path.is_absolute() or ".." in directory_path.parts:
         raise ValueError(
             f"{file_path}.directory must stay within io_settings.output_directory."
         )
 
-    console_settings = _mapping(settings, "console", path)
+    console_settings = _required_mapping(settings, "console", path)
     console_path = f"{path}.console"
     _reject_unknown_keys(console_settings, {"enabled", "level"}, console_path)
     _require_keys(console_settings, {"enabled", "level"}, console_path)
@@ -210,7 +230,7 @@ def _validate_mges(mges: ConfigDict) -> set[str]:
     names: set[str] = set()
     for name, filename in mges.items():
         name = _dynamic_name(name, path)
-        _nonempty_string(filename, f"{path}.{name}")
+        _string(filename, f"{path}.{name}")
         names.add(name)
     return names
 
@@ -238,7 +258,7 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
     for name, component_value in potential.items():
         name = _dynamic_name(name, path)
         component_path = f"{path}.{name}"
-        component = _require_mapping(component_value, component_path)
+        component = _mapping(component_value, component_path)
         _reject_unknown_keys(
             component,
             {"include", "mge", "parameters", "type"},
@@ -254,7 +274,7 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
 
         if "parameters" in component:
             _validate_parameters(
-                _mapping(component, "parameters", component_path),
+                _required_mapping(component, "parameters", component_path),
                 f"{component_path}.parameters",
                 require_nonempty=include,
             )
@@ -329,7 +349,7 @@ def _validate_parameters(
     for name, parameter_value in parameters.items():
         name = _dynamic_name(name, path)
         parameter_path = f"{path}.{name}"
-        parameter = _require_mapping(parameter_value, parameter_path)
+        parameter = _mapping(parameter_value, parameter_path)
         _reject_unknown_keys(
             parameter,
             {
@@ -350,10 +370,10 @@ def _validate_parameters(
         _boolean(parameter["logarithmic"], f"{parameter_path}.logarithmic")
         value = _number(parameter["value"], f"{parameter_path}.value")
         if "latex_label" in parameter:
-            _nonempty_string(parameter["latex_label"], f"{parameter_path}.latex_label")
+            _string(parameter["latex_label"], f"{parameter_path}.latex_label")
         if "generator_settings" in parameter:
             _validate_parameter_generator_settings(
-                _mapping(parameter, "generator_settings", parameter_path),
+                _required_mapping(parameter, "generator_settings", parameter_path),
                 f"{parameter_path}.generator_settings",
                 value,
             )
@@ -384,12 +404,13 @@ def _validate_kinematics(
     kinematics: ConfigDict,
     binning_names: set[str],
     mge_names: set[str],
-) -> None:
+) -> set[Path]:
     path = "kinematic_data"
+    data_files: set[Path] = set()
     for name, settings_value in kinematics.items():
         name = _dynamic_name(name, path)
         settings_path = f"{path}.{name}"
-        settings = _require_mapping(settings_value, settings_path)
+        settings = _mapping(settings_value, settings_path)
         _reject_unknown_keys(
             settings,
             {
@@ -414,7 +435,8 @@ def _validate_kinematics(
             _KINEMATICS_TYPES,
             f"{settings_path}.type",
         )
-        _nonempty_string(settings["data_file"], f"{settings_path}.data_file")
+        filename = _string(settings["data_file"], f"{settings_path}.data_file")
+        data_files.add(Path(filename))
         _validate_registry_reference(
             settings["binning"],
             binning_names,
@@ -431,21 +453,28 @@ def _validate_kinematics(
         # Type-specific settings are validated when the concrete runtime
         # object is instantiated by tnt.kinematics.build_kinematics. This
         # preparation layer retains only generic schema and reference checks.
+    return data_files
 
 
 def _validate_population_data(
     populations: ConfigDict,
     binning_names: set[str],
+    kinematic_files: set[Path],
 ) -> None:
     """Validate population data sets and their reusable binning references."""
     path = "population_data"
     for name, settings_value in populations.items():
         name = _dynamic_name(name, path)
         settings_path = f"{path}.{name}"
-        settings = _require_mapping(settings_value, settings_path)
+        settings = _mapping(settings_value, settings_path)
         _reject_unknown_keys(settings, {"binning", "data_file"}, settings_path)
         _require_keys(settings, {"binning", "data_file"}, settings_path)
-        _nonempty_string(settings["data_file"], f"{settings_path}.data_file")
+        filename = _string(settings["data_file"], f"{settings_path}.data_file")
+        if Path(filename) in kinematic_files:
+            raise ValueError(
+                f"{settings_path}.data_file must be separate from every "
+                "kinematic_data file."
+            )
         _validate_registry_reference(
             settings["binning"],
             binning_names,
@@ -460,7 +489,7 @@ def _validate_registry_reference(
     path: str,
     registry: str,
 ) -> None:
-    name = _nonempty_string(value, path)
+    name = _string(value, path)
     if name not in known_names:
         raise ValueError(f"{path} references unknown {registry} entry {name!r}.")
 
@@ -492,9 +521,11 @@ def _validate_orbit_library_settings(settings: ConfigDict) -> None:
         if value <= 0:
             raise ValueError(f"{path}.{key} must be a positive integer.")
     _validate_orbit_sampler(
-        _mapping(settings, "orbit_sampler", path), f"{path}.orbit_sampler"
+        _required_mapping(settings, "orbit_sampler", path), f"{path}.orbit_sampler"
     )
-    _validate_dithering(_mapping(settings, "dithering", path), f"{path}.dithering")
+    _validate_dithering(
+        _required_mapping(settings, "dithering", path), f"{path}.dithering"
+    )
     _integer(settings["random_seed"], f"{path}.random_seed")
     _positive_number(settings["orbital_periods"], f"{path}.orbital_periods")
     _positive_number(settings["accuracy"], f"{path}.accuracy")
@@ -571,7 +602,7 @@ def _validate_weight_solver_settings(settings: ConfigDict) -> None:
     # will be. Which one(s) is still undecided, so this only checks that a
     # name was given; tighten to a `_choice` over the real options once
     # chosen.
-    _nonempty_string(settings["nnls_solver"], f"{path}.nnls_solver")
+    _string(settings["nnls_solver"], f"{path}.nnls_solver")
     _positive_number(settings["maxiter_factor"], f"{path}.maxiter_factor")
     _nonnegative_number(settings["regularisation"], f"{path}.regularisation")
     for key in ("lum_intr_rel_err", "sb_proj_rel_err"):
@@ -594,17 +625,19 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
     _choice(
         settings["which_chi2"], {"chi2", "kinchi2", "kinmapchi2"}, f"{path}.which_chi2"
     )
-    generator = _mapping(settings, "generator_settings", path)
+    generator = _required_mapping(settings, "generator_settings", path)
     _reject_unknown_keys(
         generator, {"delta_chi2_threshold"}, f"{path}.generator_settings"
     )
     _require_keys(generator, {"delta_chi2_threshold"}, f"{path}.generator_settings")
     _validate_tagged_threshold(
-        _mapping(generator, "delta_chi2_threshold", f"{path}.generator_settings"),
+        _required_mapping(
+            generator, "delta_chi2_threshold", f"{path}.generator_settings"
+        ),
         f"{path}.generator_settings.delta_chi2_threshold",
         {"absolute", "fraction_of_sqrt_2n_observations"},
     )
-    stopping = _mapping(settings, "stopping_criteria", path)
+    stopping = _required_mapping(settings, "stopping_criteria", path)
     _reject_unknown_keys(
         stopping,
         {"minimum_delta_chi2", "n_max_iter", "n_max_mods"},
@@ -616,7 +649,7 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
         f"{path}.stopping_criteria",
     )
     _validate_tagged_threshold(
-        _mapping(stopping, "minimum_delta_chi2", f"{path}.stopping_criteria"),
+        _required_mapping(stopping, "minimum_delta_chi2", f"{path}.stopping_criteria"),
         f"{path}.stopping_criteria.minimum_delta_chi2",
         {"absolute", "relative"},
     )
@@ -626,7 +659,7 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
             raise ValueError(f"{path}.stopping_criteria.{key} must be positive.")
 
     _validate_potential_rescalings(
-        _mapping(settings, "potential_rescalings", path),
+        _required_mapping(settings, "potential_rescalings", path),
         f"{path}.potential_rescalings",
     )
 
@@ -648,7 +681,7 @@ def _validate_potential_rescalings(settings: ConfigDict, path: str) -> None:
     if range_count <= 0:
         raise ValueError(f"{path}.range_count must be positive.")
 
-    mass_scale_range = _mapping(settings, "mass_scale_range", path)
+    mass_scale_range = _required_mapping(settings, "mass_scale_range", path)
     range_path = f"{path}.mass_scale_range"
     _reject_unknown_keys(mass_scale_range, {"maximum", "minimum"}, range_path)
     _require_keys(mass_scale_range, {"maximum", "minimum"}, range_path)
@@ -674,7 +707,7 @@ def _validate_analysis_settings(settings: ConfigDict) -> None:
     path = "analysis_settings"
     _reject_unknown_keys(settings, {"kinematic_moments", "orbit_decomposition"}, path)
     _require_keys(settings, {"kinematic_moments", "orbit_decomposition"}, path)
-    decomposition = _mapping(settings, "orbit_decomposition", path)
+    decomposition = _required_mapping(settings, "orbit_decomposition", path)
     decomposition_path = f"{path}.orbit_decomposition"
     _reject_unknown_keys(
         decomposition,
@@ -706,7 +739,9 @@ def _validate_analysis_settings(settings: ConfigDict) -> None:
         decomposition["write_component_weights"],
         f"{decomposition_path}.write_component_weights",
     )
-    thresholds = _mapping(decomposition, "circularity_thresholds", decomposition_path)
+    thresholds = _required_mapping(
+        decomposition, "circularity_thresholds", decomposition_path
+    )
     threshold_path = f"{decomposition_path}.circularity_thresholds"
     threshold_keys = {
         "cold_min",
@@ -732,7 +767,7 @@ def _validate_analysis_settings(settings: ConfigDict) -> None:
             f"{threshold_path} values must be strictly increasing from "
             "counter-rotating cold to cold."
         )
-    moments = _mapping(settings, "kinematic_moments", path)
+    moments = _required_mapping(settings, "kinematic_moments", path)
     moments_path = f"{path}.kinematic_moments"
     _reject_unknown_keys(moments, {"velocity_dispersion_method"}, moments_path)
     _require_keys(moments, {"velocity_dispersion_method"}, moments_path)
@@ -749,7 +784,7 @@ def _validate_io_settings(settings: ConfigDict) -> None:
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
     for key in keys:
-        _nonempty_string(settings[key], f"{path}.{key}")
+        _string(settings[key], f"{path}.{key}")
 
 
 def _validate_execution_settings(settings: ConfigDict) -> None:
@@ -784,78 +819,15 @@ def _worker_count(value: Any, path: str) -> None:
         raise ValueError(f"{path} must be a positive integer or 'all_available'.")
 
 
-def _mapping(mapping: ConfigDict, key: str, parent: str) -> ConfigDict:
-    if key not in mapping:
-        raise ValueError(f"{parent} is missing required field: {key}.")
-    return _require_mapping(mapping[key], f"{parent}.{key}")
-
-
-def _require_mapping(value: Any, path: str) -> ConfigDict:
-    if not isinstance(value, dict):
-        raise TypeError(f"{path} must be a mapping.")
-    return value
-
-
-def _reject_unknown_keys(
-    mapping: ConfigDict,
-    allowed: Collection[str],
-    path: str,
-) -> None:
-    unknown = sorted(str(key) for key in mapping if key not in allowed)
-    if unknown:
-        raise ValueError(f"{path} contains unknown field(s): {', '.join(unknown)}.")
-
-
-def _require_keys(mapping: ConfigDict, required: set[str], path: str) -> None:
-    missing = sorted(required - mapping.keys())
-    if missing:
-        raise ValueError(f"{path} is missing required field(s): {', '.join(missing)}.")
-
-
 def _dynamic_name(value: Any, parent: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"Names below {parent} must be non-empty strings.")
     return value
 
 
-def _nonempty_string(value: Any, path: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise TypeError(f"{path} must be a non-empty string.")
-    return value
-
-
 def _boolean(value: Any, path: str) -> bool:
     if not isinstance(value, bool):
         raise TypeError(f"{path} must be a boolean.")
-    return value
-
-
-def _number(value: Any, path: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise TypeError(f"{path} must be a number.")
-    number = float(value)
-    if not math.isfinite(number):
-        raise ValueError(f"{path} must be finite.")
-    return number
-
-
-def _positive_number(value: Any, path: str) -> float:
-    number = _number(value, path)
-    if number <= 0:
-        raise ValueError(f"{path} must be greater than zero.")
-    return number
-
-
-def _nonnegative_number(value: Any, path: str) -> float:
-    number = _number(value, path)
-    if number < 0:
-        raise ValueError(f"{path} must not be negative.")
-    return number
-
-
-def _integer(value: Any, path: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{path} must be an integer.")
     return value
 
 

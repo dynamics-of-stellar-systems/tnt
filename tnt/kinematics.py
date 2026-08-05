@@ -16,13 +16,29 @@ import unxt as u
 from astropy.table import QTable
 from unxt import AbstractUnitSystem, Quantity
 
+from tnt.config_parsing import (
+    ConfigMapping,
+    _finite,
+    _integer,
+    _mapping,
+    _nonnegative_number,
+    _number,
+    _positive_finite,
+    _positive_number,
+    _read_bin_ids,
+    _reject_unknown_keys,
+    _required,
+    _required_string,
+    _resolve_typed_reference,
+    _string,
+    _validated_bin_ids,
+)
 from tnt.mge import LightMGE, MassMGE
 from tnt.spatial_binnings import ProjectedBinning
 
 if TYPE_CHECKING:
     from tnt.orbit_library import OrbitLibrary
 
-ConfigMapping = Mapping[str, Any]
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -131,7 +147,7 @@ class GaussHermite(AbstractKinematics):
     ) -> Self:
         """Read and construct one configured Gauss-Hermite data set."""
         path = f"kinematic_data.{name}"
-        _reject_unknown(settings, cls._allowed_settings, path)
+        _reject_unknown_keys(settings, cls._allowed_settings, path)
         maximum_order = _integer(
             _required(settings, "maximum_gh_order", path),
             f"{path}.maximum_gh_order",
@@ -245,7 +261,7 @@ class BayesLOSVD(AbstractKinematics):
     ) -> Self:
         """Read and construct one configured Bayesian LOSVD data set."""
         path = f"kinematic_data.{name}"
-        _reject_unknown(settings, cls._allowed_settings, path)
+        _reject_unknown_keys(settings, cls._allowed_settings, path)
         table = QTable.read(data_file, format="ascii.ecsv")
         bin_ids = _read_bin_ids(table, "binID_dynamite", data_file)
         _same_length(table, bin_ids.shape[0], data_file)
@@ -332,7 +348,7 @@ class ProperMotions(AbstractKinematics):
     ) -> Self:
         """Read and construct one configured proper-motion data set."""
         path = f"kinematic_data.{name}"
-        _reject_unknown(settings, cls._allowed_settings, path)
+        _reject_unknown_keys(settings, cls._allowed_settings, path)
         variance_scale = _proper_motion_variance_scale(settings, path)
         thresholds = _proper_motion_warning_thresholds(settings, path)
 
@@ -450,7 +466,7 @@ def build_kinematics(
         if not isinstance(name, str) or not name:
             raise ValueError("kinematic_data names must be non-empty strings.")
         settings = _mapping(settings_value, path)
-        kind = _string(_required(settings, "type", path), f"{path}.type")
+        kind = _required_string(settings, "type", path)
         try:
             cls = _KINEMATICS_CLASSES[kind]
         except KeyError as error:
@@ -458,12 +474,8 @@ def build_kinematics(
             raise ValueError(
                 f"Unsupported {path}.type {kind!r}; expected one of: {allowed}."
             ) from error
-        filename = _string(
-            _required(settings, "data_file", path), f"{path}.data_file"
-        )
-        binning_name = _string(
-            _required(settings, "binning", path), f"{path}.binning"
-        )
+        filename = _required_string(settings, "data_file", path)
+        binning_name = _required_string(settings, "binning", path)
         binning = _resolve_typed_reference(
             spatial_binnings,
             binning_name,
@@ -493,108 +505,6 @@ def build_kinematics(
             unit_system=unit_system,
         )
     return built
-
-
-def _mapping(value: Any, path: str) -> ConfigMapping:
-    if not isinstance(value, Mapping):
-        raise TypeError(f"{path} must be a mapping.")
-    return value
-
-
-def _required(settings: ConfigMapping, key: str, path: str) -> Any:
-    if key not in settings:
-        raise ValueError(f"{path} is missing required field: {key}.")
-    return settings[key]
-
-
-def _reject_unknown(settings: ConfigMapping, allowed: set[str], path: str) -> None:
-    unknown = set(settings) - allowed
-    if unknown:
-        names = ", ".join(sorted(unknown))
-        raise ValueError(f"{path} contains unknown field(s): {names}.")
-
-
-def _string(value: Any, path: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise TypeError(f"{path} must be a non-empty string.")
-    return value
-
-
-def _number(value: Any, path: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise TypeError(f"{path} must be a number.")
-    result = float(value)
-    if not math.isfinite(result):
-        raise ValueError(f"{path} must be finite.")
-    return result
-
-
-def _integer(value: Any, path: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{path} must be an integer.")
-    return value
-
-
-def _positive(value: Any, path: str) -> float:
-    result = _number(value, path)
-    if result <= 0:
-        raise ValueError(f"{path} must be greater than zero.")
-    return result
-
-
-def _nonnegative(value: Any, path: str) -> float:
-    result = _number(value, path)
-    if result < 0:
-        raise ValueError(f"{path} must be nonnegative.")
-    return result
-
-
-def _resolve_reference(
-    registry: Mapping[str, Any], name: str, path: str, registry_name: str
-) -> Any:
-    try:
-        return registry[name]
-    except KeyError as error:
-        raise ValueError(
-            f"{path} references unknown {registry_name} entry {name!r}."
-        ) from error
-
-
-def _resolve_typed_reference(
-    registry: Mapping[str, Any],
-    name: str,
-    path: str,
-    registry_name: str,
-    expected_type: type[Any] | tuple[type[Any], ...],
-) -> Any:
-    """Resolve a named object and enforce its runtime type."""
-    value = _resolve_reference(registry, name, path, registry_name)
-    if not isinstance(value, expected_type):
-        if isinstance(expected_type, tuple):
-            expected = " or ".join(cls.__name__ for cls in expected_type)
-        else:
-            expected = expected_type.__name__
-        raise TypeError(
-            f"{path} must resolve to {expected}, got {type(value).__name__}."
-        )
-    return value
-
-
-def _read_bin_ids(table: QTable, column: str, data_file: Path) -> jnp.ndarray:
-    if column not in table.colnames:
-        raise ValueError(f"{data_file} is missing required column: {column}.")
-    return _validated_bin_ids(table[column], data_file)
-
-
-def _validated_bin_ids(values: Any, data_file: Path) -> jnp.ndarray:
-    array = np.asarray(values)
-    if array.ndim != 1 or array.size == 0:
-        raise ValueError(f"{data_file}: spatial bin IDs must be a non-empty vector.")
-    if not np.issubdtype(array.dtype, np.integer):
-        raise TypeError(f"{data_file}: spatial bin IDs must be integers.")
-    if np.any(array <= 0) or np.unique(array).size != array.size:
-        raise ValueError(f"{data_file}: spatial bin IDs must be positive and unique.")
-    return jnp.asarray(array)
 
 
 def _same_length(table: QTable, expected: int, data_file: Path) -> None:
@@ -632,17 +542,6 @@ def _read_dimensionless_column(
     return values
 
 
-def _finite(values: Any, path: str) -> None:
-    if not bool(jnp.all(jnp.isfinite(values))):
-        raise ValueError(f"{path} must contain only finite values.")
-
-
-def _positive_finite(values: Any, path: str) -> None:
-    _finite(values, path)
-    if not bool(jnp.all(jnp.asarray(values) > 0)):
-        raise ValueError(f"{path} must contain only positive values.")
-
-
 def _nonnegative_finite(values: Any, path: str) -> None:
     _finite(values, path)
     if not bool(jnp.all(jnp.asarray(values) >= 0)):
@@ -661,7 +560,7 @@ def _gauss_hermite_systematics(
         _required(settings, "observational_errors", path),
         f"{path}.observational_errors",
     )
-    _reject_unknown(
+    _reject_unknown_keys(
         errors, {"systematic_uncertainties"}, f"{path}.observational_errors"
     )
     systematics_path = f"{path}.observational_errors.systematic_uncertainties"
@@ -672,13 +571,13 @@ def _gauss_hermite_systematics(
     expected = {"v", "sigma"} | {
         f"h{order}" for order in range(3, maximum_order + 1)
     }
-    _reject_unknown(systematics, expected, systematics_path)
+    _reject_unknown_keys(systematics, expected, systematics_path)
     missing = expected - set(systematics)
     if missing:
         names = ", ".join(sorted(missing))
         raise ValueError(f"{systematics_path} is missing required field(s): {names}.")
     return {
-        key: _nonnegative(systematics[key], f"{systematics_path}.{key}")
+        key: _nonnegative_number(systematics[key], f"{systematics_path}.{key}")
         for key in expected
     }
 
@@ -724,12 +623,12 @@ def _explicit_histogram(
         if not parent_path.endswith(".histogram")
         else parent_path
     )
-    _reject_unknown(settings, {"bins", "center", "width"}, path)
+    _reject_unknown_keys(settings, {"bins", "center", "width"}, path)
     missing = {"bins", "center", "width"} - set(settings)
     if missing:
         names = ", ".join(sorted(missing))
         raise ValueError(f"{path} is missing required field(s): {names}.")
-    width = _positive(settings["width"], f"{path}.width")
+    width = _positive_number(settings["width"], f"{path}.width")
     center = _number(settings["center"], f"{path}.center")
     bins = _integer(settings["bins"], f"{path}.bins")
     if bins <= 0 or bins % 2 == 0:
@@ -755,13 +654,15 @@ def _build_gh_histogram(
         return _explicit_histogram(histogram, speed_unit, path)
     histogram_path = f"{path}.histogram"
     allowed = {"bin_width_sigma_fraction", "center", "sigma_extent"}
-    _reject_unknown(histogram, allowed, histogram_path)
+    _reject_unknown_keys(histogram, allowed, histogram_path)
     missing = allowed - set(histogram)
     if missing:
         names = ", ".join(sorted(missing))
         raise ValueError(f"{histogram_path} is missing required field(s): {names}.")
-    extent = _positive(histogram["sigma_extent"], f"{histogram_path}.sigma_extent")
-    fraction = _positive(
+    extent = _positive_number(
+        histogram["sigma_extent"], f"{histogram_path}.sigma_extent"
+    )
+    fraction = _positive_number(
         histogram["bin_width_sigma_fraction"],
         f"{histogram_path}.bin_width_sigma_fraction",
     )
@@ -838,15 +739,15 @@ def _build_losvd_histogram(
     path: str,
 ) -> tuple[Quantity, Quantity, Histogram]:
     allowed = {"center", "oversampling_factor", "systemic_velocity", "width_scale"}
-    _reject_unknown(settings, allowed, path)
+    _reject_unknown_keys(settings, allowed, path)
     missing = allowed - set(settings)
     if missing:
         names = ", ".join(sorted(missing))
         raise ValueError(f"{path} is missing required field(s): {names}.")
     if settings["systemic_velocity"] != "flux_weighted":
         raise ValueError(f"{path}.systemic_velocity must be 'flux_weighted'.")
-    scale = _positive(settings["width_scale"], f"{path}.width_scale")
-    oversampling = _positive(
+    scale = _positive_number(settings["width_scale"], f"{path}.width_scale")
+    oversampling = _positive_number(
         settings["oversampling_factor"], f"{path}.oversampling_factor"
     )
     center = _number(settings["center"], f"{path}.center")
@@ -869,8 +770,8 @@ def _build_losvd_histogram(
 def _proper_motion_variance_scale(settings: ConfigMapping, path: str) -> float:
     errors_path = f"{path}.observational_errors"
     errors = _mapping(_required(settings, "observational_errors", path), errors_path)
-    _reject_unknown(errors, {"variance_scale"}, errors_path)
-    return _positive(
+    _reject_unknown_keys(errors, {"variance_scale"}, errors_path)
+    return _positive_number(
         _required(errors, "variance_scale", errors_path),
         f"{errors_path}.variance_scale",
     )
@@ -884,17 +785,17 @@ def _proper_motion_warning_thresholds(
         _required(settings, "warning_thresholds", path), thresholds_path
     )
     keys = {"max_bin_width_sigma_ratio", "min_histogram_width_sigma_ratio"}
-    _reject_unknown(thresholds, keys, thresholds_path)
+    _reject_unknown_keys(thresholds, keys, thresholds_path)
     missing = keys - set(thresholds)
     if missing:
         names = ", ".join(sorted(missing))
         raise ValueError(f"{thresholds_path} is missing required field(s): {names}.")
     return (
-        _positive(
+        _positive_number(
             thresholds["max_bin_width_sigma_ratio"],
             f"{thresholds_path}.max_bin_width_sigma_ratio",
         ),
-        _positive(
+        _positive_number(
             thresholds["min_histogram_width_sigma_ratio"],
             f"{thresholds_path}.min_histogram_width_sigma_ratio",
         ),
