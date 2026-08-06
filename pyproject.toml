@@ -5,26 +5,16 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    # Intel macOS has no JAX wheels after the 0.4 series. Keep its scientific
-    # stack on the mutually compatible versions supported by unxt 1.1.1.
-    "astropy>=7,<7.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "astropy>=8.0.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
-    "equinox>=0.11.10,<0.12; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "equinox>=0.13.8; sys_platform != 'darwin' or platform_machine != 'x86_64'",
-    "galax>=0.0.2",
-    "jax>0.4.32,<0.4.36; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "jax>=0.4.30; sys_platform != 'darwin' or platform_machine != 'x86_64'",
-    "numpy>=1.24,<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "plum-dispatch>=2.5.6,<2.6; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "astropy>=8.0.1",
+    "equinox>=0.13.8",
+    "galax",
+    "jax>=0.4.30",
     "pyyaml>=6.0.3",
-    "quaxed>=0.8.1,<0.9; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    # Split explicitly: a shared "unxt>=1.1.1" lets uv's resolver collapse
-    # every platform down to the oldest mutually-valid version (1.1.1, paired
-    # with an ancient/incompatible quax) once requires-python allows it --
-    # rather than relying on jax's Intel-macOS cap to force that only there.
-    "unxt>=1.1.1,<2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    "unxt>=1.11.4,<2; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "unxt>=1.11.4,<2",
 ]
+
+[tool.uv.sources]
+galax = { git = "https://github.com/GalacticDynamics/galax", branch = "main" }
 
 [dependency-groups]
 dev = [
@@ -44,14 +34,3 @@ build-backend = "hatchling.build"
 
 [tool.ruff.lint]
 extend-select = ["E501"]
-
-[tool.uv]
-# JAX only supports specific OS and architecture combinations.
-# We limit resolution to these environments to prevent wheel errors.
-required-environments = [
-    "sys_platform == 'linux' and platform_machine == 'x86_64'",  # Linux Intel/AMD
-    "sys_platform == 'linux' and platform_machine == 'aarch64'", # Linux ARM64
-    "sys_platform == 'darwin' and platform_machine == 'x86_64'", # Intel Mac (older JAX versions only...)
-    "sys_platform == 'darwin' and platform_machine == 'arm64'",  # Apple Silicon Mac
-    "sys_platform == 'win32' and platform_machine == 'AMD64'"    # Windows 64-bit
-]
