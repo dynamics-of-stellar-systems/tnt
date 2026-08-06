@@ -136,3 +136,22 @@ Solving orbit weights doesn't need to know which `Potential` (or which
 rescaling) they came from; assembling the resulting `Model` is what attaches
 it. Evaluating a `ParameterSet` doesn't need to know which search round it's
 in; `run()` is what stamps `Model.iteration` on once results come back.
+
+## Execution scheduling status
+
+`execution_settings.model_processing_order: model_by_model` is the only
+supported processing order. `stage_by_stage` remains a valid prepared setting
+so the intended schema is preserved, but `ModelIterator.from_configuration()`
+and `run()` raise a clear `NotImplementedError` before doing model-search work.
+
+`orbit_workers`, `weight_workers`, and `external_chi2_workers` are validated,
+stored in the resolved configuration, and retained on `ModelIterator`, but no
+scheduler consumes them yet, so changing their values currently has no effect.
+
+`orbit_family_integration_in_parallel` is passed through to
+`Potential.generate_orbit_library()`. The potential's orbit-integration method
+is still a signature-only scaffold, so the flag is currently recorded but
+unused. Its implementation is responsible for honoring the flag later.
+
+Weight-solver retry behavior is separate from execution scheduling and remains
+deferred: `weight_solver_settings.reattempt_failures` is not yet honored.

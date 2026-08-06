@@ -190,5 +190,5 @@ io_settings:
 execution_settings:
   orbit_workers: "all_available"
   weight_workers: "all_available"
-  model_processing_order: "stage_by_stage"
+  model_processing_order: "model_by_model"
   orbit_family_integration_in_parallel: true

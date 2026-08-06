@@ -246,11 +246,17 @@
   `PM_sys_err_factor` are not part of the TNT schema.
 - `execution_settings.model_processing_order` accepts `model_by_model` or
   `stage_by_stage`. The former completes orbit integration and weight solving
-  for each model in turn; the latter integrates all models' orbit libraries
-  before starting weight solving.
-- `execution_settings.orbit_family_integration_in_parallel` controls whether
-  box- and tube-orbit families are integrated concurrently. Account for its
-  additional CPU use when configuring orbit workers.
+  for each model in turn and is the only implemented order; runtime
+  construction and `ModelIterator.run()` raise `NotImplementedError` for
+  `stage_by_stage` before model-search work begins.
+- `execution_settings.orbit_workers`, `weight_workers`, and
+  `external_chi2_workers` are validated and retained but currently have no
+  execution effect because no scheduler consumes them yet.
+- `execution_settings.orbit_family_integration_in_parallel` is passed to
+  `Potential.generate_orbit_library()` but remains unused while orbit
+  integration is a signature-only scaffold.
+- `weight_solver_settings.reattempt_failures` remains deferred and is not yet
+  honored by `ModelIterator._solve()`.
 - Analysis defaults belong under `analysis_settings`. Orbit decomposition uses
   explicit circularity thresholds for cold, warm, and counter-rotating orbit
   classes, with the hot interval implied between `-0.25` and `0.25`. The

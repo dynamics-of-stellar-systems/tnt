@@ -356,6 +356,12 @@ pass preparation, but runtime construction rejects non-mapping entries,
 missing or unknown fields, invalid `bins_file` values, malformed quantities,
 and empty or invalid bin arrays with a named-entry error.
 
+Execution worker counts are currently reserved settings: preparation validates
+and records them, but they do not yet control runtime scheduling. Only
+`execution_settings.model_processing_order: model_by_model` is executable;
+`stage_by_stage` raises `NotImplementedError`. See
+[Model search](model_search.md) for the current execution-setting support.
+
 ## Potential rescaling
 
 Potential rescaling is configured independently of the ordinary `ml`

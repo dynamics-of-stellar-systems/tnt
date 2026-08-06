@@ -56,7 +56,12 @@ class FakePotential:
         self.components: dict[str, Any] = {}
 
     def generate_orbit_library(
-        self, settings: Any, sampler: Any, dithering: Any
+        self,
+        settings: Any,
+        sampler: Any,
+        dithering: Any,
+        *,
+        orbit_family_integration_in_parallel: bool,
     ) -> Any:
         return FakeOrbitLibrary(self.mass)
 
@@ -156,3 +161,20 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert stars_ml["value"] == pytest.approx(5.0)
     assert stars_ml["fixed"] is False
     assert stars_ml["generator_settings"]["upper_bound"] == pytest.approx(9.0)
+
+
+def test_model_iterator_rejects_stage_by_stage_before_runtime_construction(
+    example_configuration_path: Path,
+    tmp_path: Path,
+) -> None:
+    config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
+    resolved = config.as_dict()
+    resolved["execution_settings"]["model_processing_order"] = "stage_by_stage"
+
+    with pytest.raises(
+        NotImplementedError,
+        match=r"model_processing_order='stage_by_stage' is not implemented",
+    ):
+        ModelIterator.from_configuration(
+            resolved, config.unit_systems.internal, config.resolved_path
+        )

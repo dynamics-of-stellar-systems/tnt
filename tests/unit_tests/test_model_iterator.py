@@ -50,10 +50,17 @@ class FakePotential:
         self.mass = mass
         self.fail_orbit_library = fail_orbit_library
         self.components: dict[str, Any] = {}
+        self.orbit_family_integration_in_parallel: bool | None = None
 
     def generate_orbit_library(
-        self, settings: Any, sampler: Any, dithering: Any
+        self,
+        settings: Any,
+        sampler: Any,
+        dithering: Any,
+        *,
+        orbit_family_integration_in_parallel: bool,
     ) -> Any:
+        self.orbit_family_integration_in_parallel = orbit_family_integration_in_parallel
         if self.fail_orbit_library:
             raise RuntimeError("orbit integration failed")
         return FakeOrbitLibrary(self.mass)
@@ -126,6 +133,13 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
         "n_max_mods": 10,
     }
     iterator.which_chi2 = "chi2"
+    iterator.execution_settings = {
+        "external_chi2_workers": "all_available",
+        "model_processing_order": "model_by_model",
+        "orbit_family_integration_in_parallel": False,
+        "orbit_workers": "all_available",
+        "weight_workers": "all_available",
+    }
     iterator.resolved_config_path = Path("/archive/resolved_config.yaml")
     for name, value in overrides.items():
         setattr(iterator, name, value)
@@ -157,6 +171,28 @@ def test_evaluate_returns_solved_model_on_success(
     assert model.weights_done
     assert model.chi2 == {"chi2": 10.0}
     assert model.weights == "weights"
+
+
+@pytest.mark.parametrize("in_parallel", [False, True])
+def test_evaluate_passes_orbit_family_parallel_setting(
+    in_parallel: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    potential = FakePotential(mass=1.0)
+    iterator = _make_iterator(
+        execution_settings={
+            "external_chi2_workers": "all_available",
+            "model_processing_order": "model_by_model",
+            "orbit_family_integration_in_parallel": in_parallel,
+            "orbit_workers": "all_available",
+            "weight_workers": "all_available",
+        }
+    )
+    _patch_build_potential(monkeypatch, potential)
+
+    iterator._evaluate({"bh": {"m": 1.0}})
+
+    assert potential.orbit_family_integration_in_parallel is in_parallel
 
 
 def test_evaluate_logs_and_flags_orbit_integration_failure(
@@ -342,6 +378,28 @@ def test_chi2_stopped_improving_rejects_unknown_mode() -> None:
 # ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
+
+
+def test_run_rejects_stage_by_stage_before_generating_parameters() -> None:
+    generator = FakeParameterGenerator(n_rounds=1)
+    iterator = _make_iterator(
+        parameter_generator=generator,
+        execution_settings={
+            "external_chi2_workers": "all_available",
+            "model_processing_order": "stage_by_stage",
+            "orbit_family_integration_in_parallel": False,
+            "orbit_workers": "all_available",
+            "weight_workers": "all_available",
+        },
+    )
+
+    with pytest.raises(
+        NotImplementedError,
+        match=r"model_processing_order='stage_by_stage' is not implemented",
+    ):
+        iterator.run()
+
+    assert generator.calls == 0
 
 
 def test_run_stops_when_generator_proposes_nothing(

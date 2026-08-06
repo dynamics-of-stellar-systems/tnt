@@ -110,6 +110,7 @@ class ModelIterator:
                 `Configuration.resolved_path` -- recorded for every round in
                 `run`'s `IterationConfigLog`.
         """
+        _require_supported_model_processing_order(config["execution_settings"])
         input_directory = config["io_settings"]["input_directory"]
         parameter_space_settings = config["parameter_space_settings"]
 
@@ -191,6 +192,7 @@ class ModelIterator:
             The final `AllModels` and `IterationConfigLog`, covering every
             model and round recorded so far.
         """
+        _require_supported_model_processing_order(self.execution_settings)
         models = AllModels() if all_models is None else all_models
         config_log = IterationConfigLog() if config_log is None else config_log
         n_max_iter = self.stopping_criteria["n_max_iter"]
@@ -282,8 +284,9 @@ class ModelIterator:
 
         Builds one `Potential`/`OrbitLibrary` for `parameters` --
         `Potential.generate_orbit_library` takes `self.orbit_sampler`/
-        `self.orbit_dithering` alongside `self.orbit_library_settings` --
-        then -- if `potential_rescalings.enabled` -- also produces
+        `self.orbit_dithering` alongside `self.orbit_library_settings`, plus
+        `execution_settings.orbit_family_integration_in_parallel` -- then --
+        if `potential_rescalings.enabled` -- also produces
         `range_count` additional `Model`s at nearby mass scales via
         `Potential.rescale`/`OrbitLibrary.rescaled`, reusing the same
         orbit-library integration rather than re-integrating once per mass
@@ -314,7 +317,12 @@ class ModelIterator:
 
         try:
             orbit_library = potential.generate_orbit_library(
-                self.orbit_library_settings, self.orbit_sampler, self.orbit_dithering
+                self.orbit_library_settings,
+                self.orbit_sampler,
+                self.orbit_dithering,
+                orbit_family_integration_in_parallel=self.execution_settings[
+                    "orbit_family_integration_in_parallel"
+                ],
             )
         except Exception as error:  # noqa: BLE001 -- placeholder, see _evaluate's docstring
             _LOGGER.warning("Orbit integration failed for %s: %s", parameters, error)
@@ -417,6 +425,23 @@ def _settings_with_parameters(
         }
         for component_name, component in potential_settings.items()
     }
+
+
+def _require_supported_model_processing_order(
+    execution_settings: Mapping[str, Any],
+) -> None:
+    """Reject the configured execution order that TNT cannot run yet."""
+    model_processing_order = execution_settings["model_processing_order"]
+    if model_processing_order == "stage_by_stage":
+        raise NotImplementedError(
+            "execution_settings.model_processing_order='stage_by_stage' is not "
+            "implemented; use 'model_by_model'."
+        )
+    if model_processing_order != "model_by_model":
+        raise ValueError(
+            "execution_settings.model_processing_order must be 'model_by_model' "
+            f"or 'stage_by_stage', got {model_processing_order!r}."
+        )
 
 
 class _SolveResult(NamedTuple):

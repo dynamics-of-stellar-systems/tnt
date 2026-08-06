@@ -89,24 +89,32 @@ The two policy options are:
 - a soft "stop after completing the current round" threshold, which should be
   renamed and documented accordingly.
 
-### 4. Medium: validated runtime settings are silently ignored
+### 4. Partially resolved: execution scheduling settings
 
-The iterator stores `execution_settings`, but never reads it. Therefore
-`model_processing_order: stage_by_stage` still executes model by model. Worker
-counts and parallel-integration settings are also inactive.
+Resolved on 2026-08-06 for the requested scheduling scope:
 
-Similarly, `weight_solver_settings.reattempt_failures: true` is not passed into
-the iterator or honored; every solve gets exactly one attempt.
+- `model_processing_order: stage_by_stage` now raises a clear
+  `NotImplementedError` during runtime construction and at `run()`, before
+  model-search work begins; `model_by_model` remains supported.
+- Worker-count settings are explicitly documented as validated and retained
+  but currently without execution effect because no scheduler uses them.
+- `orbit_family_integration_in_parallel` is passed into
+  `Potential.generate_orbit_library()` and documented as currently unused
+  while orbit integration remains a scaffold.
 
-This is particularly visible because the integration configuration deliberately
-selects `stage_by_stage` and enables retries, yet its test succeeds without
-exercising either behavior. Relevant locations include:
+Focused unit and integration tests cover the stage-by-stage failure and the
+orbit-family flag handoff.
 
-- `tests/integration_tests/configuration.yaml`, around line 157
-- `tnt/model_iterator.py`, around line 135
+Remaining item: `weight_solver_settings.reattempt_failures: true` is still not
+passed into the iterator or honored; every solve gets exactly one attempt. This
+is intentionally left for a later change.
 
-It is acceptable to defer these features, but unsupported choices should fail
-explicitly instead of silently behaving differently.
+**Discussion point:** Define precisely what `reattempt_failures` should do
+before implementing it: which failure types are retryable, whether only the
+weight solve or a larger evaluation stage is repeated, how many attempts are
+allowed, what changes between attempts, and how attempts and the final outcome
+are logged and recorded. Decide whether a boolean remains sufficient once that
+policy is specified.
 
 ### 5. Medium: schema changes during resume can discard parameter units
 
@@ -124,6 +132,16 @@ configuration, it should either:
 
 - preserve units for new parameter columns; or
 - reject parameter-schema changes when resuming.
+
+**Discussion point:** Define the configuration-compatibility contract for
+separate runs that append to the same `AllModels` set. Distinguish changes that
+preserve a comparable model search—such as execution controls, stopping limits,
+or parameter values and ranges—from changes to the scientific or table schema,
+such as potential components and units, MGEs, observational data, spatial
+binnings, or chi-squared definitions. Decide which changes are allowed, how
+compatibility is checked against persisted run information, and whether an
+incompatible change must start a new `AllModels` set or use an explicit
+migration.
 
 ### 6. Low: the Galax/Equinox incompatibility comments are stale
 
@@ -205,7 +223,7 @@ productive sequence is:
 
 ## Validation results
 
-- `pytest -q`: 194 passed after resolving finding 1
+- `pytest -q`: 198 passed after the finding 1 and 4 changes
 - `ruff check .`: passed
 - Sphinx with warnings treated as errors: passed
 - `git diff --check`: passed
