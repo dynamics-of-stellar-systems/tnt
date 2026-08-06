@@ -143,17 +143,27 @@ compatibility is checked against persisted run information, and whether an
 incompatible change must start a new `AllModels` set or use an explicit
 migration.
 
-### 6. Low: the Galax/Equinox incompatibility comments are stale
+### 6. Low: the Galax dependency stubs require cross-platform review
 
 The three new test modules claim the current environment cannot import the real
-dependencies and consequently inject fake `galax` modules. On the Intel Mac
-used for this audit, the real import now succeeds with Equinox 0.11.10 and Galax
-0.0.2. The 13 affected tests also pass after importing real
-`galax.potential`.
-
-The stubs should now be removed so tests can detect future dependency
-regressions. One relevant location is
+dependencies and consequently inject fake `galax` modules. The initial audit
+recorded a successful Intel macOS import, but fresh isolated checks contradict
+that result and show dependency failures on both the Intel-specific and modern
+platform stacks. One relevant stub is in
 `tests/unit_tests/test_model_iterator.py`, around line 9.
+
+**Discussion point:** Do not treat this as a simple Intel macOS versus Apple
+Silicon compatibility issue or remove the stubs before the dependency stack is
+resolved. A fresh Intel macOS import fails in the Coordinax 0.20.0 and
+Dataclassish 0.9.0 chain. A Linux x86_64 smoke test using the exact modern
+versions selected by `uv.lock`—including Galax 0.0.2, Equinox 0.13.8,
+Coordinax 0.23.3, and JAX 0.11.0—fails because Galax imports the removed
+private Equinox symbol `_has_dataclass_init`. Apple Silicon resolves to this
+same modern package set, so the same pure-Python import failure is expected
+there as well. The interaction among Galax, Equinox, Coordinax, Dataclassish,
+JAX, and their platform-specific version constraints must therefore be fixed
+and tested across Intel macOS, Apple Silicon, and Linux before deciding that
+the test stubs are obsolete.
 
 ## What the pull request implements
 
@@ -227,7 +237,12 @@ productive sequence is:
 - `ruff check .`: passed
 - Sphinx with warnings treated as errors: passed
 - `git diff --check`: passed
-- Real Galax import on Intel macOS: passed
+- Real Galax import on Intel macOS: failed on a fresh recheck in the
+  Coordinax/Dataclassish import chain; the earlier pass did not establish that
+  the installed dependency stack was importable
+- Real Galax import on Linux x86_64 with the modern `uv.lock` versions: failed
+  because Galax 0.0.2 imports Equinox's removed private
+  `_has_dataclass_init` symbol
 - `ruff format --check .`: failed on six files; among pull-request-touched
   files, `tests/unit_tests/test_configuration.py` would be reformatted
 - GitHub showed no automated status checks for the pull request at audit time
