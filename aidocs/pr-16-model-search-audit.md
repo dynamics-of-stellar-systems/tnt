@@ -54,6 +54,13 @@ failed models, at approximately line 200 of `tnt/model_iterator.py`.
 This contradicts the documented promise that failures remain recorded and the
 search continues.
 
+**Discussion point:** Decide whether finding no feasible model in the first
+iteration should be a terminal condition, or whether the parameter generator
+should receive the failed results and expand the search to new parameter
+combinations. If expansion is desired, define how a generator proceeds without
+a best chi-squared value and which bounds or budgets prevent unproductive
+exploration.
+
 ### 3. High: `n_max_mods` is not actually a maximum
 
 The limit is checked only before an entire proposed round. Every candidate and
@@ -64,8 +71,18 @@ The integration test explicitly accepts `n_max_mods: 3` producing 11 models in
 `tests/integration_tests/test_model_search.py`, around line 133.
 
 Because real orbit models may be expensive, exceeding a configured maximum by
-an arbitrary batch size is potentially significant. The project should decide
-whether this is:
+an arbitrary batch size is potentially significant.
+
+**Discussion point:** Decide whether the current round-completion behavior
+should become the documented policy, with `n_max_mods` renamed to communicate
+that it is a soft target, or whether `n_max_mods` should be enforced as a strict
+cap. A strict cap also requires a deterministic policy for selecting or
+deferring candidates when the parameter generator proposes more models than
+the remaining budget, including models produced by potential rescaling. The
+choice should be reflected consistently in the variable name, implementation,
+tests, and documentation.
+
+The two policy options are:
 
 - a strict model limit, in which case candidate scheduling must respect the
   remaining budget; or
