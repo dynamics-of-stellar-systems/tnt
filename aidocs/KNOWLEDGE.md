@@ -217,7 +217,14 @@
   `delta_chi2_threshold` accepts `absolute` or
   `fraction_of_sqrt_2n_observations`; the stopping criterion's
   `minimum_delta_chi2` accepts `absolute` or `relative`. This schema makes it
-  impossible to specify both representations simultaneously.
+  impossible to specify both representations simultaneously. Search
+  improvement is the cumulative previous best chi2 minus the cumulative new
+  best. Absolute mode compares that difference directly; relative mode
+  divides it by the previous best. `minimum_delta_chi2.enabled: false`
+  disables chi2-improvement stopping, leaving the model/iteration limits or
+  the parameter generator to stop the search. Mode and value remain present,
+  validated, and nonnegative while disabled. The generator's separate
+  `delta_chi2_threshold` also remains nonnegative.
 - `parameter_space_settings.potential_rescalings` controls optional scaling of
   the complete assembled potential. It contains `enabled`, `range_count`, a
   positive inclusive `mass_scale_range`, `spacing` (`linear` or

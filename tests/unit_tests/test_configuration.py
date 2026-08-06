@@ -422,6 +422,66 @@ def test_read_rejects_invalid_tagged_threshold_mode(tmp_path: Path) -> None:
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
+def test_read_accepts_disabled_minimum_delta_chi2(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    minimum_delta_chi2:
+      enabled: false
+""",
+    )
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert config.data["parameter_space_settings"]["stopping_criteria"][
+        "minimum_delta_chi2"
+    ] == {"enabled": False, "mode": "absolute", "value": 0.5}
+
+
+def test_read_rejects_negative_minimum_delta_chi2(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    minimum_delta_chi2:
+      value: -0.5
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"minimum_delta_chi2\.value must not be negative",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_negative_generator_delta_chi2_threshold(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_settings:
+    delta_chi2_threshold:
+      value: -0.5
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"delta_chi2_threshold\.value must not be negative",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
 def test_read_rejects_nonpositive_worker_count(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"

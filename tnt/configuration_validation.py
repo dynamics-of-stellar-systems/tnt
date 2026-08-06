@@ -675,6 +675,7 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
         _required_mapping(stopping, "minimum_delta_chi2", f"{path}.stopping_criteria"),
         f"{path}.stopping_criteria.minimum_delta_chi2",
         {"absolute", "relative"},
+        with_enabled=True,
     )
     for key in ("n_max_iter", "n_max_mods"):
         value = _integer(stopping[key], f"{path}.stopping_criteria.{key}")
@@ -717,9 +718,16 @@ def _validate_tagged_threshold(
     threshold: ConfigDict,
     path: str,
     allowed_modes: set[str],
+    *,
+    with_enabled: bool = False,
 ) -> None:
-    _reject_unknown_keys(threshold, {"mode", "value"}, path)
-    _require_keys(threshold, {"mode", "value"}, path)
+    keys = {"mode", "value"}
+    if with_enabled:
+        keys.add("enabled")
+    _reject_unknown_keys(threshold, keys, path)
+    _require_keys(threshold, keys, path)
+    if with_enabled:
+        _boolean(threshold["enabled"], f"{path}.enabled")
     _choice(threshold["mode"], allowed_modes, f"{path}.mode")
     _nonnegative_number(threshold["value"], f"{path}.value")
 

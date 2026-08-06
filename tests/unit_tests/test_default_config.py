@@ -52,6 +52,7 @@ def test_default_config_is_packaged() -> None:
     assert "    delta_chi2_threshold:" in config_text
     assert '      mode: "fraction_of_sqrt_2n_observations"' in config_text
     assert "    minimum_delta_chi2:" in config_text
+    assert "      enabled: true" in config_text
     assert '      mode: "absolute"' in config_text
     assert "    min_delta_chi2_abs:" not in config_text
     assert "    min_delta_chi2_rel:" not in config_text

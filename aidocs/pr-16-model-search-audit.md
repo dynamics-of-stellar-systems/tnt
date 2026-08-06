@@ -15,20 +15,25 @@ are either incomplete or contradicted by the implementation.
 
 ## Main findings
 
-### 1. High: any successful multi-round search eventually raises `NotImplementedError`
+### 1. Resolved: multi-round chi-squared stopping was unimplemented
 
-After the second successful round, `ModelIterator.run()` calls
-`_chi2_stopped_improving()`, which is unimplemented. The tests avoid this by
-monkeypatching the method.
+Resolved on 2026-08-06. `ModelIterator._chi2_stopped_improving()` now
+implements both configured modes. Improvement is the cumulative previous best
+chi-squared value minus the cumulative new best value, since smaller values are
+better. Absolute mode compares that difference directly with the threshold;
+relative mode divides it by the previous best first. Equality continues the
+search because stopping requires improvement to be strictly less than the
+threshold.
 
-Relevant locations:
+`minimum_delta_chi2.enabled: false` explicitly disables
+chi-squared-improvement stopping, allowing exploration to continue until the
+model/iteration limits or parameter generator stop it. Mode and value remain
+present, validated, and nonnegative while disabled; the generator's separate
+`delta_chi2_threshold` is also nonnegative. Relative mode handles a previous
+best of zero without division by zero.
 
-- `tnt/model_iterator.py`, around line 223
-- `tnt/model_iterator.py`, around line 243
-
-This means the loop is currently usable only for a single round. Either
-implement both configured threshold modes or explicitly reject multi-round
-execution until they are implemented.
+Focused unit tests cover absolute, relative, equality-boundary, disabled, and
+zero-denominator behavior. Finding 2 remains independent and unresolved.
 
 ### 2. High: recorded evaluation failures still abort the search
 
@@ -183,7 +188,7 @@ productive sequence is:
 
 ## Validation results
 
-- `pytest -q`: 179 passed
+- `pytest -q`: 194 passed after resolving finding 1
 - `ruff check .`: passed
 - Sphinx with warnings treated as errors: passed
 - `git diff --check`: passed
@@ -193,4 +198,5 @@ productive sequence is:
 - GitHub showed no automated status checks for the pull request at audit time
 
 At audit time, the branch was clean, matched `origin/model-search-loop`, and
-was one commit ahead of `main`. The audit itself made no code changes.
+was one commit ahead of `main`. The initial audit itself made no code changes;
+remediation commits are tracked by the resolved status under each finding.

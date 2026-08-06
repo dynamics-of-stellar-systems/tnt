@@ -169,7 +169,10 @@ parameter_space_settings:
       value: 0.1
   stopping_criteria:
     # Modes: "absolute" or "relative".
+    # Set enabled false to leave another criterion or the parameter generator
+    # responsible for ending the search. Mode and value remain validated.
     minimum_delta_chi2:
+      enabled: true
       mode: "absolute"
       value: 0.5
     n_max_mods: 3

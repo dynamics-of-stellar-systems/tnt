@@ -176,6 +176,7 @@ parameter_space_settings:
   generator_settings: {}
   stopping_criteria:
     minimum_delta_chi2:
+      enabled: true
       mode: "absolute"
       value: 0.5
     n_max_mods: 3

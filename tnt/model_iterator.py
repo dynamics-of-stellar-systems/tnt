@@ -8,10 +8,9 @@ each `Model`. `_evaluate` itself doesn't know which search round it's in;
 `run` stamps `Model.iteration` on after collecting its results. This keeps
 each piece's inputs matching what it actually uses.
 
-Only the `minimum_delta_chi2` stopping check (`_chi2_stopped_improving`)
-still raises `NotImplementedError` directly. Everything else -- including
-`from_configuration` -- is implemented, but only down to what it delegates
-to: `build_potential`, `Potential.generate_orbit_library`,
+Everything here -- including `from_configuration` and both
+`minimum_delta_chi2` stopping modes -- is implemented, but only down to what
+it delegates to: `build_potential`, `Potential.generate_orbit_library`,
 `AbstractWeightSolver.solve`, `OrbitLibrary.rescaled`,
 `build_weight_solver`, `build_orbit_sampler`, and `build_orbit_dithering`
 are themselves still unimplemented, so `from_configuration`'s result can't
@@ -245,13 +244,38 @@ class ModelIterator:
     ) -> bool:
         """Whether the best chi2 improved by less than `minimum_delta_chi2`.
 
+        Improvement is `previous_best_chi2 - best_chi2`, since a smaller
+        chi2 is better. Absolute mode compares that difference directly;
+        relative mode divides it by `previous_best_chi2`. When `enabled` is
+        `False`, this stopping criterion is skipped, letting another criterion
+        or the parameter generator stop the search instead.
+
+        When the previous best is exactly zero, relative improvement is
+        undefined but no lower nonnegative chi2 is possible. A positive
+        threshold therefore stops, while a zero threshold does not.
+
         Args:
             previous_best_chi2: The best `which_chi2` chi2 before this
                 round's models were added.
             best_chi2: The best `which_chi2` chi2 after this round's
                 models were added.
         """
-        raise NotImplementedError
+        threshold = self.stopping_criteria["minimum_delta_chi2"]
+        if not threshold["enabled"]:
+            return False
+
+        minimum_improvement = threshold["value"]
+        improvement = previous_best_chi2 - best_chi2
+        if threshold["mode"] == "absolute":
+            return improvement < minimum_improvement
+        if threshold["mode"] == "relative":
+            if previous_best_chi2 == 0:
+                return minimum_improvement > 0
+            return improvement / previous_best_chi2 < minimum_improvement
+        raise ValueError(
+            "minimum_delta_chi2.mode must be 'absolute' or 'relative', "
+            f"got {threshold['mode']!r}."
+        )
 
     def _evaluate(self, parameters: ParameterSet) -> list[Model]:
         """Evaluate one proposed `ParameterSet`, and its cheap mass rescalings.

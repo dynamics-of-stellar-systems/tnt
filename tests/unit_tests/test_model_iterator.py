@@ -116,7 +116,15 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
     iterator.orbit_dithering = None
     iterator.potential_rescalings = {"enabled": False}
     iterator.parameter_generator = FakeParameterGenerator(n_rounds=1)
-    iterator.stopping_criteria = {"n_max_iter": 10, "n_max_mods": 10}
+    iterator.stopping_criteria = {
+        "minimum_delta_chi2": {
+            "enabled": True,
+            "mode": "absolute",
+            "value": 0.5,
+        },
+        "n_max_iter": 10,
+        "n_max_mods": 10,
+    }
     iterator.which_chi2 = "chi2"
     iterator.resolved_config_path = Path("/archive/resolved_config.yaml")
     for name, value in overrides.items():
@@ -258,6 +266,80 @@ def test_mass_scales_excludes_the_unscaled_point_and_is_cached() -> None:
 
 
 # ---------------------------------------------------------------------------
+# chi2 stopping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("mode", "threshold", "previous", "best", "expected"),
+    [
+        ("absolute", 5.0, 100.0, 90.0, False),
+        ("absolute", 10.0, 100.0, 90.0, False),
+        ("absolute", 11.0, 100.0, 90.0, True),
+        ("relative", 0.04, 100.0, 95.0, False),
+        ("relative", 0.05, 100.0, 95.0, False),
+        ("relative", 0.06, 100.0, 95.0, True),
+        ("absolute", 0.0, 100.0, 110.0, True),
+        ("relative", 0.1, 0.0, 0.0, True),
+        ("relative", 0.0, 0.0, 0.0, False),
+    ],
+)
+def test_chi2_stopped_improving(
+    mode: str,
+    threshold: float,
+    previous: float,
+    best: float,
+    expected: bool,
+) -> None:
+    iterator = _make_iterator(
+        stopping_criteria={
+            "minimum_delta_chi2": {
+                "enabled": True,
+                "mode": mode,
+                "value": threshold,
+            },
+            "n_max_iter": 10,
+            "n_max_mods": 10,
+        }
+    )
+
+    assert iterator._chi2_stopped_improving(previous, best) is expected
+
+
+def test_chi2_stopping_can_be_disabled() -> None:
+    iterator = _make_iterator(
+        stopping_criteria={
+            "minimum_delta_chi2": {
+                "enabled": False,
+                "mode": "absolute",
+                "value": 0.5,
+            },
+            "n_max_iter": 10,
+            "n_max_mods": 10,
+        }
+    )
+
+    assert iterator._chi2_stopped_improving(100.0, 110.0) is False
+
+
+def test_chi2_stopped_improving_rejects_unknown_mode() -> None:
+    iterator = _make_iterator(
+        stopping_criteria={
+            "minimum_delta_chi2": {
+                "enabled": True,
+                "mode": "unknown",
+                "value": 0.5,
+            },
+            "n_max_iter": 10,
+            "n_max_mods": 10,
+        }
+    )
+
+    with pytest.raises(ValueError, match="must be 'absolute' or 'relative'"):
+        iterator._chi2_stopped_improving(100.0, 90.0)
+
+
+# ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
 
@@ -344,7 +426,6 @@ def test_run_logs_improving_chi2_stopping_reason(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     iterator = _make_iterator(parameter_generator=FakeParameterGenerator(n_rounds=10))
-    monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: True)
     _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
 
     with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):
@@ -354,3 +435,28 @@ def test_run_logs_improving_chi2_stopping_reason(
     # until the *second* round -- it's what stops the third round from running.
     assert len(models) == 2
     assert "chi2 stopped improving" in caplog.text
+
+
+def test_run_disabled_chi2_threshold_leaves_iteration_limit_to_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    iterator = _make_iterator(
+        parameter_generator=FakeParameterGenerator(n_rounds=10),
+        stopping_criteria={
+            "minimum_delta_chi2": {
+                "enabled": False,
+                "mode": "absolute",
+                "value": 0.5,
+            },
+            "n_max_iter": 3,
+            "n_max_mods": 10,
+        },
+    )
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+
+    models, _ = iterator.run()
+
+    # Every round has the same chi2, but the disabled threshold leaves the
+    # iteration limit responsible for stopping the search.
+    assert len(models) == 3
+    assert models.n_iterations() == 3

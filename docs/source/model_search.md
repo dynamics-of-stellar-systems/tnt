@@ -26,6 +26,22 @@ has nothing left to propose, or once `parameter_space_settings.stopping_criteria
 is satisfied -- a maximum number of rounds or models evaluated, or the best
 chi2 no longer improving between rounds.
 
+The chi2-improvement criterion compares the cumulative best value before and
+after a round. Because smaller chi2 values are better, improvement is
+`previous_best_chi2 - best_chi2`. In `absolute` mode that difference is
+compared directly with `minimum_delta_chi2.value`; in `relative` mode it is
+divided by `previous_best_chi2` first. The search stops when the improvement
+is strictly less than the configured value, so an improvement exactly equal
+to the threshold continues the search.
+
+Setting `minimum_delta_chi2.enabled: false` disables chi2-improvement stopping.
+This allows the generator to keep exploring, including proposing and recording
+models whose chi2 is worse than the best already found, until `n_max_iter`,
+`n_max_mods`, or the generator itself stops the search. `mode` and `value`
+remain present and validated while the criterion is disabled; threshold values
+must be nonnegative. This does not alter the generator's separate
+`delta_chi2_threshold`, which is also nonnegative.
+
 Because `run()` accepts a previously written `AllModels` to resume from, that
 budget is tracked cumulatively: resuming continues counting rounds and models
 from where the earlier run left off, rather than granting a fresh allowance.
