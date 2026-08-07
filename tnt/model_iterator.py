@@ -166,15 +166,23 @@ class ModelIterator:
         more, or once `stopping_criteria` is met: `n_max_iter` rounds have
         run, `n_max_mods` new models have been evaluated, or the best
         `which_chi2` chi2 has stopped improving by at least
-        `minimum_delta_chi2` between rounds.
+        `minimum_delta_chi2` between successful rounds.
+
+        A fresh search stops after recording its first round if that round
+        produces no successful model, because the parameter generator has no
+        valid chi2 base from which to continue. A resumed `AllModels` that
+        contains only failed models stops before proposing another round for
+        the same reason. Once any successful model exists, a later round that
+        produces only failures does not terminate the search or participate in
+        the delta-chi2 check; the previous best remains the generator's base.
 
         `n_max_iter`/`n_max_mods` are judged cumulatively, via
         `all_models.n_iterations()`/`len(all_models)` -- so resuming from
         a previously-written `AllModels` picks up counting where that run
         left off, rather than always allowing a full `n_max_iter`/
-        `n_max_mods` more. `minimum_delta_chi2` only ever compares
-        consecutive rounds' best `which_chi2` chi2, seeded from
-        `all_models`'s own best if it's non-empty.
+        `n_max_mods` more. `minimum_delta_chi2` compares consecutive rounds
+        that produce successful models, seeded from `all_models`'s own best
+        if it contains a successful model.
 
         Also records, in `config_log`, that `self.resolved_config_path` is
         the config in effect for each round -- one row per round, not per
@@ -198,8 +206,23 @@ class ModelIterator:
         n_max_iter = self.stopping_criteria["n_max_iter"]
         n_max_mods = self.stopping_criteria["n_max_mods"]
 
+        has_successful_model = models.has_successful_model()
+        if len(models) and not has_successful_model:
+            _LOGGER.warning(
+                "Resumed AllModels contains no successful model; stopping before "
+                "proposing another iteration."
+            )
+            _LOGGER.info(
+                "Stopped after %d iteration(s), %d model(s) total.",
+                models.n_iterations(),
+                len(models),
+            )
+            return models, config_log
+
         previous_best_chi2: float | None = (
-            models.best(self.which_chi2)[self.which_chi2] if len(models) else None
+            models.best(self.which_chi2)[self.which_chi2]
+            if has_successful_model
+            else None
         )
         while models.n_iterations() < n_max_iter and len(models) < n_max_mods:
             proposed = self.parameter_generator.generate_parameters(models)
@@ -210,16 +233,34 @@ class ModelIterator:
             iteration = models.n_iterations()
             config_log = config_log.append(iteration, self.resolved_config_path)
             n_before = len(models)
+            n_successful = 0
             for parameters in proposed:
                 for model in self._evaluate(parameters):
                     model = eqx.tree_at(lambda m: m.iteration, model, iteration)
                     models = models.append(model)
+                    n_successful += int(model.weights_done)
             _LOGGER.info(
                 "Iteration %d: evaluated %d parameter set(s) into %d model(s).",
                 iteration,
                 len(proposed),
                 len(models) - n_before,
             )
+
+            if not n_successful:
+                if previous_best_chi2 is None:
+                    _LOGGER.warning(
+                        "Initial iteration %d produced no successful model; "
+                        "stopping because parameter generation has no chi2 base.",
+                        iteration,
+                    )
+                    break
+                _LOGGER.info(
+                    "Iteration %d produced no successful model; retaining the "
+                    "previous best value for %s and continuing.",
+                    iteration,
+                    self.which_chi2,
+                )
+                continue
 
             best_chi2 = models.best(self.which_chi2)[self.which_chi2]
             if previous_best_chi2 is not None and self._chi2_stopped_improving(

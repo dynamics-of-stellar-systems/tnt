@@ -33,33 +33,26 @@ present, validated, and nonnegative while disabled; the generator's separate
 best of zero without division by zero.
 
 Focused unit tests cover absolute, relative, equality-boundary, disabled, and
-zero-denominator behavior. Finding 2 remains independent and unresolved.
+zero-denominator behavior.
 
-### 2. High: recorded evaluation failures still abort the search
+### 2. Resolved: failure behavior now distinguishes a missing search base
 
-`_evaluate()` catches integration and solver exceptions and creates failed
-`Model` rows, as intended. Immediately afterward, however, `run()` calls
-`models.best()`. If no model has a valid configured chi-squared value, that
-raises `ValueError`.
+Resolved on 2026-08-07. A fresh run records and then terminates after a first
+iteration in which every model fails, because the parameter generator has no
+successful model and therefore no valid configured chi-squared base from which
+to continue. Resuming an `AllModels` table containing only failed models
+terminates before requesting another proposal for the same reason. Both paths
+now stop cleanly instead of leaking `AllModels.best()`'s `ValueError`.
 
-This was reproduced locally with a deliberately failing weight solver:
+Once at least one successful model exists, a later iteration containing only
+failed models is not terminal. Those failures remain recorded, the previous
+best model is retained, and the delta-chi-squared improvement check is skipped
+for that iteration so the generator can try another proposal. The normal
+generator, iteration-count, and model-count limits continue to apply.
 
-```text
-ValueError: AllModels.best: no model has a computed 'chi2'.
-```
-
-The same problem occurs when resuming an `AllModels` table containing only
-failed models, at approximately line 200 of `tnt/model_iterator.py`.
-
-This contradicts the documented promise that failures remain recorded and the
-search continues.
-
-**Discussion point:** Decide whether finding no feasible model in the first
-iteration should be a terminal condition, or whether the parameter generator
-should receive the failed results and expand the search to new parameter
-combinations. If expansion is desired, define how a generator proceeds without
-a best chi-squared value and which bounds or budgets prevent unproductive
-exploration.
+Focused tests cover the initial all-failed iteration, an all-failed resumed
+table, and a successful run that continues through a later failed-only
+iteration to a subsequent successful model.
 
 ### 3. High: `n_max_mods` is not actually a maximum
 
@@ -233,7 +226,7 @@ productive sequence is:
 
 ## Validation results
 
-- `pytest -q`: 198 passed after the finding 1 and 4 changes
+- `pytest -q`: 201 passed after the finding 1, 2, and 4 changes
 - `ruff check .`: passed
 - Sphinx with warnings treated as errors: passed
 - `git diff --check`: passed

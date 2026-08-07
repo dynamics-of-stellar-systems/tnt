@@ -420,6 +420,83 @@ def test_run_stops_when_generator_proposes_nothing(
     assert "Stopped after 2 iteration(s), 2 model(s) total." in caplog.text
 
 
+def test_run_records_then_stops_when_initial_iteration_has_no_success(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    generator = FakeParameterGenerator(n_rounds=3)
+    iterator = _make_iterator(
+        parameter_generator=generator,
+        weight_solver=FakeWeightSolver(fail_on_mass=frozenset({1.0})),
+    )
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+
+    with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):
+        models, config_log = iterator.run()
+
+    assert generator.calls == 1
+    assert len(models) == 1
+    assert models.n_iterations() == 1
+    assert models.has_successful_model() is False
+    assert len(config_log) == 1
+    assert "Initial iteration 0 produced no successful model" in caplog.text
+
+
+def test_run_does_not_resume_an_all_failed_model_table(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    failing_iterator = _make_iterator(
+        weight_solver=FakeWeightSolver(fail_on_mass=frozenset({1.0}))
+    )
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    models, config_log = failing_iterator.run()
+
+    generator = FakeParameterGenerator(n_rounds=3)
+    resumed_iterator = _make_iterator(parameter_generator=generator)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):
+        resumed_models, resumed_config_log = resumed_iterator.run(models, config_log)
+
+    assert generator.calls == 0
+    assert resumed_models is models
+    assert resumed_config_log is config_log
+    assert len(resumed_models) == 1
+    assert len(resumed_config_log) == 1
+    assert "Resumed AllModels contains no successful model" in caplog.text
+
+
+def test_run_continues_after_later_iteration_has_no_success(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    generator = FakeParameterGenerator(n_rounds=3)
+    iterator = _make_iterator(
+        parameter_generator=generator,
+        weight_solver=FakeWeightSolver(fail_on_mass=frozenset({2.0})),
+    )
+    potentials = iter(
+        [
+            FakePotential(mass=1.0),
+            FakePotential(mass=2.0),
+            FakePotential(mass=3.0),
+        ]
+    )
+    monkeypatch.setattr(
+        model_iterator_module,
+        "build_potential",
+        lambda settings, mges: next(potentials),
+    )
+
+    with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):
+        models, config_log = iterator.run()
+
+    assert generator.calls == 4
+    assert len(models) == 3
+    assert models.n_iterations() == 3
+    assert list(models.table["weights_done"]) == [True, False, True]
+    assert len(config_log) == 3
+    assert "Iteration 1 produced no successful model" in caplog.text
+    assert "retaining the previous best value for chi2 and continuing" in caplog.text
+
+
 def test_run_respects_n_max_mods(monkeypatch: pytest.MonkeyPatch) -> None:
     iterator = _make_iterator(
         parameter_generator=FakeParameterGenerator(n_rounds=10),

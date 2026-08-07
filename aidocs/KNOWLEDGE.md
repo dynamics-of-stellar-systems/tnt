@@ -224,7 +224,13 @@
   disables chi2-improvement stopping, leaving the model/iteration limits or
   the parameter generator to stop the search. Mode and value remain present,
   validated, and nonnegative while disabled. The generator's separate
-  `delta_chi2_threshold` also remains nonnegative.
+  `delta_chi2_threshold` also remains nonnegative. Independently of that
+  setting, a fresh run records and then stops after a first iteration with no
+  successful model, and a resumed all-failed `AllModels` stops before another
+  proposal because neither has a valid chi2 base. Once a successful model
+  exists, later failed-only iterations retain the previous best, skip the
+  delta-chi2 check, and allow the generator to continue subject to its normal
+  limits.
 - `parameter_space_settings.potential_rescalings` controls optional scaling of
   the complete assembled potential. It contains `enabled`, `range_count`, a
   positive inclusive `mass_scale_range`, `spacing` (`linear` or

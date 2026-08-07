@@ -24,7 +24,10 @@ one into a `Model`, append every result to the running `AllModels`, and check
 whether a stopping criterion has been reached. It stops when the generator
 has nothing left to propose, or once `parameter_space_settings.stopping_criteria`
 is satisfied -- a maximum number of rounds or models evaluated, or the best
-chi2 no longer improving between rounds.
+chi2 no longer improving between successful rounds. A fresh run also stops
+after recording its first round if that round produces no successful model:
+without any computed value for `which_chi2`, the parameter generator has no
+valid base from which to continue.
 
 The chi2-improvement criterion compares the cumulative best value before and
 after a round. Because smaller chi2 values are better, improvement is
@@ -42,9 +45,17 @@ remain present and validated while the criterion is disabled; threshold values
 must be nonnegative. This does not alter the generator's separate
 `delta_chi2_threshold`, which is also nonnegative.
 
+Once at least one successful model exists, a later round containing only
+failed models does not trigger the delta-chi2 check. TNT retains the previous
+best model and lets the parameter generator propose another round, subject to
+the ordinary generator, iteration-count, and model-count limits.
+
 Because `run()` accepts a previously written `AllModels` to resume from, that
 budget is tracked cumulatively: resuming continues counting rounds and models
 from where the earlier run left off, rather than granting a fresh allowance.
+If the resumed table contains models but none completed successfully, TNT
+terminates without asking the generator for another round because no valid
+chi2 base was established by the earlier run.
 
 `run()` also accepts and returns an `IterationConfigLog`: one row per round,
 recording which `resolved_config_path` was in effect for it. A search can be
@@ -127,7 +138,9 @@ integrates its `OrbitLibrary`, and solves orbit weights against the
 kinematic data (plus any `potential_rescalings` variants, reusing that same
 orbit library). A failed orbit integration or weight solve doesn't raise --
 it produces a `Model` with the corresponding flag `False` instead, so the
-search can continue and the failure stays visible in `AllModels`.
+failure stays visible in `AllModels`. The search stops if every model in its
+first round fails. After a successful model has been established, failed later
+rounds remain recorded but do not by themselves terminate the search.
 
 One pattern recurs through `ModelIterator`'s implementation, worth knowing
 before reading the code: the method doing the actual work stays ignorant of

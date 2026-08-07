@@ -100,6 +100,12 @@ class AllModels:
             return 0
         return int(self.table["iteration"].max()) + 1
 
+    def has_successful_model(self) -> bool:
+        """Whether at least one model completed orbit-weight solving."""
+        if not len(self.table):
+            return False
+        return bool(np.any(self.table["weights_done"]))
+
     def best(self, which_chi2: str) -> Row:
         """The table row with the lowest value of the named chi2 column.
 

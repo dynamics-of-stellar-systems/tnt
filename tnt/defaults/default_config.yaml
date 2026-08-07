@@ -170,7 +170,9 @@ parameter_space_settings:
   stopping_criteria:
     # Modes: "absolute" or "relative".
     # Set enabled false to leave another criterion or the parameter generator
-    # responsible for ending the search. Mode and value remain validated.
+    # responsible for ending the search. This does not disable termination
+    # when the search has never established a successful model. Mode and value
+    # remain validated.
     minimum_delta_chi2:
       enabled: true
       mode: "absolute"
