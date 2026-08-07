@@ -138,6 +138,10 @@ compatibility is checked against persisted run information, and whether an
 incompatible change must start a new `AllModels` set or use an explicit
 migration.
 
+**Disposition:** Deferred from pull request #16. The configuration-compatibility
+contract and its implementation will be addressed through issue #19 and a
+separate pull request.
+
 ### 6. Low: the Galax dependency stubs require cross-platform review
 
 The three new test modules claim the current environment cannot import the real
@@ -159,6 +163,10 @@ there as well. The interaction among Galax, Equinox, Coordinax, Dataclassish,
 JAX, and their platform-specific version constraints must therefore be fixed
 and tested across Intel macOS, Apple Silicon, and Linux before deciding that
 the test stubs are obsolete.
+
+**Disposition:** Deferred from pull request #16. Dependency-stack and
+cross-platform compatibility will be addressed in a separate issue and pull
+request.
 
 ## What the pull request implements
 
