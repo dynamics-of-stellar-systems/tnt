@@ -231,6 +231,11 @@
   exists, later failed-only iterations retain the previous best, skip the
   delta-chi2 check, and allow the generator to continue subject to its normal
   limits.
+- `parameter_space_settings.stopping_criteria.target_model_count` is a soft
+  cumulative target, not a strict maximum. TNT starts a new iteration only
+  while the existing model count is below it, then completes every proposed
+  model and potential rescaling in that iteration. The final count may exceed
+  the target; other stopping conditions may end the search below it.
 - `parameter_space_settings.potential_rescalings` controls optional scaling of
   the complete assembled potential. It contains `enabled`, `range_count`, a
   positive inclusive `mass_scale_range`, `spacing` (`linear` or

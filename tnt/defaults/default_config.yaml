@@ -177,7 +177,9 @@ parameter_space_settings:
       enabled: true
       mode: "absolute"
       value: 0.5
-    n_max_mods: 3
+    # Soft target checked before starting a new iteration. Every model in an
+    # iteration already underway is evaluated, so the final count may exceed it.
+    target_model_count: 3
     n_max_iter: 10
 
 analysis_settings:

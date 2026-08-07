@@ -54,6 +54,8 @@ def test_default_config_is_packaged() -> None:
     assert "    minimum_delta_chi2:" in config_text
     assert "      enabled: true" in config_text
     assert '      mode: "absolute"' in config_text
+    assert "    target_model_count: 3" in config_text
+    assert "    n_max_mods:" not in config_text
     assert "    min_delta_chi2_abs:" not in config_text
     assert "    min_delta_chi2_rel:" not in config_text
     assert "    threshold_del_chi2_abs:" not in config_text

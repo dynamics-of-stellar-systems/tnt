@@ -130,7 +130,7 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
             "value": 0.5,
         },
         "n_max_iter": 10,
-        "n_max_mods": 10,
+        "target_model_count": 10,
     }
     iterator.which_chi2 = "chi2"
     iterator.execution_settings = {
@@ -335,7 +335,7 @@ def test_chi2_stopped_improving(
                 "value": threshold,
             },
             "n_max_iter": 10,
-            "n_max_mods": 10,
+            "target_model_count": 10,
         }
     )
 
@@ -351,7 +351,7 @@ def test_chi2_stopping_can_be_disabled() -> None:
                 "value": 0.5,
             },
             "n_max_iter": 10,
-            "n_max_mods": 10,
+            "target_model_count": 10,
         }
     )
 
@@ -367,7 +367,7 @@ def test_chi2_stopped_improving_rejects_unknown_mode() -> None:
                 "value": 0.5,
             },
             "n_max_iter": 10,
-            "n_max_mods": 10,
+            "target_model_count": 10,
         }
     )
 
@@ -497,10 +497,12 @@ def test_run_continues_after_later_iteration_has_no_success(
     assert "retaining the previous best value for chi2 and continuing" in caplog.text
 
 
-def test_run_respects_n_max_mods(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_stops_starting_iterations_at_target_model_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     iterator = _make_iterator(
         parameter_generator=FakeParameterGenerator(n_rounds=10),
-        stopping_criteria={"n_max_iter": 10, "n_max_mods": 2},
+        stopping_criteria={"n_max_iter": 10, "target_model_count": 2},
     )
     monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
     _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
@@ -584,7 +586,7 @@ def test_run_disabled_chi2_threshold_leaves_iteration_limit_to_stop(
                 "value": 0.5,
             },
             "n_max_iter": 3,
-            "n_max_mods": 10,
+            "target_model_count": 10,
         },
     )
     _patch_build_potential(monkeypatch, FakePotential(mass=1.0))

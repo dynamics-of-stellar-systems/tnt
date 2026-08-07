@@ -442,6 +442,44 @@ def test_read_accepts_disabled_minimum_delta_chi2(tmp_path: Path) -> None:
     ] == {"enabled": False, "mode": "absolute", "value": 0.5}
 
 
+def test_read_rejects_legacy_n_max_mods(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    n_max_mods: 3
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"stopping_criteria contains unknown field\(s\): n_max_mods",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_nonpositive_target_model_count(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    target_model_count: 0
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"stopping_criteria\.target_model_count must be positive",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
 def test_read_rejects_negative_minimum_delta_chi2(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"

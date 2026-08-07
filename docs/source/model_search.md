@@ -23,11 +23,11 @@ ask the parameter generator for the next round of candidates, evaluate each
 one into a `Model`, append every result to the running `AllModels`, and check
 whether a stopping criterion has been reached. It stops when the generator
 has nothing left to propose, or once `parameter_space_settings.stopping_criteria`
-is satisfied -- a maximum number of rounds or models evaluated, or the best
-chi2 no longer improving between successful rounds. A fresh run also stops
-after recording its first round if that round produces no successful model:
-without any computed value for `which_chi2`, the parameter generator has no
-valid base from which to continue.
+is satisfied -- the maximum number of rounds, the soft model-count target, or
+the best chi2 no longer improving between successful rounds. A fresh run also
+stops after recording its first round if that round produces no successful
+model: without any computed value for `which_chi2`, the parameter generator
+has no valid base from which to continue.
 
 The chi2-improvement criterion compares the cumulative best value before and
 after a round. Because smaller chi2 values are better, improvement is
@@ -40,10 +40,18 @@ to the threshold continues the search.
 Setting `minimum_delta_chi2.enabled: false` disables chi2-improvement stopping.
 This allows the generator to keep exploring, including proposing and recording
 models whose chi2 is worse than the best already found, until `n_max_iter`,
-`n_max_mods`, or the generator itself stops the search. `mode` and `value`
-remain present and validated while the criterion is disabled; threshold values
-must be nonnegative. This does not alter the generator's separate
-`delta_chi2_threshold`, which is also nonnegative.
+`target_model_count`, or the generator itself stops the search. `mode` and
+`value` remain present and validated while the criterion is disabled;
+threshold values must be nonnegative. This does not alter the generator's
+separate `delta_chi2_threshold`, which is also nonnegative.
+
+`target_model_count` is deliberately a soft target rather than a strict
+maximum. TNT starts a new iteration only while the cumulative model count is
+below it. Once an iteration begins, every proposed model, including potential
+rescalings, is evaluated. The final model count may therefore exceed the
+target; TNT does not triage or defer part of a proposed iteration merely to
+match it exactly. Other stopping conditions may also end the search below the
+target.
 
 Once at least one successful model exists, a later round containing only
 failed models does not trigger the delta-chi2 check. TNT retains the previous

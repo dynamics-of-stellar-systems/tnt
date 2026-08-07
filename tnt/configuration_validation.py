@@ -663,12 +663,12 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
     stopping = _required_mapping(settings, "stopping_criteria", path)
     _reject_unknown_keys(
         stopping,
-        {"minimum_delta_chi2", "n_max_iter", "n_max_mods"},
+        {"minimum_delta_chi2", "n_max_iter", "target_model_count"},
         f"{path}.stopping_criteria",
     )
     _require_keys(
         stopping,
-        {"minimum_delta_chi2", "n_max_iter", "n_max_mods"},
+        {"minimum_delta_chi2", "n_max_iter", "target_model_count"},
         f"{path}.stopping_criteria",
     )
     _validate_tagged_threshold(
@@ -677,7 +677,7 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
         {"absolute", "relative"},
         with_enabled=True,
     )
-    for key in ("n_max_iter", "n_max_mods"):
+    for key in ("n_max_iter", "target_model_count"):
         value = _integer(stopping[key], f"{path}.stopping_criteria.{key}")
         if value <= 0:
             raise ValueError(f"{path}.stopping_criteria.{key} must be positive.")

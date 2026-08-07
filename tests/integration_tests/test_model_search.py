@@ -137,10 +137,10 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
 
     # SinglePoint always proposes the same point, so the first round's
     # potential_rescalings sweep (range_count=10, none landing on 1.0) puts
-    # 11 models straight past stopping_criteria.n_max_mods=3 -- checked
-    # only *before* each round, so the round that crosses it still
-    # completes -- and the loop then stops after that one round.
-    assert parameter_space_settings["stopping_criteria"]["n_max_mods"] == 3
+    # 11 models straight past stopping_criteria.target_model_count=3. This is
+    # a soft target checked only before each round, so the round that crosses
+    # it still completes and the loop then stops after that one round.
+    assert parameter_space_settings["stopping_criteria"]["target_model_count"] == 3
     assert len(models) == 11
     assert models.n_iterations() == 1
     assert len(config_log) == 1

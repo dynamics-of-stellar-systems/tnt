@@ -54,33 +54,20 @@ Focused tests cover the initial all-failed iteration, an all-failed resumed
 table, and a successful run that continues through a later failed-only
 iteration to a subsequent successful model.
 
-### 3. High: `n_max_mods` is not actually a maximum
+### 3. Resolved: model count is explicitly a soft target
 
-The limit is checked only before an entire proposed round. Every candidate and
-every mass rescaling is then evaluated without considering the remaining
-budget.
+Resolved on 2026-08-07. The former `n_max_mods` setting is now named
+`target_model_count`, making its non-strict semantics explicit. TNT checks the
+cumulative count before starting a new iteration, then evaluates every model
+and potential rescaling in an iteration already underway. It does not triage
+or defer part of the parameter generator's proposal merely to hit the target
+exactly, so the final count may exceed the target. Other stopping conditions
+may end the search below it.
 
-The integration test explicitly accepts `n_max_mods: 3` producing 11 models in
-`tests/integration_tests/test_model_search.py`, around line 133.
-
-Because real orbit models may be expensive, exceeding a configured maximum by
-an arbitrary batch size is potentially significant.
-
-**Discussion point:** Decide whether the current round-completion behavior
-should become the documented policy, with `n_max_mods` renamed to communicate
-that it is a soft target, or whether `n_max_mods` should be enforced as a strict
-cap. A strict cap also requires a deterministic policy for selecting or
-deferring candidates when the parameter generator proposes more models than
-the remaining budget, including models produced by potential rescaling. The
-choice should be reflected consistently in the variable name, implementation,
-tests, and documentation.
-
-The two policy options are:
-
-- a strict model limit, in which case candidate scheduling must respect the
-  remaining budget; or
-- a soft "stop after completing the current round" threshold, which should be
-  renamed and documented accordingly.
+The runtime variable, validation schema, packaged defaults, integration
+configuration, tests, and documentation now use the new name. The integration
+test deliberately retains the representative behavior in which a target of 3
+produces 11 models by completing one potential-rescaling batch.
 
 ### 4. Partially resolved: execution scheduling settings
 
@@ -226,7 +213,7 @@ productive sequence is:
 
 ## Validation results
 
-- `pytest -q`: 201 passed after the finding 1, 2, and 4 changes
+- `pytest -q`: 203 passed after the finding 1 through 4 changes
 - `ruff check .`: passed
 - Sphinx with warnings treated as errors: passed
 - `git diff --check`: passed
