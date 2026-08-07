@@ -332,9 +332,8 @@ class ModelIterator:
 
         Builds one `Potential`/`OrbitLibrary` for `parameters` --
         `Potential.generate_orbit_library` takes `self.orbit_sampler`/
-        `self.orbit_dithering` alongside `self.orbit_library_settings`, plus
-        `execution_settings.orbit_family_integration_in_parallel` -- then --
-        if `potential_rescalings.enabled` -- also produces
+        `self.orbit_dithering` alongside `self.orbit_library_settings` -- then,
+        if `potential_rescalings.enabled`, also produces
         `range_count` additional `Model`s at nearby mass scales via
         `Potential.rescale`/`OrbitLibrary.rescaled`, reusing the same
         orbit-library integration rather than re-integrating once per mass
@@ -348,9 +347,10 @@ class ModelIterator:
         than assuming success. A failed orbit integration or weight solve is
         caught as a bare `Exception` -- there's no narrower exception type
         established anywhere else in the codebase yet for either failure, so
-        this is a placeholder pending one. Deliberately makes only one
-        attempt at each: `weight_solver_settings.reattempt_failures`
-        retry logic isn't implemented here yet.
+        this is a placeholder pending one. Deliberately makes only one attempt
+        at each; configuration requires
+        `weight_solver_settings.reattempt_failures: false` until retry behavior
+        is implemented.
 
         Logs each failure as a `WARNING`, identified by `parameters` (and,
         for a rescaled variant, its mass scale) -- `_evaluate` is what logs
@@ -368,9 +368,6 @@ class ModelIterator:
                 self.orbit_library_settings,
                 self.orbit_sampler,
                 self.orbit_dithering,
-                orbit_family_integration_in_parallel=self.execution_settings[
-                    "orbit_family_integration_in_parallel"
-                ],
             )
         except Exception as error:  # noqa: BLE001 -- placeholder, see _evaluate's docstring
             _LOGGER.warning("Orbit integration failed for %s: %s", parameters, error)

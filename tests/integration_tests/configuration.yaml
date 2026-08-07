@@ -161,7 +161,7 @@ weight_solver_settings:
   regularisation: 0
   lum_intr_rel_err: 0.01
   sb_proj_rel_err: 0.02
-  reattempt_failures: true
+  reattempt_failures: false
 
 parameter_space_settings:
   generator_type: "SinglePoint"
@@ -191,4 +191,3 @@ execution_settings:
   orbit_workers: "all_available"
   weight_workers: "all_available"
   model_processing_order: "model_by_model"
-  orbit_family_integration_in_parallel: true

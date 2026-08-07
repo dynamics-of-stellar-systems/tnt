@@ -140,8 +140,6 @@ class Potential(eqx.Module):
         orbit_library_settings: Mapping[str, Any],
         orbit_sampler: AbstractOrbitSampler,
         orbit_dithering: AbstractOrbitDithering,
-        *,
-        orbit_family_integration_in_parallel: bool,
     ) -> OrbitLibrary:
         """Integrate this potential's `OrbitLibrary`.
 
@@ -154,10 +152,6 @@ class Potential(eqx.Module):
             orbit_dithering: Determines the number of dithered orbits per
                 bundle (`OrbitLibrary.orbits`' second axis), e.g. from
                 `tnt.orbit_library.build_orbit_dithering`.
-            orbit_family_integration_in_parallel: Whether independent orbit
-                families should be integrated concurrently. This flag is now
-                passed through from `execution_settings`, but remains unused
-                while orbit integration is a signature-only scaffold.
         """
         raise NotImplementedError
 

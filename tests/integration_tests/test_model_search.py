@@ -60,8 +60,6 @@ class FakePotential:
         settings: Any,
         sampler: Any,
         dithering: Any,
-        *,
-        orbit_family_integration_in_parallel: bool,
     ) -> Any:
         return FakeOrbitLibrary(self.mass)
 

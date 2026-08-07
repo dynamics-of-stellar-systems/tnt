@@ -268,11 +268,13 @@
 - `execution_settings.orbit_workers`, `weight_workers`, and
   `external_chi2_workers` are validated and retained but currently have no
   execution effect because no scheduler consumes them yet.
-- `execution_settings.orbit_family_integration_in_parallel` is passed to
-  `Potential.generate_orbit_library()` but remains unused while orbit
-  integration is a signature-only scaffold.
-- `weight_solver_settings.reattempt_failures` remains deferred and is not yet
-  honored by `ModelIterator._solve()`.
+- The former `execution_settings.orbit_family_integration_in_parallel` option
+  has been removed from TNT. Configuration rejects it as an unknown field, and
+  `Potential.generate_orbit_library()` has no corresponding argument.
+- `weight_solver_settings.reattempt_failures` remains in the schema for future
+  retry behavior, but configuration currently requires it to be `false`.
+  `true` is rejected until retry semantics and execution are implemented;
+  `ModelIterator._solve()` makes exactly one attempt.
 - Analysis defaults belong under `analysis_settings`. Orbit decomposition uses
   explicit circularity thresholds for cold, warm, and counter-rotating orbit
   classes, with the hot interval implied between `-0.25` and `0.25`. The

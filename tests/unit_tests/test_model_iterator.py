@@ -50,17 +50,13 @@ class FakePotential:
         self.mass = mass
         self.fail_orbit_library = fail_orbit_library
         self.components: dict[str, Any] = {}
-        self.orbit_family_integration_in_parallel: bool | None = None
 
     def generate_orbit_library(
         self,
         settings: Any,
         sampler: Any,
         dithering: Any,
-        *,
-        orbit_family_integration_in_parallel: bool,
     ) -> Any:
-        self.orbit_family_integration_in_parallel = orbit_family_integration_in_parallel
         if self.fail_orbit_library:
             raise RuntimeError("orbit integration failed")
         return FakeOrbitLibrary(self.mass)
@@ -136,7 +132,6 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
     iterator.execution_settings = {
         "external_chi2_workers": "all_available",
         "model_processing_order": "model_by_model",
-        "orbit_family_integration_in_parallel": False,
         "orbit_workers": "all_available",
         "weight_workers": "all_available",
     }
@@ -171,28 +166,6 @@ def test_evaluate_returns_solved_model_on_success(
     assert model.weights_done
     assert model.chi2 == {"chi2": 10.0}
     assert model.weights == "weights"
-
-
-@pytest.mark.parametrize("in_parallel", [False, True])
-def test_evaluate_passes_orbit_family_parallel_setting(
-    in_parallel: bool,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    potential = FakePotential(mass=1.0)
-    iterator = _make_iterator(
-        execution_settings={
-            "external_chi2_workers": "all_available",
-            "model_processing_order": "model_by_model",
-            "orbit_family_integration_in_parallel": in_parallel,
-            "orbit_workers": "all_available",
-            "weight_workers": "all_available",
-        }
-    )
-    _patch_build_potential(monkeypatch, potential)
-
-    iterator._evaluate({"bh": {"m": 1.0}})
-
-    assert potential.orbit_family_integration_in_parallel is in_parallel
 
 
 def test_evaluate_logs_and_flags_orbit_integration_failure(
@@ -387,7 +360,6 @@ def test_run_rejects_stage_by_stage_before_generating_parameters() -> None:
         execution_settings={
             "external_chi2_workers": "all_available",
             "model_processing_order": "stage_by_stage",
-            "orbit_family_integration_in_parallel": False,
             "orbit_workers": "all_available",
             "weight_workers": "all_available",
         },

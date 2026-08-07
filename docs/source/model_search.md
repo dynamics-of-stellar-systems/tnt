@@ -175,10 +175,7 @@ and `run()` raise a clear `NotImplementedError` before doing model-search work.
 stored in the resolved configuration, and retained on `ModelIterator`, but no
 scheduler consumes them yet, so changing their values currently has no effect.
 
-`orbit_family_integration_in_parallel` is passed through to
-`Potential.generate_orbit_library()`. The potential's orbit-integration method
-is still a signature-only scaffold, so the flag is currently recorded but
-unused. Its implementation is responsible for honoring the flag later.
-
 Weight-solver retry behavior is separate from execution scheduling and remains
-deferred: `weight_solver_settings.reattempt_failures` is not yet honored.
+deferred. Configuration currently requires
+`weight_solver_settings.reattempt_failures: false`; setting it to `true` is
+rejected until retry semantics and execution are implemented.

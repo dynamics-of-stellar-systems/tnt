@@ -27,8 +27,8 @@ class Model(eqx.Module):
     for setting `orblib_done`/`weights_done` (and `weights`/`chi2`) to
     reflect what actually happened -- `orblib_done` is `False` if orbit
     integration itself failed, and `weights_done` is `False` if weight
-    solving failed even after `weight_solver_settings.reattempt_failures`
-    retries. `weights_done` implies `orblib_done`.
+    solving failed on its single attempt. `weights_done` implies
+    `orblib_done`.
     """
 
     potential: Potential

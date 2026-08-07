@@ -576,6 +576,45 @@ def test_read_rejects_nonpositive_worker_count(tmp_path: Path) -> None:
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
+def test_read_rejects_enabled_reattempt_failures(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""weight_solver_settings:
+  reattempt_failures: true
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"weight_solver_settings\.reattempt_failures must be false",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_removed_orbit_family_parallel_setting(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""execution_settings:
+  orbit_family_integration_in_parallel: true
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"execution_settings contains unknown field\(s\): "
+            r"orbit_family_integration_in_parallel"
+        ),
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
 @pytest.mark.parametrize(
     ("logging_body", "message"),
     [

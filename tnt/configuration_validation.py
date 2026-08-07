@@ -607,7 +607,14 @@ def _validate_weight_solver_settings(settings: ConfigDict) -> None:
     _nonnegative_number(settings["regularisation"], f"{path}.regularisation")
     for key in ("lum_intr_rel_err", "sb_proj_rel_err"):
         _nonnegative_number(settings[key], f"{path}.{key}")
-    _boolean(settings["reattempt_failures"], f"{path}.reattempt_failures")
+    reattempt_failures = _boolean(
+        settings["reattempt_failures"], f"{path}.reattempt_failures"
+    )
+    if reattempt_failures:
+        raise ValueError(
+            f"{path}.reattempt_failures must be false until retry behavior is "
+            "implemented."
+        )
 
 
 # Which `generator_settings` keys each `generator_type` requires. Mirrors
@@ -821,7 +828,6 @@ def _validate_execution_settings(settings: ConfigDict) -> None:
     keys = {
         "external_chi2_workers",
         "model_processing_order",
-        "orbit_family_integration_in_parallel",
         "orbit_workers",
         "weight_workers",
     }
@@ -833,10 +839,6 @@ def _validate_execution_settings(settings: ConfigDict) -> None:
         settings["model_processing_order"],
         {"model_by_model", "stage_by_stage"},
         f"{path}.model_processing_order",
-    )
-    _boolean(
-        settings["orbit_family_integration_in_parallel"],
-        f"{path}.orbit_family_integration_in_parallel",
     )
 
 

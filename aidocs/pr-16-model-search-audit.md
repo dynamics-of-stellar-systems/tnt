@@ -76,7 +76,7 @@ while model and `IterationConfigLog` iteration numbers remain cumulative. The
 runtime, validation schema, defaults, fixtures, tests, and documentation use
 the new name; the legacy key is rejected rather than silently translated.
 
-### 4. Partially resolved: execution scheduling settings
+### 4. Resolved: unsupported execution settings are explicit
 
 Resolved on 2026-08-06 for the requested scheduling scope:
 
@@ -85,23 +85,26 @@ Resolved on 2026-08-06 for the requested scheduling scope:
   model-search work begins; `model_by_model` remains supported.
 - Worker-count settings are explicitly documented as validated and retained
   but currently without execution effect because no scheduler uses them.
-- `orbit_family_integration_in_parallel` is passed into
-  `Potential.generate_orbit_library()` and documented as currently unused
-  while orbit integration remains a scaffold.
+- The unused `orbit_family_integration_in_parallel` setting has subsequently
+  been removed completely from configuration, runtime calls, and
+  `Potential.generate_orbit_library()`'s signature. Configurations that still
+  supply the former key are rejected as unknown.
 
-Focused unit and integration tests cover the stage-by-stage failure and the
-orbit-family flag handoff.
+Focused unit and integration tests cover the stage-by-stage failure, and
+configuration tests cover rejection of the removed orbit-family key and the
+unsupported retry-enabled value.
 
-Remaining item: `weight_solver_settings.reattempt_failures: true` is still not
-passed into the iterator or honored; every solve gets exactly one attempt. This
+`weight_solver_settings.reattempt_failures` remains available for the future,
+but currently must be `false`; configuration rejects `true` with a clear error,
+and every solve gets exactly one attempt. Implementing retry-enabled behavior
 is intentionally left for a later change.
 
-**Discussion point:** Define precisely what `reattempt_failures` should do
-before implementing it: which failure types are retryable, whether only the
-weight solve or a larger evaluation stage is repeated, how many attempts are
-allowed, what changes between attempts, and how attempts and the final outcome
-are logged and recorded. Decide whether a boolean remains sufficient once that
-policy is specified.
+**Future discussion point:** Before allowing `reattempt_failures: true`, define
+which failure types are retryable, whether only the weight solve or a larger
+evaluation stage is repeated, how many attempts are allowed, what changes
+between attempts, and how attempts and the final outcome are logged and
+recorded. Decide whether a boolean remains sufficient once that policy is
+specified.
 
 ### 5. Medium: schema changes during resume can discard parameter units
 

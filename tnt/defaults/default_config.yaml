@@ -148,7 +148,8 @@ weight_solver_settings:
   regularisation: 0
   lum_intr_rel_err: 0.01
   sb_proj_rel_err: 0.01
-  reattempt_failures: true
+  # Retry behavior is not implemented; configuration currently requires false.
+  reattempt_failures: false
 
 parameter_space_settings:
   generator_type: "GridSearch"
@@ -216,6 +217,3 @@ execution_settings:
   # before starting the weight-solving stage, but is not implemented yet and
   # raises NotImplementedError at runtime construction/run.
   model_processing_order: "model_by_model"
-  # Passed to Potential.generate_orbit_library, but unused until its orbit
-  # integration scaffold is implemented.
-  orbit_family_integration_in_parallel: false
