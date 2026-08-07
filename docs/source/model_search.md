@@ -39,7 +39,7 @@ to the threshold continues the search.
 
 Setting `minimum_delta_chi2.enabled: false` disables chi2-improvement stopping.
 This allows the generator to keep exploring, including proposing and recording
-models whose chi2 is worse than the best already found, until `n_max_iter`,
+models whose chi2 is worse than the best already found, until `n_new_iter`,
 `target_model_count`, or the generator itself stops the search. `mode` and
 `value` remain present and validated while the criterion is disabled;
 threshold values must be nonnegative. This does not alter the generator's
@@ -53,17 +53,23 @@ target; TNT does not triage or defer part of a proposed iteration merely to
 match it exactly. Other stopping conditions may also end the search below the
 target.
 
+`n_new_iter` limits only the number of additional iterations performed by the
+current `ModelIterator.run()` call. If a persisted search already contains five
+iterations and `n_new_iter` is 3, a resumed call may perform iterations 5, 6,
+and 7. The model and configuration-log iteration labels therefore remain
+cumulative even though the allowance is renewed for each resumed call.
+
 Once at least one successful model exists, a later round containing only
 failed models does not trigger the delta-chi2 check. TNT retains the previous
 best model and lets the parameter generator propose another round, subject to
 the ordinary generator, iteration-count, and model-count limits.
 
-Because `run()` accepts a previously written `AllModels` to resume from, that
-budget is tracked cumulatively: resuming continues counting rounds and models
-from where the earlier run left off, rather than granting a fresh allowance.
-If the resumed table contains models but none completed successfully, TNT
-terminates without asking the generator for another round because no valid
-chi2 base was established by the earlier run.
+Because `run()` accepts a previously written `AllModels` to resume from, the
+model-count target is tracked cumulatively, while `n_new_iter` grants the
+current call its configured number of additional iterations. If the resumed
+table contains models but none completed successfully, TNT terminates without
+asking the generator for another round because no valid chi2 base was
+established by the earlier run.
 
 `run()` also accepts and returns an `IterationConfigLog`: one row per round,
 recording which `resolved_config_path` was in effect for it. A search can be
@@ -89,7 +95,7 @@ chosen by `parameter_space_settings.generator_type`:
   single point, taken directly from each parameter's configured `value`. It
   ignores `all_models` entirely, so it's meant for evaluating one nominal
   potential rather than searching -- pair it with
-  `stopping_criteria.n_max_iter: 1` to stop after that one round.
+  `stopping_criteria.n_new_iter: 1` to stop after that one round.
 
 ## Model
 

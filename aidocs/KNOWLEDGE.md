@@ -236,6 +236,11 @@
   while the existing model count is below it, then completes every proposed
   model and potential rescaling in that iteration. The final count may exceed
   the target; other stopping conditions may end the search below it.
+- `parameter_space_settings.stopping_criteria.n_new_iter` is the maximum number
+  of additional iterations for the current `ModelIterator.run()` invocation,
+  not a cumulative limit across resumed runs. Model and `IterationConfigLog`
+  iteration numbers remain cumulative; a resumed call measures its new
+  allowance from the persisted `AllModels.n_iterations()` starting point.
 - `parameter_space_settings.potential_rescalings` controls optional scaling of
   the complete assembled potential. It contains `enabled`, `range_count`, a
   positive inclusive `mass_scale_range`, `spacing` (`linear` or

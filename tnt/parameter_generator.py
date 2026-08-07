@@ -75,7 +75,7 @@ class SinglePointParameterGenerator(AbstractParameterGenerator):
 
     Ignores `all_models` and always proposes the same point -- meant for
     evaluating one nominal potential rather than searching parameter space.
-    `parameter_space_settings.stopping_criteria` (e.g. `n_max_iter: 1`) is
+    `parameter_space_settings.stopping_criteria` (e.g. `n_new_iter: 1`) is
     what stops the search after it's evaluated. Needs no `generator_settings`.
     """
 

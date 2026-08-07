@@ -69,6 +69,13 @@ configuration, tests, and documentation now use the new name. The integration
 test deliberately retains the representative behavior in which a target of 3
 produces 11 models by completing one potential-rescaling batch.
 
+As a related stopping-contract update, the former cumulative `n_max_iter` is
+now `n_new_iter`: the maximum number of additional iterations performed by the
+current `ModelIterator.run()` call. A resumed run receives a fresh allowance,
+while model and `IterationConfigLog` iteration numbers remain cumulative. The
+runtime, validation schema, defaults, fixtures, tests, and documentation use
+the new name; the legacy key is rejected rather than silently translated.
+
 ### 4. Partially resolved: execution scheduling settings
 
 Resolved on 2026-08-06 for the requested scheduling scope:
@@ -213,7 +220,7 @@ productive sequence is:
 
 ## Validation results
 
-- `pytest -q`: 203 passed after the finding 1 through 4 changes
+- `pytest -q`: 205 passed after the finding 1 through 4 changes
 - `ruff check .`: passed
 - Sphinx with warnings treated as errors: passed
 - `git diff --check`: passed

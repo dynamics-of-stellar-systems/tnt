@@ -163,12 +163,13 @@ class ModelIterator:
         `_evaluate` -- which also produces any `potential_rescalings`
         models -- and appends every resulting `Model` to the running
         `AllModels`. Stops when `parameter_generator` proposes nothing
-        more, or once `stopping_criteria` is met: `n_max_iter` rounds have
-        run, `target_model_count` models have been evaluated before a new
-        round starts, or the best `which_chi2` chi2 has stopped improving by
-        at least `minimum_delta_chi2` between successful rounds. The model
-        count is a soft target: every model in a round that has already begun
-        is evaluated, so the final count can exceed it.
+        more, or once `stopping_criteria` is met: `n_new_iter` rounds have run
+        during the current call, `target_model_count` cumulative models have
+        been evaluated before a new round starts, or the best `which_chi2`
+        chi2 has stopped improving by at least `minimum_delta_chi2` between
+        successful rounds. The model count is a soft target: every model in a
+        round that has already begun is evaluated, so the final count can
+        exceed it.
 
         A fresh search stops after recording its first round if that round
         produces no successful model, because the parameter generator has no
@@ -178,13 +179,13 @@ class ModelIterator:
         produces only failures does not terminate the search or participate in
         the delta-chi2 check; the previous best remains the generator's base.
 
-        `n_max_iter`/`target_model_count` are judged cumulatively, via
-        `all_models.n_iterations()`/`len(all_models)` -- so resuming from
-        a previously-written `AllModels` picks up counting where that run
-        left off, rather than always allowing a full `n_max_iter`/
-        `target_model_count` more. `minimum_delta_chi2` compares consecutive
-        rounds that produce successful models, seeded from `all_models`'s own
-        best if it contains a successful model.
+        `n_new_iter` is a per-call allowance: resuming a previously written
+        `AllModels` can run up to that many additional iterations. Iteration
+        labels remain cumulative, starting at `all_models.n_iterations()`.
+        `target_model_count`, in contrast, is judged cumulatively via
+        `len(all_models)`. `minimum_delta_chi2` compares consecutive rounds
+        that produce successful models, seeded from `all_models`'s own best if
+        it contains a successful model.
 
         Also records, in `config_log`, that `self.resolved_config_path` is
         the config in effect for each round -- one row per round, not per
@@ -205,8 +206,9 @@ class ModelIterator:
         _require_supported_model_processing_order(self.execution_settings)
         models = AllModels() if all_models is None else all_models
         config_log = IterationConfigLog() if config_log is None else config_log
-        n_max_iter = self.stopping_criteria["n_max_iter"]
+        n_new_iter = self.stopping_criteria["n_new_iter"]
         target_model_count = self.stopping_criteria["target_model_count"]
+        initial_iteration_count = models.n_iterations()
 
         has_successful_model = models.has_successful_model()
         if len(models) and not has_successful_model:
@@ -226,7 +228,10 @@ class ModelIterator:
             if has_successful_model
             else None
         )
-        while models.n_iterations() < n_max_iter and len(models) < target_model_count:
+        while (
+            models.n_iterations() - initial_iteration_count < n_new_iter
+            and len(models) < target_model_count
+        ):
             proposed = self.parameter_generator.generate_parameters(models)
             if not proposed:
                 _LOGGER.info("Parameter generator proposed nothing more; stopping.")

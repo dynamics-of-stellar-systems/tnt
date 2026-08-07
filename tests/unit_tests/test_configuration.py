@@ -480,6 +480,44 @@ def test_read_rejects_nonpositive_target_model_count(tmp_path: Path) -> None:
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
+def test_read_rejects_legacy_n_max_iter(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    n_max_iter: 3
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"stopping_criteria contains unknown field\(s\): n_max_iter",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_nonpositive_n_new_iter(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    n_new_iter: 0
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"stopping_criteria\.n_new_iter must be positive",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
 def test_read_rejects_negative_minimum_delta_chi2(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"

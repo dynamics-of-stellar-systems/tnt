@@ -129,7 +129,7 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
             "mode": "absolute",
             "value": 0.5,
         },
-        "n_max_iter": 10,
+        "n_new_iter": 10,
         "target_model_count": 10,
     }
     iterator.which_chi2 = "chi2"
@@ -334,7 +334,7 @@ def test_chi2_stopped_improving(
                 "mode": mode,
                 "value": threshold,
             },
-            "n_max_iter": 10,
+            "n_new_iter": 10,
             "target_model_count": 10,
         }
     )
@@ -350,7 +350,7 @@ def test_chi2_stopping_can_be_disabled() -> None:
                 "mode": "absolute",
                 "value": 0.5,
             },
-            "n_max_iter": 10,
+            "n_new_iter": 10,
             "target_model_count": 10,
         }
     )
@@ -366,7 +366,7 @@ def test_chi2_stopped_improving_rejects_unknown_mode() -> None:
                 "mode": "unknown",
                 "value": 0.5,
             },
-            "n_max_iter": 10,
+            "n_new_iter": 10,
             "target_model_count": 10,
         }
     )
@@ -502,7 +502,7 @@ def test_run_stops_starting_iterations_at_target_model_count(
 ) -> None:
     iterator = _make_iterator(
         parameter_generator=FakeParameterGenerator(n_rounds=10),
-        stopping_criteria={"n_max_iter": 10, "target_model_count": 2},
+        stopping_criteria={"n_new_iter": 10, "target_model_count": 2},
     )
     monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
     _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
@@ -534,12 +534,13 @@ def test_run_records_one_config_log_row_per_iteration_not_per_model(
     assert len(config_log) == 2  # still one row per round
 
 
-def test_run_resumes_cumulative_counts_and_config_log_across_calls(
+def test_run_allows_n_new_iter_and_keeps_cumulative_labels_across_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     iterator = _make_iterator(
         parameter_generator=FakeParameterGenerator(n_rounds=2),
         resolved_config_path=Path("/archive/run1/resolved_config.yaml"),
+        stopping_criteria={"n_new_iter": 2, "target_model_count": 10},
     )
     monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
     _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
@@ -585,7 +586,7 @@ def test_run_disabled_chi2_threshold_leaves_iteration_limit_to_stop(
                 "mode": "absolute",
                 "value": 0.5,
             },
-            "n_max_iter": 3,
+            "n_new_iter": 3,
             "target_model_count": 10,
         },
     )

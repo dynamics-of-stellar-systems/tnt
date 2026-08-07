@@ -180,7 +180,7 @@ parameter_space_settings:
       mode: "absolute"
       value: 0.5
     target_model_count: 3
-    n_max_iter: 10
+    n_new_iter: 10
 
 io_settings:
   input_directory: "NGC6278_input/"
