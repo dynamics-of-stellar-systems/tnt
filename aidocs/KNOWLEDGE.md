@@ -265,9 +265,11 @@
   for each model in turn and is the only implemented order; runtime
   construction and `ModelIterator.run()` raise `NotImplementedError` for
   `stage_by_stage` before model-search work begins.
-- `execution_settings.orbit_workers`, `weight_workers`, and
-  `external_chi2_workers` are validated and retained but currently have no
-  execution effect because no scheduler consumes them yet.
+- `execution_settings.orbit_workers` and `weight_workers` are validated and
+  retained but currently have no execution effect because no scheduler
+  consumes them yet. The former `external_chi2_workers` setting has been
+  removed; TNT has no separate external chi-squared execution path. Internal
+  `chi2`, `kinchi2`, and `kinmapchi2` metrics are unaffected.
 - The former `execution_settings.orbit_family_integration_in_parallel` option
   has been removed from TNT. Configuration rejects it as an unknown field, and
   `Potential.generate_orbit_library()` has no corresponding argument.

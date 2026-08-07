@@ -826,14 +826,13 @@ def _validate_io_settings(settings: ConfigDict) -> None:
 def _validate_execution_settings(settings: ConfigDict) -> None:
     path = "execution_settings"
     keys = {
-        "external_chi2_workers",
         "model_processing_order",
         "orbit_workers",
         "weight_workers",
     }
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
-    for key in ("external_chi2_workers", "orbit_workers", "weight_workers"):
+    for key in ("orbit_workers", "weight_workers"):
         _worker_count(settings[key], f"{path}.{key}")
     _choice(
         settings["model_processing_order"],

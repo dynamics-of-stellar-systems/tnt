@@ -171,9 +171,10 @@ supported processing order. `stage_by_stage` remains a valid prepared setting
 so the intended schema is preserved, but `ModelIterator.from_configuration()`
 and `run()` raise a clear `NotImplementedError` before doing model-search work.
 
-`orbit_workers`, `weight_workers`, and `external_chi2_workers` are validated,
-stored in the resolved configuration, and retained on `ModelIterator`, but no
-scheduler consumes them yet, so changing their values currently has no effect.
+`orbit_workers` and `weight_workers` are validated, stored in the resolved
+configuration, and retained on `ModelIterator`, but no scheduler consumes them
+yet, so changing their values currently has no effect. TNT has no separate
+external chi-squared execution path or worker setting.
 
 Weight-solver retry behavior is separate from execution scheduling and remains
 deferred. Configuration currently requires

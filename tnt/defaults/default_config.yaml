@@ -211,7 +211,6 @@ execution_settings:
   # resolved configuration, but currently do not affect execution.
   orbit_workers: "all_available"
   weight_workers: "all_available"
-  external_chi2_workers: "all_available"
   # "model_by_model" completes orbit integration and weight solving for each
   # model in turn. "stage_by_stage" integrates all models' orbit libraries
   # before starting the weight-solving stage, but is not implemented yet and

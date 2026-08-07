@@ -615,6 +615,24 @@ def test_read_rejects_removed_orbit_family_parallel_setting(tmp_path: Path) -> N
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
+def test_read_rejects_removed_external_chi2_workers(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""execution_settings:
+  external_chi2_workers: all_available
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"execution_settings contains unknown field\(s\): external_chi2_workers",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
 @pytest.mark.parametrize(
     ("logging_body", "message"),
     [

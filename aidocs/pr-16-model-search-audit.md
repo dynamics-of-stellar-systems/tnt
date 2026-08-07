@@ -83,16 +83,21 @@ Resolved on 2026-08-06 for the requested scheduling scope:
 - `model_processing_order: stage_by_stage` now raises a clear
   `NotImplementedError` during runtime construction and at `run()`, before
   model-search work begins; `model_by_model` remains supported.
-- Worker-count settings are explicitly documented as validated and retained
-  but currently without execution effect because no scheduler uses them.
+- The remaining `orbit_workers` and `weight_workers` settings are explicitly
+  documented as validated and retained but currently without execution effect
+  because no scheduler uses them.
+- The unused `external_chi2_workers` setting has been removed from
+  configuration and test fixtures. TNT has no external chi-squared execution
+  path; its internal chi-squared metrics remain unchanged. Configurations that
+  supply the former key are rejected as unknown.
 - The unused `orbit_family_integration_in_parallel` setting has subsequently
   been removed completely from configuration, runtime calls, and
   `Potential.generate_orbit_library()`'s signature. Configurations that still
   supply the former key are rejected as unknown.
 
 Focused unit and integration tests cover the stage-by-stage failure, and
-configuration tests cover rejection of the removed orbit-family key and the
-unsupported retry-enabled value.
+configuration tests cover rejection of the removed orbit-family and external
+chi-squared worker keys plus the unsupported retry-enabled value.
 
 `weight_solver_settings.reattempt_failures` remains available for the future,
 but currently must be `false`; configuration rejects `true` with a clear error,
@@ -223,7 +228,7 @@ productive sequence is:
 
 ## Validation results
 
-- `pytest -q`: 205 passed after the finding 1 through 4 changes
+- `pytest -q`: 206 passed after the finding 1 through 4 changes
 - `ruff check .`: passed
 - Sphinx with warnings treated as errors: passed
 - `git diff --check`: passed

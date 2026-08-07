@@ -130,7 +130,6 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
     }
     iterator.which_chi2 = "chi2"
     iterator.execution_settings = {
-        "external_chi2_workers": "all_available",
         "model_processing_order": "model_by_model",
         "orbit_workers": "all_available",
         "weight_workers": "all_available",
@@ -358,7 +357,6 @@ def test_run_rejects_stage_by_stage_before_generating_parameters() -> None:
     iterator = _make_iterator(
         parameter_generator=generator,
         execution_settings={
-            "external_chi2_workers": "all_available",
             "model_processing_order": "stage_by_stage",
             "orbit_workers": "all_available",
             "weight_workers": "all_available",

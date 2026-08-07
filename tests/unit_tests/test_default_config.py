@@ -67,6 +67,7 @@ def test_default_config_is_packaged() -> None:
     assert "    range_count: 10" in config_text
     assert '    spacing: "logarithmic"' in config_text
     assert '  model_processing_order: "model_by_model"' in config_text
+    assert "external_chi2_workers" not in config_text
     assert "orbit_family_integration_in_parallel" not in config_text
     assert "  reattempt_failures: false" in config_text
     assert "  reattempt_failures: true" not in config_text
