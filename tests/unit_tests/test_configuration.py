@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tnt.configuration import Configuration, configuration_session
+from tnt.configuration import (
+    Configuration,
+    _semantic_configuration_sha256,
+    configuration_session,
+)
 
 
 def _write_user_config(
@@ -86,7 +90,11 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     assert package_logger.propagate is logger_state[2]
 
     repository = output_directory / "config_repository"
-    expected_path = repository / "resolved_config.yaml"
+    assert config.resolved_path is not None
+    expected_path = config.resolved_path
+    assert expected_path.parent.parent == repository / "configurations"
+    assert expected_path.parent.name.startswith("0000-")
+    assert expected_path.name == "resolved_config.yaml"
     assert config.resolved_path == expected_path
     assert expected_path.is_file()
 
@@ -145,14 +153,21 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     assert "GH_sys_err" not in written["weight_solver_settings"]
     assert "PM_sys_err_factor" not in written["weight_solver_settings"]
 
-    user_copy = repository / "user_config.yaml"
+    assert config.user_config_path is not None
+    user_copy = config.user_config_path
+    assert user_copy.parent == repository / "user_configs"
+    assert user_copy.name.startswith("0000-")
+    assert user_copy.name.endswith("-user_config.yaml")
     assert config.user_config_path == user_copy
     assert user_copy.read_bytes() == user_path.read_bytes()
 
-    manifest_path = repository / "run_manifest.yaml"
+    assert config.run_manifest_path is not None
+    manifest_path = config.run_manifest_path
+    assert manifest_path == repository / "manifests" / "0000-run_manifest.yaml"
     assert config.run_manifest_path == manifest_path
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["manifest_version"] == 1
+    assert manifest["manifest_version"] == 2
+    assert manifest["invocation_id"] == 0
     assert set(manifest["tnt"]) == {
         "version",
         "git_commit",
@@ -161,6 +176,17 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     assert "unxt" in manifest["dependencies"]
     assert manifest["execution"]["workspace_root"] == str(tmp_path)
     assert manifest["configuration"]["source"] == str(user_path)
+    assert manifest["configuration"]["snapshot_id"] == 0
+    assert len(manifest["configuration"]["semantic_sha256"]) == 64
+    assert manifest["configuration"]["user_copy"] == str(
+        user_copy.relative_to(repository)
+    )
+    assert manifest["configuration"]["resolved"] == str(
+        expected_path.relative_to(repository)
+    )
+    assert manifest["configuration"]["manifest"] == str(
+        manifest_path.relative_to(repository)
+    )
     assert manifest["configuration"]["input_directory"] == str(tmp_path / "input")
     assert manifest["configuration"]["output_directory"] == str(output_directory)
     assert manifest["configuration"]["logfile"] is None
@@ -177,6 +203,89 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
         "effective_orbit_library_seed": None,
         "status": "pending_generation",
     }
+
+
+def test_repository_deduplicates_semantic_and_source_configurations(
+    tmp_path: Path,
+) -> None:
+    first_user_path = tmp_path / "first.yaml"
+    second_user_path = tmp_path / "second.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(first_user_path, output_directory)
+    second_user_path.write_text(
+        f"# Same configuration with different formatting.\n\n"
+        f"{first_user_path.read_text(encoding='utf-8')}\n",
+        encoding="utf-8",
+    )
+
+    first = Configuration().read(first_user_path, workspace_root=tmp_path)
+    repeated = Configuration().read(first_user_path, workspace_root=tmp_path)
+    reformatted = Configuration().read(second_user_path, workspace_root=tmp_path)
+
+    assert first.resolved_path == repeated.resolved_path == reformatted.resolved_path
+    assert first.user_config_path == repeated.user_config_path
+    assert reformatted.user_config_path != first.user_config_path
+    repository = output_directory / "config_repository"
+    assert len(list((repository / "configurations").iterdir())) == 1
+    assert len(list((repository / "user_configs").iterdir())) == 2
+    manifests = sorted((repository / "manifests").glob("*-run_manifest.yaml"))
+    assert [path.name for path in manifests] == [
+        "0000-run_manifest.yaml",
+        "0001-run_manifest.yaml",
+        "0002-run_manifest.yaml",
+    ]
+    manifest_data = [
+        yaml.safe_load(path.read_text(encoding="utf-8")) for path in manifests
+    ]
+    assert [manifest["invocation_id"] for manifest in manifest_data] == [0, 1, 2]
+    assert [manifest["configuration"]["snapshot_id"] for manifest in manifest_data] == [
+        0,
+        0,
+        0,
+    ]
+    assert (
+        manifest_data[0]["configuration"]["user_copy"]
+        == manifest_data[1]["configuration"]["user_copy"]
+    )
+    assert (
+        manifest_data[2]["configuration"]["user_copy"]
+        != manifest_data[0]["configuration"]["user_copy"]
+    )
+
+
+def test_repository_versions_changed_resolved_configuration(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    first = Configuration().read(user_path, workspace_root=tmp_path)
+
+    user_path.write_text(
+        user_path.read_text(encoding="utf-8").replace(
+            "name: test_system",
+            "name: changed_system",
+        ),
+        encoding="utf-8",
+    )
+    second = Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert first.resolved_path != second.resolved_path
+    assert first.resolved_path is not None
+    assert second.resolved_path is not None
+    assert first.resolved_path.parent.name.startswith("0000-")
+    assert second.resolved_path.parent.name.startswith("0001-")
+
+
+def test_semantic_configuration_hash_ignores_mapping_order() -> None:
+    first = {"section": {"alpha": 1, "beta": [2, 3]}, "enabled": True}
+    reordered = {"enabled": True, "section": {"beta": [2, 3], "alpha": 1}}
+    reordered_list = {"enabled": True, "section": {"beta": [3, 2], "alpha": 1}}
+
+    assert _semantic_configuration_sha256(first) == _semantic_configuration_sha256(
+        reordered
+    )
+    assert _semantic_configuration_sha256(first) != _semantic_configuration_sha256(
+        reordered_list
+    )
 
 
 def test_default_workspace_root_is_invoking_script_directory(
@@ -932,16 +1041,13 @@ def test_configuration_session_logs_preparation(
     logfiles = list((output_directory / "logs").glob("tnt-*.log"))
     assert len(logfiles) == 1
     logfile = logfiles[0].read_text(encoding="utf-8")
-    manifest = yaml.safe_load(
-        (output_directory / "config_repository" / "run_manifest.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    assert config.run_manifest_path is not None
+    manifest = yaml.safe_load(config.run_manifest_path.read_text(encoding="utf-8"))
     terminal = capsys.readouterr().err
 
     assert f"User configuration loaded from {user_path}" in logfile
     assert f"Resolving configuration loaded from {user_path}" in logfile
-    assert "Resolved configuration written to" in logfile
+    assert "Resolved configuration preserved at" in logfile
     assert "execution debug detail" in logfile
     assert "TNT configuration session completed" in logfile
     assert "User configuration loaded from" in terminal

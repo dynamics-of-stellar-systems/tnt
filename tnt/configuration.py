@@ -31,9 +31,11 @@ from tnt.units import (
 )
 
 CONFIG_REPOSITORY_DIRECTORY = "config_repository"
-USER_CONFIG_FILENAME = "user_config.yaml"
+CONFIGURATIONS_DIRECTORY = "configurations"
+USER_CONFIGS_DIRECTORY = "user_configs"
+MANIFESTS_DIRECTORY = "manifests"
 RESOLVED_CONFIG_FILENAME = "resolved_config.yaml"
-RUN_MANIFEST_FILENAME = "run_manifest.yaml"
+HASH_PREFIX_LENGTH = 8
 
 ConfigDict = dict[str, Any]
 _LOGGER = logging.getLogger(__name__)
@@ -116,29 +118,34 @@ class Configuration:
         validate_resolved_configuration(portable_config)
 
         repository = output_directory / CONFIG_REPOSITORY_DIRECTORY
-        user_config_path = repository / USER_CONFIG_FILENAME
-        resolved_path = repository / RESOLVED_CONFIG_FILENAME
-        run_manifest_path = repository / RUN_MANIFEST_FILENAME
         resolved_bytes = _generated_yaml_bytes(
             portable_config, "resolved configuration"
         )
-        manifest = _build_run_manifest(
+        semantic_sha256 = _semantic_configuration_sha256(portable_config)
+        resolved_path, configuration_version = _preserve_resolved_configuration(
+            repository,
+            resolved_bytes,
+            semantic_sha256,
+        )
+        user_config_path = _preserve_user_configuration(
+            repository,
+            user_config_bytes,
+        )
+        run_manifest_path = _preserve_run_manifest(
+            repository=repository,
             source_path=source_path,
             workspace_root=workspace_root,
             runtime_config=runtime_config,
             user_config_path=user_config_path,
             resolved_path=resolved_path,
-            run_manifest_path=run_manifest_path,
             logfile_path=logfile_path,
             user_config_bytes=user_config_bytes,
-            resolved_config_bytes=resolved_bytes,
+            configuration_version=configuration_version,
+            semantic_sha256=semantic_sha256,
         )
 
-        _write_bytes_atomically(user_config_bytes, user_config_path)
-        _write_bytes_atomically(resolved_bytes, resolved_path)
-        _write_yaml_atomically(manifest, run_manifest_path, "run manifest")
         _LOGGER.info("User configuration preserved at %s.", user_config_path)
-        _LOGGER.info("Resolved configuration written to %s.", resolved_path)
+        _LOGGER.info("Resolved configuration preserved at %s.", resolved_path)
         _LOGGER.info("Run manifest written to %s.", run_manifest_path)
 
         self.data = runtime_config
@@ -532,17 +539,151 @@ def _workspace_relative_path(path: Path, workspace_root: Path) -> str:
     return Path(relative).as_posix()
 
 
+def _semantic_configuration_sha256(config: ConfigDict) -> str:
+    """Hash a resolved configuration independently of mapping presentation."""
+    canonical_bytes = yaml.safe_dump(
+        config,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(canonical_bytes).hexdigest()
+
+
+def _preserve_resolved_configuration(
+    repository: Path,
+    resolved_bytes: bytes,
+    semantic_sha256: str,
+) -> tuple[Path, int]:
+    """Reuse or create one immutable semantic configuration snapshot."""
+    directory = repository / CONFIGURATIONS_DIRECTORY
+    for path in sorted(directory.glob(f"*-*/{RESOLVED_CONFIG_FILENAME}")):
+        archived = _read_yaml_bytes_mapping(
+            path.read_bytes(),
+            f"archived resolved configuration {path}",
+        )
+        if _semantic_configuration_sha256(archived) == semantic_sha256:
+            return path, _leading_index(path.parent.name)
+
+    directory.mkdir(parents=True, exist_ok=True)
+    while True:
+        version = _next_index(directory)
+        snapshot_directory = directory / (
+            f"{version:04d}-{semantic_sha256[:HASH_PREFIX_LENGTH]}"
+        )
+        try:
+            snapshot_directory.mkdir()
+        except FileExistsError:
+            continue
+        path = snapshot_directory / RESOLVED_CONFIG_FILENAME
+        try:
+            _write_bytes_immutably(resolved_bytes, path)
+        except BaseException:
+            snapshot_directory.rmdir()
+            raise
+        return path, version
+
+
+def _preserve_user_configuration(repository: Path, content: bytes) -> Path:
+    """Reuse or create one immutable byte-exact submitted configuration."""
+    directory = repository / USER_CONFIGS_DIRECTORY
+    content_sha256 = sha256(content).hexdigest()
+    for path in sorted(directory.glob("*-user_config.yaml")):
+        if sha256(path.read_bytes()).hexdigest() == content_sha256:
+            return path
+
+    directory.mkdir(parents=True, exist_ok=True)
+    while True:
+        version = _next_index(directory)
+        path = directory / (
+            f"{version:04d}-{content_sha256[:HASH_PREFIX_LENGTH]}-user_config.yaml"
+        )
+        try:
+            _write_bytes_immutably(content, path)
+        except FileExistsError:
+            continue
+        return path
+
+
+def _preserve_run_manifest(
+    *,
+    repository: Path,
+    source_path: Path,
+    workspace_root: Path,
+    runtime_config: ConfigDict,
+    user_config_path: Path,
+    resolved_path: Path,
+    logfile_path: Path | None,
+    user_config_bytes: bytes,
+    configuration_version: int,
+    semantic_sha256: str,
+) -> Path:
+    """Create one immutable manifest for this TNT invocation."""
+    directory = repository / MANIFESTS_DIRECTORY
+    directory.mkdir(parents=True, exist_ok=True)
+    while True:
+        invocation_id = _next_index(directory)
+        path = directory / f"{invocation_id:04d}-run_manifest.yaml"
+        manifest = _build_run_manifest(
+            source_path=source_path,
+            workspace_root=workspace_root,
+            runtime_config=runtime_config,
+            repository=repository,
+            user_config_path=user_config_path,
+            resolved_path=resolved_path,
+            run_manifest_path=path,
+            logfile_path=logfile_path,
+            user_config_bytes=user_config_bytes,
+            resolved_config_bytes=resolved_path.read_bytes(),
+            configuration_version=configuration_version,
+            semantic_sha256=semantic_sha256,
+            invocation_id=invocation_id,
+        )
+        try:
+            _write_yaml_immutably(manifest, path, "run manifest")
+        except FileExistsError:
+            continue
+        return path
+
+
+def _next_index(directory: Path) -> int:
+    """Return the first index after every indexed entry in `directory`."""
+    indices = [
+        _leading_index(path.name)
+        for path in directory.iterdir()
+        if path.name.split("-", maxsplit=1)[0].isdigit()
+    ]
+    return max(indices, default=-1) + 1
+
+
+def _leading_index(name: str) -> int:
+    """Read the numeric prefix from one repository artifact name."""
+    prefix = name.split("-", maxsplit=1)[0]
+    if not prefix.isdigit():
+        raise ValueError(f"Repository artifact {name!r} has no numeric index.")
+    return int(prefix)
+
+
+def _repository_relative(path: Path, repository: Path) -> str:
+    """Represent an artifact path relative to the configuration repository."""
+    return path.relative_to(repository).as_posix()
+
+
 def _build_run_manifest(
     *,
     source_path: Path,
     workspace_root: Path,
     runtime_config: ConfigDict,
+    repository: Path,
     user_config_path: Path,
     resolved_path: Path,
     run_manifest_path: Path,
     logfile_path: Path | None,
     user_config_bytes: bytes,
     resolved_config_bytes: bytes,
+    configuration_version: int,
+    semantic_sha256: str,
+    invocation_id: int,
 ) -> ConfigDict:
     """Build provenance for this concrete configuration preparation."""
     io_settings = _optional_mapping(runtime_config, "io_settings", "configuration")
@@ -558,7 +699,8 @@ def _build_run_manifest(
         else None
     )
     return {
-        "manifest_version": 1,
+        "manifest_version": 2,
+        "invocation_id": invocation_id,
         "prepared_at_utc": datetime.now(UTC).isoformat(),
         "tnt": {
             "version": _package_version("tnt"),
@@ -586,10 +728,12 @@ def _build_run_manifest(
             },
         },
         "configuration": {
+            "snapshot_id": configuration_version,
+            "semantic_sha256": semantic_sha256,
             "source": str(source_path.resolve()),
-            "user_copy": str(user_config_path.resolve()),
-            "resolved": str(resolved_path.resolve()),
-            "manifest": str(run_manifest_path.resolve()),
+            "user_copy": _repository_relative(user_config_path, repository),
+            "resolved": _repository_relative(resolved_path, repository),
+            "manifest": _repository_relative(run_manifest_path, repository),
             "logfile": str(logfile_path.resolve()) if logfile_path else None,
             "input_directory": io_settings["input_directory"],
             "output_directory": io_settings["output_directory"],
@@ -672,20 +816,20 @@ def _generated_yaml_bytes(config: ConfigDict, description: str) -> bytes:
     return content.encode("utf-8")
 
 
-def _write_yaml_atomically(
+def _write_yaml_immutably(
     config: ConfigDict,
     destination: Path,
     description: str,
 ) -> None:
-    """Write generated YAML using an atomic replacement."""
-    _write_bytes_atomically(
+    """Write generated YAML atomically without replacing an existing file."""
+    _write_bytes_immutably(
         _generated_yaml_bytes(config, description),
         destination,
     )
 
 
-def _write_bytes_atomically(content: bytes, destination: Path) -> None:
-    """Write bytes using an atomic replacement in the destination directory."""
+def _write_bytes_immutably(content: bytes, destination: Path) -> None:
+    """Publish complete bytes atomically without replacing `destination`."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
@@ -698,8 +842,7 @@ def _write_bytes_atomically(content: bytes, destination: Path) -> None:
         ) as stream:
             temporary_path = Path(stream.name)
             stream.write(content)
-        os.replace(temporary_path, destination)
-    except BaseException:
+        os.link(temporary_path, destination)
+    finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
-        raise

@@ -27,9 +27,10 @@
 - Configuration preparation is implemented by `tnt.Configuration`. Its
   `read()` method loads the user YAML, recursively merges package defaults,
   resolves dynamic and kinematics-type defaults, validates the resulting
-  data, and atomically preserves `user_config.yaml`, `resolved_config.yaml`,
-  and `run_manifest.yaml` below `<output_directory>/config_repository/`. It
-  does not instantiate scientific runtime objects.
+  data, and atomically publishes immutable resolved snapshots, byte-exact user
+  files, and invocation manifests below
+  `<output_directory>/config_repository/`. It does not instantiate scientific
+  runtime objects.
 - Preparation-stage validation rejects duplicate keys, unknown or missing
   fields in preparation-owned schemas, invalid types and enumerations,
   malformed tagged thresholds, and basic numerical inconsistencies before the
@@ -98,10 +99,14 @@
   `portable_data` and `as_portable_dict()` expose the archived form.
   Configuration preparation requires both path strings but creates only the
   output directory and configuration repository.
-- `config_repository/user_config.yaml` is a byte-identical copy of the user
-  file. `resolved_config.yaml` has all defaults applied with portable paths.
-  `run_manifest.yaml` records materialized paths, configuration checksums,
-  software versions, Git commit and dirty state when available,
+- The configuration repository separates semantic snapshots under
+  `configurations/`, byte-identical submitted files under `user_configs/`, and
+  one immutable manifest per invocation under `manifests/`. Semantic identity
+  hashes a canonical resolved portable configuration, ignoring mapping order
+  and YAML presentation but preserving list order and values. Identical
+  semantic configurations and identical user-file bytes are deduplicated
+  independently. Each manifest records the selected snapshot and user
+  artifact, their complete hashes, software versions, Git state,
   Python/platform/host context, scheduler identifiers, logfile location, and
   orbit random-seed state.
 - Configuration preparation cannot record a generated seed or observational

@@ -71,8 +71,9 @@ block.
 6. Validates the generic resolved schema and registry references without
    constructing runtime objects. Type-specific kinematics and population-file
    validation is deferred to runtime construction.
-7. Preserves the original user YAML, portable resolved configuration, and run
-   manifest below `<output_directory>/config_repository/`.
+7. Preserves the original user YAML, portable resolved configuration, and an
+   invocation-specific run manifest below
+   `<output_directory>/config_repository/`.
 
 Mapping values are merged recursively. A user value replaces a default scalar
 or list. User values always take precedence over applicable defaults.
@@ -428,19 +429,41 @@ portable values are available through `Configuration.portable_data` and
 
 ## Configuration repository
 
-After successful validation, TNT writes three files atomically into
+After successful validation, TNT publishes immutable artifacts under
 `<output_directory>/config_repository/`:
 
-- `user_config.yaml` is a byte-for-byte copy of the submitted file, including
-  its comments and formatting.
-- `resolved_config.yaml` has all TNT defaults applied and stores input and
-  output paths relative to the workspace root. It is intended to be moved to
-  another machine and reused with a different workspace root.
-- `run_manifest.yaml` records the absolute paths used for this preparation,
-  checksums of both configuration files, TNT and dependency versions, the Git
-  commit and dirty-working-tree state when available, Python and platform
-  details, hostname, scheduler job identifiers when available, and random-seed
-  state.
+```text
+config_repository/
+├── configurations/
+│   └── 0000-a81c09f3/
+│       └── resolved_config.yaml
+├── user_configs/
+│   └── 0000-21dc503a-user_config.yaml
+└── manifests/
+    └── 0000-run_manifest.yaml
+```
+
+- `configurations/` holds semantic configuration versions. Each resolved file
+  has all TNT defaults applied and stores input and output paths relative to
+  the workspace root. TNT hashes a canonical representation in which mapping
+  order and YAML presentation do not matter, while list order and values do.
+  An existing snapshot is reused when this semantic hash matches.
+- `user_configs/` holds byte-for-byte submitted files, including comments and
+  formatting. Identical bytes reuse an existing artifact; differently
+  formatted files remain distinct even when they resolve to the same semantic
+  configuration.
+- `manifests/` receives one new manifest for every TNT invocation. A manifest
+  records its invocation and configuration-snapshot identifiers, paths
+  relative to the configuration-repository root, the user-file, resolved-file,
+  and semantic configuration hashes, TNT and dependency versions, Git state,
+  Python and platform details, hostname, scheduler identifiers, logfile
+  location, and random-seed state.
+
+Numeric prefixes provide stable human-readable identifiers. Short hash
+prefixes in artifact names aid inspection; manifests retain the complete
+SHA-256 hashes. `Configuration.user_config_path`, `Configuration.resolved_path`,
+and `Configuration.run_manifest_path` identify the artifacts selected or
+created by the current invocation.
 
 A negative configured orbit-library seed still means that execution must
 generate a seed. Until that happens, the preparation manifest records the
@@ -448,7 +471,8 @@ effective seed as `null` with status `pending_generation`; the future execution
 stage must update it once the actual seed is known.
 
 Configuration preparation creates the output directory and its
-`config_repository` subdirectory when necessary. The three repository files
-are replaced on each successful preparation. It does not instantiate
-components, load observational data, checksum observational inputs, or execute
-modelling code.
+`config_repository` subdirectories when necessary. Existing artifacts are
+never replaced. Repeating an identical invocation therefore reuses the same
+resolved and user configuration files while creating a new manifest. It does
+not instantiate components, load observational data, checksum observational
+inputs, or execute modelling code.
