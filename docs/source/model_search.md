@@ -108,6 +108,53 @@ This log records provenance and verifies that referenced snapshots remain
 intact. It does not decide whether different configurations are compatible;
 that compatibility contract is a separate model-resume policy.
 
+## Configuration compatibility on resume
+
+Runtime construction writes a versioned `compatibility_signature.yaml` beside
+each immutable resolved configuration. Before a resumed `run()` asks the
+parameter generator for another round, TNT compares the current signature with
+every configuration snapshot referenced by `IterationConfigLog`. An
+incompatible change raises `ConfigurationCompatibilityError` before models or
+the log are modified. The error lists the differing field paths.
+
+Compatibility contract version 1 allows changes that control future search,
+execution, presentation, or post-processing without changing existing model
+meaning:
+
+- worker and processing-order settings;
+- stopping criteria, generator settings, and potential-rescaling ranges;
+- values, ranges, fixed/logarithmic flags, and labels of existing potential
+  parameters;
+- display units, logging, and analysis settings; and
+- input/output paths when the loaded scientific file contents remain
+  byte-identical.
+
+It rejects changes to:
+
+- internal units, `cosmological_parameters`, and physical system attributes
+  such as distance (`system_attributes.name` remains metadata);
+- potential components, inclusion, types, MGE references, parameter names, or
+  remaining parameter-schema fields;
+- MGE settings, spatial binnings, kinematics, population data, or any of their
+  raw input-file contents;
+- all `numerics_settings` in this first contract version;
+- orbit-library settings; and
+- weight-solver settings.
+
+Changing `parameter_space_settings.which_chi2` is allowed only when the chosen
+metric exists and is finite for every successful historical model. A nonempty
+`AllModels` table must also contain every parameter column required by the
+included potential components.
+
+Scientific inputs are compared by SHA-256 content, not filename, so moving or
+renaming an identical file remains compatible. The exact raw bytes are the
+identity: re-serializing equivalent values into different bytes is treated as
+a scientific-input change in this conservative first version.
+
+A negative orbit-library random seed is valid for both fresh and continued
+runs. Like the other orbit-library settings, changing its configured value
+between runs remains incompatible under contract version 1.
+
 ## ParameterGenerator
 
 A `ParameterSet` is one proposed point in parameter space: a mapping from

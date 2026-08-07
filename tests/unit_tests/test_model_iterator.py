@@ -38,6 +38,7 @@ if "galax" not in sys.modules:
     sys.modules["galax.potential"] = _fake_galax_potential
 
 import tnt.model_iterator as model_iterator_module
+from tnt.configuration_compatibility import ConfigurationCompatibilitySignature
 from tnt.iteration_config_log import (
     ConfigurationSnapshotReference,
     IterationConfigLog,
@@ -152,6 +153,10 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
         "weight_workers": "all_available",
     }
     iterator.configuration_snapshot = _snapshot_reference()
+    iterator.compatibility_signature = ConfigurationCompatibilitySignature.create(
+        {"potential": {}},
+        {},
+    )
     for name, value in overrides.items():
         setattr(iterator, name, value)
     return iterator
@@ -538,6 +543,11 @@ def test_run_records_one_config_log_row_per_iteration_not_per_model(
 def test_run_allows_n_new_iter_and_keeps_cumulative_labels_across_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        model_iterator_module,
+        "ensure_resume_compatible",
+        lambda *_: None,
+    )
     iterator = _make_iterator(
         parameter_generator=FakeParameterGenerator(n_rounds=2),
         configuration_snapshot=_snapshot_reference(),
@@ -557,12 +567,8 @@ def test_run_allows_n_new_iter_and_keeps_cumulative_labels_across_calls(
     assert models.n_iterations() == 4
     assert len(config_log) == 4
     paths = list(config_log.table["resolved_config_path"])
-    assert paths[:2] == [
-        "configurations/0000-aaaaaaaa/resolved_config.yaml"
-    ] * 2
-    assert paths[2:] == [
-        "configurations/0001-bbbbbbbb/resolved_config.yaml"
-    ] * 2
+    assert paths[:2] == ["configurations/0000-aaaaaaaa/resolved_config.yaml"] * 2
+    assert paths[2:] == ["configurations/0001-bbbbbbbb/resolved_config.yaml"] * 2
 
 
 def test_run_logs_improving_chi2_stopping_reason(

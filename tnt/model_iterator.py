@@ -31,6 +31,11 @@ import numpy as np
 from unxt import AbstractUnitSystem
 
 from tnt.all_models import AllModels
+from tnt.configuration_compatibility import (
+    ConfigurationCompatibilitySignature,
+    build_and_preserve_compatibility_signature,
+    ensure_resume_compatible,
+)
 from tnt.iteration_config_log import (
     ConfigurationSnapshotReference,
     IterationConfigLog,
@@ -82,6 +87,7 @@ class ModelIterator:
     stopping_criteria: Mapping[str, Any]
     execution_settings: Mapping[str, Any]
     configuration_snapshot: ConfigurationSnapshotReference
+    compatibility_signature: ConfigurationCompatibilitySignature
 
     @classmethod
     def from_configuration(
@@ -137,6 +143,10 @@ class ModelIterator:
         population_data = build_populations(
             config["population_data"], input_directory, unit_system, spatial_binnings
         )
+        compatibility_signature = build_and_preserve_compatibility_signature(
+            config,
+            configuration_snapshot,
+        )
 
         return cls(
             potential_settings=config["potential"],
@@ -155,6 +165,7 @@ class ModelIterator:
             stopping_criteria=parameter_space_settings["stopping_criteria"],
             execution_settings=config["execution_settings"],
             configuration_snapshot=configuration_snapshot,
+            compatibility_signature=compatibility_signature,
         )
 
     def run(
@@ -218,6 +229,13 @@ class ModelIterator:
                 f"of iterations; received {models.n_iterations()} and "
                 f"{len(config_log)}, respectively."
             )
+        ensure_resume_compatible(
+            self.compatibility_signature,
+            self.configuration_snapshot,
+            config_log.snapshot_references(self.configuration_snapshot.repository),
+            models,
+            self.which_chi2,
+        )
         n_new_iter = self.stopping_criteria["n_new_iter"]
         target_model_count = self.stopping_criteria["target_model_count"]
         initial_iteration_count = models.n_iterations()

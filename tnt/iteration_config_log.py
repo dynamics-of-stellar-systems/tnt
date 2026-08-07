@@ -155,6 +155,21 @@ class IterationConfigLog:
         table.add_row(row)
         return type(self)(table)
 
+    def snapshot_references(
+        self,
+        repository: Path,
+    ) -> list[ConfigurationSnapshotReference]:
+        """Reconstruct portable snapshot references below `repository`."""
+        return [
+            ConfigurationSnapshotReference(
+                repository=repository,
+                snapshot_id=int(row["configuration_snapshot_id"]),
+                semantic_sha256=str(row["semantic_sha256"]),
+                resolved_config_path=str(row["resolved_config_path"]),
+            )
+            for row in self.table
+        ]
+
     def __len__(self) -> int:
         """Return the total number of iterations recorded so far."""
         return len(self.table)

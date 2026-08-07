@@ -436,7 +436,8 @@ After successful validation, TNT publishes immutable artifacts under
 config_repository/
 ├── configurations/
 │   └── 0000-a81c09f3/
-│       └── resolved_config.yaml
+│       ├── resolved_config.yaml
+│       └── compatibility_signature.yaml
 ├── user_configs/
 │   └── 0000-21dc503a-user_config.yaml
 ├── manifests/
@@ -470,6 +471,12 @@ created by the current invocation.
 persists its returned `IterationConfigLog`; configuration preparation itself
 does not create or update the log. It links each cumulative search iteration
 to one immutable file under `configurations/`.
+
+`compatibility_signature.yaml` is added at runtime construction, after TNT has
+loaded and validated the referenced scientific inputs. It records the
+versioned resume contract, compatibility-critical resolved settings, and
+SHA-256 hashes of MGE, spatial-binning, kinematics, and population files.
+Configuration preparation still does not open or checksum those inputs.
 
 A negative configured orbit-library seed still means that execution must
 generate a seed. Until that happens, the preparation manifest records the

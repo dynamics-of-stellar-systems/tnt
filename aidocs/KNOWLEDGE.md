@@ -116,7 +116,20 @@
   referenced immutable files. `ModelIterator.run()` still returns rather than
   writes both `AllModels` and this log, so the execution layer must load and
   save them together. The log records provenance only; it does not implement
-  the separate configuration-compatibility policy.
+  the configuration-compatibility decision itself.
+- Runtime construction creates a versioned `compatibility_signature.yaml`
+  beside each resolved snapshot and checks it before a resumed model-search
+  proposal. Contract version 1 excludes operational/search/presentation fields
+  and potential parameter values/ranges from the scientific identity. It
+  includes internal units, cosmology, physical system attributes except name,
+  potential/parameter schema, MGE and observational settings, all
+  `numerics_settings`, orbit-library settings, and weight-solver settings.
+  Scientific input paths are excluded but their raw SHA-256 hashes are
+  included. Every historical snapshot in `IterationConfigLog` must match;
+  `which_chi2` must be finite for every successful historical model, and the
+  required potential parameter columns must exist. Negative configured orbit
+  seeds are valid for fresh and continued runs; changing the configured seed
+  between runs remains incompatible with contract version 1.
 - Configuration preparation cannot record a generated seed or observational
   input checksums because neither exists yet. A negative seed is recorded as
   `pending_generation`; the execution phase must update the effective seed.
