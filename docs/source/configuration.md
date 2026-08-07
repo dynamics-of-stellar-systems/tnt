@@ -439,8 +439,9 @@ config_repository/
 │       └── resolved_config.yaml
 ├── user_configs/
 │   └── 0000-21dc503a-user_config.yaml
-└── manifests/
-    └── 0000-run_manifest.yaml
+├── manifests/
+│   └── 0000-run_manifest.yaml
+└── iteration_config_log.ecsv
 ```
 
 - `configurations/` holds semantic configuration versions. Each resolved file
@@ -464,6 +465,11 @@ prefixes in artifact names aid inspection; manifests retain the complete
 SHA-256 hashes. `Configuration.user_config_path`, `Configuration.resolved_path`,
 and `Configuration.run_manifest_path` identify the artifacts selected or
 created by the current invocation.
+
+`iteration_config_log.ecsv` is created when the model-search caller explicitly
+persists its returned `IterationConfigLog`; configuration preparation itself
+does not create or update the log. It links each cumulative search iteration
+to one immutable file under `configurations/`.
 
 A negative configured orbit-library seed still means that execution must
 generate a seed. Until that happens, the preparation manifest records the

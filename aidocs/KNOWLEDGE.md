@@ -109,6 +109,14 @@
   artifact, their complete hashes, software versions, Git state,
   Python/platform/host context, scheduler identifiers, logfile location, and
   orbit random-seed state.
+- `IterationConfigLog` persists separately as
+  `config_repository/iteration_config_log.ecsv`, with one row per cumulative
+  model-search iteration. Rows record the snapshot ID, complete semantic hash,
+  and repository-relative resolved path. Reads and atomic writes validate the
+  referenced immutable files. `ModelIterator.run()` still returns rather than
+  writes both `AllModels` and this log, so the execution layer must load and
+  save them together. The log records provenance only; it does not implement
+  the separate configuration-compatibility policy.
 - Configuration preparation cannot record a generated seed or observational
   input checksums because neither exists yet. A negative seed is recorded as
   `pending_generation`; the execution phase must update the effective seed.

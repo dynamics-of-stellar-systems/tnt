@@ -42,6 +42,7 @@ import pytest
 
 import tnt.model_iterator as model_iterator_module
 from tnt import Configuration
+from tnt.iteration_config_log import IterationConfigLog
 from tnt.model_iterator import ModelIterator
 
 # ---------------------------------------------------------------------------
@@ -142,7 +143,18 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert len(models) == 11
     assert models.n_iterations() == 1
     assert len(config_log) == 1
-    assert config_log.table["resolved_config_path"][0] == str(config.resolved_path)
+    assert config.resolved_path is not None
+    assert (
+        config_log.table["resolved_config_path"][0]
+        == iterator.configuration_snapshot.resolved_config_path
+    )
+    log_path = IterationConfigLog.path_for(config.resolved_path)
+    config_log.write(log_path)
+    restored_log = IterationConfigLog.read(log_path)
+    assert len(restored_log) == 1
+    assert restored_log.table["semantic_sha256"][0] == config_log.table[
+        "semantic_sha256"
+    ][0]
 
     masses = sorted(10.0 / value for value in models.table["kinchi2"])
     expected_masses = sorted([1.0, *np.geomspace(0.1, 10.0, 10)])

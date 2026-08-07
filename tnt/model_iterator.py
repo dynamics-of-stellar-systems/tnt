@@ -31,7 +31,10 @@ import numpy as np
 from unxt import AbstractUnitSystem
 
 from tnt.all_models import AllModels
-from tnt.iteration_config_log import IterationConfigLog
+from tnt.iteration_config_log import (
+    ConfigurationSnapshotReference,
+    IterationConfigLog,
+)
 from tnt.kinematics import AbstractKinematics, build_kinematics
 from tnt.mge import LightMGE, MassMGE, build_mges
 from tnt.model import Model
@@ -78,7 +81,7 @@ class ModelIterator:
     which_chi2: str
     stopping_criteria: Mapping[str, Any]
     execution_settings: Mapping[str, Any]
-    resolved_config_path: Path
+    configuration_snapshot: ConfigurationSnapshotReference
 
     @classmethod
     def from_configuration(
@@ -111,6 +114,9 @@ class ModelIterator:
                 `run`'s `IterationConfigLog`.
         """
         _require_supported_model_processing_order(config["execution_settings"])
+        configuration_snapshot = ConfigurationSnapshotReference.from_resolved_config(
+            resolved_config_path
+        )
         input_directory = config["io_settings"]["input_directory"]
         parameter_space_settings = config["parameter_space_settings"]
 
@@ -148,7 +154,7 @@ class ModelIterator:
             which_chi2=parameter_space_settings["which_chi2"],
             stopping_criteria=parameter_space_settings["stopping_criteria"],
             execution_settings=config["execution_settings"],
-            resolved_config_path=resolved_config_path,
+            configuration_snapshot=configuration_snapshot,
         )
 
     def run(
@@ -187,7 +193,7 @@ class ModelIterator:
         that produce successful models, seeded from `all_models`'s own best if
         it contains a successful model.
 
-        Also records, in `config_log`, that `self.resolved_config_path` is
+        Also records, in `config_log`, that `self.configuration_snapshot` is
         the config in effect for each round -- one row per round, not per
         `Model` -- since a resumed search can be picked up under an edited
         configuration, and `AllModels`/`Model.iteration` alone can't show
@@ -206,6 +212,12 @@ class ModelIterator:
         _require_supported_model_processing_order(self.execution_settings)
         models = AllModels() if all_models is None else all_models
         config_log = IterationConfigLog() if config_log is None else config_log
+        if len(config_log) != models.n_iterations():
+            raise ValueError(
+                "AllModels and IterationConfigLog must describe the same number "
+                f"of iterations; received {models.n_iterations()} and "
+                f"{len(config_log)}, respectively."
+            )
         n_new_iter = self.stopping_criteria["n_new_iter"]
         target_model_count = self.stopping_criteria["target_model_count"]
         initial_iteration_count = models.n_iterations()
@@ -238,7 +250,7 @@ class ModelIterator:
                 break
 
             iteration = models.n_iterations()
-            config_log = config_log.append(iteration, self.resolved_config_path)
+            config_log = config_log.append(iteration, self.configuration_snapshot)
             n_before = len(models)
             n_successful = 0
             for parameters in proposed:

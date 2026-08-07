@@ -38,6 +38,10 @@ if "galax" not in sys.modules:
     sys.modules["galax.potential"] = _fake_galax_potential
 
 import tnt.model_iterator as model_iterator_module
+from tnt.iteration_config_log import (
+    ConfigurationSnapshotReference,
+    IterationConfigLog,
+)
 from tnt.model_iterator import ModelIterator
 
 # ---------------------------------------------------------------------------
@@ -108,6 +112,19 @@ class FakeParameterGenerator:
         return [{"bh": {"m": 1.0}}]
 
 
+def _snapshot_reference(
+    snapshot_id: int = 0,
+    semantic_sha256: str = "a" * 64,
+) -> ConfigurationSnapshotReference:
+    directory = f"{snapshot_id:04d}-{semantic_sha256[:8]}"
+    return ConfigurationSnapshotReference(
+        repository=Path("/archive/config_repository"),
+        snapshot_id=snapshot_id,
+        semantic_sha256=semantic_sha256,
+        resolved_config_path=f"configurations/{directory}/resolved_config.yaml",
+    )
+
+
 def _make_iterator(**overrides: Any) -> ModelIterator:
     iterator = ModelIterator.__new__(ModelIterator)
     iterator.potential_settings = {}
@@ -134,7 +151,7 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
         "orbit_workers": "all_available",
         "weight_workers": "all_available",
     }
-    iterator.resolved_config_path = Path("/archive/resolved_config.yaml")
+    iterator.configuration_snapshot = _snapshot_reference()
     for name, value in overrides.items():
         setattr(iterator, name, value)
     return iterator
@@ -434,6 +451,20 @@ def test_run_does_not_resume_an_all_failed_model_table(
     assert "Resumed AllModels contains no successful model" in caplog.text
 
 
+def test_run_rejects_mismatched_models_and_config_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    iterator = _make_iterator()
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    models, _ = iterator.run()
+
+    with pytest.raises(
+        ValueError,
+        match="AllModels and IterationConfigLog must describe the same number",
+    ):
+        iterator.run(models, IterationConfigLog())
+
+
 def test_run_continues_after_later_iteration_has_no_success(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -509,7 +540,7 @@ def test_run_allows_n_new_iter_and_keeps_cumulative_labels_across_calls(
 ) -> None:
     iterator = _make_iterator(
         parameter_generator=FakeParameterGenerator(n_rounds=2),
-        resolved_config_path=Path("/archive/run1/resolved_config.yaml"),
+        configuration_snapshot=_snapshot_reference(),
         stopping_criteria={"n_new_iter": 2, "target_model_count": 10},
     )
     monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
@@ -519,15 +550,19 @@ def test_run_allows_n_new_iter_and_keeps_cumulative_labels_across_calls(
     assert len(models) == 2
 
     iterator.parameter_generator = FakeParameterGenerator(n_rounds=2)
-    iterator.resolved_config_path = Path("/archive/run2/resolved_config.yaml")
+    iterator.configuration_snapshot = _snapshot_reference(1, "b" * 64)
     models, config_log = iterator.run(models, config_log)
 
     assert len(models) == 4
     assert models.n_iterations() == 4
     assert len(config_log) == 4
     paths = list(config_log.table["resolved_config_path"])
-    assert paths[:2] == [str(Path("/archive/run1/resolved_config.yaml"))] * 2
-    assert paths[2:] == [str(Path("/archive/run2/resolved_config.yaml"))] * 2
+    assert paths[:2] == [
+        "configurations/0000-aaaaaaaa/resolved_config.yaml"
+    ] * 2
+    assert paths[2:] == [
+        "configurations/0001-bbbbbbbb/resolved_config.yaml"
+    ] * 2
 
 
 def test_run_logs_improving_chi2_stopping_reason(
