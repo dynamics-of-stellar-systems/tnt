@@ -332,9 +332,6 @@ binning, but they cannot refer to IDs absent from it. Population objects do not
 contain an MGE. A population file must also be different from every configured
 kinematics file; sharing only the `spatial_binnings` entry is supported.
 
-The former global `number_GH`, `GH_sys_err`, and `PM_sys_err_factor` fields are
-not weight-solver settings in TNT and are rejected as unknown fields.
-
 ## Validation
 
 Preparation rejects duplicate YAML keys, generic unknown fields, missing
@@ -393,9 +390,7 @@ resolved file is written only after every preparation-stage check succeeds.
 
 Preparation does not instantiate system components, inspect observational data
 or MGE files, or verify optional runtime dependencies. Those checks belong to
-the later execution phase. TNT also does not reproduce warnings for deprecated
-configuration fields from predecessor software; unsupported fields are
-reported as errors instead.
+the later execution phase. Unsupported fields are reported as errors.
 
 ## Paths and side effects
 

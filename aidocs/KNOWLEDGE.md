@@ -57,8 +57,7 @@
   observational file contents and type-specific runtime rules. Other
   runtime-object, MGE-content, and optional-dependency checks remain the
   responsibility of the execution phase.
-  Legacy
-  deprecation-and-ignore warnings are intentionally not reproduced.
+  Unknown fields raise validation errors rather than being ignored.
 - TNT uses `unxt` for configuration units. The required
   `units.internal` block defines length, time, mass, angle, and power;
   `units.display` selectively overrides presentation units and otherwise
@@ -184,10 +183,9 @@
   components; `kinematic_data` references a binning and optionally an MGE; and
   `population_data` references a binning. Preparation validates all
   cross-references without opening the files.
-- Population observations must always use a separate
-  `population_data.<name>.data_file`. TNT does not support DYNAMITE's
-  `with_pops` pattern or population columns embedded in a kinematics file,
-  even when the population and kinematics data share a spatial binning.
+- Population observations always use a separate
+  `population_data.<name>.data_file`, even when the population and kinematics
+  data share a spatial binning.
 - `tnt.populations.build_populations()` loads each configured population ECSV
   into an immutable JAX/Equinox `Populations` object. It resolves a strictly
   typed `ProjectedBinning` but no MGE. Files require a positive unique
@@ -223,15 +221,15 @@
   uncertainties are added in quadrature. Missing higher-order pairs are
   represented by zero coefficients only when the corresponding configured
   systematic uncertainty is positive.
-- Bayesian LOSVD ECSV files use DYNAMITE-compatible `binID_dynamite`,
-  `bin_flux`, `losvd_N`, and `dlosvd_N` columns. Metadata must contain `vcent`,
-  `dv`, and an explicit `velocity_unit`; TNT converts the velocity grid and
-  applies the configured flux-weighted systemic centering.
-- Proper-motion input retains DYNAMITE's NPZ array layout (`PM_2dhist`,
-  `PM_2dhist_sigma`, `binID_dynamite`, `nstarbin`, `vxrange`, and `vyrange`)
-  and adds a required scalar `velocity_unit`. Construction validates and
-  normalizes each 2D distribution, scales uncertainties by the square root of
-  `variance_scale`, and emits configured sampling warnings.
+- Bayesian LOSVD ECSV files use `binID_dynamite`, `bin_flux`, `losvd_N`, and
+  `dlosvd_N` columns. Metadata must contain `vcent`, `dv`, and an explicit
+  `velocity_unit`; TNT converts the velocity grid and applies the configured
+  flux-weighted systemic centering.
+- Proper-motion NPZ input contains `PM_2dhist`, `PM_2dhist_sigma`,
+  `binID_dynamite`, `nstarbin`, `vxrange`, and `vyrange`, plus a required
+  scalar `velocity_unit`. Construction validates and normalizes each 2D
+  distribution, scales uncertainties by the square root of `variance_scale`,
+  and emits configured sampling warnings.
 - Potential types are `triaxial_light_mge`, `triaxial_mass_mge`, `nfw`, and
   `plummer`. A light-MGE potential requires an `ml` parameter. A mass-MGE
   potential rejects `ml` because its MGE already contains mass.
@@ -262,11 +260,8 @@
   `mge_settings.projected_mass_quad_order` are positive fixed Gauss-Legendre
   quadrature orders for intrinsic spherical-grid and projected pixel
   integration, respectively. The packaged defaults are both 10.
-- `SphericalGrid` is defined in `tnt.spatial_binnings`; code importing it from
-  `tnt.mge` must update its import. The unused inverse conversion
-  `AbstractMGE.physical_to_angular()` and
-  `quantity_conversions.physical_to_angular()` have been removed; runtime code
-  retains the angular-to-physical direction used by current workflows.
+- `SphericalGrid` is defined in `tnt.spatial_binnings`. Runtime coordinate
+  conversion uses the angular-to-physical direction.
 - Shared comparison tolerances and constraint-error floors belong under
   `numerics_settings`. Model comparison uses a relative tolerance of `1e-10`,
   while parameter-grid comparisons use `1e-6`. Total-mass and intrinsic-mass
@@ -321,21 +316,15 @@
 - `proper_motions.observational_errors.variance_scale` is also per data set.
   It multiplies proper-motion error variances, so uncertainties are scaled by
   its square root; it must be positive and `1.0` is neutral.
-- The former weight-solver keys `number_GH`, `GH_sys_err`, and
-  `PM_sys_err_factor` are not part of the TNT schema.
 - `execution_settings.model_processing_order` accepts `model_by_model` or
-  `stage_by_stage`. The former completes orbit integration and weight solving
-  for each model in turn and is the only implemented order; runtime
+  `stage_by_stage`. `model_by_model` completes orbit integration and weight
+  solving for each model in turn and is the only implemented order; runtime
   construction and `ModelIterator.run()` raise `NotImplementedError` for
   `stage_by_stage` before model-search work begins.
 - `execution_settings.orbit_workers` and `weight_workers` are validated and
   retained but currently have no execution effect because no scheduler
-  consumes them yet. The former `external_chi2_workers` setting has been
-  removed; TNT has no separate external chi-squared execution path. Internal
-  `chi2`, `kinchi2`, and `kinmapchi2` metrics are unaffected.
-- The former `execution_settings.orbit_family_integration_in_parallel` option
-  has been removed from TNT. Configuration rejects it as an unknown field, and
-  `Potential.generate_orbit_library()` has no corresponding argument.
+  consumes them yet. TNT calculates `chi2`, `kinchi2`, and `kinmapchi2` as
+  part of its normal model evaluation.
 - `weight_solver_settings.reattempt_failures` remains in the schema for future
   retry behavior, but configuration currently requires it to be `false`.
   `true` is rejected until retry semantics and execution are implemented;
@@ -381,13 +370,3 @@
   example profile (`configuration.yaml`, alongside it), covering every
   top-level configuration section at once, unlike the synthetic per-feature
   configurations in `tests/unit_tests/test_configuration.py`.
-
-## Relationship to DYNAMITE
-
-- TNT is a standalone reimplementation and refactoring, not a compatibility
-  layer for DYNAMITE.
-- TNT's configuration schema may improve or replace DYNAMITE concepts and
-  names; compatibility with DYNAMITE configuration files is not a requirement.
-- Legacy Fortran functionality will be replaced by Python implementations
-  based on JAX. Do not introduce Fortran-specific configuration or execution
-  paths into TNT.
