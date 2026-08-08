@@ -1,0 +1,14 @@
+name: tnt-development
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    working_dir: /workspace
+    init: true
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/workspace
