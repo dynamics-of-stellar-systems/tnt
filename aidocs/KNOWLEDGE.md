@@ -19,6 +19,19 @@
   see its module docstring for the full rationale and existing contents
   before adding a near-duplicate.
 
+## Linux development container
+
+- `Dockerfile` and `compose.yaml` provide the reproducible Linux `x86_64`
+  development environment used from Intel macOS. The host checkout is mounted
+  at `/workspace`; its macOS `.venv` is never used in the container because
+  `UV_PROJECT_ENVIRONMENT` points to `/opt/tnt-venv` inside the image.
+- Run `docker compose build` after dependency or container-definition changes.
+  Normal source edits are immediately visible without rebuilding.
+- Use `docker compose run --rm dev <command>` for Linux validation, for example
+  `pytest -q`, `ruff check .`, or
+  `sphinx-build -E -b html -W docs/source docs/build/html`. Omitting the command
+  opens an interactive shell with the TNT environment on `PATH`.
+
 ## Configuration defaults
 
 - The packaged base profile is `tnt/defaults/default_config.yaml`.
@@ -75,15 +88,12 @@
 - `tnt.mge.build_mges()` is the explicit runtime boundary that loads the
   resolved `MGEs` registry into named `LightMGE` and `MassMGE` objects.
   `Configuration` continues to contain no instantiated scientific objects.
-- Intel macOS needs the compatibility constraints recorded in
-  `pyproject.toml`: the latest available JAX wheel is in the 0.4 series, and
-  `unxt` 1.1.1 requires matching older Quax, Quaxed, Plum, Astropy, and NumPy
-  APIs on that platform.
+- Intel macOS is not a native TNT target because current JAX releases do not
+  provide `jaxlib` wheels for that platform. Use the Linux `x86_64`
+  development container there instead.
 - Retrieve units from `unxt` unit systems by physical dimension rather than
-  generated attribute names. In particular, the luminosity dimension is
-  exposed as `radiant_flux` by the Intel-macOS `unxt` stack and as `power` by
-  newer versions; dimension-based lookup supports both without platform
-  branching.
+  generated attribute names so TNT does not depend on convenience-name changes
+  between `unxt` releases.
 - Mapping values merge recursively, while user scalars and lists replace
   defaults. User values have final precedence. Schema-only
   `dynamic_object_defaults` and `kinematics_type_defaults` sections are
