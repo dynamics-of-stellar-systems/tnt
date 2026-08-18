@@ -52,7 +52,12 @@ def test_default_config_is_packaged() -> None:
     assert "    delta_chi2_threshold:" in config_text
     assert '      mode: "fraction_of_sqrt_2n_observations"' in config_text
     assert "    minimum_delta_chi2:" in config_text
+    assert "      enabled: true" in config_text
     assert '      mode: "absolute"' in config_text
+    assert "    target_model_count: 3" in config_text
+    assert "    n_max_mods:" not in config_text
+    assert "    n_new_iter: 10" in config_text
+    assert "    n_max_iter:" not in config_text
     assert "    min_delta_chi2_abs:" not in config_text
     assert "    min_delta_chi2_rel:" not in config_text
     assert "    threshold_del_chi2_abs:" not in config_text
@@ -61,9 +66,11 @@ def test_default_config_is_packaged() -> None:
     assert "    enabled: false" in config_text
     assert "    range_count: 10" in config_text
     assert '    spacing: "logarithmic"' in config_text
-    assert "    include_unscaled: true" in config_text
     assert '  model_processing_order: "model_by_model"' in config_text
-    assert "  orbit_family_integration_in_parallel: false" in config_text
+    assert "external_chi2_workers" not in config_text
+    assert "orbit_family_integration_in_parallel" not in config_text
+    assert "  reattempt_failures: false" in config_text
+    assert "  reattempt_failures: true" not in config_text
     assert "  model_strategy:" not in config_text
     assert "  orbit_libraries_in_parallel:" not in config_text
     assert "counter_rotating_orbit_cut" not in config_text

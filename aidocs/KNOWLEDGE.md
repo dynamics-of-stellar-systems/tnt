@@ -227,7 +227,30 @@
   `delta_chi2_threshold` accepts `absolute` or
   `fraction_of_sqrt_2n_observations`; the stopping criterion's
   `minimum_delta_chi2` accepts `absolute` or `relative`. This schema makes it
-  impossible to specify both representations simultaneously.
+  impossible to specify both representations simultaneously. Search
+  improvement is the cumulative previous best chi2 minus the cumulative new
+  best. Absolute mode compares that difference directly; relative mode
+  divides it by the previous best. `minimum_delta_chi2.enabled: false`
+  disables chi2-improvement stopping, leaving the model/iteration limits or
+  the parameter generator to stop the search. Mode and value remain present,
+  validated, and nonnegative while disabled. The generator's separate
+  `delta_chi2_threshold` also remains nonnegative. Independently of that
+  setting, a fresh run records and then stops after a first iteration with no
+  successful model, and a resumed all-failed `AllModels` stops before another
+  proposal because neither has a valid chi2 base. Once a successful model
+  exists, later failed-only iterations retain the previous best, skip the
+  delta-chi2 check, and allow the generator to continue subject to its normal
+  limits.
+- `parameter_space_settings.stopping_criteria.target_model_count` is a soft
+  cumulative target, not a strict maximum. TNT starts a new iteration only
+  while the existing model count is below it, then completes every proposed
+  model and potential rescaling in that iteration. The final count may exceed
+  the target; other stopping conditions may end the search below it.
+- `parameter_space_settings.stopping_criteria.n_new_iter` is the maximum number
+  of additional iterations for the current `ModelIterator.run()` invocation,
+  not a cumulative limit across resumed runs. Model and `IterationConfigLog`
+  iteration numbers remain cumulative; a resumed call measures its new
+  allowance from the persisted `AllModels.n_iterations()` starting point.
 - `parameter_space_settings.potential_rescalings` controls optional scaling of
   the complete assembled potential. It contains `enabled`, `range_count`, a
   positive inclusive `mass_scale_range`, `spacing` (`linear` or
@@ -249,11 +272,21 @@
   `PM_sys_err_factor` are not part of the TNT schema.
 - `execution_settings.model_processing_order` accepts `model_by_model` or
   `stage_by_stage`. The former completes orbit integration and weight solving
-  for each model in turn; the latter integrates all models' orbit libraries
-  before starting weight solving.
-- `execution_settings.orbit_family_integration_in_parallel` controls whether
-  box- and tube-orbit families are integrated concurrently. Account for its
-  additional CPU use when configuring orbit workers.
+  for each model in turn and is the only implemented order; runtime
+  construction and `ModelIterator.run()` raise `NotImplementedError` for
+  `stage_by_stage` before model-search work begins.
+- `execution_settings.orbit_workers` and `weight_workers` are validated and
+  retained but currently have no execution effect because no scheduler
+  consumes them yet. The former `external_chi2_workers` setting has been
+  removed; TNT has no separate external chi-squared execution path. Internal
+  `chi2`, `kinchi2`, and `kinmapchi2` metrics are unaffected.
+- The former `execution_settings.orbit_family_integration_in_parallel` option
+  has been removed from TNT. Configuration rejects it as an unknown field, and
+  `Potential.generate_orbit_library()` has no corresponding argument.
+- `weight_solver_settings.reattempt_failures` remains in the schema for future
+  retry behavior, but configuration currently requires it to be `false`.
+  `true` is rejected until retry semantics and execution are implemented;
+  `ModelIterator._solve()` makes exactly one attempt.
 - Analysis defaults belong under `analysis_settings`. Orbit decomposition uses
   explicit circularity thresholds for cold, warm, and counter-rotating orbit
   classes, with the hot interval implied between `-0.25` and `0.25`. The

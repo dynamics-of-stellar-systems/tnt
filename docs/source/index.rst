@@ -17,6 +17,7 @@ documentation for details.
    configuration
    units
    logging
+   model_search
 
 .. toctree::
    :maxdepth: 1

@@ -138,7 +138,6 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
         "range_count": 10,
         "mass_scale_range": {"minimum": 0.1, "maximum": 10.0},
         "spacing": "logarithmic",
-        "include_unscaled": True,
     }
     assert written["weight_solver_settings"]["reattempt_failures"] is False
     assert written["weight_solver_settings"]["maxiter_factor"] == 3
@@ -423,6 +422,142 @@ def test_read_rejects_invalid_tagged_threshold_mode(tmp_path: Path) -> None:
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
+def test_read_accepts_disabled_minimum_delta_chi2(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    minimum_delta_chi2:
+      enabled: false
+""",
+    )
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert config.data["parameter_space_settings"]["stopping_criteria"][
+        "minimum_delta_chi2"
+    ] == {"enabled": False, "mode": "absolute", "value": 0.5}
+
+
+def test_read_rejects_legacy_n_max_mods(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    n_max_mods: 3
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"stopping_criteria contains unknown field\(s\): n_max_mods",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_nonpositive_target_model_count(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    target_model_count: 0
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"stopping_criteria\.target_model_count must be positive",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_legacy_n_max_iter(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    n_max_iter: 3
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"stopping_criteria contains unknown field\(s\): n_max_iter",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_nonpositive_n_new_iter(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    n_new_iter: 0
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"stopping_criteria\.n_new_iter must be positive",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_negative_minimum_delta_chi2(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    minimum_delta_chi2:
+      value: -0.5
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"minimum_delta_chi2\.value must not be negative",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_negative_generator_delta_chi2_threshold(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_settings:
+    delta_chi2_threshold:
+      value: -0.5
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"delta_chi2_threshold\.value must not be negative",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
 def test_read_rejects_nonpositive_worker_count(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"
@@ -437,6 +572,63 @@ def test_read_rejects_nonpositive_worker_count(tmp_path: Path) -> None:
     with pytest.raises(
         ValueError,
         match=r"execution_settings\.orbit_workers must be a positive integer",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_enabled_reattempt_failures(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""weight_solver_settings:
+  reattempt_failures: true
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"weight_solver_settings\.reattempt_failures must be false",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_removed_orbit_family_parallel_setting(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""execution_settings:
+  orbit_family_integration_in_parallel: true
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"execution_settings contains unknown field\(s\): "
+            r"orbit_family_integration_in_parallel"
+        ),
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_removed_external_chi2_workers(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""execution_settings:
+  external_chi2_workers: all_available
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"execution_settings contains unknown field\(s\): external_chi2_workers",
     ):
         Configuration().read(user_path, workspace_root=tmp_path)
 

@@ -607,7 +607,27 @@ def _validate_weight_solver_settings(settings: ConfigDict) -> None:
     _nonnegative_number(settings["regularisation"], f"{path}.regularisation")
     for key in ("lum_intr_rel_err", "sb_proj_rel_err"):
         _nonnegative_number(settings[key], f"{path}.{key}")
-    _boolean(settings["reattempt_failures"], f"{path}.reattempt_failures")
+    reattempt_failures = _boolean(
+        settings["reattempt_failures"], f"{path}.reattempt_failures"
+    )
+    if reattempt_failures:
+        raise ValueError(
+            f"{path}.reattempt_failures must be false until retry behavior is "
+            "implemented."
+        )
+
+
+# Which `generator_settings` keys each `generator_type` requires. Mirrors
+# each `tnt.parameter_generator.AbstractParameterGenerator` subclass's own
+# `_required_generator_settings` -- kept as plain data here, rather than
+# imported from `tnt.parameter_generator`, since that module (transitively,
+# via `tnt.all_models`/`tnt.model`/`tnt.potential`) pulls in `galax`, which
+# this validation-only module should not depend on just to read
+# configuration.
+_GENERATOR_SETTINGS_KEYS = {
+    "GridSearch": frozenset({"delta_chi2_threshold"}),
+    "SinglePoint": frozenset(),
+}
 
 
 def _validate_parameter_space_settings(settings: ConfigDict) -> None:
@@ -621,39 +641,50 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
     }
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
-    _choice(settings["generator_type"], {"GridSearch"}, f"{path}.generator_type")
+    generator_type = _choice(
+        settings["generator_type"],
+        set(_GENERATOR_SETTINGS_KEYS),
+        f"{path}.generator_type",
+    )
     _choice(
         settings["which_chi2"], {"chi2", "kinchi2", "kinmapchi2"}, f"{path}.which_chi2"
     )
     generator = _required_mapping(settings, "generator_settings", path)
-    _reject_unknown_keys(
-        generator, {"delta_chi2_threshold"}, f"{path}.generator_settings"
-    )
-    _require_keys(generator, {"delta_chi2_threshold"}, f"{path}.generator_settings")
-    _validate_tagged_threshold(
-        _required_mapping(
-            generator, "delta_chi2_threshold", f"{path}.generator_settings"
-        ),
-        f"{path}.generator_settings.delta_chi2_threshold",
-        {"absolute", "fraction_of_sqrt_2n_observations"},
-    )
+    required_generator_keys = _GENERATOR_SETTINGS_KEYS[generator_type]
+    # Not `_reject_unknown_keys`: recursive default-merging can't remove a
+    # mapping key, so a user who overrides `generator_type` away from the
+    # packaged default's ("GridSearch") still inherits its
+    # `generator_settings.delta_chi2_threshold` unless they redeclare that
+    # exact key with a real value -- an empty `generator_settings: {}`
+    # override doesn't clear it. Keys beyond what this `generator_type`
+    # requires are therefore tolerated rather than rejected.
+    _require_keys(generator, required_generator_keys, f"{path}.generator_settings")
+    if "delta_chi2_threshold" in required_generator_keys:
+        _validate_tagged_threshold(
+            _required_mapping(
+                generator, "delta_chi2_threshold", f"{path}.generator_settings"
+            ),
+            f"{path}.generator_settings.delta_chi2_threshold",
+            {"absolute", "fraction_of_sqrt_2n_observations"},
+        )
     stopping = _required_mapping(settings, "stopping_criteria", path)
     _reject_unknown_keys(
         stopping,
-        {"minimum_delta_chi2", "n_max_iter", "n_max_mods"},
+        {"minimum_delta_chi2", "n_new_iter", "target_model_count"},
         f"{path}.stopping_criteria",
     )
     _require_keys(
         stopping,
-        {"minimum_delta_chi2", "n_max_iter", "n_max_mods"},
+        {"minimum_delta_chi2", "n_new_iter", "target_model_count"},
         f"{path}.stopping_criteria",
     )
     _validate_tagged_threshold(
         _required_mapping(stopping, "minimum_delta_chi2", f"{path}.stopping_criteria"),
         f"{path}.stopping_criteria.minimum_delta_chi2",
         {"absolute", "relative"},
+        with_enabled=True,
     )
-    for key in ("n_max_iter", "n_max_mods"):
+    for key in ("n_new_iter", "target_model_count"):
         value = _integer(stopping[key], f"{path}.stopping_criteria.{key}")
         if value <= 0:
             raise ValueError(f"{path}.stopping_criteria.{key} must be positive.")
@@ -667,7 +698,6 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
 def _validate_potential_rescalings(settings: ConfigDict, path: str) -> None:
     keys = {
         "enabled",
-        "include_unscaled",
         "mass_scale_range",
         "range_count",
         "spacing",
@@ -675,7 +705,6 @@ def _validate_potential_rescalings(settings: ConfigDict, path: str) -> None:
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
     _boolean(settings["enabled"], f"{path}.enabled")
-    _boolean(settings["include_unscaled"], f"{path}.include_unscaled")
 
     range_count = _integer(settings["range_count"], f"{path}.range_count")
     if range_count <= 0:
@@ -696,9 +725,16 @@ def _validate_tagged_threshold(
     threshold: ConfigDict,
     path: str,
     allowed_modes: set[str],
+    *,
+    with_enabled: bool = False,
 ) -> None:
-    _reject_unknown_keys(threshold, {"mode", "value"}, path)
-    _require_keys(threshold, {"mode", "value"}, path)
+    keys = {"mode", "value"}
+    if with_enabled:
+        keys.add("enabled")
+    _reject_unknown_keys(threshold, keys, path)
+    _require_keys(threshold, keys, path)
+    if with_enabled:
+        _boolean(threshold["enabled"], f"{path}.enabled")
     _choice(threshold["mode"], allowed_modes, f"{path}.mode")
     _nonnegative_number(threshold["value"], f"{path}.value")
 
@@ -790,24 +826,18 @@ def _validate_io_settings(settings: ConfigDict) -> None:
 def _validate_execution_settings(settings: ConfigDict) -> None:
     path = "execution_settings"
     keys = {
-        "external_chi2_workers",
         "model_processing_order",
-        "orbit_family_integration_in_parallel",
         "orbit_workers",
         "weight_workers",
     }
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
-    for key in ("external_chi2_workers", "orbit_workers", "weight_workers"):
+    for key in ("orbit_workers", "weight_workers"):
         _worker_count(settings[key], f"{path}.{key}")
     _choice(
         settings["model_processing_order"],
         {"model_by_model", "stage_by_stage"},
         f"{path}.model_processing_order",
-    )
-    _boolean(
-        settings["orbit_family_integration_in_parallel"],
-        f"{path}.orbit_family_integration_in_parallel",
     )
 
 

@@ -148,7 +148,8 @@ weight_solver_settings:
   regularisation: 0
   lum_intr_rel_err: 0.01
   sb_proj_rel_err: 0.01
-  reattempt_failures: true
+  # Retry behavior is not implemented; configuration currently requires false.
+  reattempt_failures: false
 
 parameter_space_settings:
   generator_type: "GridSearch"
@@ -162,8 +163,6 @@ parameter_space_settings:
       minimum: 0.1
       maximum: 10.0
     spacing: "logarithmic"
-    # Ensure that mass scale factor 1.0 is represented exactly once.
-    include_unscaled: true
   generator_settings:
     # Modes: "absolute" or "fraction_of_sqrt_2n_observations".
     delta_chi2_threshold:
@@ -171,11 +170,19 @@ parameter_space_settings:
       value: 0.1
   stopping_criteria:
     # Modes: "absolute" or "relative".
+    # Set enabled false to leave another criterion or the parameter generator
+    # responsible for ending the search. This does not disable termination
+    # when the search has never established a successful model. Mode and value
+    # remain validated.
     minimum_delta_chi2:
+      enabled: true
       mode: "absolute"
       value: 0.5
-    n_max_mods: 3
-    n_max_iter: 10
+    # Soft target checked before starting a new iteration. Every model in an
+    # iteration already underway is evaluated, so the final count may exceed it.
+    target_model_count: 3
+    # Maximum number of additional iterations performed by the current run.
+    n_new_iter: 10
 
 analysis_settings:
   orbit_decomposition:
@@ -200,12 +207,12 @@ io_settings:
   all_models_file: "all_models.ecsv"
 
 execution_settings:
+  # Reserved for future schedulers. These counts are validated and retained in
+  # resolved configuration, but currently do not affect execution.
   orbit_workers: "all_available"
   weight_workers: "all_available"
-  external_chi2_workers: "all_available"
   # "model_by_model" completes orbit integration and weight solving for each
   # model in turn. "stage_by_stage" integrates all models' orbit libraries
-  # before starting the weight-solving stage.
+  # before starting the weight-solving stage, but is not implemented yet and
+  # raises NotImplementedError at runtime construction/run.
   model_processing_order: "model_by_model"
-  # Whether the box- and tube-orbit families are integrated concurrently.
-  orbit_family_integration_in_parallel: false
