@@ -71,8 +71,8 @@ block.
 6. Validates the generic resolved schema and registry references without
    constructing runtime objects. Type-specific kinematics and population-file
    validation is deferred to runtime construction.
-7. Preserves the original user YAML, portable resolved configuration, and an
-   invocation-specific run manifest below
+7. Preserves the portable resolved configuration and a run-specific manifest
+   below
    `<output_directory>/config_repository/`.
 
 Mapping values are merged recursively. A user value replaces a default scalar
@@ -438,11 +438,9 @@ config_repository/
 │   └── 0000-a81c09f3/
 │       ├── resolved_config.yaml
 │       └── compatibility_signature.yaml
-├── user_configs/
-│   └── 0000-21dc503a-user_config.yaml
 ├── manifests/
 │   └── 0000-run_manifest.yaml
-└── iteration_config_log.ecsv
+└── run_config_log.ecsv
 ```
 
 - `configurations/` holds semantic configuration versions. Each resolved file
@@ -450,27 +448,27 @@ config_repository/
   the workspace root. TNT hashes a canonical representation in which mapping
   order and YAML presentation do not matter, while list order and values do.
   An existing snapshot is reused when this semantic hash matches.
-- `user_configs/` holds byte-for-byte submitted files, including comments and
-  formatting. Identical bytes reuse an existing artifact; differently
-  formatted files remain distinct even when they resolve to the same semantic
-  configuration.
-- `manifests/` receives one new manifest for every TNT invocation. A manifest
-  records its invocation and configuration-snapshot identifiers, paths
-  relative to the configuration-repository root, the user-file, resolved-file,
-  and semantic configuration hashes, TNT and dependency versions, Git state,
-  Python and platform details, hostname, scheduler identifiers, logfile
-  location, and random-seed state.
+- `manifests/` receives one new manifest for every TNT run. A manifest records
+  its run ID and configuration-snapshot identifiers, paths relative to the
+  configuration-repository root, resolved-file and semantic configuration
+  hashes, TNT and dependency versions, Git state, Python and platform details,
+  hostname, scheduler identifiers, logfile location, and random-seed state.
+  The submitted user profile, its source path, and its byte hash are not
+  persisted.
 
 Numeric prefixes provide stable human-readable identifiers. Short hash
 prefixes in artifact names aid inspection; manifests retain the complete
-SHA-256 hashes. `Configuration.user_config_path`, `Configuration.resolved_path`,
-and `Configuration.run_manifest_path` identify the artifacts selected or
-created by the current invocation.
+SHA-256 hashes. `Configuration.resolved_path` and
+`Configuration.run_manifest_path` identify the artifacts selected or created
+by the current run. `Configuration.run_id` records the numeric run ID.
+`Configuration.source_path` remains available only in memory for the active
+process.
 
-`iteration_config_log.ecsv` is created when the model-search caller explicitly
-persists its returned `IterationConfigLog`; configuration preparation itself
-does not create or update the log. It links each cumulative search iteration
-to one immutable file under `configurations/`.
+`run_config_log.ecsv` is created when the model-search caller explicitly
+persists its returned `RunConfigLog`; configuration preparation itself does
+not create or update the log. It maps each cumulative search iteration to a
+run ID. The corresponding immutable run manifest links that ID to its resolved
+configuration snapshot and execution provenance.
 
 `compatibility_signature.yaml` is added at runtime construction, after TNT has
 loaded and validated the referenced scientific inputs. It records the
@@ -485,7 +483,7 @@ stage must update it once the actual seed is known.
 
 Configuration preparation creates the output directory and its
 `config_repository` subdirectories when necessary. Existing artifacts are
-never replaced. Repeating an identical invocation therefore reuses the same
-resolved and user configuration files while creating a new manifest. It does
+never replaced. Repeating an identical run configuration therefore reuses the
+same resolved configuration file while creating a new run manifest. It does
 not instantiate components, load observational data, checksum observational
 inputs, or execute modelling code.

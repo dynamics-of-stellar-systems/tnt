@@ -72,7 +72,7 @@ produces 11 models by completing one potential-rescaling batch.
 As a related stopping-contract update, the former cumulative `n_max_iter` is
 now `n_new_iter`: the maximum number of additional iterations performed by the
 current `ModelIterator.run()` call. A resumed run receives a fresh allowance,
-while model and `IterationConfigLog` iteration numbers remain cumulative. The
+while model and `RunConfigLog` iteration numbers remain cumulative. The
 runtime, validation schema, defaults, fixtures, tests, and documentation use
 the new name; the legacy key is rejected rather than silently translated.
 
@@ -206,7 +206,7 @@ The main pieces are:
 - `Model`: records potential, completion flags, weights, chi-squared values,
   and iteration.
 - `AllModels`: flattens results into an Astropy `QTable` with ECSV persistence.
-- `IterationConfigLog`: associates iterations with archived resolved
+- `RunConfigLog`: associates iterations with TNT runs and their archived resolved
   configurations.
 - Potential rescaling: reuses one orbit library across nearby overall mass
   scales.
@@ -223,7 +223,7 @@ doubles.
 Do not review the approximately 1,335 added lines sequentially. A more
 productive sequence is:
 
-1. Review the contracts in `Model`, `AllModels`, and `IterationConfigLog`.
+1. Review the contracts in `Model`, `AllModels`, and `RunConfigLog`.
 2. Decide exact semantics for model limits, iterations, failures, and resume.
 3. Review `ModelIterator.run()` against those decisions.
 4. Review `_evaluate()` and mass-rescaling reuse.

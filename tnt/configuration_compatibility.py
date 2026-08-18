@@ -18,7 +18,7 @@ from tnt.configuration import (
     _read_yaml_bytes_mapping,
     _write_yaml_immutably,
 )
-from tnt.iteration_config_log import ConfigurationSnapshotReference
+from tnt.run_config_log import ConfigurationSnapshotReference
 
 COMPATIBILITY_CONTRACT_VERSION = 1
 COMPATIBILITY_SIGNATURE_FILENAME = "compatibility_signature.yaml"

@@ -27,8 +27,8 @@
 - Configuration preparation is implemented by `tnt.Configuration`. Its
   `read()` method loads the user YAML, recursively merges package defaults,
   resolves dynamic and kinematics-type defaults, validates the resulting
-  data, and atomically publishes immutable resolved snapshots, byte-exact user
-  files, and invocation manifests below
+  data, and atomically publishes immutable resolved snapshots and run
+  manifests below
   `<output_directory>/config_repository/`. It does not instantiate scientific
   runtime objects.
 - Preparation-stage validation rejects duplicate keys, unknown or missing
@@ -57,8 +57,8 @@
   a required sibling `unit` applying to the parameter value and generator
   range. Dimensionless values remain plain numbers and reject a `unit`.
   Configuration preparation converts supported quantities to plain
-  internal-unit numbers before validation and resolved-YAML generation; the
-  byte-identical user copy retains the submitted notation.
+  internal-unit numbers before validation and resolved-YAML generation. The
+  submitted profile is transient input and is not archived by TNT.
 - The first unit-aware schema covers `cosmological_parameters.H0`,
   `system_attributes.distance`, explicit kinematics histogram width and center,
   Gauss-Hermite `v` and `sigma` systematic uncertainties, Plummer `m` and `a`,
@@ -100,23 +100,23 @@
   Configuration preparation requires both path strings but creates only the
   output directory and configuration repository.
 - The configuration repository separates semantic snapshots under
-  `configurations/`, byte-identical submitted files under `user_configs/`, and
-  one immutable manifest per invocation under `manifests/`. Semantic identity
-  hashes a canonical resolved portable configuration, ignoring mapping order
-  and YAML presentation but preserving list order and values. Identical
-  semantic configurations and identical user-file bytes are deduplicated
-  independently. Each manifest records the selected snapshot and user
-  artifact, their complete hashes, software versions, Git state,
-  Python/platform/host context, scheduler identifiers, logfile location, and
-  orbit random-seed state.
-- `IterationConfigLog` persists separately as
-  `config_repository/iteration_config_log.ecsv`, with one row per cumulative
-  model-search iteration. Rows record the snapshot ID, complete semantic hash,
-  and repository-relative resolved path. Reads and atomic writes validate the
-  referenced immutable files. `ModelIterator.run()` still returns rather than
-  writes both `AllModels` and this log, so the execution layer must load and
-  save them together. The log records provenance only; it does not implement
-  the configuration-compatibility decision itself.
+  `configurations/` from one immutable manifest per TNT run under
+  `manifests/`. Semantic identity hashes a canonical resolved portable
+  configuration, ignoring mapping order and YAML presentation but preserving
+  list order and values. Identical semantic configurations reuse one snapshot.
+  The submitted user profile, its source path, and its byte hash are not
+  persisted. Each manifest records the selected snapshot and its hashes,
+  software versions, Git state, Python/platform/host context, scheduler
+  identifiers, logfile location, and orbit random-seed state.
+- `RunConfigLog` persists separately as
+  `config_repository/run_config_log.ecsv`, with one row per cumulative
+  model-search iteration. Rows map iterations to run IDs. Reads and atomic
+  writes validate the referenced immutable run manifests; those manifests are
+  the authoritative links to resolved configuration snapshots and execution
+  provenance. `ModelIterator.run()` still returns rather than writes both
+  `AllModels` and this log, so the execution layer must load and save them
+  together. The log records provenance only; it does not implement the
+  configuration-compatibility decision itself.
 - Runtime construction creates a versioned `compatibility_signature.yaml`
   beside each resolved snapshot and checks it before a resumed model-search
   proposal. Contract version 1 excludes operational/search/presentation fields
@@ -125,11 +125,11 @@
   potential/parameter schema, MGE and observational settings, all
   `numerics_settings`, orbit-library settings, and weight-solver settings.
   Scientific input paths are excluded but their raw SHA-256 hashes are
-  included. Every historical snapshot in `IterationConfigLog` must match;
-  `which_chi2` must be finite for every successful historical model, and the
-  required potential parameter columns must exist. Negative configured orbit
-  seeds are valid for fresh and continued runs; changing the configured seed
-  between runs remains incompatible with contract version 1.
+  included. Every historical snapshot reached through `RunConfigLog` must
+  match; `which_chi2` must be finite for every successful historical model,
+  and the required potential parameter columns must exist. Negative configured
+  orbit seeds are valid for fresh and continued runs; changing the configured
+  seed between runs remains incompatible with contract version 1.
 - Configuration preparation cannot record a generated seed or observational
   input checksums because neither exists yet. A negative seed is recorded as
   `pending_generation`; the execution phase must update the effective seed.
@@ -263,8 +263,8 @@
   model and potential rescaling in that iteration. The final count may exceed
   the target; other stopping conditions may end the search below it.
 - `parameter_space_settings.stopping_criteria.n_new_iter` is the maximum number
-  of additional iterations for the current `ModelIterator.run()` invocation,
-  not a cumulative limit across resumed runs. Model and `IterationConfigLog`
+  of additional iterations for the current `ModelIterator.run()` call,
+  not a cumulative limit across resumed runs. Model and `RunConfigLog`
   iteration numbers remain cumulative; a resumed call measures its new
   allowance from the persisted `AllModels.n_iterations()` starting point.
 - `parameter_space_settings.potential_rescalings` controls optional scaling of

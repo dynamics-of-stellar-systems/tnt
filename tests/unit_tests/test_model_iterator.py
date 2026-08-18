@@ -39,11 +39,11 @@ if "galax" not in sys.modules:
 
 import tnt.model_iterator as model_iterator_module
 from tnt.configuration_compatibility import ConfigurationCompatibilitySignature
-from tnt.iteration_config_log import (
-    ConfigurationSnapshotReference,
-    IterationConfigLog,
-)
 from tnt.model_iterator import ModelIterator
+from tnt.run_config_log import (
+    ConfigurationSnapshotReference,
+    RunConfigLog,
+)
 
 # ---------------------------------------------------------------------------
 # Fakes standing in for Potential / OrbitLibrary / AbstractWeightSolver.
@@ -152,6 +152,7 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
         "orbit_workers": "all_available",
         "weight_workers": "all_available",
     }
+    iterator.run_id = 0
     iterator.configuration_snapshot = _snapshot_reference()
     iterator.compatibility_signature = ConfigurationCompatibilitySignature.create(
         {"potential": {}},
@@ -465,9 +466,9 @@ def test_run_rejects_mismatched_models_and_config_log(
 
     with pytest.raises(
         ValueError,
-        match="AllModels and IterationConfigLog must describe the same number",
+        match="AllModels and RunConfigLog must describe the same number",
     ):
-        iterator.run(models, IterationConfigLog())
+        iterator.run(models, RunConfigLog())
 
 
 def test_run_continues_after_later_iteration_has_no_success(
@@ -548,6 +549,7 @@ def test_run_allows_n_new_iter_and_keeps_cumulative_labels_across_calls(
         "ensure_resume_compatible",
         lambda *_: None,
     )
+    monkeypatch.setattr(RunConfigLog, "snapshot_references", lambda *_args, **_kw: [])
     iterator = _make_iterator(
         parameter_generator=FakeParameterGenerator(n_rounds=2),
         configuration_snapshot=_snapshot_reference(),
@@ -560,15 +562,14 @@ def test_run_allows_n_new_iter_and_keeps_cumulative_labels_across_calls(
     assert len(models) == 2
 
     iterator.parameter_generator = FakeParameterGenerator(n_rounds=2)
+    iterator.run_id = 1
     iterator.configuration_snapshot = _snapshot_reference(1, "b" * 64)
     models, config_log = iterator.run(models, config_log)
 
     assert len(models) == 4
     assert models.n_iterations() == 4
     assert len(config_log) == 4
-    paths = list(config_log.table["resolved_config_path"])
-    assert paths[:2] == ["configurations/0000-aaaaaaaa/resolved_config.yaml"] * 2
-    assert paths[2:] == ["configurations/0001-bbbbbbbb/resolved_config.yaml"] * 2
+    assert list(config_log.table["run_id"]) == [0, 0, 1, 1]
 
 
 def test_run_logs_improving_chi2_stopping_reason(

@@ -71,37 +71,44 @@ table contains models but none completed successfully, TNT terminates without
 asking the generator for another round because no valid chi2 base was
 established by the earlier run.
 
-`run()` also accepts and returns an `IterationConfigLog`: one row per round,
-recording the configuration snapshot ID, complete semantic SHA-256 hash, and
-repository-relative `resolved_config_path` in effect for it. Multiple rounds
-may reference the same immutable snapshot. A search can be paused and resumed
-under an edited configuration, so `AllModels` and `Model.iteration` alone
-can't show which config file produced a given round.
+`run()` also accepts and returns a `RunConfigLog`: one row per round, mapping
+the cumulative iteration number to the ID of the TNT run that produced it.
+Multiple rounds may reference the same run. The run's immutable manifest is
+the authoritative link to its resolved configuration snapshot and execution
+provenance. A search can be paused and resumed under an edited configuration,
+so `AllModels` and `Model.iteration` alone cannot show which run produced a
+given round.
 
 The log has a fixed persisted location at
-`config_repository/iteration_config_log.ecsv`. Its `read()` and `write()`
-methods validate contiguous iteration IDs and snapshot references; `write()`
-uses atomic replacement so an interrupted write cannot destroy the previous
-log. Model search deliberately returns both state objects instead of writing
-either one internally. The calling execution layer must load and save
-`AllModels` and `IterationConfigLog` together; `run()` rejects a pair that
-describes different numbers of iterations:
+`config_repository/run_config_log.ecsv`. Its `read()` and `write()` methods
+validate contiguous iteration IDs, nonnegative run IDs, and every referenced
+run manifest; `write()` uses atomic replacement so an interrupted write cannot
+destroy the previous log. Model search deliberately returns both state objects
+instead of writing either one internally. The calling execution layer must
+load and save `AllModels` and `RunConfigLog` together; `run()` rejects a pair
+that describes different numbers of iterations:
 
 ```python
 from pathlib import Path
 
 from tnt.all_models import AllModels
-from tnt.iteration_config_log import IterationConfigLog
+from tnt.model_iterator import ModelIterator
+from tnt.run_config_log import RunConfigLog
 
 output = Path(config.data["io_settings"]["output_directory"])
 models_path = output / config.data["io_settings"]["all_models_file"]
-log_path = IterationConfigLog.path_for(config.resolved_path)
+log_path = RunConfigLog.path_for(config.run_manifest_path)
+iterator = ModelIterator.from_configuration(
+    config.as_dict(),
+    config.unit_systems.internal,
+    config.run_manifest_path,
+)
 
 models = AllModels.read(models_path) if models_path.exists() else None
-config_log = IterationConfigLog.read(log_path) if log_path.exists() else None
-models, config_log = iterator.run(models, config_log)
+run_config_log = RunConfigLog.read(log_path) if log_path.exists() else None
+models, run_config_log = iterator.run(models, run_config_log)
 models.write(models_path)
-config_log.write(log_path)
+run_config_log.write(log_path)
 ```
 
 This log records provenance and verifies that referenced snapshots remain
@@ -112,8 +119,9 @@ that compatibility contract is a separate model-resume policy.
 
 Runtime construction writes a versioned `compatibility_signature.yaml` beside
 each immutable resolved configuration. Before a resumed `run()` asks the
-parameter generator for another round, TNT compares the current signature with
-every configuration snapshot referenced by `IterationConfigLog`. An
+parameter generator for another round, TNT follows the run IDs in
+`RunConfigLog` through their manifests and compares the current signature with
+every referenced configuration snapshot. An
 incompatible change raises `ConfigurationCompatibilityError` before models or
 the log are modified. The error lists the differing field paths.
 

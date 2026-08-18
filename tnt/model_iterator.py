@@ -36,10 +36,6 @@ from tnt.configuration_compatibility import (
     build_and_preserve_compatibility_signature,
     ensure_resume_compatible,
 )
-from tnt.iteration_config_log import (
-    ConfigurationSnapshotReference,
-    IterationConfigLog,
-)
 from tnt.kinematics import AbstractKinematics, build_kinematics
 from tnt.mge import LightMGE, MassMGE, build_mges
 from tnt.model import Model
@@ -57,6 +53,11 @@ from tnt.parameter_generator import (
 )
 from tnt.populations import Populations, build_populations
 from tnt.potential import Potential, build_potential
+from tnt.run_config_log import (
+    ConfigurationSnapshotReference,
+    RunConfigLog,
+    RunManifestReference,
+)
 from tnt.spatial_binnings import build_spatial_binnings
 from tnt.weight_solver import AbstractWeightSolver, OrbitWeights, build_weight_solver
 
@@ -86,6 +87,7 @@ class ModelIterator:
     which_chi2: str
     stopping_criteria: Mapping[str, Any]
     execution_settings: Mapping[str, Any]
+    run_id: int
     configuration_snapshot: ConfigurationSnapshotReference
     compatibility_signature: ConfigurationCompatibilitySignature
 
@@ -94,7 +96,7 @@ class ModelIterator:
         cls,
         config: Mapping[str, Any],
         unit_system: AbstractUnitSystem,
-        resolved_config_path: Path,
+        run_manifest_path: Path,
     ) -> Self:
         """Build a `ModelIterator` from a fully resolved configuration.
 
@@ -114,15 +116,13 @@ class ModelIterator:
             unit_system: The unit system to convert MGE/kinematics/
                 population quantities into, e.g.
                 `Configuration.unit_systems.internal`.
-            resolved_config_path: The archived `resolved_config.yaml` this
-                configuration was read from, e.g.
-                `Configuration.resolved_path` -- recorded for every round in
-                `run`'s `IterationConfigLog`.
+            run_manifest_path: The immutable run manifest associated with this
+                configuration, e.g. `Configuration.run_manifest_path`. Its run
+                ID is recorded for every round in `run`'s `RunConfigLog`.
         """
         _require_supported_model_processing_order(config["execution_settings"])
-        configuration_snapshot = ConfigurationSnapshotReference.from_resolved_config(
-            resolved_config_path
-        )
+        run_manifest = RunManifestReference.from_run_manifest(run_manifest_path)
+        configuration_snapshot = run_manifest.configuration_snapshot
         input_directory = config["io_settings"]["input_directory"]
         parameter_space_settings = config["parameter_space_settings"]
 
@@ -164,6 +164,7 @@ class ModelIterator:
             which_chi2=parameter_space_settings["which_chi2"],
             stopping_criteria=parameter_space_settings["stopping_criteria"],
             execution_settings=config["execution_settings"],
+            run_id=run_manifest.run_id,
             configuration_snapshot=configuration_snapshot,
             compatibility_signature=compatibility_signature,
         )
@@ -171,8 +172,8 @@ class ModelIterator:
     def run(
         self,
         all_models: AllModels | None = None,
-        config_log: IterationConfigLog | None = None,
-    ) -> tuple[AllModels, IterationConfigLog]:
+        run_config_log: RunConfigLog | None = None,
+    ) -> tuple[AllModels, RunConfigLog]:
         """Iterate until a stopping criterion is met.
 
         Each round asks `parameter_generator` for the next `ParameterSet`s
@@ -204,35 +205,40 @@ class ModelIterator:
         that produce successful models, seeded from `all_models`'s own best if
         it contains a successful model.
 
-        Also records, in `config_log`, that `self.configuration_snapshot` is
-        the config in effect for each round -- one row per round, not per
-        `Model` -- since a resumed search can be picked up under an edited
-        configuration, and `AllModels`/`Model.iteration` alone can't show
-        which config file was active for a given round.
+        Also records, in `run_config_log`, the ID of the TNT run that produced
+        each round -- one row per round, not per `Model`. The immutable run
+        manifest links that run ID to its resolved configuration and execution
+        provenance.
 
         Args:
             all_models: Models evaluated in a previous run to resume from,
                 or `None` to start fresh.
-            config_log: The iteration/config-path log from a previous run
-                to resume, or `None` to start fresh.
+            run_config_log: The iteration-to-run log from previous runs to
+                resume, or `None` to start fresh.
 
         Returns:
-            The final `AllModels` and `IterationConfigLog`, covering every
+            The final `AllModels` and `RunConfigLog`, covering every
             model and round recorded so far.
         """
         _require_supported_model_processing_order(self.execution_settings)
         models = AllModels() if all_models is None else all_models
-        config_log = IterationConfigLog() if config_log is None else config_log
-        if len(config_log) != models.n_iterations():
+        run_config_log = (
+            RunConfigLog() if run_config_log is None else run_config_log
+        )
+        if len(run_config_log) != models.n_iterations():
             raise ValueError(
-                "AllModels and IterationConfigLog must describe the same number "
+                "AllModels and RunConfigLog must describe the same number "
                 f"of iterations; received {models.n_iterations()} and "
-                f"{len(config_log)}, respectively."
+                f"{len(run_config_log)}, respectively."
             )
         ensure_resume_compatible(
             self.compatibility_signature,
             self.configuration_snapshot,
-            config_log.snapshot_references(self.configuration_snapshot.repository),
+            run_config_log.snapshot_references(
+                self.configuration_snapshot.repository,
+                current_run_id=self.run_id,
+                current_snapshot=self.configuration_snapshot,
+            ),
             models,
             self.which_chi2,
         )
@@ -251,7 +257,7 @@ class ModelIterator:
                 models.n_iterations(),
                 len(models),
             )
-            return models, config_log
+            return models, run_config_log
 
         previous_best_chi2: float | None = (
             models.best(self.which_chi2)[self.which_chi2]
@@ -268,7 +274,7 @@ class ModelIterator:
                 break
 
             iteration = models.n_iterations()
-            config_log = config_log.append(iteration, self.configuration_snapshot)
+            run_config_log = run_config_log.append(iteration, self.run_id)
             n_before = len(models)
             n_successful = 0
             for parameters in proposed:
@@ -317,7 +323,7 @@ class ModelIterator:
             models.n_iterations(),
             len(models),
         )
-        return models, config_log
+        return models, run_config_log
 
     def _chi2_stopped_improving(
         self, previous_best_chi2: float, best_chi2: float

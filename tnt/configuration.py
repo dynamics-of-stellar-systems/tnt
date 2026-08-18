@@ -32,7 +32,6 @@ from tnt.units import (
 
 CONFIG_REPOSITORY_DIRECTORY = "config_repository"
 CONFIGURATIONS_DIRECTORY = "configurations"
-USER_CONFIGS_DIRECTORY = "user_configs"
 MANIFESTS_DIRECTORY = "manifests"
 RESOLVED_CONFIG_FILENAME = "resolved_config.yaml"
 HASH_PREFIX_LENGTH = 8
@@ -56,7 +55,7 @@ class Configuration:
         self.portable_data: ConfigDict = {}
         self.source_path: Path | None = None
         self.workspace_root: Path | None = None
-        self.user_config_path: Path | None = None
+        self.run_id: int | None = None
         self.resolved_path: Path | None = None
         self.run_manifest_path: Path | None = None
         self.unit_systems: UnitSystems | None = None
@@ -83,12 +82,9 @@ class Configuration:
             ValueError: If required configuration values are absent or invalid.
         """
         root = _resolve_workspace_root(workspace_root)
-        source_path, user_config_bytes, merged_config = _load_merged_configuration(
-            filename
-        )
+        source_path, merged_config = _load_merged_configuration(filename)
         return self._resolve_and_write(
             source_path,
-            user_config_bytes,
             merged_config,
             root,
         )
@@ -96,7 +92,6 @@ class Configuration:
     def _resolve_and_write(
         self,
         source_path: Path,
-        user_config_bytes: bytes,
         merged_config: ConfigDict,
         workspace_root: Path,
         logfile_path: Path | None = None,
@@ -127,24 +122,16 @@ class Configuration:
             resolved_bytes,
             semantic_sha256,
         )
-        user_config_path = _preserve_user_configuration(
-            repository,
-            user_config_bytes,
-        )
-        run_manifest_path = _preserve_run_manifest(
+        run_manifest_path, run_id = _preserve_run_manifest(
             repository=repository,
-            source_path=source_path,
             workspace_root=workspace_root,
             runtime_config=runtime_config,
-            user_config_path=user_config_path,
             resolved_path=resolved_path,
             logfile_path=logfile_path,
-            user_config_bytes=user_config_bytes,
             configuration_version=configuration_version,
             semantic_sha256=semantic_sha256,
         )
 
-        _LOGGER.info("User configuration preserved at %s.", user_config_path)
         _LOGGER.info("Resolved configuration preserved at %s.", resolved_path)
         _LOGGER.info("Run manifest written to %s.", run_manifest_path)
 
@@ -152,7 +139,7 @@ class Configuration:
         self.portable_data = portable_config
         self.source_path = source_path.resolve()
         self.workspace_root = workspace_root
-        self.user_config_path = user_config_path.resolve()
+        self.run_id = run_id
         self.resolved_path = resolved_path.resolve()
         self.run_manifest_path = run_manifest_path.resolve()
         self.unit_systems = unit_systems
@@ -199,7 +186,7 @@ def configuration_session(
         ValueError: If bootstrap or full configuration data is invalid.
     """
     root = _resolve_workspace_root(workspace_root)
-    source_path, user_config_bytes, merged_config = _load_merged_configuration(filename)
+    source_path, merged_config = _load_merged_configuration(filename)
     bootstrap_config = _logging_bootstrap_configuration(merged_config, root)
 
     with configure_logging(bootstrap_config) as logging_session:
@@ -211,7 +198,6 @@ def configuration_session(
         try:
             config._resolve_and_write(
                 source_path,
-                user_config_bytes,
                 merged_config,
                 root,
                 logging_session.logfile_path,
@@ -231,7 +217,7 @@ def configuration_session(
 
 def _load_merged_configuration(
     filename: str | Path,
-) -> tuple[Path, bytes, ConfigDict]:
+) -> tuple[Path, ConfigDict]:
     """Load one user profile and merge it with packaged defaults."""
     source_path = Path(filename).expanduser()
     _LOGGER.debug("Reading user configuration from %s.", source_path)
@@ -241,7 +227,7 @@ def _load_merged_configuration(
         "user configuration",
     )
     default_config = _read_packaged_defaults()
-    return source_path, user_config_bytes, _deep_merge(default_config, user_config)
+    return source_path, _deep_merge(default_config, user_config)
 
 
 def _logging_bootstrap_configuration(
@@ -584,66 +570,39 @@ def _preserve_resolved_configuration(
         return path, version
 
 
-def _preserve_user_configuration(repository: Path, content: bytes) -> Path:
-    """Reuse or create one immutable byte-exact submitted configuration."""
-    directory = repository / USER_CONFIGS_DIRECTORY
-    content_sha256 = sha256(content).hexdigest()
-    for path in sorted(directory.glob("*-user_config.yaml")):
-        if sha256(path.read_bytes()).hexdigest() == content_sha256:
-            return path
-
-    directory.mkdir(parents=True, exist_ok=True)
-    while True:
-        version = _next_index(directory)
-        path = directory / (
-            f"{version:04d}-{content_sha256[:HASH_PREFIX_LENGTH]}-user_config.yaml"
-        )
-        try:
-            _write_bytes_immutably(content, path)
-        except FileExistsError:
-            continue
-        return path
-
-
 def _preserve_run_manifest(
     *,
     repository: Path,
-    source_path: Path,
     workspace_root: Path,
     runtime_config: ConfigDict,
-    user_config_path: Path,
     resolved_path: Path,
     logfile_path: Path | None,
-    user_config_bytes: bytes,
     configuration_version: int,
     semantic_sha256: str,
-) -> Path:
-    """Create one immutable manifest for this TNT invocation."""
+) -> tuple[Path, int]:
+    """Create one immutable manifest for this TNT run."""
     directory = repository / MANIFESTS_DIRECTORY
     directory.mkdir(parents=True, exist_ok=True)
     while True:
-        invocation_id = _next_index(directory)
-        path = directory / f"{invocation_id:04d}-run_manifest.yaml"
+        run_id = _next_index(directory)
+        path = directory / f"{run_id:04d}-run_manifest.yaml"
         manifest = _build_run_manifest(
-            source_path=source_path,
             workspace_root=workspace_root,
             runtime_config=runtime_config,
             repository=repository,
-            user_config_path=user_config_path,
             resolved_path=resolved_path,
             run_manifest_path=path,
             logfile_path=logfile_path,
-            user_config_bytes=user_config_bytes,
             resolved_config_bytes=resolved_path.read_bytes(),
             configuration_version=configuration_version,
             semantic_sha256=semantic_sha256,
-            invocation_id=invocation_id,
+            run_id=run_id,
         )
         try:
             _write_yaml_immutably(manifest, path, "run manifest")
         except FileExistsError:
             continue
-        return path
+        return path, run_id
 
 
 def _next_index(directory: Path) -> int:
@@ -671,21 +630,18 @@ def _repository_relative(path: Path, repository: Path) -> str:
 
 def _build_run_manifest(
     *,
-    source_path: Path,
     workspace_root: Path,
     runtime_config: ConfigDict,
     repository: Path,
-    user_config_path: Path,
     resolved_path: Path,
     run_manifest_path: Path,
     logfile_path: Path | None,
-    user_config_bytes: bytes,
     resolved_config_bytes: bytes,
     configuration_version: int,
     semantic_sha256: str,
-    invocation_id: int,
+    run_id: int,
 ) -> ConfigDict:
-    """Build provenance for this concrete configuration preparation."""
+    """Build provenance for this concrete TNT run."""
     io_settings = _optional_mapping(runtime_config, "io_settings", "configuration")
     orbit_settings = _optional_mapping(
         runtime_config,
@@ -700,7 +656,7 @@ def _build_run_manifest(
     )
     return {
         "manifest_version": 2,
-        "invocation_id": invocation_id,
+        "run_id": run_id,
         "prepared_at_utc": datetime.now(UTC).isoformat(),
         "tnt": {
             "version": _package_version("tnt"),
@@ -730,14 +686,11 @@ def _build_run_manifest(
         "configuration": {
             "snapshot_id": configuration_version,
             "semantic_sha256": semantic_sha256,
-            "source": str(source_path.resolve()),
-            "user_copy": _repository_relative(user_config_path, repository),
             "resolved": _repository_relative(resolved_path, repository),
             "manifest": _repository_relative(run_manifest_path, repository),
             "logfile": str(logfile_path.resolve()) if logfile_path else None,
             "input_directory": io_settings["input_directory"],
             "output_directory": io_settings["output_directory"],
-            "user_config_sha256": sha256(user_config_bytes).hexdigest(),
             "resolved_config_sha256": sha256(resolved_config_bytes).hexdigest(),
         },
         "randomness": {

@@ -3,7 +3,7 @@
 Unlike tests/unit_tests/test_model_iterator.py (which fakes every
 collaborator), this builds the `ModelIterator` via the real
 `from_configuration`, against the real `Configuration`,
-`SinglePointParameterGenerator`, `AllModels`, and `IterationConfigLog`.
+`SinglePointParameterGenerator`, `AllModels`, and `RunConfigLog`.
 Only `build_potential`, `build_weight_solver`, `build_orbit_sampler`, and
 `build_orbit_dithering` are faked, since potential construction, orbit
 integration, and weight solving are still unimplemented (see
@@ -42,8 +42,8 @@ import pytest
 
 import tnt.model_iterator as model_iterator_module
 from tnt import Configuration
-from tnt.iteration_config_log import IterationConfigLog
 from tnt.model_iterator import ModelIterator
+from tnt.run_config_log import RunConfigLog
 
 # ---------------------------------------------------------------------------
 # Fakes standing in for Potential / OrbitLibrary / AbstractWeightSolver --
@@ -128,8 +128,9 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
         lambda settings: "fake-dithering",
     )
 
+    assert config.run_manifest_path is not None
     iterator = ModelIterator.from_configuration(
-        resolved, config.unit_systems.internal, config.resolved_path
+        resolved, config.unit_systems.internal, config.run_manifest_path
     )
 
     models, config_log = iterator.run()
@@ -143,18 +144,13 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert len(models) == 11
     assert models.n_iterations() == 1
     assert len(config_log) == 1
-    assert config.resolved_path is not None
-    assert (
-        config_log.table["resolved_config_path"][0]
-        == iterator.configuration_snapshot.resolved_config_path
-    )
-    log_path = IterationConfigLog.path_for(config.resolved_path)
+    assert config.run_id is not None
+    assert config_log.table["run_id"][0] == config.run_id
+    log_path = RunConfigLog.path_for(config.run_manifest_path)
     config_log.write(log_path)
-    restored_log = IterationConfigLog.read(log_path)
+    restored_log = RunConfigLog.read(log_path)
     assert len(restored_log) == 1
-    assert restored_log.table["semantic_sha256"][0] == config_log.table[
-        "semantic_sha256"
-    ][0]
+    assert restored_log.table["run_id"][0] == config.run_id
 
     masses = sorted(10.0 / value for value in models.table["kinchi2"])
     expected_masses = sorted([1.0, *np.geomspace(0.1, 10.0, 10)])
@@ -180,11 +176,12 @@ def test_model_iterator_rejects_stage_by_stage_before_runtime_construction(
     config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
     resolved = config.as_dict()
     resolved["execution_settings"]["model_processing_order"] = "stage_by_stage"
+    assert config.run_manifest_path is not None
 
     with pytest.raises(
         NotImplementedError,
         match=r"model_processing_order='stage_by_stage' is not implemented",
     ):
         ModelIterator.from_configuration(
-            resolved, config.unit_systems.internal, config.resolved_path
+            resolved, config.unit_systems.internal, config.run_manifest_path
         )

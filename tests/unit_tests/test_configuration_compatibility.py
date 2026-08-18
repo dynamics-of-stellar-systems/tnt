@@ -16,7 +16,7 @@ from tnt.configuration_compatibility import (
     build_and_preserve_compatibility_signature,
     ensure_resume_compatible,
 )
-from tnt.iteration_config_log import ConfigurationSnapshotReference
+from tnt.run_config_log import ConfigurationSnapshotReference
 
 
 def _write_inputs(directory: Path, suffix: str = "") -> None:

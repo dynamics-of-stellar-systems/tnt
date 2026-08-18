@@ -153,13 +153,8 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     assert "GH_sys_err" not in written["weight_solver_settings"]
     assert "PM_sys_err_factor" not in written["weight_solver_settings"]
 
-    assert config.user_config_path is not None
-    user_copy = config.user_config_path
-    assert user_copy.parent == repository / "user_configs"
-    assert user_copy.name.startswith("0000-")
-    assert user_copy.name.endswith("-user_config.yaml")
-    assert config.user_config_path == user_copy
-    assert user_copy.read_bytes() == user_path.read_bytes()
+    assert not (repository / "user_configs").exists()
+    assert config.source_path == user_path
 
     assert config.run_manifest_path is not None
     manifest_path = config.run_manifest_path
@@ -167,7 +162,8 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     assert config.run_manifest_path == manifest_path
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     assert manifest["manifest_version"] == 2
-    assert manifest["invocation_id"] == 0
+    assert manifest["run_id"] == 0
+    assert config.run_id == 0
     assert set(manifest["tnt"]) == {
         "version",
         "git_commit",
@@ -175,12 +171,18 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     }
     assert "unxt" in manifest["dependencies"]
     assert manifest["execution"]["workspace_root"] == str(tmp_path)
-    assert manifest["configuration"]["source"] == str(user_path)
+    assert set(manifest["configuration"]) == {
+        "input_directory",
+        "logfile",
+        "manifest",
+        "output_directory",
+        "resolved",
+        "resolved_config_sha256",
+        "semantic_sha256",
+        "snapshot_id",
+    }
     assert manifest["configuration"]["snapshot_id"] == 0
     assert len(manifest["configuration"]["semantic_sha256"]) == 64
-    assert manifest["configuration"]["user_copy"] == str(
-        user_copy.relative_to(repository)
-    )
     assert manifest["configuration"]["resolved"] == str(
         expected_path.relative_to(repository)
     )
@@ -190,10 +192,6 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     assert manifest["configuration"]["input_directory"] == str(tmp_path / "input")
     assert manifest["configuration"]["output_directory"] == str(output_directory)
     assert manifest["configuration"]["logfile"] is None
-    assert (
-        manifest["configuration"]["user_config_sha256"]
-        == sha256(user_path.read_bytes()).hexdigest()
-    )
     assert (
         manifest["configuration"]["resolved_config_sha256"]
         == sha256(expected_path.read_bytes()).hexdigest()
@@ -205,9 +203,7 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     }
 
 
-def test_repository_deduplicates_semantic_and_source_configurations(
-    tmp_path: Path,
-) -> None:
+def test_repository_deduplicates_semantic_configurations(tmp_path: Path) -> None:
     first_user_path = tmp_path / "first.yaml"
     second_user_path = tmp_path / "second.yaml"
     output_directory = tmp_path / "output"
@@ -223,11 +219,9 @@ def test_repository_deduplicates_semantic_and_source_configurations(
     reformatted = Configuration().read(second_user_path, workspace_root=tmp_path)
 
     assert first.resolved_path == repeated.resolved_path == reformatted.resolved_path
-    assert first.user_config_path == repeated.user_config_path
-    assert reformatted.user_config_path != first.user_config_path
     repository = output_directory / "config_repository"
     assert len(list((repository / "configurations").iterdir())) == 1
-    assert len(list((repository / "user_configs").iterdir())) == 2
+    assert not (repository / "user_configs").exists()
     manifests = sorted((repository / "manifests").glob("*-run_manifest.yaml"))
     assert [path.name for path in manifests] == [
         "0000-run_manifest.yaml",
@@ -237,20 +231,12 @@ def test_repository_deduplicates_semantic_and_source_configurations(
     manifest_data = [
         yaml.safe_load(path.read_text(encoding="utf-8")) for path in manifests
     ]
-    assert [manifest["invocation_id"] for manifest in manifest_data] == [0, 1, 2]
+    assert [manifest["run_id"] for manifest in manifest_data] == [0, 1, 2]
     assert [manifest["configuration"]["snapshot_id"] for manifest in manifest_data] == [
         0,
         0,
         0,
     ]
-    assert (
-        manifest_data[0]["configuration"]["user_copy"]
-        == manifest_data[1]["configuration"]["user_copy"]
-    )
-    assert (
-        manifest_data[2]["configuration"]["user_copy"]
-        != manifest_data[0]["configuration"]["user_copy"]
-    )
 
 
 def test_repository_versions_changed_resolved_configuration(tmp_path: Path) -> None:
@@ -332,9 +318,7 @@ def test_explicit_histogram_replaces_derived_policy(tmp_path: Path) -> None:
     assert histogram == {"width": 1000.0, "center": 10.0, "bins": 101}
 
 
-def test_read_normalizes_explicit_quantity_and_preserves_user_notation(
-    tmp_path: Path,
-) -> None:
+def test_read_normalizes_explicit_quantity(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"
     _write_user_config(user_path, output_directory)
@@ -347,10 +331,6 @@ def test_read_normalizes_explicit_quantity_and_preserves_user_notation(
     config = Configuration().read(user_path, workspace_root=tmp_path)
 
     assert config.data["system_attributes"]["distance"] == pytest.approx(10000.0)
-    assert config.user_config_path is not None
-    assert '{value: 10.0, unit: "Mpc"}' in config.user_config_path.read_text(
-        encoding="utf-8"
-    )
     assert config.resolved_path is not None
     resolved = yaml.safe_load(config.resolved_path.read_text(encoding="utf-8"))
     assert resolved["system_attributes"]["distance"] == pytest.approx(10000.0)
