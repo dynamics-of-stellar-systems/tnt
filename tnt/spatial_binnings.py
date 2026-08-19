@@ -147,6 +147,8 @@ class ProjectedBinning(eqx.Module):
     axis. `bins` is a ``(npix_x, npix_y)`` array of integer bin IDs, one per
     pixel; a value of 0 marks a pixel with no associated bin, and the positive
     IDs must be contiguous, running ``1, 2, ..., n_bins`` with no gaps.
+    Observational files referencing this binning must use `bin_id` to cover
+    that complete positive-ID set exactly once; their row order is unrestricted.
 
     `x_lo`/`x_hi` and `y_lo`/`y_hi` are each pixel's edges along x and y, and
     `x_nodes`/`x_weights` are fixed-order Gauss-Legendre quadrature nodes and
@@ -403,6 +405,40 @@ def _validated_bins(
             f"their maximum with no gaps; got {sorted(int(i) for i in positive_ids)}."
         )
     return array
+
+
+def _validate_bin_ids_cover_binning(
+    bin_ids: jnp.ndarray,
+    binning: ProjectedBinning,
+    data_file: Path,
+) -> None:
+    """Require observational IDs to cover every projected bin exactly once."""
+    values = np.asarray(bin_ids)
+    unique, counts = np.unique(values, return_counts=True)
+    observed = {int(value) for value in unique}
+    expected = set(range(1, binning.n_bins + 1))
+    missing = sorted(expected - observed)
+    unknown = sorted(observed - expected)
+    duplicates = sorted(int(value) for value in unique[counts > 1])
+    if not missing and not unknown and not duplicates:
+        return
+
+    details = []
+    if missing:
+        details.append("missing: " + ", ".join(str(value) for value in missing))
+    if unknown:
+        details.append(
+            "absent from the referenced binning: "
+            + ", ".join(str(value) for value in unknown)
+        )
+    if duplicates:
+        details.append(
+            "duplicated: " + ", ".join(str(value) for value in duplicates)
+        )
+    raise ValueError(
+        f"{data_file}: bin_id must cover every positive spatial bin exactly "
+        f"once ({'; '.join(details)})."
+    )
 
 
 def build_spatial_binnings(

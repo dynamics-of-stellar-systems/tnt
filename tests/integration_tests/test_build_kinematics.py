@@ -36,4 +36,4 @@ def test_build_kinematics_from_resolved_configuration(
     assert isinstance(observed, GaussHermite)
     assert observed.mge is mges["mge_lum"]
     assert observed.binning is binnings["kinset1_binning"]
-    assert observed.n_spatial_bins == 2
+    assert observed.n_spatial_bins == binnings["kinset1_binning"].n_bins == 152

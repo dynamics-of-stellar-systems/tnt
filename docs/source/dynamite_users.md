@@ -69,13 +69,16 @@ preserved, but no scheduler consumes them yet. `model_processing_order` must be
 Some familiar data layouts remain useful during migration:
 
 - Bayesian line-of-sight velocity distribution (LOSVD) ECSV files use
-  `binID_dynamite`, `bin_flux`, and paired `losvd_N`/`dlosvd_N` columns. TNT
-  additionally requires the documented velocity metadata.
+  `bin_flux` and paired `losvd_N`/`dlosvd_N` columns. Rename the DYNAMITE
+  `binID_dynamite` column to TNT's `bin_id`; TNT additionally requires the
+  documented velocity metadata.
 - Proper-motion NPZ files use `PM_2dhist`, `PM_2dhist_sigma`,
-  `binID_dynamite`, `nstarbin`, `vxrange`, and `vyrange`. TNT additionally
-  requires a scalar `velocity_unit`.
+  `nstarbin`, `vxrange`, and `vyrange`. Rename the `binID_dynamite` array to
+  `bin_id`; TNT additionally requires a scalar `velocity_unit`.
 
-Gauss-Hermite and population inputs follow the TNT schemas described in
+Rename `vbin_id` to `bin_id` in Gauss-Hermite and population inputs as well.
+Every TNT observational file must cover all positive IDs in its referenced
+spatial binning exactly once; see
 [Configuration preparation](configuration.md).
 
 ## Migration checklist

@@ -9,12 +9,12 @@ from typing import Self
 import astropy.units as au
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 import unxt as u
 from astropy.table import QTable
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.config_parsing import (
+    BIN_ID_COLUMN,
     ConfigMapping,
     _finite,
     _mapping,
@@ -24,7 +24,7 @@ from tnt.config_parsing import (
     _required_string,
     _resolve_typed_reference,
 )
-from tnt.spatial_binnings import ProjectedBinning
+from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
 
 
 class Populations(eqx.Module):
@@ -79,8 +79,8 @@ class Populations(eqx.Module):
         path = f"population_data.{name}"
         _reject_unknown_keys(settings, {"binning", "data_file"}, path)
         table = QTable.read(data_file, format="ascii.ecsv")
-        bin_ids = _read_bin_ids(table, "vbin_id", data_file)
-        _validate_bin_ids_against_binning(bin_ids, binning, data_file)
+        bin_ids = _read_bin_ids(table, data_file)
+        _validate_bin_ids_cover_binning(bin_ids, binning, data_file)
         property_names = _population_property_names(table, data_file)
 
         values: list[Quantity] = []
@@ -153,23 +153,8 @@ def build_populations(
     return built
 
 
-def _validate_bin_ids_against_binning(
-    bin_ids: jnp.ndarray,
-    binning: ProjectedBinning,
-    data_file: Path,
-) -> None:
-    available = set(np.asarray(binning.bins).ravel().tolist()) - {0}
-    unknown = sorted(set(np.asarray(bin_ids).tolist()) - available)
-    if unknown:
-        names = ", ".join(str(value) for value in unknown)
-        raise ValueError(
-            f"{data_file}: spatial bin ID(s) absent from the referenced "
-            f"binning: {names}."
-        )
-
-
 def _population_property_names(table: QTable, data_file: Path) -> tuple[str, ...]:
-    columns = [name for name in table.colnames if name != "vbin_id"]
+    columns = [name for name in table.colnames if name != BIN_ID_COLUMN]
     names = set(columns)
     properties = [name for name in columns if f"d{name}" in names]
     covered = set(properties) | {f"d{name}" for name in properties}

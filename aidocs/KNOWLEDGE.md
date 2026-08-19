@@ -189,11 +189,11 @@
 - `tnt.populations.build_populations()` loads each configured population ECSV
   into an immutable JAX/Equinox `Populations` object. It resolves a strictly
   typed `ProjectedBinning` but no MGE. Files require a positive unique
-  `vbin_id` and one or more `property`/`dproperty` column pairs. Paired units
+  `bin_id` and one or more `property`/`dproperty` column pairs. Paired units
   must be equivalent; declared quantities are converted to the internal unit
   system, unitless columns remain dimensionless, and uncertainties must be
-  positive. Observed bin IDs may be a subset of, but cannot fall outside, the
-  referenced binning.
+  positive. Observed bin IDs must cover every positive ID in the referenced
+  binning exactly once; ID 0 remains reserved for unbinned pixels.
 - `tnt.spatial_binnings.build_spatial_binnings()` is the explicit runtime
   boundary that loads the resolved `spatial_binnings` registry into named
   `ProjectedBinning` objects. It validates the complete entry before file
@@ -216,17 +216,21 @@
   raises `NotImplementedError` until orbit integration and the concrete
   kinematics projections are implemented; observational values and
   uncertainties already have a shared base-class interface.
-- Gauss-Hermite ECSV files require `vbin_id`, unitful `v`, `dv`, `sigma`, and
+- Every kinematics and population input uses `bin_id`. Its positive, unique
+  integer values must cover every positive ID in the referenced
+  `ProjectedBinning` exactly once, although row order is unrestricted. ID 0
+  represents unbinned pixels in the bin map and is invalid in observations.
+- Gauss-Hermite ECSV files require `bin_id`, unitful `v`, `dv`, `sigma`, and
   `dsigma` columns plus dimensionless `hN`/`dhN` pairs. Configured systematic
   uncertainties are added in quadrature. Missing higher-order pairs are
   represented by zero coefficients only when the corresponding configured
   systematic uncertainty is positive.
-- Bayesian LOSVD ECSV files use `binID_dynamite`, `bin_flux`, `losvd_N`, and
+- Bayesian LOSVD ECSV files use `bin_id`, `bin_flux`, `losvd_N`, and
   `dlosvd_N` columns. Metadata must contain `vcent`, `dv`, and an explicit
   `velocity_unit`; TNT converts the velocity grid and applies the configured
   flux-weighted systemic centering.
 - Proper-motion NPZ input contains `PM_2dhist`, `PM_2dhist_sigma`,
-  `binID_dynamite`, `nstarbin`, `vxrange`, and `vyrange`, plus a required
+  `bin_id`, `nstarbin`, `vxrange`, and `vyrange`, plus a required
   scalar `velocity_unit`. Construction validates and normalizes each 2D
   distribution, scales uncertainties by the square root of `variance_scale`,
   and emits configured sampling warnings.

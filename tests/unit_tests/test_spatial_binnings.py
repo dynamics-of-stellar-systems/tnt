@@ -2,7 +2,11 @@ import numpy as np
 import pytest
 import unxt as u
 
-from tnt.spatial_binnings import ProjectedBinning, build_spatial_binnings
+from tnt.spatial_binnings import (
+    ProjectedBinning,
+    _validate_bin_ids_cover_binning,
+    build_spatial_binnings,
+)
 
 _QUAD_ORDER = 3
 
@@ -278,6 +282,41 @@ def test_from_settings_accepts_contiguous_bin_ids_with_unbinned_pixels():
     )
 
     assert binning.n_bins == 2
+
+
+def test_observational_bin_ids_may_use_any_row_order(tmp_path):
+    binning = ProjectedBinning.from_settings(
+        _settings(),
+        np.array([[0, 1], [2, 3]]),
+        _internal_unit_system(),
+        _QUAD_ORDER,
+    )
+
+    _validate_bin_ids_cover_binning(
+        np.array([3, 1, 2]), binning, tmp_path / "observations.ecsv"
+    )
+
+
+@pytest.mark.parametrize(
+    ("bin_ids", "message"),
+    [
+        (np.array([1, 3]), "missing: 2"),
+        (np.array([1, 2, 4]), "absent from the referenced binning: 4"),
+        (np.array([1, 2, 3, 3]), "duplicated: 3"),
+    ],
+)
+def test_observational_bin_ids_must_cover_binning(tmp_path, bin_ids, message):
+    binning = ProjectedBinning.from_settings(
+        _settings(),
+        np.array([[0, 1], [2, 3]]),
+        _internal_unit_system(),
+        _QUAD_ORDER,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        _validate_bin_ids_cover_binning(
+            bin_ids, binning, tmp_path / "observations.ecsv"
+        )
 
 
 @pytest.mark.parametrize(

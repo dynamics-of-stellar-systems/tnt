@@ -33,7 +33,7 @@ def _settings(data_file: Path) -> dict[str, str]:
 
 def _write_populations(path: Path) -> None:
     table = QTable()
-    table["vbin_id"] = [1, 2]
+    table["bin_id"] = [1, 2]
     table["age"] = [10.0, 8.0] * au.Gyr
     table["dage"] = [500.0, 750.0] * au.Myr
     table["metallicity"] = [0.1, -0.2]
@@ -129,7 +129,7 @@ def test_build_populations_rejects_mge_setting(tmp_path: Path) -> None:
 
 def test_populations_require_value_uncertainty_pairs(tmp_path: Path) -> None:
     data_file = tmp_path / "populations.ecsv"
-    table = QTable({"vbin_id": [1, 2], "age": [10.0, 8.0]})
+    table = QTable({"bin_id": [1, 2], "age": [10.0, 8.0]})
     table.write(data_file, format="ascii.ecsv")
 
     with pytest.raises(ValueError, match="unpaired column.*age"):
@@ -144,7 +144,7 @@ def test_populations_require_value_uncertainty_pairs(tmp_path: Path) -> None:
 def test_populations_require_equivalent_pair_units(tmp_path: Path) -> None:
     data_file = tmp_path / "populations.ecsv"
     table = QTable()
-    table["vbin_id"] = [1, 2]
+    table["bin_id"] = [1, 2]
     table["age"] = [10.0, 8.0] * au.Gyr
     table["dage"] = [1.0, 1.0] * au.kpc
     table.write(data_file, format="ascii.ecsv")
@@ -161,7 +161,7 @@ def test_populations_require_equivalent_pair_units(tmp_path: Path) -> None:
 def test_populations_require_positive_uncertainties(tmp_path: Path) -> None:
     data_file = tmp_path / "populations.ecsv"
     table = QTable(
-        {"vbin_id": [1, 2], "metallicity": [0.1, -0.2], "dmetallicity": [0.0, 0.1]}
+        {"bin_id": [1, 2], "metallicity": [0.1, -0.2], "dmetallicity": [0.0, 0.1]}
     )
     table.write(data_file, format="ascii.ecsv")
 
@@ -177,7 +177,7 @@ def test_populations_require_positive_uncertainties(tmp_path: Path) -> None:
 def test_populations_reject_bin_ids_absent_from_binning(tmp_path: Path) -> None:
     data_file = tmp_path / "populations.ecsv"
     table = QTable(
-        {"vbin_id": [1, 3], "metallicity": [0.1, -0.2], "dmetallicity": [0.1, 0.1]}
+        {"bin_id": [1, 3], "metallicity": [0.1, -0.2], "dmetallicity": [0.1, 0.1]}
     )
     table.write(data_file, format="ascii.ecsv")
 

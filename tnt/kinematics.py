@@ -17,6 +17,7 @@ from astropy.table import QTable
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.config_parsing import (
+    BIN_ID_COLUMN,
     ConfigMapping,
     _finite,
     _integer,
@@ -34,7 +35,7 @@ from tnt.config_parsing import (
     _validated_bin_ids,
 )
 from tnt.mge import LightMGE, MassMGE
-from tnt.spatial_binnings import ProjectedBinning
+from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
 
 if TYPE_CHECKING:
     from tnt.orbit_library import OrbitLibrary
@@ -157,7 +158,8 @@ class GaussHermite(AbstractKinematics):
 
         systematics = _gauss_hermite_systematics(settings, maximum_order, path)
         table = QTable.read(data_file, format="ascii.ecsv")
-        bin_ids = _read_bin_ids(table, "vbin_id", data_file)
+        bin_ids = _read_bin_ids(table, data_file)
+        _validate_bin_ids_cover_binning(bin_ids, binning, data_file)
         speed_unit = unit_system[u.dimension("speed")]
 
         velocity = _read_quantity_column(table, "v", speed_unit, data_file)
@@ -263,7 +265,8 @@ class BayesLOSVD(AbstractKinematics):
         path = f"kinematic_data.{name}"
         _reject_unknown_keys(settings, cls._allowed_settings, path)
         table = QTable.read(data_file, format="ascii.ecsv")
-        bin_ids = _read_bin_ids(table, "binID_dynamite", data_file)
+        bin_ids = _read_bin_ids(table, data_file)
+        _validate_bin_ids_cover_binning(bin_ids, binning, data_file)
         _same_length(table, bin_ids.shape[0], data_file)
         speed_unit = unit_system[u.dimension("speed")]
         centers, data_bin_width = _read_losvd_velocity_grid(
@@ -356,7 +359,7 @@ class ProperMotions(AbstractKinematics):
             required = {
                 "PM_2dhist",
                 "PM_2dhist_sigma",
-                "binID_dynamite",
+                BIN_ID_COLUMN,
                 "nstarbin",
                 "velocity_unit",
                 "vxrange",
@@ -368,7 +371,7 @@ class ProperMotions(AbstractKinematics):
                 raise ValueError(f"{data_file} is missing required array(s): {names}.")
             distribution = jnp.asarray(archive["PM_2dhist"])
             uncertainty = jnp.asarray(archive["PM_2dhist_sigma"])
-            bin_ids = _validated_bin_ids(archive["binID_dynamite"], data_file)
+            bin_ids = _validated_bin_ids(archive[BIN_ID_COLUMN], data_file)
             stars = jnp.asarray(archive["nstarbin"])
             source_unit = au.Unit(str(archive["velocity_unit"].item()))
             speed_unit = unit_system[u.dimension("speed")]
@@ -377,6 +380,7 @@ class ProperMotions(AbstractKinematics):
                 np.asarray([archive["vxrange"], archive["vyrange"]], dtype=float),
             )
 
+        _validate_bin_ids_cover_binning(bin_ids, binning, data_file)
         _validate_proper_motion_arrays(
             distribution, uncertainty, bin_ids, stars, data_file
         )
@@ -816,7 +820,7 @@ def _validate_proper_motion_arrays(
         )
     if distribution.shape[0] != bin_ids.shape[0] or stars.shape != bin_ids.shape:
         raise ValueError(
-            f"{data_file}: binID_dynamite and nstarbin must match the spatial-bin axis."
+            f"{data_file}: bin_id and nstarbin must match the spatial-bin axis."
         )
     if distribution.shape[1] % 2 == 0 or distribution.shape[2] % 2 == 0:
         raise ValueError(f"{data_file}: proper-motion velocity-bin counts must be odd.")
