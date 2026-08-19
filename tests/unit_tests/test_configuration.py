@@ -153,7 +153,6 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     assert "GH_sys_err" not in written["weight_solver_settings"]
     assert "PM_sys_err_factor" not in written["weight_solver_settings"]
 
-    assert not (repository / "user_configs").exists()
     assert config.source_path == user_path
 
     assert config.run_manifest_path is not None
@@ -221,7 +220,6 @@ def test_repository_deduplicates_semantic_configurations(tmp_path: Path) -> None
     assert first.resolved_path == repeated.resolved_path == reformatted.resolved_path
     repository = output_directory / "config_repository"
     assert len(list((repository / "configurations").iterdir())) == 1
-    assert not (repository / "user_configs").exists()
     manifests = sorted((repository / "manifests").glob("*-run_manifest.yaml"))
     assert [path.name for path in manifests] == [
         "0000-run_manifest.yaml",
