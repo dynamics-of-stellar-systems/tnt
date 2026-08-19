@@ -91,8 +91,8 @@ that describes different numbers of iterations:
 ```python
 from pathlib import Path
 
-from tnt.all_models import AllModels
 from tnt.model_iterator import ModelIterator
+from tnt.model_search_state import ModelSearchState
 from tnt.run_config_log import RunConfigLog
 
 output = Path(config.data["io_settings"]["output_directory"])
@@ -104,11 +104,13 @@ iterator = ModelIterator.from_configuration(
     config.run_manifest_path,
 )
 
-models = AllModels.read(models_path) if models_path.exists() else None
-run_config_log = RunConfigLog.read(log_path) if log_path.exists() else None
-models, run_config_log = iterator.run(models, run_config_log)
-models.write(models_path)
-run_config_log.write(log_path)
+state = ModelSearchState.read(
+    models_path,
+    log_path,
+    repair_log_ahead=True,
+)
+models, run_config_log = iterator.run(state.all_models, state.run_config_log)
+ModelSearchState(models, run_config_log).write(models_path, log_path)
 ```
 
 The ECSV metadata contains `total_runs` and
@@ -117,6 +119,18 @@ and the iteration rows whenever the log is read or written. The execution
 layer must therefore write the returned log even when the current run produces
 no iteration; its run ID will then appear in `run_ids_without_iterations`
 without adding a nullable iteration row.
+
+`ModelSearchState.write()` validates both temporary ECSV files before
+publishing them. It replaces the run log first and `AllModels` second. A crash
+between those replacements can therefore leave only safely discardable,
+trailing run-log rows; the explicit `repair_log_ahead=True` option truncates
+them when resuming. TNT rejects the opposite mismatch because models whose run
+provenance is absent cannot be reconstructed safely. An initial zero-model
+checkpoint writes only the run log because `AllModels` has no table schema yet.
+
+The example checkpoints once after `ModelIterator.run()` returns. The iterator
+itself still performs no disk writes; an execution layer that checkpoints after
+every completed iteration must call the same paired writer at each checkpoint.
 
 This log records provenance and verifies that referenced snapshots remain
 intact. It does not decide whether different configurations are compatible;

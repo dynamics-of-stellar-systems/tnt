@@ -223,7 +223,7 @@ class RunConfigLog:
         return run.repository / RUN_CONFIG_LOG_FILENAME
 
     def write(self, path: Path) -> None:
-        """Refresh run metadata and atomically replace the persisted log."""
+        """Write only this log; checkpoints should use `ModelSearchState`."""
         _validate_log_path(path)
         _validate_table(self.table, repository=path.parent)
         _refresh_run_metadata(self.table, path.parent)
@@ -254,6 +254,18 @@ class RunConfigLog:
         table = self.table.copy()
         table.add_row(row)
         return type(self)(table)
+
+    def truncate(self, n_iterations: int) -> Self:
+        """Return a log containing only the first `n_iterations` rows."""
+        if (
+            isinstance(n_iterations, bool)
+            or not isinstance(n_iterations, Integral)
+            or not 0 <= n_iterations <= len(self.table)
+        ):
+            raise ValueError(
+                "n_iterations must be an integer between 0 and the log length."
+            )
+        return type(self)(self.table[: int(n_iterations)].copy())
 
     def snapshot_references(
         self,

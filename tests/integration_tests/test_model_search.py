@@ -43,6 +43,7 @@ import pytest
 import tnt.model_iterator as model_iterator_module
 from tnt import Configuration
 from tnt.model_iterator import ModelIterator
+from tnt.model_search_state import ModelSearchState
 from tnt.run_config_log import RunConfigLog
 
 # ---------------------------------------------------------------------------
@@ -146,11 +147,14 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert len(config_log) == 1
     assert config.run_id is not None
     assert config_log.table["run_id"][0] == config.run_id
+    output = Path(resolved["io_settings"]["output_directory"])
+    models_path = output / resolved["io_settings"]["all_models_file"]
     log_path = RunConfigLog.path_for(config.run_manifest_path)
-    config_log.write(log_path)
-    restored_log = RunConfigLog.read(log_path)
-    assert len(restored_log) == 1
-    assert restored_log.table["run_id"][0] == config.run_id
+    ModelSearchState(models, config_log).write(models_path, log_path)
+    restored_state = ModelSearchState.read(models_path, log_path)
+    assert len(restored_state.all_models) == 11
+    assert len(restored_state.run_config_log) == 1
+    assert restored_state.run_config_log.table["run_id"][0] == config.run_id
 
     masses = sorted(10.0 / value for value in models.table["kinchi2"])
     expected_masses = sorted([1.0, *np.geomspace(0.1, 10.0, 10)])

@@ -471,12 +471,13 @@ by the current run. `Configuration.run_id` records the numeric run ID.
 process.
 
 `run_config_log.ecsv` is created when the model-search caller explicitly
-persists its returned `RunConfigLog`; configuration preparation itself does
-not create or update the log. It maps each cumulative search iteration to a
-run ID. The corresponding immutable run manifest links that ID to its resolved
+persists `AllModels` and `RunConfigLog` through the coordinated
+`ModelSearchState` writer; configuration preparation itself does not create or
+update the log. It maps each cumulative search iteration to a run ID. The
+corresponding immutable run manifest links that ID to its resolved
 configuration snapshot and execution provenance. Its derived ECSV metadata
 records `total_runs` and `run_ids_without_iterations`; callers must persist the
-returned log even when a run produces no iteration so that these summaries are
+state even when a run produces no iteration so that these summaries are
 updated.
 
 A negative configured orbit-library seed still means that execution must

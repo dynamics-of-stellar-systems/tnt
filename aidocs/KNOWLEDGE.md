@@ -129,6 +129,13 @@
   both `AllModels` and this log, so the execution layer must load and save them
   together, including after a zero-iteration run. The log records provenance
   only; it does not implement the configuration-compatibility decision itself.
+- `ModelSearchState` is the coordinated persistence boundary for `AllModels`
+  and `RunConfigLog`. It validates both temporary ECSV files, atomically
+  replaces each file in run-log-first order, explicitly repairs a log-ahead
+  crash state by truncating unpublished trailing rows, and rejects a
+  models-ahead state because missing provenance is not recoverable. An initial
+  zero-model checkpoint writes only the run log because `AllModels` has no
+  column schema until its first model.
 - Runtime construction creates a versioned `compatibility_signature.yaml`
   beside each resolved snapshot and checks it before a resumed model-search
   proposal. Contract version 1 excludes operational/search/presentation fields
