@@ -470,6 +470,24 @@ by the current run. `Configuration.run_id` records the numeric run ID.
 `Configuration.source_path` remains available only in memory for the active
 process.
 
+(run-identity)=
+### Run identity
+
+A successful `Configuration.read()` defines the start of a TNT run for
+provenance purposes: it creates a new immutable run manifest and assigns the
+next run ID. Reusing that prepared `Configuration` and its `ModelIterator`
+across multiple `ModelIterator.run()` calls retains the same run ID. Reading a
+configuration again creates another run manifest and assigns another run ID,
+even when the resolved configuration is semantically identical and therefore
+reuses an existing configuration snapshot.
+
+Configuration snapshots and run manifests consequently have different
+identities. A snapshot represents one distinct resolved configuration; a run
+manifest represents one TNT execution session that used a snapshot. The
+future top-level execution layer should preserve this boundary by reading the
+configuration once at the beginning of each invocation and using the resulting
+run ID for every model-search iteration in that invocation.
+
 `run_config_log.ecsv` is created when the model-search caller explicitly
 persists `AllModels` and `RunConfigLog` through the coordinated
 `ModelSearchState` writer; configuration preparation itself does not create or

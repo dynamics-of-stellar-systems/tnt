@@ -75,9 +75,10 @@ established by the earlier run.
 the cumulative iteration number to the ID of the TNT run that produced it.
 Multiple rounds may reference the same run. The run's immutable manifest is
 the authoritative link to its resolved configuration snapshot and execution
-provenance. A search can be paused and resumed under an edited configuration,
-so `AllModels` and `Model.iteration` alone cannot show which run produced a
-given round.
+provenance. Run IDs are allocated during configuration preparation, not by
+`ModelIterator.run()`; see {ref}`run-identity`. A search can be paused and
+resumed under an edited configuration, so `AllModels` and `Model.iteration`
+alone cannot show which run produced a given round.
 
 The log has a fixed persisted location at
 `config_repository/run_config_log.ecsv`. Its `read()` and `write()` methods
