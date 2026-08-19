@@ -123,10 +123,12 @@
   model-search iteration. Rows map iterations to run IDs. Reads and atomic
   writes validate the referenced immutable run manifests; those manifests are
   the authoritative links to resolved configuration snapshots and execution
-  provenance. `ModelIterator.run()` still returns rather than writes both
-  `AllModels` and this log, so the execution layer must load and save them
-  together. The log records provenance only; it does not implement the
-  configuration-compatibility decision itself.
+  provenance. ECSV metadata derives `total_runs` and
+  `run_ids_without_iterations` from all manifests and the iteration rows on
+  every read or write. `ModelIterator.run()` still returns rather than writes
+  both `AllModels` and this log, so the execution layer must load and save them
+  together, including after a zero-iteration run. The log records provenance
+  only; it does not implement the configuration-compatibility decision itself.
 - Runtime construction creates a versioned `compatibility_signature.yaml`
   beside each resolved snapshot and checks it before a resumed model-search
   proposal. Contract version 1 excludes operational/search/presentation fields

@@ -448,6 +448,12 @@ config_repository/
   the workspace root. TNT hashes a canonical representation in which mapping
   order and YAML presentation do not matter, while list order and values do.
   An existing snapshot is reused when this semantic hash matches.
+  Runtime construction later adds `compatibility_signature.yaml` beside the
+  resolved file, after TNT has loaded and validated the referenced scientific
+  inputs. The signature records the versioned resume contract,
+  compatibility-critical resolved settings, and SHA-256 hashes of MGE,
+  spatial-binning, kinematics, and population files. Configuration preparation
+  itself does not open or checksum those inputs.
 - `manifests/` receives one new manifest for every TNT run. A manifest records
   its run ID and configuration-snapshot identifiers, paths relative to the
   configuration-repository root, resolved-file and semantic configuration
@@ -468,13 +474,10 @@ process.
 persists its returned `RunConfigLog`; configuration preparation itself does
 not create or update the log. It maps each cumulative search iteration to a
 run ID. The corresponding immutable run manifest links that ID to its resolved
-configuration snapshot and execution provenance.
-
-`compatibility_signature.yaml` is added at runtime construction, after TNT has
-loaded and validated the referenced scientific inputs. It records the
-versioned resume contract, compatibility-critical resolved settings, and
-SHA-256 hashes of MGE, spatial-binning, kinematics, and population files.
-Configuration preparation still does not open or checksum those inputs.
+configuration snapshot and execution provenance. Its derived ECSV metadata
+records `total_runs` and `run_ids_without_iterations`; callers must persist the
+returned log even when a run produces no iteration so that these summaries are
+updated.
 
 A negative configured orbit-library seed still means that execution must
 generate a seed. Until that happens, the preparation manifest records the

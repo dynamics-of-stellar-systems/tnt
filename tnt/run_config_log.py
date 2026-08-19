@@ -1,4 +1,4 @@
-"""Persist the TNT run that produced every model-search iteration."""
+"""Persist iteration-to-run provenance and derived run summary metadata."""
 
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ from tnt.configuration import (
 )
 
 RUN_CONFIG_LOG_FILENAME = "run_config_log.ecsv"
+TOTAL_RUNS_METADATA_KEY = "total_runs"
+RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY = "run_ids_without_iterations"
 _RUN_MANIFEST_SUFFIX = "-run_manifest.yaml"
 _COLUMNS = ("iteration", "run_id")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -199,7 +201,7 @@ class RunManifestReference:
 
 
 class RunConfigLog:
-    """Map each cumulative model-search iteration to the TNT run that made it."""
+    """Map iterations to runs and summarize runs that produced no iteration."""
 
     def __init__(self, table: QTable | None = None) -> None:
         self.table = _empty_table() if table is None else table
@@ -211,6 +213,7 @@ class RunConfigLog:
         _validate_log_path(path)
         table = QTable.read(path, format="ascii.ecsv")
         _validate_table(table, repository=path.parent)
+        _refresh_run_metadata(table, path.parent)
         return cls(table)
 
     @staticmethod
@@ -220,9 +223,10 @@ class RunConfigLog:
         return run.repository / RUN_CONFIG_LOG_FILENAME
 
     def write(self, path: Path) -> None:
-        """Atomically replace the persisted log after validating its runs."""
+        """Refresh run metadata and atomically replace the persisted log."""
         _validate_log_path(path)
         _validate_table(self.table, repository=path.parent)
+        _refresh_run_metadata(self.table, path.parent)
         _write_table_atomically(self.table, path)
 
     def append(self, iteration: int, run_id: int) -> Self:
@@ -306,6 +310,24 @@ def _validate_table(table: QTable, repository: Path | None = None) -> None:
     if repository is not None:
         for run_id in set(run_ids):
             RunManifestReference.from_run_id(repository, run_id)
+
+
+def _refresh_run_metadata(table: QTable, repository: Path) -> None:
+    """Derive the human-readable run summary from immutable manifests."""
+    manifests_directory = repository / MANIFESTS_DIRECTORY
+    manifest_paths = (
+        sorted(manifests_directory.glob(f"*{_RUN_MANIFEST_SUFFIX}"))
+        if manifests_directory.is_dir()
+        else []
+    )
+    manifest_run_ids = [
+        RunManifestReference.from_run_manifest(path).run_id for path in manifest_paths
+    ]
+    iteration_run_ids = {int(value) for value in table["run_id"]}
+    table.meta[TOTAL_RUNS_METADATA_KEY] = len(manifest_run_ids)
+    table.meta[RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY] = [
+        run_id for run_id in manifest_run_ids if run_id not in iteration_run_ids
+    ]
 
 
 def _validate_run_id(value: object) -> int:

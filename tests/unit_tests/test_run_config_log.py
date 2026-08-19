@@ -7,6 +7,8 @@ import yaml
 from tnt.configuration import _semantic_configuration_sha256
 from tnt.run_config_log import (
     RUN_CONFIG_LOG_FILENAME,
+    RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY,
+    TOTAL_RUNS_METADATA_KEY,
     ConfigurationSnapshotReference,
     RunConfigLog,
     RunManifestReference,
@@ -117,6 +119,8 @@ def test_write_and_read_round_trip_atomically(tmp_path: Path) -> None:
 
     assert len(restored) == 2
     assert list(restored.table["run_id"]) == [0, 1]
+    assert restored.table.meta[TOTAL_RUNS_METADATA_KEY] == 2
+    assert restored.table.meta[RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY] == []
     assert RunConfigLog.path_for(second.absolute_run_manifest_path) == path
     snapshots = restored.snapshot_references(
         first.repository,
@@ -127,6 +131,31 @@ def test_write_and_read_round_trip_atomically(tmp_path: Path) -> None:
         first.configuration_snapshot.semantic_sha256,
         second.configuration_snapshot.semantic_sha256,
     ]
+
+
+def test_metadata_records_runs_without_iterations(tmp_path: Path) -> None:
+    first = _write_run(tmp_path, 0, 0, {"value": 1})
+    _write_run(tmp_path, 1, 1, {"value": 2})
+    third = _write_run(tmp_path, 2, 2, {"value": 3})
+    path = first.repository / RUN_CONFIG_LOG_FILENAME
+    log = RunConfigLog().append(0, first.run_id).append(1, third.run_id)
+
+    log.write(path)
+
+    assert log.table.meta[TOTAL_RUNS_METADATA_KEY] == 3
+    assert log.table.meta[RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY] == [1]
+
+
+def test_read_refreshes_metadata_after_a_zero_iteration_run(tmp_path: Path) -> None:
+    first = _write_run(tmp_path, 0, 0, {"value": 1})
+    path = first.repository / RUN_CONFIG_LOG_FILENAME
+    RunConfigLog().append(0, first.run_id).write(path)
+    _write_run(tmp_path, 1, 1, {"value": 2})
+
+    refreshed = RunConfigLog.read(path)
+
+    assert refreshed.table.meta[TOTAL_RUNS_METADATA_KEY] == 2
+    assert refreshed.table.meta[RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY] == [1]
 
 
 def test_read_rejects_changed_resolved_snapshot(tmp_path: Path) -> None:

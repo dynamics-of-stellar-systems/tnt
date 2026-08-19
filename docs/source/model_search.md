@@ -111,6 +111,13 @@ models.write(models_path)
 run_config_log.write(log_path)
 ```
 
+The ECSV metadata contains `total_runs` and
+`run_ids_without_iterations`. Both are derived from the immutable manifests
+and the iteration rows whenever the log is read or written. The execution
+layer must therefore write the returned log even when the current run produces
+no iteration; its run ID will then appear in `run_ids_without_iterations`
+without adding a nullable iteration row.
+
 This log records provenance and verifies that referenced snapshots remain
 intact. It does not decide whether different configurations are compatible;
 that compatibility contract is a separate model-resume policy.
