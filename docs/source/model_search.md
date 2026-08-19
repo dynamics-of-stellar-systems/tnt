@@ -121,6 +121,14 @@ layer must therefore write the returned log even when the current run produces
 no iteration; its run ID will then appear in `run_ids_without_iterations`
 without adding a nullable iteration row.
 
+This applies to both initial and resumed runs. A resumed run may add no
+iteration because its stopping criteria are already satisfied, its parameter
+generator proposes nothing, or it cannot continue from the existing models.
+Configuration preparation still creates that run's manifest and run ID, and
+persisting the unchanged search state records the ID in
+`run_ids_without_iterations`. The initial zero-model case is special only
+because no `AllModels` table schema exists yet.
+
 `ModelSearchState.write()` validates both temporary ECSV files before
 publishing them. It replaces the run log first and `AllModels` second. A crash
 between those replacements can therefore leave only safely discardable,
