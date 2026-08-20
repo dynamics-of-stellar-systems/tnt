@@ -260,9 +260,29 @@
   scalar `velocity_unit`. Construction validates and normalizes each 2D
   distribution, scales uncertainties by the square root of `variance_scale`,
   and emits configured sampling warnings.
-- Potential types are `triaxial_light_mge`, `triaxial_mass_mge`, `nfw`, and
-  `plummer`. A light-MGE potential requires an `ml` parameter. A mass-MGE
-  potential rejects `ml` because its MGE already contains mass.
+- `potential.<name>.type` names a `galax.potential` class directly (e.g.
+  `NFWPotential`, `PlummerPotential`) -- not a TNT-curated enum -- or one of
+  two TNT-specific MGE composite types, `triaxial_light_mge`/
+  `triaxial_mass_mge` (no native `galax` class exists for a
+  sum-of-triaxial-Gaussians potential). A light-MGE potential requires an
+  `ml` parameter; a mass-MGE potential rejects `ml` (it uses
+  `mge_mass_scale` instead) because its MGE already contains mass.
+- `parameterization` is a separate, optional field controlling how config
+  `parameters` map onto a component's canonical fields. Omitted, raw
+  parameter names must match the resolved `type`'s own native `galax`
+  constructor kwargs exactly; both their physical dimensions and the
+  mass-normalization parameter `rescale()` scales are derived dynamically
+  from `galax`'s own `ParameterField(dimensions=...)` metadata
+  (`tnt.potential.native_parameter_dimensions`/`_native_mass_parameter`),
+  not hand-maintained per type. Given explicitly, it names a registered
+  non-native conversion (today, only NFW's `concentration_mass_ratio`,
+  which is not yet implemented -- the `(c, f) -> (m, r_s)` formula needs a
+  confirmed reference, same as the MGE `stars` component's own
+  `(q_min, p_min, u) -> (theta, phi, psi)` viewing-geometry conversion).
+  Hand-maintained dimension tables now cover only these non-native
+  parameterizations and the two MGE composite types' own parameters
+  (`tnt.potential.PARAMETERIZATION_RAW_DIMENSIONS`/`_MGE_RAW_DIMENSIONS`),
+  not native-galax types.
 - Explicit kinematics histogram metadata is grouped under `histogram` as
   `width`, `center`, and `bins`.
 - Defaults for properties of dynamically named potential components and

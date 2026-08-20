@@ -74,6 +74,7 @@ class ModelIterator:
     """
 
     potential_settings: Mapping[str, Mapping[str, Any]]
+    unit_system: AbstractUnitSystem
     mges: Mapping[str, LightMGE | MassMGE]
     kinematic_data: Mapping[str, AbstractKinematics]
     population_data: Mapping[str, Populations]
@@ -147,6 +148,7 @@ class ModelIterator:
 
         return cls(
             potential_settings=potential_settings,
+            unit_system=unit_system,
             mges=mges,
             kinematic_data=kinematic_data,
             population_data=population_data,
@@ -392,6 +394,7 @@ class ModelIterator:
         potential = build_potential(
             _settings_with_parameters(self.potential_settings, parameters),
             self.mges,
+            self.unit_system,
         )
 
         try:

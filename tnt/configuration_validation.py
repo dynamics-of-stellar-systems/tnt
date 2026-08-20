@@ -39,7 +39,12 @@ _TOP_LEVEL_KEYS = {
     "units",
     "weight_solver_settings",
 }
-_POTENTIAL_TYPES = {"nfw", "plummer", "triaxial_light_mge", "triaxial_mass_mge"}
+# `potential.<name>.type` names either one of these two TNT-specific MGE
+# composite potentials, or -- for every other value -- a `galax.potential`
+# class name, resolved dynamically by `tnt.potential` at runtime rather than
+# validated against a closed set here (this module deliberately avoids
+# constructing scientific objects; see module docstring).
+_MGE_POTENTIAL_TYPES = {"triaxial_light_mge", "triaxial_mass_mge"}
 _KINEMATICS_TYPES = {"bayes_losvd", "gauss_hermite", "proper_motions"}
 
 
@@ -267,15 +272,17 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         component = _mapping(component_value, component_path)
         _reject_unknown_keys(
             component,
-            {"include", "mge", "parameters", "type"},
+            {"include", "mge", "parameterization", "parameters", "type"},
             component_path,
         )
         _require_keys(component, {"include", "type"}, component_path)
-        component_type = _choice(
-            component["type"],
-            _POTENTIAL_TYPES,
-            f"{component_path}.type",
-        )
+        # `type` names either a TNT MGE composite (checked against
+        # _MGE_POTENTIAL_TYPES below) or a galax.potential class name, which
+        # this module deliberately doesn't validate -- resolving it requires
+        # constructing/importing galax, deferred to tnt.potential at runtime.
+        component_type = _string(component["type"], f"{component_path}.type")
+        if "parameterization" in component:
+            _string(component["parameterization"], f"{component_path}.parameterization")
         include = _boolean(component["include"], f"{component_path}.include")
 
         if "parameters" in component:
@@ -287,10 +294,7 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         elif include:
             raise ValueError(f"{component_path} is missing required field: parameters.")
 
-        is_mge_potential = component_type in {
-            "triaxial_light_mge",
-            "triaxial_mass_mge",
-        }
+        is_mge_potential = component_type in _MGE_POTENTIAL_TYPES
         if is_mge_potential:
             if include:
                 _require_keys(component, {"mge"}, component_path)

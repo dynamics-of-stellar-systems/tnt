@@ -7,35 +7,15 @@ collaborator), this builds the `ModelIterator` via the real
 Only `build_potential`, `build_weight_solver`, `build_orbit_sampler`, and
 `build_orbit_dithering` are faked, since potential construction, orbit
 integration, and weight solving are still unimplemented (see
-tnt.model_iterator's module docstring).
-
-`tnt.potential` imports `galax.potential` at module level, and this venv's
-installed `galax`/`equinox` versions are mutually incompatible
-(`ImportError: cannot import name '_has_dataclass_init' from
-'equinox._module'`) -- an unrelated, pre-existing environment issue. Stub
-out `galax`/`galax.potential` before importing anything from `tnt` that
-would pull in that chain, so this test can run regardless. Remove this
-stub once the real dependency conflict is fixed.
+tnt.model_iterator's module docstring). Potential-building is now real for
+native-galax types (`tnt.potential`), but `build_potential` stays faked
+here too, since `Potential.generate_orbit_library` still isn't.
 """
 
 from __future__ import annotations
 
-import sys
-import types
 from pathlib import Path
 from typing import Any, NamedTuple
-
-if "galax" not in sys.modules:
-    _fake_galax = types.ModuleType("galax")
-    _fake_galax_potential = types.ModuleType("galax.potential")
-
-    class _FakeAbstractPotentialBase:
-        pass
-
-    _fake_galax_potential.AbstractPotentialBase = _FakeAbstractPotentialBase
-    _fake_galax.potential = _fake_galax_potential
-    sys.modules["galax"] = _fake_galax
-    sys.modules["galax.potential"] = _fake_galax_potential
 
 import numpy as np
 import pytest
@@ -106,7 +86,9 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
 
     captured_settings: list[Any] = []
 
-    def fake_build_potential(settings: Any, mges: Any) -> FakePotential:
+    def fake_build_potential(
+        settings: Any, mges: Any, unit_system: Any
+    ) -> FakePotential:
         captured_settings.append(settings)
         return FakePotential(mass=1.0)
 

@@ -17,6 +17,7 @@ from tnt.config_parsing import (
     _reject_unknown_keys,
     _require_keys,
 )
+from tnt.potential import raw_parameter_dimensions
 
 ConfigDict = dict[str, Any]
 
@@ -31,13 +32,6 @@ _REFERENCE_UNITS = {
     "speed": "m / s",
     "inverse_time": "1 / s",
     "mass_to_light": "kg / W",
-}
-_POTENTIAL_PARAMETER_DIMENSIONS = {
-    "plummer": {"m": "mass", "a": "length"},
-    "triaxial_light_mge": {"ml": "mass_to_light"},
-    # Normalize first so schema validation can issue the more specific error
-    # that mass MGE potentials must not declare an ml parameter.
-    "triaxial_mass_mge": {"ml": "mass_to_light"},
 }
 
 
@@ -158,7 +152,7 @@ def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
     for potential_name, potential_value in potential.items():
         potential_path = f"potential.{potential_name}"
         settings = _mapping(potential_value, potential_path)
-        dimensions = _POTENTIAL_PARAMETER_DIMENSIONS.get(settings.get("type"), {})
+        dimensions = _potential_parameter_dimensions(settings)
         parameters = settings.get("parameters")
         if parameters is not None:
             _validate_parameter_units(
@@ -191,6 +185,24 @@ def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
                 _validate_field(systematics, "sigma", "speed", systematics_path)
 
 
+def _potential_parameter_dimensions(settings: Mapping[str, Any]) -> Mapping[str, str]:
+    """One potential component's raw parameter dimensions, from `tnt.potential`.
+
+    `type`/`parameterization` are validated as strings by `_validate_potential`,
+    which runs after normalization -- fall back to no declared dimensions
+    (nothing scaled) for a malformed value here rather than duplicating that
+    validation.
+    """
+    potential_type = settings.get("type")
+    parameterization = settings.get("parameterization")
+    if not (
+        isinstance(potential_type, str)
+        and (parameterization is None or isinstance(parameterization, str))
+    ):
+        return {}
+    return raw_parameter_dimensions(potential_type, parameterization)
+
+
 def normalize_potential_settings(
     potential: Mapping[str, Any],
     unit_system: u.AbstractUnitSystem,
@@ -200,7 +212,7 @@ def normalize_potential_settings(
     for potential_name, potential_value in normalized.items():
         potential_path = f"potential.{potential_name}"
         settings = _mapping(potential_value, potential_path)
-        dimensions = _POTENTIAL_PARAMETER_DIMENSIONS.get(settings.get("type"), {})
+        dimensions = _potential_parameter_dimensions(settings)
         parameters = settings.get("parameters")
         if parameters is not None:
             _normalize_parameters(
