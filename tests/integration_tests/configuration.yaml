@@ -22,10 +22,10 @@ spatial_binnings:
 
 potential:
   bh:
-    type: "plummer"
+    type: "PlummerPotential"
     include: true
     parameters:
-      m:
+      m_tot:
         unit: "Msun"
         generator_settings:
           lower_bound: 1.0
@@ -36,14 +36,15 @@ potential:
         value: 5.0
         logarithmic: true
         latex_label: "$\\log(M_\\mathrm{BH}/M_\\odot)$"
-      a:
+      r_s:
         unit: "kpc"
         fixed: true
         value: 1.0e-3
         latex_label: "$a_\\mathrm{BH}$"
 
   dh:
-    type: "nfw"
+    type: "NFWPotential"
+    parameterization: "concentration_mass_ratio"
     include: true
     parameters:
       c:
