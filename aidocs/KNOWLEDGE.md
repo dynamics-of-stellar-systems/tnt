@@ -234,21 +234,39 @@
   distribution, scales uncertainties by the square root of `variance_scale`,
   and emits configured sampling warnings.
 - `potential.<name>.type` names a `galax.potential` class directly (e.g.
-  `NFWPotential`, `PlummerPotential`) -- not a TNT-curated enum -- or one of
-  two TNT-specific MGE composite types, `triaxial_light_mge`/
-  `triaxial_mass_mge` (no native `galax` class exists for a
-  sum-of-triaxial-Gaussians potential). A light-MGE potential requires an
-  `ml` parameter; a mass-MGE potential rejects `ml` (it uses
-  `mge_mass_scale` instead) because its MGE already contains mass.
+  `NFWPotential`, `PlummerPotential`), or one of two TNT-specific MGE
+  composite types, `triaxial_light_mge`/`triaxial_mass_mge`, provided
+  directly by TNT since `galax` has no native class for a
+  sum-of-triaxial-Gaussians potential. A light-MGE potential requires an
+  `ml` parameter; a mass-MGE potential requires `mge_mass_scale` instead
+  and validation rejects `ml` on it, since its MGE already contains mass.
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`
-  constructor kwargs exactly; both their physical dimensions and the
-  mass-normalization parameter `rescale()` scales are derived dynamically
-  from `galax`'s own `ParameterField(dimensions=...)` metadata
-  (`tnt.potential.native_parameter_dimensions`/`_native_mass_parameter`),
-  not hand-maintained per type. Given explicitly, it names a registered
-  non-native conversion (today, only NFW's `concentration_mass_ratio`,
+  constructor kwargs exactly; their physical dimensions are derived
+  dynamically from `galax`'s own `ParameterField(dimensions=...)` metadata
+  (`tnt.potential.native_parameter_dimensions`), not hand-maintained per
+  type. `GalaxPotentialComponent.rescale()` scales every native parameter
+  by `mass_scale ** exponent`, where `exponent` comes from a small table of
+  individually verified dimensions keyed by dimension name
+  (`tnt.potential._RESCALE_EXPONENTS`: mass=1, length/angle/dimensionless=0
+  since shape is held fixed, speed=0.5 -- verified against
+  `LogarithmicPotential`'s `v_c`, which has no mass-dimensioned parameter
+  at all: `Phi = 0.5 * v_c**2 * ln(...)`, so scaling `v_c` by
+  `sqrt(mass_scale)` scales `Phi` linearly, matching a true mass
+  parameter). Each entry requires this kind of direct verification before
+  being added, since dimension alone doesn't determine a parameter's role:
+  a bar's pattern speed (`MonariEtAl2016BarPotential`'s `Omega`, dimension
+  `"frequency"`) shares `v_c`'s time-power but must stay fixed under a mass
+  rescale rather than scale with it, and `"power"` has no current native
+  `galax` parameter to verify against, so both raise `NotImplementedError`
+  via `tnt.potential._rescale_exponent` rather than being derived
+  automatically. `PhysicalType.__str__` joins every
+  alias with `/` (e.g. `"speed/velocity"`), which `u.dimension()` silently
+  treats as dimensionless rather than raising; dimension derivation takes
+  the first name from iterating the `PhysicalType` instead. Given
+  explicitly, `parameterization` names a registered non-native conversion
+  (today, only NFW's `concentration_mass_ratio`,
   which is not yet implemented -- the `(c, f) -> (m, r_s)` formula needs a
   confirmed reference, same as the MGE `stars` component's own
   `(q_min, p_min, u) -> (theta, phi, psi)` viewing-geometry conversion).

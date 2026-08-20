@@ -76,10 +76,10 @@ potential:
 ### MGE composite types
 
 `"triaxial_light_mge"` and `"triaxial_mass_mge"` build a potential from a
-named Multi-Gaussian Expansion (MGE) rather than from a single `galax`
-class -- `galax.potential` has no native "sum of triaxial Gaussians"
-potential to name directly. Both require an `mge` field naming a registered
-MGE (see [Configuration preparation](configuration.md)):
+named Multi-Gaussian Expansion (MGE) -- TNT provides these two types
+directly, since `galax.potential` has no "sum of triaxial Gaussians"
+potential of its own to name. Both require an `mge` field naming a
+registered MGE (see [Configuration preparation](configuration.md)):
 
 ```yaml
 potential:
@@ -93,16 +93,21 @@ potential:
 
 `triaxial_light_mge`'s `ml` (mass-to-light ratio) and `triaxial_mass_mge`'s
 `mge_mass_scale` (a pure multiplicative scale factor on an already
-mass-calibrated MGE) are TNT's own parameter names, not `galax`'s -- there's
-no native `galax` class for either type to take native parameters from.
+mass-calibrated MGE) are TNT's own parameter names for these two types.
 
 ## What's implemented today
 
 - **Any native-galax-parameterized type** (`parameterization` omitted): the
-  component resolves, and `rescale()` works, for every `galax.potential`
-  class -- verified against `PlummerPotential`, `NFWPotential`, and
-  `TriaxialNFWPotential`. `to_galax()` (building the actual `galax`
-  potential object) works the same way for all of them.
+  component resolves and `to_galax()` (building the actual `galax`
+  potential object) works for every `galax.potential` class -- verified
+  against `PlummerPotential`, `NFWPotential`, and `TriaxialNFWPotential`.
+  `rescale()` works the same way for parameters with a confirmed
+  mass-rescale exponent (mass, length, angle, dimensionless, speed --
+  verified including `LogarithmicPotential`'s velocity-parameterized
+  `v_c`); each addition to that confirmed set requires the same kind of
+  direct verification, since e.g. a bar's pattern speed
+  (`MonariEtAl2016BarPotential`'s `Omega`) shares `v_c`'s dimension but has
+  to stay fixed under a mass rescale rather than scale with it.
 - **NFW's `concentration_mass_ratio` parameterization**: registered, but not
   implemented -- converting `(c, f)` into native `(m, r_s)` needs a formula
   from the triaxial-Schwarzschild-modeling / DYNAMITE-successor literature

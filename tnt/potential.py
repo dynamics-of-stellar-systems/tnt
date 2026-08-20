@@ -2,17 +2,17 @@
 
 `potential.<name>.type` names either a `galax.potential` class directly
 (e.g. `"NFWPotential"`, `"PlummerPotential"`) or one of two TNT-specific MGE
-composite potentials (`"triaxial_light_mge"`, `"triaxial_mass_mge"`) that
-aren't single galax classes. `parameterization` is a separate, optional
-concern: when omitted, `parameters` must use the resolved type's own native
-constructor kwargs -- both their physical dimensions and, for `rescale`, the
-mass-normalization parameter are derived directly from galax's own
-`ParameterField` metadata (see `raw_parameter_dimensions`/
-`native_parameter_dimensions`), not hand-maintained per type. When given,
-`parameterization` names a registered conversion from some other raw
-parameter convention (e.g. NFW's `concentration_mass_ratio`, not yet
-implemented -- the `(c, f) -> (m, r_s)` formula needs a confirmed reference)
-into those same native fields.
+composite potentials, `"triaxial_light_mge"`/`"triaxial_mass_mge"`, each
+built from a named MGE. `parameterization` is a separate, optional concern:
+when omitted, `parameters` use the resolved type's own native constructor
+kwargs, with physical dimensions derived directly from galax's own
+`ParameterField` metadata for any `galax.potential` class (see
+`raw_parameter_dimensions`/`native_parameter_dimensions`), and `rescale`
+scales each one by an exponent derived from that same dimension (see
+`_rescale_exponent`). When given, `parameterization` names a registered
+conversion from some other raw parameter convention into those same native
+fields -- today, NFW's `concentration_mass_ratio`, whose `(c, f) -> (m,
+r_s)` formula is pending a confirmed reference.
 
 This module is filled in incrementally, one object at a time -- the same
 approach already used for `ProjectedBinning`. `Potential.generate_orbit_library`
@@ -52,8 +52,7 @@ def native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
     """Each of `galax_type`'s native constructor parameters' physical dimension.
 
     Derived from galax's own `ParameterField(dimensions=...)` metadata, so
-    this works for any `galax.potential` class -- not a hand-maintained
-    table grown one type at a time.
+    this works for any `galax.potential` class.
 
     Args:
         galax_type: A name from `galax.potential`, e.g. `"NFWPotential"`.
@@ -76,43 +75,71 @@ def _native_parameter_dimensions(
     galax_cls: type[galax.potential.AbstractPotential],
 ) -> dict[str, str]:
     return {
-        f.name: str(raw.dimensions)
+        # A PhysicalType with more than one recognized name (e.g. "speed"
+        # and "velocity") stringifies as "speed/velocity", which
+        # u.dimension() doesn't recognize and silently resolves to
+        # "dimensionless" instead of raising -- iterate and take the first
+        # canonical name instead of stringifying the whole object.
+        f.name: next(iter(raw.dimensions))
         for f in dataclasses.fields(galax_cls)
-        if isinstance(raw := galax_cls.__dict__.get(f.name), ParameterField)
+        # getattr, not galax_cls.__dict__.get: a ParameterField declared on
+        # an abstract parent (e.g. AbstractMultipolePotential's m_tot/r_s,
+        # inherited by MultipolePotential) isn't in the subclass's own
+        # __dict__, but getattr still finds it via the MRO.
+        if isinstance(raw := getattr(galax_cls, f.name, None), ParameterField)
     }
 
 
-def _native_mass_parameter(galax_cls: type[galax.potential.AbstractPotential]) -> str:
-    """The one native parameter with dimension `"mass"`.
+# Exponents of `mass_scale` for dimensions with one confirmed, unambiguous
+# role under `rescale` (see `_rescale_exponent`) -- each entry individually
+# verified, since a parameter's role determines its exponent as much as its
+# dimension does. `galax.potential.LogarithmicPotential`'s `v_c` (speed)
+# sets the potential's overall gravitational amplitude, verified directly
+# (`Phi = 0.5 * v_c**2 * ln(...)`: scaling `v_c` by `sqrt(mass_scale)` scales
+# `Phi` by exactly `mass_scale`, matching a linear mass parameter). By
+# contrast, `galax.potential.MonariEtAl2016BarPotential`'s `Omega`
+# (dimension "frequency", the same time-power as speed) is a bar's pattern
+# speed: an independently observed input to the potential's imposed
+# time-dependence that stays fixed under a mass rescale, even though its
+# dimension alone looks the same as a scaling one.
+_RESCALE_EXPONENTS: dict[str, float] = {
+    "mass": 1.0,  # linear: Plummer's m_tot, NFW's m, ...
+    "length": 0.0,  # shape held fixed by definition
+    "angle": 0.0,  # orientation, unaffected by a mass-only rescale
+    "dimensionless": 0.0,  # shape ratios (axis ratios, normalized moments, ...)
+    "speed": 0.5,  # sets amplitude directly, e.g. LogarithmicPotential's v_c
+    # "power" (e.g. luminosity) has no current galax.potential parameter
+    # (checked against every class); add it, with the same kind of direct
+    # verification as "speed" above, once a real parameter needs it.
+}
 
-    Every potential component has exactly one mass-normalization parameter
-    (see `AbstractPotentialComponent.rescale`'s docstring); for a native
-    galax type, that's whichever of its own constructor parameters has
-    dimension `"mass"`.
+
+def _rescale_exponent(dimension: str) -> float:
+    """The exponent of `mass_scale` a native parameter's dimension picks up.
+
+    `rescale` holds shape fixed while multiplying the total mass by
+    `mass_scale`; see `_RESCALE_EXPONENTS` for the confirmed dimensions and
+    the reasoning behind each one.
     """
-    candidates = [
-        name
-        for name, dimension in _native_parameter_dimensions(galax_cls).items()
-        if dimension == "mass"
-    ]
-    if len(candidates) != 1:
+    try:
+        return _RESCALE_EXPONENTS[dimension]
+    except KeyError as error:
         raise NotImplementedError(
-            f"{galax_cls.__name__} has {len(candidates)} mass-dimensioned "
-            "parameter(s) (expected exactly 1); rescale() needs a single "
-            "mass-normalization parameter to scale."
-        )
-    return candidates[0]
+            f"No confirmed mass-rescale exponent for dimension {dimension!r}; "
+            f"implemented: {', '.join(sorted(_RESCALE_EXPONENTS))}. Dimensions "
+            "with nonzero time content (e.g. frequency) depend on the "
+            "parameter's role, not just its dimension -- needs a deliberate "
+            "per-parameter decision, not an automatic one."
+        ) from error
 
 
-# Raw parameter dimensions for the two TNT MGE composite types, which have
-# no native galax class to introspect. `triaxial_mass_mge` has no entry for
-# its `mge_mass_scale` parameter: like `ml`, it's a pure multiplicative
-# scale factor with no physical unit of its own (dimensionless).
-# `triaxial_mass_mge` still declares `ml` here (even though `ml` is invalid
-# for it) so that a config mistakenly declaring one gets normalized as
-# mass_to_light rather than rejected here as "dimensionless" -- letting
-# `_validate_potential` raise the more specific "ml is invalid for a mass
-# MGE potential" error instead.
+# Hand-declared raw parameter dimensions for the two TNT MGE composite
+# types. `triaxial_mass_mge`'s own mass parameter is `mge_mass_scale`, a
+# pure multiplicative scale factor with no physical unit of its own
+# (dimensionless, so it has no entry here); it still declares `ml` so that
+# a config mistakenly setting one on a mass-MGE component gets normalized
+# as mass_to_light, letting `_validate_potential` raise the more specific
+# "ml is invalid for a mass MGE potential" error.
 _MGE_RAW_DIMENSIONS: dict[str, dict[str, str]] = {
     "triaxial_light_mge": {"ml": "mass_to_light"},
     "triaxial_mass_mge": {"ml": "mass_to_light"},
@@ -182,12 +209,17 @@ _PARAMETERIZATIONS: dict[str, dict[str, ParameterizationConverter]] = {
 class AbstractPotentialComponent(eqx.Module):
     """One named term of the total potential (e.g. a halo, a light MGE).
 
-    Every component has exactly one mass-normalization parameter on top of
-    an otherwise-fixed shape; `rescale` multiplies that parameter, holding
-    shape fixed. `parameters` always holds canonical, parameterization
-    -independent fields: for a native galax type these are exactly that
-    class's own constructor kwarg names; for the two MGE composite types,
-    TNT's own `ml`/`mge_mass_scale`.
+    `rescale` holds shape fixed while re-normalizing a component's overall
+    mass: for `GalaxPotentialComponent`, every native parameter scales by
+    its own exponent, derived from its physical dimension (see
+    `_rescale_exponent`) -- e.g. `LogarithmicPotential`'s `v_c` scales
+    alongside a true mass parameter like Plummer's `m_tot`, each by the
+    exponent its own dimension calls for. For the two MGE composite types,
+    `rescale` multiplies their one TNT-defined mass-normalization parameter
+    (`ml`/`mge_mass_scale`) directly. `parameters` always holds canonical,
+    parameterization-independent fields: for a native galax type these are
+    exactly that class's own constructor kwarg names; for the two MGE
+    composite types, TNT's own `ml`/`mge_mass_scale`.
     """
 
     parameters: dict[str, Quantity]
@@ -292,7 +324,7 @@ class AbstractPotentialComponent(eqx.Module):
         raise NotImplementedError
 
     def rescale(self, mass_scale: float) -> Self:
-        """Multiply this component's mass-normalization parameter.
+        """Re-normalize this component to a different overall mass scale.
 
         Used for cheap re-exploration of nearby mass scales without
         re-integrating orbits (`parameter_space_settings.potential_rescalings`
@@ -331,9 +363,23 @@ class GalaxPotentialComponent(AbstractPotentialComponent):
 
     def rescale(self, mass_scale: float) -> Self:
         potential_cls = getattr(galax.potential, self.galax_type)
-        key = _native_mass_parameter(potential_cls)
-        rescaled = dict(self.parameters)
-        rescaled[key] = rescaled[key] * mass_scale
+        dimensions = _native_parameter_dimensions(potential_cls)
+        rescaled = {}
+        for name, value in self.parameters.items():
+            if name not in dimensions:
+                raise NotImplementedError(
+                    f"{self.galax_type}.{name} isn't a ParameterField (e.g. a "
+                    "plain hyperparameter like MultipolePotential.l_max); "
+                    "rescale() doesn't yet know how to handle non-Quantity "
+                    "native parameters."
+                )
+            try:
+                exponent = _rescale_exponent(dimensions[name])
+            except NotImplementedError as error:
+                raise NotImplementedError(
+                    f"{self.galax_type}.{name}: {error}"
+                ) from error
+            rescaled[name] = value * mass_scale**exponent
         return eqx.tree_at(lambda c: c.parameters, self, rescaled)
 
 
