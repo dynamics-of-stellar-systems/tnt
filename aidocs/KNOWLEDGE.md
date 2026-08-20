@@ -68,15 +68,22 @@
   quantities use `{value: ..., unit: ...}`. Unitful parameter definitions use
   a required sibling `unit` applying to the parameter value and generator
   range. Dimensionless values remain plain numbers and reject a `unit`.
-  Configuration preparation converts supported quantities to plain
-  internal-unit numbers before validation and resolved-YAML generation. The
-  submitted profile is transient input and is not archived by TNT.
+  Configuration preparation validates their dimensions without converting or
+  stripping them; per-run resolved configurations preserve the `{value, unit}`
+  declarations. The submitted profile is transient input and is not archived
+  by TNT.
 - The first unit-aware schema covers `cosmological_parameters.H0`,
   `system_attributes.distance`, explicit kinematics histogram width and center,
   Gauss-Hermite `v` and `sigma` systematic uncertainties, Plummer `m` and `a`,
-  and light-MGE potential `ml`. Linear parameter steps are converted;
-  logarithmic parameter values and bounds are shifted between reference units
-  while log step sizes remain unchanged.
+  and light-MGE potential `ml`. At runtime, linear parameter steps are
+  converted; logarithmic parameter values and bounds are shifted between
+  reference units while log step sizes remain unchanged.
+- Runtime kinematics construction converts configured histogram quantities and
+  Gauss-Hermite velocity systematics. `ModelIterator.from_configuration()`
+  creates one internal-unit potential-settings copy shared by the parameter
+  generator and potential construction, leaving the resolved configuration
+  unchanged. Values without a scientific runtime object, currently `H0` and
+  system distance, remain declared quantities in configuration data.
 - MGE contents and quantities inside observational files are deliberately
   deferred to the object-construction/data-loading phase. Configuration
   preparation does not open those files. `tnt.kinematics.build_kinematics`
@@ -158,7 +165,9 @@
   successful historical model, and the required potential parameter columns
   must exist. Negative configured orbit seeds are valid for fresh and
   continued runs; changing the configured seed between runs remains
-  incompatible.
+  incompatible. Unit-bearing compatibility fields are canonicalized into the
+  configured internal units first, so physically equivalent declarations such
+  as `1 kpc` and `1000 pc` compare equal.
 - The compatibility check currently runs once at the start of each
   `ModelIterator.run()` invocation, outside its internal iteration loop. When
   TNT gains a coordinating execution layer, move the check there and perform

@@ -14,6 +14,7 @@ from tnt.config_parsing import _mapping as _parse_mapping
 from tnt.config_parsing import _required_mapping as _parse_required_mapping
 from tnt.configuration import ConfigDict, _read_yaml_bytes_mapping
 from tnt.run_config_log import RunManifestReference
+from tnt.units import build_unit_systems, normalize_configuration_quantities
 
 _SEARCH_PARAMETER_KEYS = {
     "fixed",
@@ -60,7 +61,9 @@ def ensure_resume_compatible(
 
 
 def _critical_configuration(config: Mapping[str, Any]) -> ConfigDict:
-    """Project a resolved runtime configuration onto scientifically fixed fields."""
+    """Project physically canonical configuration onto scientifically fixed fields."""
+    unit_systems = build_unit_systems(_mapping(config, "units"))
+    config = normalize_configuration_quantities(config, unit_systems)
     system_attributes = {
         key: deepcopy(value)
         for key, value in _mapping(config, "system_attributes").items()

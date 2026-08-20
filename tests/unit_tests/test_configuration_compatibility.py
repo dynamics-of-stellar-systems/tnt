@@ -33,8 +33,13 @@ def _config(input_directory: Path) -> dict[str, object]:
             },
             "display": {"angle": "arcsec"},
         },
-        "cosmological_parameters": {"H0": 0.1},
-        "system_attributes": {"name": "galaxy", "distance": 10.0},
+        "cosmological_parameters": {
+            "H0": {"value": 0.1, "unit": "1 / Myr"}
+        },
+        "system_attributes": {
+            "name": "galaxy",
+            "distance": {"value": 10.0, "unit": "kpc"},
+        },
         "mge_settings": {
             "intrinsic_mass_quad_order": 10,
             "projected_mass_quad_order": 10,
@@ -50,11 +55,11 @@ def _config(input_directory: Path) -> dict[str, object]:
         "MGEs": {"light": "light.ecsv"},
         "spatial_binnings": {
             "observed": {
-                "min_x": -1.0,
-                "min_y": -1.0,
-                "x_extent": 2.0,
-                "y_extent": 2.0,
-                "PA": 0.0,
+                "min_x": {"value": -1.0, "unit": "rad"},
+                "min_y": {"value": -1.0, "unit": "rad"},
+                "x_extent": {"value": 2.0, "unit": "rad"},
+                "y_extent": {"value": 2.0, "unit": "rad"},
+                "PA": {"value": 0.0, "unit": "rad"},
                 "bins_file": "bins.npy",
             }
         },
@@ -71,7 +76,11 @@ def _config(input_directory: Path) -> dict[str, object]:
                         "latex_label": "q",
                         "generator_settings": {"lower_bound": 0.5},
                     },
-                    "ml": {"value": 5.0, "fixed": False},
+                    "ml": {
+                        "value": 5.0,
+                        "unit": "Msun / Lsun",
+                        "fixed": False,
+                    },
                 },
             }
         },
@@ -169,17 +178,72 @@ def test_operational_and_search_changes_are_compatible(tmp_path: Path) -> None:
     ) == []
 
 
+def test_equivalent_declared_units_are_compatible(tmp_path: Path) -> None:
+    input_directory = tmp_path / "input"
+    _write_inputs(input_directory)
+    baseline = _config(input_directory)
+    baseline["kinematic_data"]["observed"].update(
+        {
+            "histogram": {
+                "width": {"value": 1000.0, "unit": "km / s"},
+                "center": {"value": 0.0, "unit": "km / s"},
+                "bins": 101,
+            },
+            "observational_errors": {
+                "systematic_uncertainties": {
+                    "v": {"value": 0.0, "unit": "km / s"},
+                    "sigma": {"value": 0.0, "unit": "km / s"},
+                    "h3": 0.0,
+                    "h4": 0.0,
+                }
+            },
+        }
+    )
+    equivalent = deepcopy(baseline)
+    equivalent["system_attributes"]["distance"] = {
+        "value": 10000.0,
+        "unit": "pc",
+    }
+    equivalent["spatial_binnings"]["observed"].update(
+        {
+            "min_x": {"value": -1000.0, "unit": "mrad"},
+            "min_y": {"value": -1000.0, "unit": "mrad"},
+            "x_extent": {"value": 2000.0, "unit": "mrad"},
+            "y_extent": {"value": 2000.0, "unit": "mrad"},
+        }
+    )
+    equivalent["kinematic_data"]["observed"]["histogram"].update(
+        {
+            "width": {"value": 1_000_000.0, "unit": "m / s"},
+            "center": {"value": 0.0, "unit": "m / s"},
+        }
+    )
+    systematics = equivalent["kinematic_data"]["observed"][
+        "observational_errors"
+    ]["systematic_uncertainties"]
+    systematics["v"] = {"value": 0.0, "unit": "m / s"}
+    systematics["sigma"] = {"value": 0.0, "unit": "m / s"}
+    equivalent["potential"]["stars"]["parameters"]["ml"]["unit"] = (
+        "solMass / solLum"
+    )
+
+    assert _different_paths(
+        _critical_configuration(baseline),
+        _critical_configuration(equivalent),
+    ) == []
+
+
 @pytest.mark.parametrize(
     ("section", "mutate", "expected_path"),
     [
         (
             "cosmological_parameters",
-            lambda value: value.update(H0=0.2),
+            lambda value: value["H0"].update(value=0.2),
             "critical_configuration.cosmological_parameters.H0",
         ),
         (
             "system_attributes",
-            lambda value: value.update(distance=11.0),
+            lambda value: value["distance"].update(value=11.0),
             "critical_configuration.system_attributes.distance",
         ),
         (
@@ -214,7 +278,7 @@ def test_operational_and_search_changes_are_compatible(tmp_path: Path) -> None:
         ),
         (
             "spatial_binnings",
-            lambda value: value["observed"].update(PA=1.0),
+            lambda value: value["observed"]["PA"].update(value=1.0),
             "critical_configuration.spatial_binnings.observed.PA",
         ),
         (

@@ -30,10 +30,11 @@ class AbstractParameterGenerator(eqx.Module):
 
     `_type` matches `parameter_space_settings.generator_type`.
 
-    `potential_settings` (a resolved configuration's `potential` section --
-    every parameter's declared value, and, for a search, its allowed
-    range/step) is common to every generator, since even a fixed single
-    point is drawn from it. `generator_settings` is
+    `potential_settings` (a resolved configuration's `potential` section
+    converted into shared internal runtime coordinates -- every parameter's
+    value and, for a search, its allowed range/step) is common to every
+    generator, since even a fixed single point is drawn from it.
+    `generator_settings` is
     `parameter_space_settings.generator_settings`; not every generator type
     needs any of it, so `_required_generator_settings` names the subset of
     its keys this `_type` actually reads -- `configuration_validation`
@@ -107,7 +108,7 @@ def build_parameter_generator(
     Args:
         parameter_space_settings: A resolved configuration's
             `parameter_space_settings` section.
-        potential_settings: A resolved configuration's `potential` section.
+        potential_settings: Unit-normalized runtime `potential` settings.
 
     Returns:
         The `AbstractParameterGenerator` matching

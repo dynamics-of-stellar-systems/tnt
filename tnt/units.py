@@ -1,4 +1,4 @@
-"""Unit systems and unit-aware configuration normalization."""
+"""Unit systems and unit-aware configuration validation/conversion."""
 
 from __future__ import annotations
 
@@ -89,7 +89,12 @@ def normalize_configuration_quantities(
     config: Mapping[str, Any],
     unit_systems: UnitSystems,
 ) -> ConfigDict:
-    """Return a copy with supported quantities expressed in internal units."""
+    """Return a canonical copy with quantities expressed in internal units.
+
+    This is a runtime/compatibility helper. Configuration preparation validates
+    declared quantities with :func:`validate_configuration_quantities` and
+    preserves their original ``{value, unit}`` representation.
+    """
     resolved = deepcopy(_mapping(config, "configuration"))
 
     cosmology = _optional_mapping(resolved, "cosmological_parameters", "configuration")
@@ -97,46 +102,136 @@ def normalize_configuration_quantities(
         cosmology,
         "H0",
         "inverse_time",
-        unit_systems,
+        unit_systems.internal,
         "cosmological_parameters",
     )
 
     attributes = _optional_mapping(resolved, "system_attributes", "configuration")
     _normalize_field(
-        attributes, "distance", "length", unit_systems, "system_attributes"
+        attributes,
+        "distance",
+        "length",
+        unit_systems.internal,
+        "system_attributes",
     )
 
-    potential = _optional_mapping(resolved, "potential", "configuration")
-    for potential_name, potential_value in potential.items():
-        potential_path = f"potential.{potential_name}"
-        settings = _mapping(potential_value, potential_path)
-        potential_type = settings.get("type")
-        dimensions = _POTENTIAL_PARAMETER_DIMENSIONS.get(potential_type, {})
-        parameters = settings.get("parameters")
-        if parameters is not None:
-            _normalize_parameters(
-                _mapping(parameters, f"{potential_path}.parameters"),
-                dimensions,
-                unit_systems,
-                f"{potential_path}.parameters",
+    spatial_binnings = _optional_mapping(
+        resolved, "spatial_binnings", "configuration"
+    )
+    for binning_name, binning_value in spatial_binnings.items():
+        binning_path = f"spatial_binnings.{binning_name}"
+        binning = _mapping(binning_value, binning_path)
+        for field in ("min_x", "min_y", "x_extent", "y_extent", "PA"):
+            _normalize_field(
+                binning,
+                field,
+                "angle",
+                unit_systems.internal,
+                binning_path,
             )
+
+    potential = _optional_mapping(resolved, "potential", "configuration")
+    resolved["potential"] = normalize_potential_settings(
+        potential, unit_systems.internal
+    )
 
     kinematic_data = _optional_mapping(resolved, "kinematic_data", "configuration")
     _normalize_kinematics(
         kinematic_data,
-        unit_systems,
+        unit_systems.internal,
         "kinematic_data",
     )
     return resolved
 
 
+def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
+    """Validate declared configuration quantities without converting them."""
+    config = _mapping(config, "configuration")
+
+    cosmology = _optional_mapping(config, "cosmological_parameters", "configuration")
+    _validate_field(cosmology, "H0", "inverse_time", "cosmological_parameters")
+
+    attributes = _optional_mapping(config, "system_attributes", "configuration")
+    _validate_field(attributes, "distance", "length", "system_attributes")
+
+    potential = _optional_mapping(config, "potential", "configuration")
+    for potential_name, potential_value in potential.items():
+        potential_path = f"potential.{potential_name}"
+        settings = _mapping(potential_value, potential_path)
+        dimensions = _POTENTIAL_PARAMETER_DIMENSIONS.get(settings.get("type"), {})
+        parameters = settings.get("parameters")
+        if parameters is not None:
+            _validate_parameter_units(
+                _mapping(parameters, f"{potential_path}.parameters"),
+                dimensions,
+                f"{potential_path}.parameters",
+            )
+
+    kinematics = _optional_mapping(config, "kinematic_data", "configuration")
+    for name, settings_value in kinematics.items():
+        settings_path = f"kinematic_data.{name}"
+        settings = _mapping(settings_value, settings_path)
+        histogram = settings.get("histogram")
+        if histogram is not None:
+            histogram = _mapping(histogram, f"{settings_path}.histogram")
+            histogram_path = f"{settings_path}.histogram"
+            _validate_field(histogram, "width", "speed", histogram_path)
+            _validate_field(histogram, "center", "speed", histogram_path)
+
+        errors = settings.get("observational_errors")
+        if settings.get("type") == "gauss_hermite" and errors is not None:
+            errors = _mapping(errors, f"{settings_path}.observational_errors")
+            systematics = errors.get("systematic_uncertainties")
+            if systematics is not None:
+                systematics_path = (
+                    f"{settings_path}.observational_errors.systematic_uncertainties"
+                )
+                systematics = _mapping(systematics, systematics_path)
+                _validate_field(systematics, "v", "speed", systematics_path)
+                _validate_field(systematics, "sigma", "speed", systematics_path)
+
+
+def normalize_potential_settings(
+    potential: Mapping[str, Any],
+    unit_system: u.AbstractUnitSystem,
+) -> ConfigDict:
+    """Return potential settings in the shared internal runtime coordinates."""
+    normalized = deepcopy(_mapping(potential, "potential"))
+    for potential_name, potential_value in normalized.items():
+        potential_path = f"potential.{potential_name}"
+        settings = _mapping(potential_value, potential_path)
+        dimensions = _POTENTIAL_PARAMETER_DIMENSIONS.get(settings.get("type"), {})
+        parameters = settings.get("parameters")
+        if parameters is not None:
+            _normalize_parameters(
+                _mapping(parameters, f"{potential_path}.parameters"),
+                dimensions,
+                unit_system,
+                f"{potential_path}.parameters",
+            )
+    return normalized
+
+
 def normalize_unitful_value(
     value: Any,
     dimension: str,
-    unit_systems: UnitSystems,
+    unit_system: u.AbstractUnitSystem,
     path: str,
 ) -> float:
     """Normalize an explicit ``{value, unit}`` mapping."""
+    numeric, source = _declared_quantity(value, dimension, path)
+    target = _internal_unit(unit_system, dimension)
+    return float(source.to(target, numeric))
+
+
+def declared_quantity_value(value: Any, dimension: str, path: str) -> float:
+    """Validate an explicit quantity and return its unconverted numeric value."""
+    numeric, _ = _declared_quantity(value, dimension, path)
+    return numeric
+
+
+def _declared_quantity(value: Any, dimension: str, path: str) -> tuple[float, Any]:
+    """Return one validated declared value and unit without converting it."""
     if not isinstance(value, Mapping):
         raise TypeError(
             f"{path} must be a mapping containing value and unit; unitful "
@@ -152,13 +247,12 @@ def normalize_unitful_value(
     numeric = float(numeric_value)
     _require_finite(numeric, f"{path}.value")
     source = _validated_declared_unit(explicit["unit"], dimension, f"{path}.unit")
-    target = _internal_unit(unit_systems.internal, dimension)
-    return float(source.to(target, numeric))
+    return numeric, source
 
 
 def _normalize_kinematics(
     kinematics: ConfigDict,
-    unit_systems: UnitSystems,
+    unit_system: u.AbstractUnitSystem,
     path: str,
 ) -> None:
     for name, settings_value in kinematics.items():
@@ -168,8 +262,8 @@ def _normalize_kinematics(
         if histogram is not None:
             histogram = _mapping(histogram, f"{settings_path}.histogram")
             histogram_path = f"{settings_path}.histogram"
-            _normalize_field(histogram, "width", "speed", unit_systems, histogram_path)
-            _normalize_field(histogram, "center", "speed", unit_systems, histogram_path)
+            _normalize_field(histogram, "width", "speed", unit_system, histogram_path)
+            _normalize_field(histogram, "center", "speed", unit_system, histogram_path)
 
         errors = settings.get("observational_errors")
         if settings.get("type") == "gauss_hermite" and errors is not None:
@@ -184,17 +278,17 @@ def _normalize_kinematics(
                     f"{settings_path}.observational_errors.systematic_uncertainties"
                 )
                 _normalize_field(
-                    systematics, "v", "speed", unit_systems, systematics_path
+                    systematics, "v", "speed", unit_system, systematics_path
                 )
                 _normalize_field(
-                    systematics, "sigma", "speed", unit_systems, systematics_path
+                    systematics, "sigma", "speed", unit_system, systematics_path
                 )
 
 
 def _normalize_parameters(
     parameters: ConfigDict,
     dimensions: Mapping[str, str],
-    unit_systems: UnitSystems,
+    unit_system: u.AbstractUnitSystem,
     path: str,
 ) -> None:
     for name, parameter_value in parameters.items():
@@ -216,7 +310,7 @@ def _normalize_parameters(
         source = _validated_declared_unit(
             declared_unit, dimension, f"{parameter_path}.unit"
         )
-        target = _internal_unit(unit_systems.internal, dimension)
+        target = _internal_unit(unit_system, dimension)
         factor = float(source.to(target, 1.0))
         logarithmic = parameter.get("logarithmic", False)
         if not isinstance(logarithmic, bool):
@@ -253,12 +347,41 @@ def _normalize_field(
     mapping: ConfigDict,
     key: str,
     dimension: str,
-    unit_systems: UnitSystems,
+    unit_system: u.AbstractUnitSystem,
     path: str,
 ) -> None:
     if key in mapping:
         mapping[key] = normalize_unitful_value(
-            mapping[key], dimension, unit_systems, f"{path}.{key}"
+            mapping[key], dimension, unit_system, f"{path}.{key}"
+        )
+
+
+def _validate_field(
+    mapping: Mapping[str, Any], key: str, dimension: str, path: str
+) -> None:
+    if key in mapping:
+        declared_quantity_value(mapping[key], dimension, f"{path}.{key}")
+
+
+def _validate_parameter_units(
+    parameters: Mapping[str, Any], dimensions: Mapping[str, str], path: str
+) -> None:
+    for name, parameter_value in parameters.items():
+        parameter_path = f"{path}.{name}"
+        parameter = _mapping(parameter_value, parameter_path)
+        dimension = dimensions.get(name)
+        if dimension is None:
+            if "unit" in parameter:
+                raise ValueError(
+                    f"{parameter_path}.unit is not supported because this "
+                    "parameter is dimensionless or does not yet have a declared "
+                    "dimension."
+                )
+            continue
+        if "unit" not in parameter:
+            raise ValueError(f"{parameter_path} is missing required field: unit.")
+        _validated_declared_unit(
+            parameter["unit"], dimension, f"{parameter_path}.unit"
         )
 
 

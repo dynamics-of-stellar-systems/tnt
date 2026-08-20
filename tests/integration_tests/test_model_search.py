@@ -164,9 +164,9 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert best["kinchi2"] == pytest.approx(min(models.table["kinchi2"]))
 
     # _settings_with_parameters overlaid SinglePoint's proposed values onto
-    # the real resolved potential settings without disturbing anything else
-    # (units are already stripped by this point -- configuration resolution
-    # converts every declared unit into TNT's internal units and drops it).
+    # the shared runtime potential settings without disturbing anything else.
+    # ModelIterator converts the preserved declarations into internal parameter
+    # coordinates once for both the generator and potential construction.
     stars_ml = captured_settings[0]["stars"]["parameters"]["ml"]
     assert stars_ml["value"] == pytest.approx(5.0)
     assert stars_ml["fixed"] is False

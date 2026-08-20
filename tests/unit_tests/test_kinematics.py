@@ -43,6 +43,10 @@ def _common_settings(data_file: Path, kind: str) -> dict[str, object]:
     }
 
 
+def _speed(value: float) -> dict[str, object]:
+    return {"value": value, "unit": "kpc / Myr"}
+
+
 def _write_gauss_hermite(
     path: Path, bin_ids: tuple[int, int] = (1, 2)
 ) -> None:
@@ -70,8 +74,8 @@ def test_build_gauss_hermite_converts_units_and_applies_systematics(
             "maximum_gh_order": 4,
             "observational_errors": {
                 "systematic_uncertainties": {
-                    "v": 1.0,
-                    "sigma": 2.0,
+                    "v": _speed(1.0),
+                    "sigma": _speed(2.0),
                     "h3": 0.01,
                     "h4": 0.02,
                 }
@@ -79,7 +83,7 @@ def test_build_gauss_hermite_converts_units_and_applies_systematics(
             "histogram": {
                 "sigma_extent": 3.0,
                 "bin_width_sigma_fraction": 0.1,
-                "center": 0.0,
+                "center": _speed(0.0),
             },
         }
     )
@@ -113,15 +117,19 @@ def test_gauss_hermite_requires_complete_binning_coverage(tmp_path: Path) -> Non
     settings.update(
         {
             "maximum_gh_order": 4,
-            "observational_errors": {
-                "systematic_uncertainties": {
-                    "v": 0.0,
-                    "sigma": 0.0,
-                    "h3": 0.0,
-                    "h4": 0.0,
-                }
-            },
-            "histogram": {"width": 1000.0, "center": 0.0, "bins": 101},
+                "observational_errors": {
+                    "systematic_uncertainties": {
+                        "v": _speed(0.0),
+                        "sigma": _speed(0.0),
+                        "h3": 0.0,
+                        "h4": 0.0,
+                    }
+                },
+                "histogram": {
+                    "width": _speed(1000.0),
+                    "center": _speed(0.0),
+                    "bins": 101,
+                },
         }
     )
 
@@ -142,14 +150,18 @@ def test_gauss_hermite_adds_missing_higher_order_with_systematic(
             "maximum_gh_order": 5,
             "observational_errors": {
                 "systematic_uncertainties": {
-                    "v": 0.0,
-                    "sigma": 0.0,
+                    "v": _speed(0.0),
+                    "sigma": _speed(0.0),
                     "h3": 0.0,
                     "h4": 0.0,
                     "h5": 0.03,
                 }
             },
-            "histogram": {"width": 1000.0, "center": 0.0, "bins": 101},
+            "histogram": {
+                "width": _speed(1000.0),
+                "center": _speed(0.0),
+                "bins": 101,
+            },
         }
     )
 
@@ -172,13 +184,17 @@ def test_gauss_hermite_rejects_incomplete_systematics_at_construction(
             "maximum_gh_order": 5,
             "observational_errors": {
                 "systematic_uncertainties": {
-                    "v": 0.0,
-                    "sigma": 0.0,
+                    "v": _speed(0.0),
+                    "sigma": _speed(0.0),
                     "h3": 0.0,
                     "h4": 0.0,
                 }
             },
-            "histogram": {"width": 1000.0, "center": 0.0, "bins": 101},
+            "histogram": {
+                "width": _speed(1000.0),
+                "center": _speed(0.0),
+                "bins": 101,
+            },
         }
     )
 
@@ -199,13 +215,17 @@ def test_gauss_hermite_rejects_even_histogram_at_construction(
             "maximum_gh_order": 4,
             "observational_errors": {
                 "systematic_uncertainties": {
-                    "v": 0.0,
-                    "sigma": 0.0,
+                    "v": _speed(0.0),
+                    "sigma": _speed(0.0),
                     "h3": 0.0,
                     "h4": 0.0,
                 }
             },
-            "histogram": {"width": 1000.0, "center": 0.0, "bins": 100},
+            "histogram": {
+                "width": _speed(1000.0),
+                "center": _speed(0.0),
+                "bins": 100,
+            },
         }
     )
 
@@ -240,7 +260,7 @@ def test_build_bayes_losvd_centers_systemic_velocity(tmp_path: Path) -> None:
     settings["histogram"] = {
         "width_scale": 1.0,
         "oversampling_factor": 2.0,
-        "center": 0.0,
+        "center": _speed(0.0),
         "systemic_velocity": "flux_weighted",
     }
 
@@ -270,7 +290,7 @@ def test_bayes_losvd_requires_complete_binning_coverage(tmp_path: Path) -> None:
     settings["histogram"] = {
         "width_scale": 1.0,
         "oversampling_factor": 2.0,
-        "center": 0.0,
+        "center": _speed(0.0),
         "systemic_velocity": "flux_weighted",
     }
 
