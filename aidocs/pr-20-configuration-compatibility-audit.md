@@ -226,3 +226,41 @@ defense — worth confirming with Thomas rather than assuming either way.
    signature — the case for hashing anything at all is worth revisiting from
    scratch, rather than keeping a lighter version of the current scheme by
    default.
+
+## Codex response to the audit
+
+Assessment against the current implementation (2026-08-20):
+
+| Finding | Assessment | Recommended treatment |
+| --- | --- | --- |
+| 1. Concurrent snapshot creation | Agree. This is a real correctness issue because two writers can choose the same next snapshot ID. | Resolve before merging. Reconcile after a concurrent create conflict, and add a concurrency regression test. |
+| 2. Concurrent checkpoint overwrite | Agree. This is a real data-loss risk if two `ModelSearchState` instances write the same repository. | Resolve before merging. Enforce a single active writer or reject stale state; documentation alone is insufficient. |
+| 3. NaN in critical fields | Disagree that this is currently an exposed bug. Configuration validation rejects non-finite numeric values, and spatial-binning construction rejects NaN values before signature generation. Runtime model or MGE values are outside the critical configuration signature. | Record the validation coverage; no code change is currently required. |
+| 4. Repeated compatibility reads | The cost is overstated. `ensure_resume_compatible()` runs once per `ModelIterator.run()`, not once per internal search iteration. | Keep full-history checking. Consider caching only if measurement later shows a material cost. |
+| 5. Repeated manifest validation | Agree that this is avoidable repeated work, but it is not a correctness problem. | Treat as a later cleanup or caching optimization. |
+| 6. Linear snapshot scan | Agree. Snapshot lookup and deduplication scale linearly with the number of snapshots. | Keep the current simple implementation for now; optimize only when repository size or profiling justifies an index. |
+| 7. Scientific-input hashing | The behavior is intentional. Hashing detects scientific input files whose bytes change while their paths remain unchanged. | Retain it unless the compatibility contract is deliberately weakened. |
+| 8. Duplicated logic | Partly agree. The exact duplicate canonical-hash implementation and small parsing/validation helpers are candidates for consolidation. The write-time `_validate_pair()` is not dead because frozen dataclasses can still contain mutable tables, and the temporary writers have different immutable, mutable, and paired-file semantics. | Make only focused, behavior-preserving consolidations; do not merge helpers solely because they look similar. |
+| 9. Repeated resolved-config integrity checks | Agree that caching or consolidation may help; disagree with removing the integrity hash. The resolved snapshot is authoritative and cannot necessarily be recreated after the submitted YAML or defaults change. | Preserve the distinct semantic, compatibility-signature, and integrity hashes. Optimize repeated verification separately if needed. |
+
+### Recommended path forward
+
+1. Fix findings 1 and 2 before merging PR #20, with regression tests for the
+   chosen concurrency guarantees.
+2. Preserve snapshot deduplication, full-history compatibility checks,
+   scientific-input hashing, and the distinct hashes because they protect
+   different invariants.
+3. Treat findings 5, 6, and the performance portion of finding 9 as later,
+   measurement-driven optimization work.
+4. Apply only the clearly useful consolidation from finding 8 after the
+   correctness fixes, so cleanup does not obscure their review.
+5. Close findings 3, 4, and 7 by documenting the existing validation,
+   call frequency, and intended compatibility behavior.
+
+For the audit's open questions, TNT should not merely assume a single writer:
+the repository layer should enforce or detect that condition. The current
+content-addressed snapshot repository and full-history comparison are worth
+retaining because they provide deduplication and prevent a later configuration
+from silently becoming incompatible with an earlier run. Likewise, removing
+all hashes would conflate three separate purposes: semantic identity,
+compatibility identity, and on-disk integrity.
