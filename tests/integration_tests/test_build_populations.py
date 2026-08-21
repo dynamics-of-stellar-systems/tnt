@@ -35,7 +35,7 @@ def test_build_populations_from_resolved_configuration(
     assert isinstance(observed, Populations)
     assert observed.binning is binnings["kinset1_binning"]
     assert observed.property_names == ("age", "metallicity")
-    assert observed.n_spatial_bins == 2
+    assert observed.n_spatial_bins == binnings["kinset1_binning"].n_bins == 152
     age, age_uncertainty = observed.values_and_uncertainties("age")
-    assert jnp.allclose(age.ustrip("Myr"), jnp.array([10000.0, 8000.0]))
-    assert jnp.allclose(age_uncertainty.ustrip("Myr"), jnp.array([500.0, 750.0]))
+    assert jnp.allclose(age.ustrip("Myr"), jnp.full(152, 10000.0))
+    assert jnp.allclose(age_uncertainty.ustrip("Myr"), jnp.full(152, 500.0))

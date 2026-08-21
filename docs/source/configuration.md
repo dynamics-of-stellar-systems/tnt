@@ -291,16 +291,22 @@ each binning reference to resolve to a `ProjectedBinning` and each MGE
 reference to resolve to a `LightMGE` or `MassMGE`.
 
 Gauss-Hermite and Bayesian LOSVD inputs are ECSV files. Gauss-Hermite files
-contain `vbin_id`, unitful `v`, `dv`, `sigma`, and `dsigma` columns, followed by
+contain `bin_id`, unitful `v`, `dv`, `sigma`, and `dsigma` columns, followed by
 dimensionless `hN` and `dhN` pairs. Bayesian LOSVD files contain
-`binID_dynamite`, `bin_flux`, and paired `losvd_N`/`dlosvd_N` columns; their
+`bin_id`, `bin_flux`, and paired `losvd_N`/`dlosvd_N` columns; their
 metadata declares `vcent`, `dv`, and `velocity_unit`.
 
 Proper-motion inputs use an NPZ archive containing `PM_2dhist`,
-`PM_2dhist_sigma`, `binID_dynamite`, `nstarbin`, `vxrange`, `vyrange`, and the
+`PM_2dhist_sigma`, `bin_id`, `nstarbin`, `vxrange`, `vyrange`, and the
 scalar string `velocity_unit`. TNT validates odd two-dimensional velocity-bin
 counts and positive uncertainties, normalizes each spatial-bin distribution,
 and applies `variance_scale` to its error variances.
+
+Every kinematics input must cover the referenced `ProjectedBinning` exactly:
+`bin_id` is a positive, unique integer vector whose values are the complete
+set ``1, 2, ..., n_bins``. Row order is unrestricted because `bin_id`
+identifies each row. ID 0 is reserved for unbinned pixels in the bin map and
+must not occur in observational data.
 
 ## Constructing populations
 
@@ -319,21 +325,19 @@ populations = build_populations(
 ```
 
 Each returned `Populations` object retains its shared `ProjectedBinning` and
-stores its observations as JAX-backed `unxt.Quantity` arrays. A population
-ECSV file requires a positive unique `vbin_id` column and at least one paired
+stores its observations as JAX-backed `unxt.Quantity` arrays. Under the same
+convention as kinematics inputs, a population ECSV file requires a `bin_id`
+column whose positive, unique integer values cover every positive ID in the
+referenced binning exactly once. It also requires at least one paired
 population property and uncertainty, for example `age`/`dage` or
 `metallicity`/`dmetallicity`. Property names are otherwise unrestricted.
 Declared units on each pair must be equivalent and are converted into the
 internal unit system; columns without declared units are dimensionless. All
 values must be finite and all uncertainties must be strictly positive.
 
-Population bin IDs may cover a subset of the positive IDs in the referenced
-binning, but they cannot refer to IDs absent from it. Population objects do not
-contain an MGE. A population file must also be different from every configured
-kinematics file; sharing only the `spatial_binnings` entry is supported.
-
-The former global `number_GH`, `GH_sys_err`, and `PM_sys_err_factor` fields are
-not weight-solver settings in TNT and are rejected as unknown fields.
+Population objects do not contain an MGE. A population file must also be
+different from every configured kinematics file; sharing only the
+`spatial_binnings` entry is supported.
 
 ## Validation
 
@@ -393,9 +397,7 @@ resolved file is written only after every preparation-stage check succeeds.
 
 Preparation does not instantiate system components, inspect observational data
 or MGE files, or verify optional runtime dependencies. Those checks belong to
-the later execution phase. TNT also does not reproduce warnings for deprecated
-configuration fields from predecessor software; unsupported fields are
-reported as errors instead.
+the later execution phase. Unsupported fields are reported as errors.
 
 ## Paths and side effects
 

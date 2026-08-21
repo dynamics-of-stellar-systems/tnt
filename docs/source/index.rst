@@ -18,6 +18,7 @@ documentation for details.
    units
    logging
    model_search
+   dynamite_users
 
 .. toctree::
    :maxdepth: 1

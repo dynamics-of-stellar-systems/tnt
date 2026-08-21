@@ -21,6 +21,7 @@ import numpy as np
 from astropy.table import QTable
 
 ConfigMapping = Mapping[str, Any]
+BIN_ID_COLUMN = "bin_id"
 
 
 def _mapping(value: Any, path: str) -> ConfigMapping:
@@ -130,10 +131,12 @@ def _resolve_typed_reference(
     return value
 
 
-def _read_bin_ids(table: QTable, column: str, data_file: Path) -> jnp.ndarray:
-    if column not in table.colnames:
-        raise ValueError(f"{data_file} is missing required column: {column}.")
-    return _validated_bin_ids(table[column], data_file)
+def _read_bin_ids(table: QTable, data_file: Path) -> jnp.ndarray:
+    if BIN_ID_COLUMN not in table.colnames:
+        raise ValueError(
+            f"{data_file} is missing required column: {BIN_ID_COLUMN}."
+        )
+    return _validated_bin_ids(table[BIN_ID_COLUMN], data_file)
 
 
 def _validated_bin_ids(values: Any, data_file: Path) -> jnp.ndarray:

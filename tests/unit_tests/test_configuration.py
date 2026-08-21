@@ -147,9 +147,6 @@ def test_read_resolves_defaults_and_writes_run_bundle(tmp_path: Path) -> None:
     }
     assert written["weight_solver_settings"]["reattempt_failures"] is False
     assert written["weight_solver_settings"]["maxiter_factor"] == 3
-    assert "number_GH" not in written["weight_solver_settings"]
-    assert "GH_sys_err" not in written["weight_solver_settings"]
-    assert "PM_sys_err_factor" not in written["weight_solver_settings"]
 
     assert config.source_path == user_path
 
@@ -421,6 +418,43 @@ def test_read_rejects_unknown_nested_field(tmp_path: Path) -> None:
     assert not output_directory.exists()
 
 
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        (
+            """parameter_space_settings:
+  stopping_criteria:
+    unexpected_option: 1
+""",
+            r"stopping_criteria contains unknown field\(s\): unexpected_option",
+        ),
+        (
+            """execution_settings:
+  unexpected_option: 1
+""",
+            r"execution_settings contains unknown field\(s\): unexpected_option",
+        ),
+        (
+            """weight_solver_settings:
+  unexpected_option: 1
+""",
+            r"weight_solver_settings contains unknown field\(s\): unexpected_option",
+        ),
+    ],
+)
+def test_read_rejects_unknown_preparation_field(
+    tmp_path: Path,
+    body: str,
+    message: str,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory, body=body)
+
+    with pytest.raises(ValueError, match=message):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
 def test_read_rejects_partial_explicit_histogram(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"
@@ -514,25 +548,6 @@ def test_read_accepts_disabled_minimum_delta_chi2(tmp_path: Path) -> None:
     ] == {"enabled": False, "mode": "absolute", "value": 0.5}
 
 
-def test_read_rejects_legacy_n_max_mods(tmp_path: Path) -> None:
-    user_path = tmp_path / "user.yaml"
-    output_directory = tmp_path / "output"
-    _write_user_config(
-        user_path,
-        output_directory,
-        body="""parameter_space_settings:
-  stopping_criteria:
-    n_max_mods: 3
-""",
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=r"stopping_criteria contains unknown field\(s\): n_max_mods",
-    ):
-        Configuration().read(user_path, workspace_root=tmp_path)
-
-
 def test_read_rejects_nonpositive_target_model_count(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"
@@ -548,25 +563,6 @@ def test_read_rejects_nonpositive_target_model_count(tmp_path: Path) -> None:
     with pytest.raises(
         ValueError,
         match=r"stopping_criteria\.target_model_count must be positive",
-    ):
-        Configuration().read(user_path, workspace_root=tmp_path)
-
-
-def test_read_rejects_legacy_n_max_iter(tmp_path: Path) -> None:
-    user_path = tmp_path / "user.yaml"
-    output_directory = tmp_path / "output"
-    _write_user_config(
-        user_path,
-        output_directory,
-        body="""parameter_space_settings:
-  stopping_criteria:
-    n_max_iter: 3
-""",
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=r"stopping_criteria contains unknown field\(s\): n_max_iter",
     ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
@@ -662,45 +658,6 @@ def test_read_rejects_enabled_reattempt_failures(tmp_path: Path) -> None:
     with pytest.raises(
         ValueError,
         match=r"weight_solver_settings\.reattempt_failures must be false",
-    ):
-        Configuration().read(user_path, workspace_root=tmp_path)
-
-
-def test_read_rejects_removed_orbit_family_parallel_setting(tmp_path: Path) -> None:
-    user_path = tmp_path / "user.yaml"
-    output_directory = tmp_path / "output"
-    _write_user_config(
-        user_path,
-        output_directory,
-        body="""execution_settings:
-  orbit_family_integration_in_parallel: true
-""",
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=(
-            r"execution_settings contains unknown field\(s\): "
-            r"orbit_family_integration_in_parallel"
-        ),
-    ):
-        Configuration().read(user_path, workspace_root=tmp_path)
-
-
-def test_read_rejects_removed_external_chi2_workers(tmp_path: Path) -> None:
-    user_path = tmp_path / "user.yaml"
-    output_directory = tmp_path / "output"
-    _write_user_config(
-        user_path,
-        output_directory,
-        body="""execution_settings:
-  external_chi2_workers: all_available
-""",
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=r"execution_settings contains unknown field\(s\): external_chi2_workers",
     ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
@@ -967,25 +924,6 @@ def test_read_rejects_invalid_potential_rescaling_range(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match=r"minimum must not exceed maximum"):
-        Configuration().read(user_path, workspace_root=tmp_path)
-
-
-@pytest.mark.parametrize("legacy_key", ["number_GH", "GH_sys_err", "PM_sys_err_factor"])
-def test_weight_solver_rejects_former_global_kinematics_keys(
-    tmp_path: Path,
-    legacy_key: str,
-) -> None:
-    user_path = tmp_path / "user.yaml"
-    output_directory = tmp_path / "output"
-    _write_user_config(
-        user_path,
-        output_directory,
-        body=f"""weight_solver_settings:
-  {legacy_key}: 1
-""",
-    )
-
-    with pytest.raises(ValueError, match=legacy_key):
         Configuration().read(user_path, workspace_root=tmp_path)
 
 

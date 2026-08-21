@@ -43,9 +43,11 @@ def _common_settings(data_file: Path, kind: str) -> dict[str, object]:
     }
 
 
-def _write_gauss_hermite(path: Path) -> None:
+def _write_gauss_hermite(
+    path: Path, bin_ids: tuple[int, int] = (1, 2)
+) -> None:
     table = QTable()
-    table["vbin_id"] = [1, 2]
+    table["bin_id"] = bin_ids
     table["v"] = [100.0, -50.0] * au.km / au.s
     table["dv"] = [3.0, 4.0] * au.km / au.s
     table["sigma"] = [120.0, 80.0] * au.km / au.s
@@ -102,6 +104,31 @@ def test_build_gauss_hermite_converts_units_and_applies_systematics(
     )
     values, uncertainties = result.observed_values_and_uncertainties()
     assert values.shape == uncertainties.shape == (2, 4)
+
+
+def test_gauss_hermite_requires_complete_binning_coverage(tmp_path: Path) -> None:
+    data_file = tmp_path / "gh.ecsv"
+    _write_gauss_hermite(data_file, (1, 3))
+    settings = _common_settings(data_file, "gauss_hermite")
+    settings.update(
+        {
+            "maximum_gh_order": 4,
+            "observational_errors": {
+                "systematic_uncertainties": {
+                    "v": 0.0,
+                    "sigma": 0.0,
+                    "h3": 0.0,
+                    "h4": 0.0,
+                }
+            },
+            "histogram": {"width": 1000.0, "center": 0.0, "bins": 101},
+        }
+    )
+
+    with pytest.raises(ValueError, match="absent from the referenced binning: 3"):
+        build_kinematics(
+            {"gh": settings}, tmp_path, _unit_system(), {"observed": _binning()}
+        )
 
 
 def test_gauss_hermite_adds_missing_higher_order_with_systematic(
@@ -188,9 +215,11 @@ def test_gauss_hermite_rejects_even_histogram_at_construction(
         )
 
 
-def _write_bayes_losvd(path: Path) -> None:
+def _write_bayes_losvd(
+    path: Path, bin_ids: tuple[int, int] = (1, 2)
+) -> None:
     table = QTable()
-    table["binID_dynamite"] = [1, 2]
+    table["bin_id"] = bin_ids
     table["bin_flux"] = [2.0, 1.0]
     losvds = np.array([[0.1, 0.6, 0.3], [0.4, 0.5, 0.1]])
     for index in range(3):
@@ -234,14 +263,33 @@ def test_build_bayes_losvd_centers_systemic_velocity(tmp_path: Path) -> None:
     assert result.histogram.bins % 2 == 1
 
 
-def _write_proper_motions(path: Path) -> None:
+def test_bayes_losvd_requires_complete_binning_coverage(tmp_path: Path) -> None:
+    data_file = tmp_path / "bayes.ecsv"
+    _write_bayes_losvd(data_file, (1, 3))
+    settings = _common_settings(data_file, "bayes_losvd")
+    settings["histogram"] = {
+        "width_scale": 1.0,
+        "oversampling_factor": 2.0,
+        "center": 0.0,
+        "systemic_velocity": "flux_weighted",
+    }
+
+    with pytest.raises(ValueError, match="absent from the referenced binning: 3"):
+        build_kinematics(
+            {"bayes": settings}, tmp_path, _unit_system(), {"observed": _binning()}
+        )
+
+
+def _write_proper_motions(
+    path: Path, bin_ids: tuple[int, int] = (1, 2)
+) -> None:
     distribution = np.ones((2, 3, 3), dtype=float)
     distribution[0, 1, 1] = 4.0
     np.savez(
         path,
         PM_2dhist=distribution,
         PM_2dhist_sigma=np.full((2, 3, 3), 0.2),
-        binID_dynamite=np.array([1, 2]),
+        bin_id=np.array(bin_ids),
         nstarbin=np.array([20, 30]),
         velocity_unit=np.array("km / s"),
         vxrange=np.array(150.0),
@@ -274,6 +322,26 @@ def test_build_proper_motions_normalizes_and_scales_errors(tmp_path: Path) -> No
     assert jnp.isclose(result.uncertainty[0, 0, 0], 0.4 / 12.0)
     values, uncertainties = result.observed_values_and_uncertainties()
     assert values.shape == uncertainties.shape == (2, 9)
+
+
+def test_proper_motions_require_complete_binning_coverage(tmp_path: Path) -> None:
+    data_file = tmp_path / "pm.npz"
+    _write_proper_motions(data_file, (1, 3))
+    settings = _common_settings(data_file, "proper_motions")
+    settings.update(
+        {
+            "observational_errors": {"variance_scale": 1.0},
+            "warning_thresholds": {
+                "max_bin_width_sigma_ratio": 10.0,
+                "min_histogram_width_sigma_ratio": 0.1,
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="absent from the referenced binning: 3"):
+        build_kinematics(
+            {"pm": settings}, tmp_path, _unit_system(), {"observed": _binning()}
+        )
 
 
 def test_proper_motions_rejects_variance_scale_at_construction(
