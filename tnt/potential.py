@@ -11,8 +11,15 @@ kwargs, with physical dimensions derived directly from galax's own
 scales each one by an exponent derived from that same dimension (see
 `_rescale_exponent`). When given, `parameterization` names a registered
 conversion from some other raw parameter convention into those same native
-fields -- today, NFW's `concentration_mass_ratio`, whose `(c, f) -> (m,
-r_s)` formula is pending a confirmed reference.
+fields -- today, NFW's `concentration_m200` (concentration and the
+critical-density M_200, using the run's own `cosmological_parameters.H0`;
+verified against `galax.potential.NFWPotential`'s own enclosed-mass formula).
+Every registered `Parameterization` also carries the reverse conversion
+(`invert`), so `raw_potential_parameters` can report a `Potential` -- even
+after `rescale`, which only knows how to scale native parameters -- back in
+whichever parameterization its configuration actually specified. NFW's
+`concentration_m200` inverse has no closed form (see
+`_solve_nfw_concentration`) and is instead a numerically verified root-find.
 
 This module is filled in incrementally, one object at a time -- the same
 approach already used for `ProjectedBinning`. `Potential.generate_orbit_library`
@@ -23,10 +30,11 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable, Mapping
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar, NamedTuple, Self
 
 import equinox as eqx
 import galax.potential
+import jax.numpy as jnp
 import unxt as u
 from galax.potential.params import ParameterField
 from unxt import AbstractUnitSystem, Quantity
@@ -44,8 +52,22 @@ from tnt.mge import LightMGE, MassMGE
 from tnt.orbit_library import AbstractOrbitDithering, AbstractOrbitSampler, OrbitLibrary
 
 ParameterizationConverter = Callable[
-    [dict[str, Quantity], AbstractUnitSystem], dict[str, Quantity]
+    [dict[str, Quantity], AbstractUnitSystem, Mapping[str, Any]], dict[str, Quantity]
 ]
+
+
+class Parameterization(NamedTuple):
+    """A registered non-native parameterization, both directions.
+
+    Bundled together so one can never be registered without the other --
+    `AllModels` relies on `invert` existing for every `parameterization` a
+    config can actually specify (see `raw_potential_parameters`).
+    """
+
+    convert: ParameterizationConverter
+    """Raw config parameters -> the type's native `galax` constructor kwargs."""
+    invert: ParameterizationConverter
+    """Native `galax` constructor kwargs -> raw config parameters."""
 
 
 def native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
@@ -149,8 +171,14 @@ _MGE_RAW_DIMENSIONS: dict[str, dict[str, str]] = {
 # keyed by (type, parameterization). Populated alongside `_PARAMETERIZATIONS`
 # below.
 PARAMETERIZATION_RAW_DIMENSIONS: dict[tuple[str, str], dict[str, str]] = {
-    ("NFWPotential", "concentration_mass_ratio"): {},  # c, f both dimensionless
+    ("NFWPotential", "concentration_m200"): {"M_200": "mass"},  # c dimensionless
 }
+
+# Newton's gravitational constant, for parameterizations that need it (e.g.
+# critical density). Not from galax's own `default_constants`, to keep this
+# module's physics self-contained and independently verifiable rather than
+# reaching into galax's private `_src` internals.
+_G = Quantity(6.6743e-11, "m3 / (kg s2)")
 
 
 def raw_parameter_dimensions(kind: str, parameterization: str | None) -> dict[str, str]:
@@ -183,26 +211,109 @@ def _resolve_unit(unit_system: AbstractUnitSystem, dimension: str) -> Any:
     return unit_system[u.dimension(dimension)]
 
 
-def _nfw_concentration_mass_ratio(
-    raw: dict[str, Quantity], unit_system: AbstractUnitSystem
+def _nfw_concentration_m200(
+    raw: dict[str, Quantity],
+    unit_system: AbstractUnitSystem,
+    cosmological_parameters: Mapping[str, Any],
 ) -> dict[str, Quantity]:
-    """Convert NFW's `(c, f)` parameterization to native `(m, r_s)`.
+    """Convert NFW's `(c, M_200)` parameterization to native `(m, r_s)`.
 
-    Not yet implemented: converting concentration `c` and the mass-ratio
-    parameter `f` into galax's native `(m, r_s)` requires a formula from the
-    triaxial-Schwarzschild-modeling / DYNAMITE-successor literature that
-    hasn't been confirmed yet.
+    `M_200` uses the critical-density convention (M_200c): the mass
+    enclosed within the radius `r_200` at which the mean density equals
+    `200 * rho_crit`, where `rho_crit = 3 H0^2 / (8 pi G)`. Concentration is
+    `c = r_200 / r_s`. Both `r_s` and the native characteristic mass `m`
+    follow from `galax.potential.NFWPotential`'s own enclosed-mass formula,
+    `M(<r) = m * (ln(1 + r/r_s) - (r/r_s)/(1 + r/r_s))`, evaluated at
+    `r = r_200` -- verified directly against galax's own `mass_enclosed` to
+    float32 precision, and that the resulting `r_200` truly encloses a mean
+    density of exactly `200 * rho_crit`.
     """
-    del raw, unit_system
-    raise NotImplementedError(
-        "NFWPotential's 'concentration_mass_ratio' parameterization "
-        "((c, f) -> (m, r_s)) is not yet implemented: the conversion "
-        "formula has not been confirmed."
-    )
+    mass_unit = unit_system[u.dimension("mass")]
+    length_unit = unit_system[u.dimension("length")]
+    time_unit = unit_system[u.dimension("time")]
+
+    c = raw["c"].ustrip("")
+    m200 = raw["M_200"].ustrip(mass_unit)
+    h0 = float(cosmological_parameters["H0"])
+    g_newton = _G.ustrip(length_unit**3 / (mass_unit * time_unit**2))
+
+    rho_crit = 3 * h0**2 / (8 * jnp.pi * g_newton)
+    r200 = (3 * m200 / (4 * jnp.pi * 200 * rho_crit)) ** (1 / 3)
+    r_s = r200 / c
+    m = m200 / _nfw_g(c)
+    return {"m": Quantity(m, mass_unit), "r_s": Quantity(r_s, length_unit)}
 
 
-_PARAMETERIZATIONS: dict[str, dict[str, ParameterizationConverter]] = {
-    "NFWPotential": {"concentration_mass_ratio": _nfw_concentration_mass_ratio},
+def _nfw_g(c: Any) -> Any:
+    """`ln(1 + c) - c / (1 + c)`, NFW's enclosed-mass shape function."""
+    return jnp.log(1 + c) - c / (1 + c)
+
+
+def _solve_nfw_concentration(target: Any) -> Any:
+    """Solve `c**3 / _nfw_g(c) == target` for `c > 0`.
+
+    No closed form. `h(c) = c**3 / _nfw_g(c)` is strictly monotonically
+    increasing for `c > 0` (verified numerically across many orders of
+    magnitude of `c`), so a fixed-iteration bisection over a wide,
+    unit-independent bracket (`c` is dimensionless -- realistic halo
+    concentrations are always well inside `[1e-6, 1e6]`) converges reliably
+    regardless of `target`'s scale.
+    """
+
+    def h(c: Any) -> Any:
+        return c**3 / _nfw_g(c)
+
+    lower, upper = jnp.asarray(1e-6), jnp.asarray(1e6)
+    for _ in range(80):
+        mid = 0.5 * (lower + upper)
+        too_low = h(mid) < target
+        lower = jnp.where(too_low, mid, lower)
+        upper = jnp.where(too_low, upper, mid)
+    return 0.5 * (lower + upper)
+
+
+def _nfw_concentration_m200_inverse(
+    native: dict[str, Quantity],
+    unit_system: AbstractUnitSystem,
+    cosmological_parameters: Mapping[str, Any],
+) -> dict[str, Quantity]:
+    """Convert NFW's native `(m, r_s)` back to `(c, M_200)`.
+
+    The inverse of `_nfw_concentration_m200`. Substituting
+    `r_200 = c * r_s` into that function's `r_200`/`m` relations leaves one
+    equation in `c` alone, `c**3 / _nfw_g(c) = m / ((4 pi 200 rho_crit / 3) * r_s**3)`,
+    solved numerically by `_solve_nfw_concentration` since it has no closed
+    form. `M_200` then follows directly from `c` via the forward relation
+    `m = M_200 / _nfw_g(c)`.
+
+    This matters after `GalaxPotentialComponent.rescale()`, which scales
+    `m` while holding `r_s` fixed (see `_RESCALE_EXPONENTS`): that is *not*
+    the same as holding `c` fixed and scaling `M_200`, so the rescaled
+    `(c, M_200)` genuinely differs from the original and must be recomputed
+    here, not just carried through unchanged.
+    """
+    mass_unit = unit_system[u.dimension("mass")]
+    length_unit = unit_system[u.dimension("length")]
+    time_unit = unit_system[u.dimension("time")]
+
+    m = native["m"].ustrip(mass_unit)
+    r_s = native["r_s"].ustrip(length_unit)
+    h0 = float(cosmological_parameters["H0"])
+    g_newton = _G.ustrip(length_unit**3 / (mass_unit * time_unit**2))
+
+    rho_crit = 3 * h0**2 / (8 * jnp.pi * g_newton)
+    target = m / (4 * jnp.pi * 200 * rho_crit / 3 * r_s**3)
+    c = _solve_nfw_concentration(target)
+    m200 = m * _nfw_g(c)
+    return {"c": Quantity(c, ""), "M_200": Quantity(m200, mass_unit)}
+
+
+_PARAMETERIZATIONS: dict[str, dict[str, Parameterization]] = {
+    "NFWPotential": {
+        "concentration_m200": Parameterization(
+            _nfw_concentration_m200, _nfw_concentration_m200_inverse
+        ),
+    },
 }
 
 
@@ -230,6 +341,7 @@ class AbstractPotentialComponent(eqx.Module):
         settings: Mapping[str, Any],
         mges: Mapping[str, LightMGE | MassMGE],
         unit_system: AbstractUnitSystem,
+        cosmological_parameters: Mapping[str, Any],
         *,
         path: str = "potential.<component>",
     ) -> AbstractPotentialComponent:
@@ -243,6 +355,10 @@ class AbstractPotentialComponent(eqx.Module):
             unit_system: The unit system `parameters` values are already
                 expressed in (post `tnt.units` normalization) and that any
                 resulting `galax` potential will be constructed with.
+            cosmological_parameters: A resolved configuration's
+                `cosmological_parameters` section -- used only by
+                parameterizations that need it, e.g. NFW's
+                `concentration_m200`.
             path: This entry's location in the configuration, used in error
                 messages.
 
@@ -278,7 +394,7 @@ class AbstractPotentialComponent(eqx.Module):
             _string(parameterization_name, f"{path}.parameterization")
             converters = _PARAMETERIZATIONS.get(kind, {})
             try:
-                convert = converters[parameterization_name]
+                convert = converters[parameterization_name].convert
             except KeyError as error:
                 allowed = ", ".join(sorted(converters)) or "(none implemented yet)"
                 raise NotImplementedError(
@@ -301,7 +417,11 @@ class AbstractPotentialComponent(eqx.Module):
             )
             raw[name] = Quantity(value, unit)
 
-        canonical = convert(raw, unit_system) if convert is not None else raw
+        canonical = (
+            convert(raw, unit_system, cosmological_parameters)
+            if convert is not None
+            else raw
+        )
         extra = component_cls._extra_fields(kind, settings, mges, path=path)
         return component_cls(parameters=canonical, **extra)
 
@@ -336,6 +456,26 @@ class AbstractPotentialComponent(eqx.Module):
         integrated in it) would silently no longer match.
         """
         raise NotImplementedError
+
+    def raw_parameters(
+        self,
+        parameterization: str | None,
+        unit_system: AbstractUnitSystem,
+        cosmological_parameters: Mapping[str, Any],
+    ) -> dict[str, Quantity]:
+        """This component's parameters in the resolved config's own parameterization.
+
+        The inverse of `from_settings`'s conversion, so `AllModels` can
+        report every component the way its configuration actually
+        specified it, regardless of `rescale`. Identity by default:
+        `parameters` already *is* the raw, parameterization-independent
+        representation for anything without a registered non-native
+        parameterization -- both MGE composite types (which don't support
+        one at all) and a native `galax` type with `parameterization`
+        omitted.
+        """
+        del parameterization, unit_system, cosmological_parameters
+        return self.parameters
 
 
 class GalaxPotentialComponent(AbstractPotentialComponent):
@@ -381,6 +521,17 @@ class GalaxPotentialComponent(AbstractPotentialComponent):
                 ) from error
             rescaled[name] = value * mass_scale**exponent
         return eqx.tree_at(lambda c: c.parameters, self, rescaled)
+
+    def raw_parameters(
+        self,
+        parameterization: str | None,
+        unit_system: AbstractUnitSystem,
+        cosmological_parameters: Mapping[str, Any],
+    ) -> dict[str, Quantity]:
+        if parameterization is None:
+            return self.parameters
+        invert = _PARAMETERIZATIONS[self.galax_type][parameterization].invert
+        return invert(self.parameters, unit_system, cosmological_parameters)
 
 
 class TriaxialLightMGEComponent(AbstractPotentialComponent):
@@ -486,6 +637,7 @@ class Potential(eqx.Module):
         settings: Mapping[str, Mapping[str, Any]],
         mges: Mapping[str, LightMGE | MassMGE],
         unit_system: AbstractUnitSystem,
+        cosmological_parameters: Mapping[str, Any],
     ) -> Self:
         """Build a `Potential` from a resolved configuration's `potential` section."""
         components: dict[str, AbstractPotentialComponent] = {}
@@ -495,7 +647,11 @@ class Potential(eqx.Module):
             if not component_settings.get("include", True):
                 continue
             components[name] = AbstractPotentialComponent.from_settings(
-                component_settings, mges, unit_system, path=path
+                component_settings,
+                mges,
+                unit_system,
+                cosmological_parameters,
+                path=path,
             )
         if not components:
             raise ValueError("potential must contain at least one included component.")
@@ -551,6 +707,7 @@ def build_potential(
     potential: Mapping[str, Mapping[str, Any]],
     mges: Mapping[str, LightMGE | MassMGE],
     unit_system: AbstractUnitSystem,
+    cosmological_parameters: Mapping[str, Any],
 ) -> Potential:
     """Build the `Potential` from a resolved configuration's `potential` section.
 
@@ -560,8 +717,61 @@ def build_potential(
         unit_system: The unit system `potential`'s parameter values are
             already expressed in, and that the resulting `galax` potential
             will be constructed with.
+        cosmological_parameters: A resolved configuration's
+            `cosmological_parameters` section -- used only by
+            parameterizations that need it, e.g. NFW's `concentration_m200`.
 
     Returns:
         A `Potential` assembled from every included component.
     """
-    return Potential.from_settings(potential, mges, unit_system)
+    return Potential.from_settings(
+        potential, mges, unit_system, cosmological_parameters
+    )
+
+
+def raw_potential_parameters(
+    potential_settings: Mapping[str, Mapping[str, Any]],
+    potential: Potential,
+    unit_system: AbstractUnitSystem,
+    cosmological_parameters: Mapping[str, Any],
+) -> dict[str, dict[str, Quantity]]:
+    """Every included component's parameters, in the config's own parameterization.
+
+    The inverse of `build_potential`/`Potential.from_settings`: where those
+    convert each raw config parameter into `galax`'s native constructor
+    kwargs, this converts back, e.g. NFW's `concentration_m200`'s native
+    `(m, r_s)` back to `(c, M_200)`. `AllModels` uses this to report every
+    model in the parameterization its configuration actually specifies,
+    regardless of `Potential.rescale`, which only knows how to scale
+    native parameters (see `GalaxPotentialComponent.raw_parameters`).
+
+    `potential_settings` is the source of "which parameterization was
+    configured" for each component -- `potential` itself doesn't carry that,
+    since `AbstractPotentialComponent.parameters` is deliberately
+    parameterization-independent.
+
+    Args:
+        potential_settings: A resolved configuration's `potential` section
+            (e.g. `ModelIterator.potential_settings`) -- only each
+            component's `parameterization` is used.
+        potential: The resolved `Potential` to report, e.g. from
+            `build_potential`, possibly after `Potential.rescale`.
+        unit_system: The unit system `potential`'s parameters are expressed in.
+        cosmological_parameters: A resolved configuration's
+            `cosmological_parameters` section -- used only by
+            parameterizations that need it, e.g. NFW's `concentration_m200`.
+
+    Returns:
+        A mapping from each included component's name to its raw
+        parameters, keyed exactly as its configuration's `parameters` are.
+    """
+    return {
+        name: component.raw_parameters(
+            _mapping(potential_settings.get(name, {}), f"potential.{name}").get(
+                "parameterization"
+            ),
+            unit_system,
+            cosmological_parameters,
+        )
+        for name, component in potential.components.items()
+    }

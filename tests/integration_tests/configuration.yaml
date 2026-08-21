@@ -44,7 +44,7 @@ potential:
 
   dh:
     type: "NFWPotential"
-    parameterization: "concentration_mass_ratio"
+    parameterization: "concentration_m200"
     include: true
     parameters:
       c:
@@ -57,16 +57,17 @@ potential:
         value: 3.0
         logarithmic: true
         latex_label: "$\\log(C)$"
-      f:
+      M_200:
+        unit: "Msun"
         generator_settings:
-          lower_bound: 0.0
-          upper_bound: 2.0
-          step: 0.5
+          lower_bound: 1.0e+11
+          upper_bound: 1.0e+13
+          step: 1.0
           minimum_step: 0.1
         fixed: true
-        value: 1.0
+        value: 1.0e+12
         logarithmic: true
-        latex_label: "$\\log(M_{200}/M_\\mathrm{stars})$"
+        latex_label: "$\\log(M_{200}/M_\\odot)$"
 
   stars:
     type: "triaxial_light_mge"

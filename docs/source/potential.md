@@ -27,15 +27,36 @@ component types, `"triaxial_light_mge"` and `"triaxial_mass_mge"` (see
 
 By default, TNT assumes a component's own native `galax` parameterization --
 however other parameterizations may be preferred. NFW is the
-motivating exception: `galax.potential.NFWPotential`'s native parameters are
+motivating example: `galax.potential.NFWPotential`'s native parameters are
 a characteristic mass `m` and scale radius `r_s`, but it may be more
-appropriate to search over concentration and mass fraction. The optional `parameterization` field can be used to specify alternatives:
+appropriate to search over (concentration, $M_{200c}$). The optional `parameterization`
+field can be used to specify alternatives:
 
 - **Omitted**: `parameters` must match the native `galax` names exactly.
 - **Given**: names a registered conversion from some other parameter
-  convention into the native `galax` fields. Today, only one such conversion
-  is registered anywhere (NFW's `concentration_mass_ratio`), and it isn't
-  implemented yet -- see below.
+  convention into the native `galax` fields. Today, NFW registers
+  `concentration_m200`, converting a concentration `c` and $M_{200c}$ (mass
+  enclosed within the radius where the mean density is 200 times the
+  critical density) into native `(m, r_s)`. Some parameterizations need more
+  than a component's own `parameters` to convert -- `concentration_m200`
+  also needs `H0` from the resolved configuration's
+  `cosmological_parameters` section to compute the critical density.
+
+  A parameterization converts only within one component's own raw
+  parameters; it can't depend on another component's resolved state (e.g. a
+  mass ratio to another component's total mass) -- components are resolved
+  independently of each other. That kind of cross-component relationship
+  belongs to a separate, not-yet-designed "prior" concept, consumed by the
+  parameter generator/search space rather than by potential construction.
+
+Every registered parameterization also converts back: `AllModels`' table
+always reports a component's parameters the way its configuration actually
+specified it (`dh.c`/`dh.M_200` under `concentration_m200`, not `dh.m`/
+`dh.r_s`), even after `parameter_space_settings.potential_rescalings`
+rescales the underlying `galax` potential -- rescaling only knows how to
+scale native parameters (see [What's implemented today](#whats-implemented-today)),
+so the raw parameterization's values are recomputed from the rescaled
+native ones, not carried through unchanged.
 
 ## Configuration reference
 
@@ -56,11 +77,11 @@ potential:
 
   dh:
     type: "NFWPotential"
-    parameterization: "concentration_mass_ratio"   # non-native; not yet implemented
+    parameterization: "concentration_m200"   # non-native
     include: true
     parameters:
-      c: {value: 3.0, fixed: true}
-      f: {value: 1.0, fixed: true}
+      c: {value: 8.0, fixed: true}
+      M_200: {value: 1.0e12, unit: "Msun", fixed: true}
 ```
 
 - `type` (required): a `galax.potential` class name, or one of the two MGE
@@ -108,19 +129,29 @@ mass-calibrated MGE) are TNT's own parameter names for these two types.
   direct verification, since e.g. a bar's pattern speed
   (`MonariEtAl2016BarPotential`'s `Omega`) shares `v_c`'s dimension but has
   to stay fixed under a mass rescale rather than scale with it.
-- **NFW's `concentration_mass_ratio` parameterization**: registered, but not
-  implemented -- converting `(c, f)` into native `(m, r_s)` needs a formula
-  from the triaxial-Schwarzschild-modeling / DYNAMITE-successor literature
-  that hasn't been confirmed yet. Building a component with this
-  parameterization raises `NotImplementedError` naming exactly what's
-  missing.
+- **NFW's `concentration_m200` parameterization**: implemented and verified
+  against `galax`'s own enclosed-mass function. Converts a concentration `c`
+  and $M_{200c}$ into native `(m, r_s)` via the critical-density definition
+  of $M_{200c}$: $\rho_\mathrm{crit} = 3 H_0^2 / (8\pi G)$,
+  $r_{200} = (3 M_{200} / (4\pi \cdot 200 \rho_\mathrm{crit}))^{1/3}$,
+  $r_s = r_{200} / c$, $m = M_{200} / (\ln(1+c) - c/(1+c))$. The reverse
+  conversion, native `(m, r_s)` back to `(c, M_200)`, is implemented too --
+  used to build `AllModels`' table columns -- but has no closed form:
+  `rescale()` scales `m` while holding `r_s` fixed, which is *not* the same
+  as holding `c` fixed and scaling `M_200`, so recovering `c` after a
+  rescale means solving a transcendental equation. Solved numerically via
+  bisection, verified by confirming the round trip is self-consistent
+  (converting the recovered `(c, M_200)` forward again reproduces the same
+  rescaled `(m, r_s)`), since there's no independent closed-form answer to
+  check against.
 - **The two MGE composite types**: `from_settings` resolves the component
   and its named MGE, but `to_galax()` raises `NotImplementedError` -- no
   native `galax.potential` class exists for a sum-of-triaxial-Gaussians
   potential, so building one needs a custom `galax.potential.AbstractPotential`
   subclass, the same difficulty tier as `AbstractMGE.get_projected_mass`'s
   from-scratch implementation. The MGE `stars` component's own viewing-geometry
-  parameterization (`q_min`, `p_min`, `u` -> `theta`, `phi`, `psi`) is a
-  second, separate unconfirmed formula, for the same reason as NFW's.
+  parameterization (`q_min`, `p_min`, `u` -> `theta`, `phi`, `psi`) needs a
+  formula from the triaxial-Schwarzschild-modeling / DYNAMITE-successor
+  literature that hasn't been confirmed yet.
 - **`Potential.generate_orbit_library`**: not implemented -- blocked on
   `tnt.orbit_library`, itself still a full scaffold.

@@ -21,15 +21,25 @@ from tnt.potential import (
     GalaxPotentialComponent,
     Potential,
     TriaxialLightMGEComponent,
+    _nfw_concentration_m200,
+    _nfw_concentration_m200_inverse,
+    _nfw_g,
     _rescale_exponent,
+    _solve_nfw_concentration,
     build_potential,
     native_parameter_dimensions,
     raw_parameter_dimensions,
+    raw_potential_parameters,
 )
 
 
 def _internal_unit_system() -> u.AbstractUnitSystem:
     return u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
+
+
+# Only the concentration_m200 parameterization uses cosmological_parameters;
+# every other test passes it through unused.
+_NO_COSMOLOGICAL_PARAMETERS: dict[str, float] = {}
 
 
 def _closed_form_plummer_potential(
@@ -171,7 +181,9 @@ def test_raw_parameter_dimensions_covers_all_three_sources() -> None:
         "r_s": "length",
     }
     # Registered non-native parameterization.
-    assert raw_parameter_dimensions("NFWPotential", "concentration_mass_ratio") == {}
+    assert raw_parameter_dimensions("NFWPotential", "concentration_m200") == {
+        "M_200": "mass"
+    }
     # TNT MGE composite type.
     assert raw_parameter_dimensions("triaxial_light_mge", None) == {
         "ml": "mass_to_light"
@@ -194,6 +206,7 @@ def test_from_settings_rejects_unrecognized_type() -> None:
             {"type": "NotAPotential", "include": True, "parameters": {}},
             {},
             unit_system,
+            _NO_COSMOLOGICAL_PARAMETERS,
             path="potential.dh",
         )
 
@@ -208,6 +221,7 @@ def test_from_settings_resolves_a_real_galax_class_name() -> None:
         },
         {},
         unit_system,
+        _NO_COSMOLOGICAL_PARAMETERS,
         path="potential.dh",
     )
     assert isinstance(component, GalaxPotentialComponent)
@@ -228,24 +242,143 @@ def test_from_settings_rejects_unimplemented_parameterization() -> None:
             },
             {},
             unit_system,
+            _NO_COSMOLOGICAL_PARAMETERS,
             path="potential.bh",
         )
 
 
-def test_nfw_concentration_mass_ratio_parameterization_not_yet_implemented() -> None:
+def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
+    # M_200 is defined as the mass enclosed within r_200 = c * r_s; feeding
+    # the derived (m, r_s) back into galax's own enclosed-mass formula at
+    # that radius should reproduce the M_200 that was put in.
+    from galax.potential._src.builtin.nfw.base import mass_enclosed
+
     unit_system = _internal_unit_system()
-    with pytest.raises(NotImplementedError, match="concentration_mass_ratio"):
-        AbstractPotentialComponent.from_settings(
-            {
-                "type": "NFWPotential",
-                "parameterization": "concentration_mass_ratio",
-                "include": True,
-                "parameters": {"c": {"value": 3.0}, "f": {"value": 1.0}},
-            },
-            {},
-            unit_system,
-            path="potential.dh",
-        )
+    c, m200 = 8.0, 1.0e12
+    h0 = 7.158985155319864e-05  # 70 km/s/Mpc, in this unit system's 1/Myr
+
+    component = AbstractPotentialComponent.from_settings(
+        {
+            "type": "NFWPotential",
+            "parameterization": "concentration_m200",
+            "include": True,
+            "parameters": {"c": {"value": c}, "M_200": {"value": m200}},
+        },
+        {},
+        unit_system,
+        {"H0": h0},
+        path="potential.dh",
+    )
+    m = component.parameters["m"].ustrip("Msun")
+    r_s = component.parameters["r_s"].ustrip("kpc")
+    r200 = r_s * c
+
+    recovered_m200 = float(mass_enclosed({"m": m, "r_s": r_s}, r200))
+    assert recovered_m200 == pytest.approx(m200, rel=1e-6)
+
+    # And r_200 itself must enclose a mean density of exactly 200 * rho_crit.
+    g = float(Quantity(6.6743e-11, "m3 / (kg s2)").ustrip("kpc3 / (Msun Myr2)"))
+    rho_crit = 3 * h0**2 / (8 * jnp.pi * g)
+    mean_density = m200 / (4 / 3 * jnp.pi * r200**3)
+    assert float(mean_density / rho_crit) == pytest.approx(200.0, rel=1e-5)
+
+
+def test_nfw_concentration_m200_raw_dimensions() -> None:
+    assert raw_parameter_dimensions("NFWPotential", "concentration_m200") == {
+        "M_200": "mass"
+    }
+
+
+# ---------------------------------------------------------------------------
+# concentration_m200's inverse: (m, r_s) -> (c, M_200). No closed form, so
+# these check the numerical root-find and the round trip directly, rather
+# than against any independently derivable expected value.
+# ---------------------------------------------------------------------------
+
+
+def test_solve_nfw_concentration_recovers_a_known_c() -> None:
+    # rel=1e-5, not tighter: this module runs in float32, and _nfw_g's
+    # log(1+c) - c/(1+c) loses several digits to cancellation for small c.
+    for c in (0.1, 1.0, 5.0, 8.0, 20.0, 100.0):
+        target = c**3 / _nfw_g(c)
+        assert float(_solve_nfw_concentration(target)) == pytest.approx(c, rel=1e-5)
+
+
+def test_nfw_concentration_m200_inverse_round_trips_the_forward_conversion() -> None:
+    unit_system = _internal_unit_system()
+    h0 = 7.158985155319864e-05  # 70 km/s/Mpc, in this unit system's 1/Myr
+    for c, m200 in ((3.0, 1.0e11), (8.0, 1.0e12), (20.0, 5.0e13)):
+        raw = {"c": Quantity(c, ""), "M_200": Quantity(m200, "Msun")}
+        native = _nfw_concentration_m200(raw, unit_system, {"H0": h0})
+        recovered = _nfw_concentration_m200_inverse(native, unit_system, {"H0": h0})
+        assert float(recovered["c"].ustrip("")) == pytest.approx(c, rel=1e-5)
+        assert float(recovered["M_200"].ustrip("Msun")) == pytest.approx(m200, rel=1e-5)
+
+
+def test_nfw_concentration_m200_inverse_is_self_consistent_after_rescale() -> None:
+    # There's no closed form for (c, M_200) after a mass rescale (rescale()
+    # holds r_s fixed and scales only m -- not the same as holding c fixed
+    # and scaling M_200), so the only checkable invariant is that inverting
+    # and then re-converting forward reproduces the same rescaled (m, r_s).
+    unit_system = _internal_unit_system()
+    h0 = 7.158985155319864e-05
+    raw = {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")}
+    native = _nfw_concentration_m200(raw, unit_system, {"H0": h0})
+
+    mass_scale = 2.5
+    rescaled_native = {"m": native["m"] * mass_scale, "r_s": native["r_s"]}
+    recovered_raw = _nfw_concentration_m200_inverse(
+        rescaled_native, unit_system, {"H0": h0}
+    )
+    reconverted_native = _nfw_concentration_m200(recovered_raw, unit_system, {"H0": h0})
+
+    assert reconverted_native["m"].ustrip("Msun") == pytest.approx(
+        rescaled_native["m"].ustrip("Msun"), rel=1e-5
+    )
+    assert reconverted_native["r_s"].ustrip("kpc") == pytest.approx(
+        rescaled_native["r_s"].ustrip("kpc"), rel=1e-5
+    )
+    # And the concentration genuinely changed -- holding c fixed would have
+    # been wrong, per the docstring's reasoning.
+    assert float(recovered_raw["c"].ustrip("")) != pytest.approx(8.0, rel=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# raw_potential_parameters: reporting a Potential in its own configured
+# parameterization, the inverse of Potential.from_settings.
+# ---------------------------------------------------------------------------
+
+
+def test_raw_potential_parameters_uses_each_component_own_parameterization() -> None:
+    unit_system = _internal_unit_system()
+    h0 = 7.158985155319864e-05
+    settings = {
+        "bh": {
+            "type": "PlummerPotential",
+            "include": True,
+            "parameters": {"m_tot": {"value": 5.0}, "r_s": {"value": 1e-3}},
+        },
+        "dh": {
+            "type": "NFWPotential",
+            "parameterization": "concentration_m200",
+            "include": True,
+            "parameters": {"c": {"value": 8.0}, "M_200": {"value": 1.0e12}},
+        },
+    }
+    potential = Potential.from_settings(settings, {}, unit_system, {"H0": h0})
+
+    raw = raw_potential_parameters(settings, potential, unit_system, {"H0": h0})
+    assert set(raw["bh"]) == {"m_tot", "r_s"}
+    assert set(raw["dh"]) == {"c", "M_200"}
+    assert raw["dh"]["c"].ustrip("") == pytest.approx(8.0, rel=1e-5)
+    assert raw["dh"]["M_200"].ustrip("Msun") == pytest.approx(1.0e12, rel=1e-5)
+
+    rescaled = potential.rescale(2.0)
+    raw_rescaled = raw_potential_parameters(settings, rescaled, unit_system, {"H0": h0})
+    assert set(raw_rescaled["dh"]) == {"c", "M_200"}
+    assert raw_rescaled["dh"]["M_200"].ustrip("Msun") != pytest.approx(
+        raw["dh"]["M_200"].ustrip("Msun"), rel=1e-3
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +397,7 @@ def test_plummer_to_galax_matches_closed_form_potential() -> None:
         },
         {},
         unit_system,
+        _NO_COSMOLOGICAL_PARAMETERS,
         path="potential.bh",
     )
     galax_potential = component.to_galax(unit_system)
@@ -288,6 +422,7 @@ def test_plummer_rescale_scales_only_the_mass_parameter() -> None:
         },
         {},
         unit_system,
+        _NO_COSMOLOGICAL_PARAMETERS,
         path="potential.bh",
     )
     rescaled = component.rescale(2.0)
@@ -309,7 +444,7 @@ def test_potential_composes_only_included_components() -> None:
             "parameters": {"m_tot": {"value": 100.0}, "r_s": {"value": 1.0}},
         },
     }
-    potential = build_potential(settings, {}, unit_system)
+    potential = build_potential(settings, {}, unit_system, _NO_COSMOLOGICAL_PARAMETERS)
     assert set(potential.components) == {"bh"}
 
     galax_potential = potential.to_galax(unit_system)
@@ -372,6 +507,7 @@ def test_mge_component_from_settings_resolves_mge_but_to_galax_is_not_implemente
         },
         {"mge_lum": light_mge},
         unit_system,
+        _NO_COSMOLOGICAL_PARAMETERS,
         path="potential.stars",
     )
     assert isinstance(component, TriaxialLightMGEComponent)

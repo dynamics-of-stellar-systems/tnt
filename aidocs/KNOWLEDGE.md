@@ -292,15 +292,54 @@
   alias with `/` (e.g. `"speed/velocity"`), which `u.dimension()` silently
   treats as dimensionless rather than raising; dimension derivation takes
   the first name from iterating the `PhysicalType` instead. Given
-  explicitly, `parameterization` names a registered non-native conversion
-  (today, only NFW's `concentration_mass_ratio`,
-  which is not yet implemented -- the `(c, f) -> (m, r_s)` formula needs a
-  confirmed reference, same as the MGE `stars` component's own
-  `(q_min, p_min, u) -> (theta, phi, psi)` viewing-geometry conversion).
-  Hand-maintained dimension tables now cover only these non-native
-  parameterizations and the two MGE composite types' own parameters
+  explicitly, `parameterization` names a registered non-native conversion.
+  NFW registers `concentration_m200`, implemented and verified against
+  `galax`'s own NFW enclosed-mass function. It converts a concentration `c`
+  and $M_{200c}$ (mass enclosed within the radius where mean density is
+  200x the critical density) into native `(m, r_s)` via
+  `rho_crit = 3*H0**2 / (8*pi*G)`, `r200 = (3*M200 / (4*pi*200*rho_crit))**(1/3)`,
+  `r_s = r200 / c`, `m = M200 / (ln(1+c) - c/(1+c))`. Converters receive the
+  resolved configuration's `cosmological_parameters` as a third argument
+  (`tnt.potential.ParameterizationConverter`'s signature) so parameterizations
+  like this one that need `H0` can use it. `cosmological_parameters` is
+  threaded from `Configuration` through `ModelIterator` (a stored field, set
+  in `from_configuration`) into `build_potential`, mirroring how
+  `unit_system` is already threaded. Hand-maintained dimension tables now
+  cover only non-native parameterizations and the two MGE composite types'
+  own parameters
   (`tnt.potential.PARAMETERIZATION_RAW_DIMENSIONS`/`_MGE_RAW_DIMENSIONS`),
-  not native-galax types.
+  not native-galax types. A parameterization is deliberately scoped to one
+  component's own raw parameters (plus `unit_system`/`cosmological_parameters`)
+  -- it can't depend on another component's resolved state. NFW's
+  `(c, f) -> (m, r_s)` "concentration + mass fraction" parameterization
+  (`f = M_200 / M*_TOT`, `M*_TOT` derived from the stellar MGE component)
+  was removed for exactly this reason: `Potential.from_settings` resolves
+  each component independently in one pass, so no component-local converter
+  can see another component's resolved mass. That kind of cross-component
+  relationship belongs to a separate, not-yet-designed "prior" concept,
+  consumed by the parameter generator/search space rather than by potential
+  construction -- deliberately deferred rather than shoehorned into
+  `parameterization`.
+- Every registered parameterization converts both ways: `_PARAMETERIZATIONS`
+  maps to a `tnt.potential.Parameterization(convert, invert)` pair, not a
+  bare converter, so one direction can never be registered without the
+  other. `AbstractPotentialComponent.raw_parameters`/
+  `tnt.potential.raw_potential_parameters` use `invert` to report a
+  `Potential`'s components back in their configuration's own
+  parameterization (`Model.raw_parameters`, read by
+  `AllModels._model_row` for its table columns) -- necessary because
+  `Potential.rescale` only knows how to scale native `galax` parameters, so
+  the raw values must be recomputed from the rescaled native ones, not
+  carried through unchanged. `concentration_m200`'s inverse has no closed
+  form: `rescale` holds `r_s` fixed and scales only `m`, which is not the
+  same as holding `c` fixed and scaling `M_200`, so recovering `c` means
+  solving `c**3 / (ln(1+c) - c/(1+c)) = target` for `c` --
+  `tnt.potential._solve_nfw_concentration` does this via fixed-iteration
+  bisection, relying on that function being verified (numerically) strictly
+  monotonically increasing in `c`. Verified by round-trip self-consistency
+  (`forward(inverse(native)) == native`, including after a rescale) rather
+  than against any independently derivable expected value, since none
+  exists.
 - Explicit kinematics histogram metadata is grouped under `histogram` as
   `width`, `center`, and `bins`.
 - Defaults for properties of dynamically named potential components and
