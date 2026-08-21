@@ -10,6 +10,8 @@ from typing import Any
 import numpy as np
 
 from tnt.all_models import AllModels
+from tnt.config_parsing import _mapping as _parse_mapping
+from tnt.config_parsing import _required_mapping as _parse_required_mapping
 from tnt.configuration import ConfigDict, _read_yaml_bytes_mapping
 from tnt.run_config_log import RunManifestReference
 
@@ -178,15 +180,25 @@ def _different_paths(left: Any, right: Any, prefix: str = "") -> list[str]:
         return differences
     return [] if left == right else [prefix]
 
+
 def _mapping(config: Mapping[str, Any], key: str) -> Mapping[str, Any]:
-    """Return one required mapping from a resolved configuration."""
-    if key not in config:
-        raise ConfigurationCompatibilityError(f"Missing configuration section {key!r}.")
-    return _require_mapping(config[key], Path(key))
+    """Return one required mapping from a resolved configuration.
+
+    Delegates the actual shape check to `tnt.config_parsing`'s shared
+    `_required_mapping`, translating its generic `TypeError`/`ValueError`
+    into this module's own `ConfigurationCompatibilityError` -- the check
+    itself isn't duplicated, only the exception type this module commits to
+    raising everywhere.
+    """
+    try:
+        return dict(_parse_required_mapping(config, key, "configuration"))
+    except (TypeError, ValueError) as error:
+        raise ConfigurationCompatibilityError(str(error)) from error
 
 
 def _require_mapping(value: Any, path: Path) -> ConfigDict:
     """Return a plain mapping or raise a compatibility-specific error."""
-    if not isinstance(value, Mapping):
-        raise ConfigurationCompatibilityError(f"{path} must be a mapping.")
-    return dict(value)
+    try:
+        return dict(_parse_mapping(value, str(path)))
+    except TypeError as error:
+        raise ConfigurationCompatibilityError(str(error)) from error
