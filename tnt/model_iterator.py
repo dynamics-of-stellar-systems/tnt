@@ -28,7 +28,7 @@ from typing import Any, NamedTuple, Self
 
 import equinox as eqx
 import numpy as np
-from unxt import AbstractUnitSystem
+from unxt import AbstractUnitSystem, Quantity
 
 from tnt.all_models import AllModels
 from tnt.configuration_compatibility import (
@@ -51,7 +51,7 @@ from tnt.parameter_generator import (
     build_parameter_generator,
 )
 from tnt.populations import Populations, build_populations
-from tnt.potential import Potential, build_potential
+from tnt.potential import Potential, build_potential, raw_potential_parameters
 from tnt.run_config_log import (
     RunConfigLog,
     RunManifestReference,
@@ -74,6 +74,7 @@ class ModelIterator:
 
     potential_settings: Mapping[str, Mapping[str, Any]]
     unit_system: AbstractUnitSystem
+    cosmological_parameters: Mapping[str, Any]
     mges: Mapping[str, LightMGE | MassMGE]
     kinematic_data: Mapping[str, AbstractKinematics]
     population_data: Mapping[str, Populations]
@@ -144,6 +145,7 @@ class ModelIterator:
         return cls(
             potential_settings=config["potential"],
             unit_system=unit_system,
+            cosmological_parameters=config["cosmological_parameters"],
             mges=mges,
             kinematic_data=kinematic_data,
             population_data=population_data,
@@ -390,6 +392,7 @@ class ModelIterator:
             _settings_with_parameters(self.potential_settings, parameters),
             self.mges,
             self.unit_system,
+            self.cosmological_parameters,
         )
 
         try:
@@ -400,7 +403,7 @@ class ModelIterator:
             )
         except Exception as error:  # noqa: BLE001 -- placeholder, see _evaluate's docstring
             _LOGGER.warning("Orbit integration failed for %s: %s", parameters, error)
-            return [_unsolved_model(potential)]
+            return [_unsolved_model(potential, self._raw_parameters(potential))]
 
         potentials_and_libraries = [(potential, orbit_library, 1.0)]
         if self.potential_rescalings["enabled"]:
@@ -427,8 +430,23 @@ class ModelIterator:
                     mass_scale,
                     solved.error,
                 )
-            models.append(_model(rescaled_potential, solved))
+            raw_parameters = self._raw_parameters(rescaled_potential)
+            models.append(_model(rescaled_potential, raw_parameters, solved))
         return models
+
+    def _raw_parameters(self, potential: Potential) -> dict[str, dict[str, Quantity]]:
+        """`potential`'s components, in their configuration's own parameterization.
+
+        See `tnt.potential.raw_potential_parameters` -- recomputed per
+        `potential` (base or `rescale`d), since a mass rescale changes
+        these values (e.g. NFW's `concentration_m200`).
+        """
+        return raw_potential_parameters(
+            self.potential_settings,
+            potential,
+            self.unit_system,
+            self.cosmological_parameters,
+        )
 
     def _solve(self, orbit_library: OrbitLibrary) -> _SolveResult:
         """Solve one `OrbitLibrary`'s weights against `self.kinematic_data`.
@@ -533,10 +551,15 @@ class _SolveResult(NamedTuple):
     error: str | None
 
 
-def _model(potential: Potential, solved: _SolveResult) -> Model:
+def _model(
+    potential: Potential,
+    raw_parameters: dict[str, dict[str, Quantity]],
+    solved: _SolveResult,
+) -> Model:
     """A `Model` for `potential`, given its `OrbitLibrary`'s already-solved weights."""
     return Model(
         potential=potential,
+        raw_parameters=raw_parameters,
         orblib_done=True,
         weights_done=solved.weights_done,
         weights=solved.weights,
@@ -545,10 +568,13 @@ def _model(potential: Potential, solved: _SolveResult) -> Model:
     )
 
 
-def _unsolved_model(potential: Potential) -> Model:
+def _unsolved_model(
+    potential: Potential, raw_parameters: dict[str, dict[str, Quantity]]
+) -> Model:
     """A `Model` for `potential`, whose orbit integration itself didn't succeed."""
     return Model(
         potential=potential,
+        raw_parameters=raw_parameters,
         orblib_done=False,
         weights_done=False,
         weights=None,

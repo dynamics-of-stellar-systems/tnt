@@ -1,9 +1,11 @@
 """The growing table of every evaluated `Model`.
 
 Backed by an astropy `QTable`: one row per evaluated `Model`, with a
-column per potential-component parameter (value + unit, e.g. `"bh.m"`,
-`"stars.ml"` -- always present, since a proposed point's parameters are
-known before evaluation), boolean `orblib_done`/`weights_done` flags (see
+column per potential-component parameter (value + unit, named after the
+resolved configuration's own parameterization, e.g. `"bh.m"`, `"stars.ml"`,
+or NFW's `"dh.c"`/`"dh.M_200"` under `concentration_m200` -- see
+`Model.raw_parameters` -- always present, since a proposed point's
+parameters are known before evaluation), boolean `orblib_done`/`weights_done` flags (see
 `Model`'s docstring), and one column per `Model.chi2` key (e.g. `"chi2"`,
 `"kinchi2"`) once at least one appended model has `weights_done`. A model
 appended without `chi2` (evaluation didn't succeed) gets `nan` in every
@@ -36,8 +38,8 @@ def _model_row(model: Model) -> dict[str, Any]:
     """Flatten one `Model` into a table row: parameters, flags, and chi2."""
     row: dict[str, Any] = {
         f"{component_name}.{parameter_name}": _to_astropy_quantity(value)
-        for component_name, component in model.potential.components.items()
-        for parameter_name, value in component.parameters.items()
+        for component_name, parameters in model.raw_parameters.items()
+        for parameter_name, value in parameters.items()
     }
     row["iteration"] = model.iteration
     row["orblib_done"] = model.orblib_done

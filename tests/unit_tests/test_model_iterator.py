@@ -106,6 +106,7 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
     iterator = ModelIterator.__new__(ModelIterator)
     iterator.potential_settings = {}
     iterator.unit_system = u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
+    iterator.cosmological_parameters = {}
     iterator.mges = {}
     iterator.kinematic_data = {}
     iterator.weight_solver = FakeWeightSolver()
@@ -143,7 +144,7 @@ def _patch_build_potential(
     monkeypatch.setattr(
         model_iterator_module,
         "build_potential",
-        lambda settings, mges, unit_system: potential,
+        lambda settings, mges, unit_system, cosmological_parameters: potential,
     )
 
 
@@ -465,7 +466,7 @@ def test_run_continues_after_later_iteration_has_no_success(
     monkeypatch.setattr(
         model_iterator_module,
         "build_potential",
-        lambda settings, mges, unit_system: next(potentials),
+        lambda settings, mges, unit_system, cosmological_parameters: next(potentials),
     )
 
     with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):
