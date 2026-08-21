@@ -419,7 +419,7 @@ With a workspace root of `/scratch/project/NGC6278`, TNT uses
 `/scratch/project/NGC6278/input` and
 `/scratch/project/NGC6278/output` at runtime. Explicit absolute input and output
 paths remain supported; TNT expresses them relative to the workspace root in
-the portable snapshot. Choosing a common parent of input and output as the
+the archived resolved configuration. Choosing a common parent of input and output as the
 workspace root therefore gives the most useful archived configuration.
 
 `Configuration.data` and `Configuration.as_dict()` contain materialized
@@ -434,41 +434,38 @@ After successful validation, TNT publishes immutable artifacts under
 
 ```text
 config_repository/
-├── configurations/
-│   └── 0000-a81c09f3/
-│       ├── resolved_config.yaml
-│       └── compatibility_signature.yaml
-├── manifests/
-│   └── 0000-run_manifest.yaml
+├── runs/
+│   ├── 0000/
+│   │   ├── run_manifest.yaml
+│   │   └── resolved_config.yaml
+│   └── 0001/
+│       ├── run_manifest.yaml
+│       └── resolved_config.yaml
 └── run_config_log.ecsv
 ```
 
-- `configurations/` holds semantic configuration versions. Each resolved file
-  has all TNT defaults applied and stores input and output paths relative to
-  the workspace root. TNT hashes a canonical representation in which mapping
-  order and YAML presentation do not matter, while list order and values do.
-  An existing snapshot is reused when this semantic hash matches.
-  Runtime construction later adds `compatibility_signature.yaml` beside the
-  resolved file, after TNT has loaded and validated the referenced scientific
-  inputs. The signature records the versioned resume contract,
-  compatibility-critical resolved settings, and SHA-256 hashes of MGE,
-  spatial-binning, kinematics, and population files. Configuration preparation
-  itself does not open or checksum those inputs.
-- `manifests/` receives one new manifest for every TNT run. A manifest records
-  its run ID and configuration-snapshot identifiers, paths relative to the
-  configuration-repository root, resolved-file and semantic configuration
-  hashes, TNT and dependency versions, Git state, Python and platform details,
-  hostname, scheduler identifiers, logfile location, and random-seed state.
-  The submitted user profile, its source path, and its byte hash are not
-  persisted.
+- `runs/` contains one numbered, immutable directory per TNT run. Its
+  `resolved_config.yaml` has all defaults applied and stores input and output
+  paths relative to the workspace root. Its `run_manifest.yaml` records the
+  run ID, the resolved-configuration path, TNT and dependency versions, Git
+  state, Python/platform/host context, scheduler identifiers, logfile
+  location, and random-seed state. Repeated identical configurations are
+  archived independently because run directories are intentionally not
+  deduplicated.
+- The submitted user profile, its source path, and its bytes are not archived.
+  TNT also does not create configuration-content or scientific-input hashes.
 
-Numeric prefixes provide stable human-readable identifiers. Short hash
-prefixes in artifact names aid inspection; manifests retain the complete
-SHA-256 hashes. `Configuration.resolved_path` and
-`Configuration.run_manifest_path` identify the artifacts selected or created
-by the current run. `Configuration.run_id` records the numeric run ID.
-`Configuration.source_path` remains available only in memory for the active
-process.
+Numeric directory names provide stable human-readable run IDs.
+`Configuration.resolved_path` and `Configuration.run_manifest_path` identify
+the artifacts created by the current run. `Configuration.run_id` records the
+numeric run ID. `Configuration.source_path` remains available only in memory
+for the active process.
+
+TNT supports exactly one coordinating process writing a given output directory
+at a time. Model calculations may use multiple workers, but workers must return
+their results to that coordinator rather than modifying shared repository or
+checkpoint files. Concurrent coordinators using the same output directory are
+unsupported.
 
 (run-identity)=
 ### Run identity
@@ -478,22 +475,17 @@ provenance purposes: it creates a new immutable run manifest and assigns the
 next run ID. Reusing that prepared `Configuration` and its `ModelIterator`
 across multiple `ModelIterator.run()` calls retains the same run ID. Reading a
 configuration again creates another run manifest and assigns another run ID,
-even when the resolved configuration is semantically identical and therefore
-reuses an existing configuration snapshot.
-
-Configuration snapshots and run manifests consequently have different
-identities. A snapshot represents one distinct resolved configuration; a run
-manifest represents one TNT execution session that used a snapshot. The
-future top-level execution layer should preserve this boundary by reading the
-configuration once at the beginning of each invocation and using the resulting
-run ID for every model-search iteration in that invocation.
+and archives another resolved configuration even when it is identical to an
+earlier one. The future top-level execution layer should read the configuration
+once at the beginning of each invocation and use the resulting run ID for every
+model-search iteration in that invocation.
 
 `run_config_log.ecsv` is created when the model-search caller explicitly
 persists `AllModels` and `RunConfigLog` through the coordinated
 `ModelSearchState` writer; configuration preparation itself does not create or
 update the log. It maps each cumulative search iteration to a run ID. The
-corresponding immutable run manifest links that ID to its resolved
-configuration snapshot and execution provenance. Its derived ECSV metadata
+corresponding immutable run directory contains that run's resolved
+configuration and execution provenance. Its derived ECSV metadata
 records `total_runs` and `run_ids_without_iterations`; callers must persist the
 state even when a run produces no iteration so that these summaries are
 updated.
@@ -505,7 +497,6 @@ stage must update it once the actual seed is known.
 
 Configuration preparation creates the output directory and its
 `config_repository` subdirectories when necessary. Existing artifacts are
-never replaced. Repeating an identical run configuration therefore reuses the
-same resolved configuration file while creating a new run manifest. It does
-not instantiate components, load observational data, checksum observational
-inputs, or execute modelling code.
+never replaced. It atomically publishes each manifest and resolved
+configuration as one run directory. It does not instantiate components, load
+observational data, checksum observational inputs, or execute modelling code.

@@ -264,3 +264,41 @@ retaining because they provide deduplication and prevent a later configuration
 from silently becoming incompatible with an earlier run. Likewise, removing
 all hashes would conflate three separate purposes: semantic identity,
 compatibility identity, and on-disk integrity.
+
+## Final disposition after the lean-repository decision
+
+The project subsequently chose a different trade-off from the preceding Codex
+response. TNT now assumes exactly one coordinating process writes a given
+output directory, and users are responsible for not modifying scientific input
+files in place while a model set may be resumed. Parallel model calculation is
+still supported conceptually: workers return results to the single coordinator,
+which alone updates shared state.
+
+The implementation archives `run_manifest.yaml` and `resolved_config.yaml`
+together under `config_repository/runs/<run_id>/`. It has no configuration
+snapshots, snapshot deduplication, compatibility-signature files, or
+configuration/scientific-input SHA-256 hashes. Resume compatibility is derived
+directly from the current configuration and the archived resolved configuration
+of the earliest run that contributed an iteration. Runs without iterations are
+recorded for provenance but do not establish the model set's compatibility
+baseline.
+
+| Finding | Disposition after simplification |
+| --- | --- |
+| 1. Concurrent snapshot creation | Obsolete. The shared snapshot store and deduplication algorithm no longer exist. Concurrent coordinators are explicitly unsupported. |
+| 2. Concurrent checkpoint overwrite | Accepted as outside the supported execution contract. One coordinator owns `AllModels` and `RunConfigLog`; parallel workers do not write them. Crash-safe paired checkpoint publication remains. |
+| 3. NaN comparison | Not an exposed configuration bug: configuration validation rejects non-finite numeric values. The former identical-signature self-comparison also no longer exists. |
+| 4. Repeated compatibility reads | Substantially obsolete. There are no historical signatures or hashes to traverse. A resumed run reads only the earliest model-contributing run's resolved YAML, once per `ModelIterator.run()` call. |
+| 5. Repeated manifest validation | Partly addressed. Hashing and the duplicate manifest-validation pass were removed. The linear manifest scan remains because it derives `total_runs` and `run_ids_without_iterations`. |
+| 6. Linear snapshot scan | Obsolete. Configuration preparation creates the next numbered run directory without scanning or hashing archived configurations for deduplication. |
+| 7. Scientific-input hashing | Obsolete by policy. Scientific files are not hashed; unchanged contents at a stable configured path are a user responsibility. |
+| 8. Duplicated logic | Mostly addressed through removal: both hash implementations, snapshot-ID parsing/validation, signature persistence, and related temporary-write paths disappeared. The distinct checkpoint writers and write-time pair validation remain where they enforce different behavior. |
+| 9. Repeated resolved-config integrity checks | Obsolete. Run manifests no longer contain or verify a resolved-configuration content hash. They validate the fixed per-run path and require the YAML file to exist and be readable. |
+
+The earlier recommendation to retain content-addressed snapshots, full-history
+signature comparison, and three distinct hashes is therefore superseded by
+this section. The scientific compatibility rules themselves remain: TNT still
+rejects changes to compatibility-critical resolved settings, validates the
+selected chi-square against successful historical models, and requires the
+expected potential-parameter columns in `AllModels`. Configured scientific file
+references are now critical because file contents are no longer hashed.

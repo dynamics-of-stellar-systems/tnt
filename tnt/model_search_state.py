@@ -95,7 +95,7 @@ class ModelSearchState:
         run_config_log_path.parent.mkdir(parents=True, exist_ok=True)
 
         log_table = self.run_config_log.table.copy()
-        _validate_table(log_table, repository=run_config_log_path.parent)
+        _validate_table(log_table)
         _refresh_run_metadata(log_table, run_config_log_path.parent)
 
         temporary_log = _temporary_path(run_config_log_path)
@@ -105,7 +105,6 @@ class ModelSearchState:
             log_table.write(temporary_log, format="ascii.ecsv", overwrite=True)
             _validate_temporary_log(
                 temporary_log,
-                run_config_log_path.parent,
                 log_table,
             )
 
@@ -174,12 +173,11 @@ def _temporary_path(destination: Path) -> Path:
 
 def _validate_temporary_log(
     path: Path,
-    repository: Path,
     expected: QTable,
 ) -> None:
     """Read back and validate a prepared run log before publishing it."""
     restored = QTable.read(path, format="ascii.ecsv")
-    _validate_table(restored, repository=repository)
+    _validate_table(restored)
     if any(
         list(restored[name]) != list(expected[name]) for name in restored.colnames
     ):

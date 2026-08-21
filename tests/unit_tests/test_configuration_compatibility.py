@@ -6,17 +6,13 @@ import yaml
 from astropy.table import QTable
 
 from tnt.all_models import AllModels
-from tnt.configuration import _semantic_configuration_sha256
 from tnt.configuration_compatibility import (
-    COMPATIBILITY_SIGNATURE_FILENAME,
     ConfigurationCompatibilityError,
-    ConfigurationCompatibilitySignature,
     _critical_configuration,
-    _scientific_input_hashes,
-    build_and_preserve_compatibility_signature,
+    _different_paths,
     ensure_resume_compatible,
 )
-from tnt.run_config_log import ConfigurationSnapshotReference
+from tnt.run_config_log import RunManifestReference
 
 
 def _write_inputs(directory: Path, suffix: str = "") -> None:
@@ -113,30 +109,30 @@ def _config(input_directory: Path) -> dict[str, object]:
     }
 
 
-def _snapshot(
+def _run(
     tmp_path: Path,
-    snapshot_id: int,
-    marker: int,
-) -> ConfigurationSnapshotReference:
-    resolved = {"marker": marker}
-    semantic_sha256 = _semantic_configuration_sha256(resolved)
-    path = (
-        tmp_path
-        / "config_repository"
-        / "configurations"
-        / f"{snapshot_id:04d}-{semantic_sha256[:8]}"
-        / "resolved_config.yaml"
+    run_id: int,
+    config: dict[str, object],
+) -> RunManifestReference:
+    repository = tmp_path / "config_repository"
+    run_directory = repository / "runs" / f"{run_id:04d}"
+    run_directory.mkdir(parents=True)
+    resolved_path = run_directory / "resolved_config.yaml"
+    resolved_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    manifest_path = run_directory / "run_manifest.yaml"
+    manifest_path.write_text(
+        yaml.safe_dump(
+            {
+                "manifest_version": 3,
+                "run_id": run_id,
+                "configuration": {
+                    "resolved": resolved_path.relative_to(repository).as_posix()
+                },
+            }
+        ),
+        encoding="utf-8",
     )
-    path.parent.mkdir(parents=True)
-    path.write_text(yaml.safe_dump(resolved), encoding="utf-8")
-    return ConfigurationSnapshotReference.from_resolved_config(path)
-
-
-def _signature(config: dict[str, object]) -> ConfigurationCompatibilitySignature:
-    return ConfigurationCompatibilitySignature.create(
-        _critical_configuration(config),
-        _scientific_input_hashes(config),
-    )
+    return RunManifestReference.from_run_manifest(manifest_path)
 
 
 def test_operational_and_search_changes_are_compatible(tmp_path: Path) -> None:
@@ -167,7 +163,10 @@ def test_operational_and_search_changes_are_compatible(tmp_path: Path) -> None:
         "all_models_file": "renamed.ecsv",
     }
 
-    assert _signature(baseline).differences(_signature(changed)) == []
+    assert _different_paths(
+        _critical_configuration(baseline),
+        _critical_configuration(changed),
+    ) == []
 
 
 @pytest.mark.parametrize(
@@ -192,6 +191,11 @@ def test_operational_and_search_changes_are_compatible(tmp_path: Path) -> None:
             "mge_settings",
             lambda value: value.update(intrinsic_mass_quad_order=12),
             "critical_configuration.mge_settings.intrinsic_mass_quad_order",
+        ),
+        (
+            "MGEs",
+            lambda value: value.update(light="different-light.ecsv"),
+            "critical_configuration.MGEs.light",
         ),
         (
             "numerics_settings",
@@ -237,61 +241,40 @@ def test_critical_configuration_changes_are_rejected(
     changed = deepcopy(baseline)
     mutate(changed[section])
 
-    assert expected_path in _signature(baseline).differences(_signature(changed))
+    differences = _different_paths(
+        _critical_configuration(baseline),
+        _critical_configuration(changed),
+        "critical_configuration",
+    )
+
+    assert expected_path in differences
 
 
-def test_scientific_file_content_change_is_rejected(tmp_path: Path) -> None:
+def test_scientific_file_content_change_is_not_part_of_contract(tmp_path: Path) -> None:
     input_directory = tmp_path / "input"
     _write_inputs(input_directory)
     config = _config(input_directory)
-    baseline = _signature(config)
+    baseline = _critical_configuration(config)
     (input_directory / "kin.ecsv").write_bytes(b"changed")
 
-    assert baseline.differences(_signature(config)) == [
-        "scientific_inputs.kinematic_data.observed"
-    ]
+    assert _critical_configuration(config) == baseline
 
 
-def test_signature_is_persisted_and_reused_immutably(tmp_path: Path) -> None:
-    input_directory = tmp_path / "input"
-    _write_inputs(input_directory)
-    config = _config(input_directory)
-    snapshot = _snapshot(tmp_path, 0, 0)
-
-    first = build_and_preserve_compatibility_signature(config, snapshot)
-    second = build_and_preserve_compatibility_signature(config, snapshot)
-
-    assert first == second
-    assert (
-        snapshot.absolute_resolved_config_path.parent / COMPATIBILITY_SIGNATURE_FILENAME
-    ).is_file()
-
-
-def test_resume_rejects_incompatible_historical_snapshot(tmp_path: Path) -> None:
+def test_resume_rejects_incompatible_baseline_run(tmp_path: Path) -> None:
     input_directory = tmp_path / "input"
     _write_inputs(input_directory)
     historical_config = _config(input_directory)
     current_config = deepcopy(historical_config)
     current_config["numerics_settings"]["parameter_grid_relative_tolerance"] = 2.0e-6
-    historical_snapshot = _snapshot(tmp_path, 0, 0)
-    current_snapshot = _snapshot(tmp_path, 1, 1)
-    build_and_preserve_compatibility_signature(
-        historical_config,
-        historical_snapshot,
-    )
-    current = build_and_preserve_compatibility_signature(
-        current_config,
-        current_snapshot,
-    )
+    baseline_run = _run(tmp_path, 0, historical_config)
 
     with pytest.raises(
         ConfigurationCompatibilityError,
         match="numerics_settings.parameter_grid_relative_tolerance",
     ):
         ensure_resume_compatible(
-            current,
-            current_snapshot,
-            [historical_snapshot],
+            _critical_configuration(current_config),
+            baseline_run,
             AllModels(),
             "kinchi2",
         )
@@ -301,8 +284,7 @@ def test_resume_rejects_unavailable_historical_chi2(tmp_path: Path) -> None:
     input_directory = tmp_path / "input"
     _write_inputs(input_directory)
     config = _config(input_directory)
-    snapshot = _snapshot(tmp_path, 0, 0)
-    signature = build_and_preserve_compatibility_signature(config, snapshot)
+    baseline_run = _run(tmp_path, 0, config)
     models = AllModels(
         QTable(
             {
@@ -318,9 +300,8 @@ def test_resume_rejects_unavailable_historical_chi2(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigurationCompatibilityError, match="no such column"):
         ensure_resume_compatible(
-            signature,
-            snapshot,
-            [snapshot],
+            _critical_configuration(config),
+            baseline_run,
             models,
             "kinchi2",
         )
@@ -333,13 +314,11 @@ def test_resume_allows_negative_orbit_seed(
     _write_inputs(input_directory)
     config = _config(input_directory)
     config["orbit_library_settings"]["random_seed"] = -1
-    snapshot = _snapshot(tmp_path, 0, 0)
-    signature = build_and_preserve_compatibility_signature(config, snapshot)
+    baseline_run = _run(tmp_path, 0, config)
 
     ensure_resume_compatible(
-        signature,
-        snapshot,
-        [snapshot],
+        _critical_configuration(config),
+        baseline_run,
         AllModels(),
         "kinchi2",
     )

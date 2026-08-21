@@ -74,7 +74,7 @@ established by the earlier run.
 `run()` also accepts and returns a `RunConfigLog`: one row per round, mapping
 the cumulative iteration number to the ID of the TNT run that produced it.
 Multiple rounds may reference the same run. The run's immutable manifest is
-the authoritative link to its resolved configuration snapshot and execution
+the authoritative link to its archived resolved configuration and execution
 provenance. Run IDs are allocated during configuration preparation, not by
 `ModelIterator.run()`; see {ref}`run-identity`. A search can be paused and
 resumed under an edited configuration, so `AllModels` and `Model.iteration`
@@ -141,21 +141,35 @@ The example checkpoints once after `ModelIterator.run()` returns. The iterator
 itself still performs no disk writes; an execution layer that checkpoints after
 every completed iteration must call the same paired writer at each checkpoint.
 
-This log records provenance and verifies that referenced snapshots remain
-intact. It does not decide whether different configurations are compatible;
-that compatibility contract is a separate model-resume policy.
+This log records provenance and verifies that referenced per-run manifests and
+resolved configurations exist and remain readable. It does not decide whether
+different configurations are compatible; that compatibility contract is a
+separate model-resume policy.
 
 ## Configuration compatibility on resume
 
-Runtime construction writes a versioned `compatibility_signature.yaml` beside
-each immutable resolved configuration. Before a resumed `run()` asks the
-parameter generator for another round, TNT follows the run IDs in
-`RunConfigLog` through their manifests and compares the current signature with
-every referenced configuration snapshot. An
-incompatible change raises `ConfigurationCompatibilityError` before models or
-the log are modified. The error lists the differing field paths.
+Currently, TNT performs the compatibility check once at the beginning of each
+`ModelIterator.run()` invocation, before entering that method's internal
+iteration loop. It is therefore not repeated for every model-search iteration
+within one invocation. The check uses `RunConfigLog` to identify the earliest
+run that contributed an iteration, then loads that run's archived
+`resolved_config.yaml` and compares its compatibility-critical fields directly
+with the current resolved configuration. An incompatible change raises
+`ConfigurationCompatibilityError` before models or the log are modified. The
+error lists the differing field paths. Runs that produced no iteration do not
+define the model set's compatibility baseline.
 
-Compatibility contract version 1 allows changes that control future search,
+One TNT run may invoke `ModelIterator.run()` more than once, so the current
+location can still repeat the check. The future coordinating execution layer
+should instead perform it exactly once per TNT run: after reading the current
+configuration and loading `AllModels` and `RunConfigLog`, but before building
+MGEs, observational-data objects, or the `ModelIterator`. That layer will then
+pass already-validated state into any subsequent `ModelIterator.run()` calls,
+and the check can be removed from `ModelIterator.run()` itself. Moving it
+directly into `Configuration.read()` would be too early because the selected
+chi-square and model-table schema checks require the previous search state.
+
+The current compatibility contract allows changes that control future search,
 execution, presentation, or post-processing without changing existing model
 meaning:
 
@@ -164,8 +178,8 @@ meaning:
 - values, ranges, fixed/logarithmic flags, and labels of existing potential
   parameters;
 - display units, logging, and analysis settings; and
-- input/output paths when the loaded scientific file contents remain
-  byte-identical.
+- input/output directory paths, provided the configured scientific file
+  references themselves do not change.
 
 It rejects changes to:
 
@@ -173,9 +187,9 @@ It rejects changes to:
   such as distance (`system_attributes.name` remains metadata);
 - potential components, inclusion, types, MGE references, parameter names, or
   remaining parameter-schema fields;
-- MGE settings, spatial binnings, kinematics, population data, or any of their
-  raw input-file contents;
-- all `numerics_settings` in this first contract version;
+- MGE settings, spatial binnings, kinematics, population data, or their
+  configured scientific file references;
+- all `numerics_settings` in the current contract;
 - orbit-library settings; and
 - weight-solver settings.
 
@@ -184,14 +198,20 @@ metric exists and is finite for every successful historical model. A nonempty
 `AllModels` table must also contain every parameter column required by the
 included potential components.
 
-Scientific inputs are compared by SHA-256 content, not filename, so moving or
-renaming an identical file remains compatible. The exact raw bytes are the
-identity: re-serializing equivalent values into different bytes is treated as
-a scientific-input change in this conservative first version.
+TNT does not hash scientific input files. Users must not modify an MGE,
+spatial-binning, kinematics, or population file in place while an existing
+model set may still be resumed. Changing a configured scientific filename is
+rejected, but changing bytes at the same path cannot be detected. This is an
+explicit user responsibility in exchange for a lean configuration repository.
+
+The same output directory must have only one coordinating TNT writer. Parallel
+workers may calculate different models within an iteration, but they must
+return results to the coordinator; only that process updates `AllModels`,
+`run_config_log.ecsv`, or other shared bookkeeping files.
 
 A negative orbit-library random seed is valid for both fresh and continued
 runs. Like the other orbit-library settings, changing its configured value
-between runs remains incompatible under contract version 1.
+between runs remains incompatible under the current contract.
 
 ## ParameterGenerator
 

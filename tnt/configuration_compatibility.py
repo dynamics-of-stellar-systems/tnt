@@ -1,27 +1,18 @@
-"""Versioned compatibility policy for appending to one `AllModels` search."""
+"""Configuration compatibility policy for appending to one `AllModels` search."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
-from hashlib import sha256
 from pathlib import Path
-from typing import Any, Self
+from typing import Any
 
 import numpy as np
-import yaml
 
 from tnt.all_models import AllModels
-from tnt.configuration import (
-    ConfigDict,
-    _read_yaml_bytes_mapping,
-    _write_yaml_immutably,
-)
-from tnt.run_config_log import ConfigurationSnapshotReference
+from tnt.configuration import ConfigDict, _read_yaml_bytes_mapping
+from tnt.run_config_log import RunManifestReference
 
-COMPATIBILITY_CONTRACT_VERSION = 1
-COMPATIBILITY_SIGNATURE_FILENAME = "compatibility_signature.yaml"
 _SEARCH_PARAMETER_KEYS = {
     "fixed",
     "generator_settings",
@@ -35,180 +26,35 @@ class ConfigurationCompatibilityError(ValueError):
     """A resumed search would mix scientifically incompatible models."""
 
 
-@dataclass(frozen=True)
-class ConfigurationCompatibilitySignature:
-    """Canonical scientific identity used by the first compatibility contract."""
-
-    contract_version: int
-    critical_configuration: ConfigDict
-    scientific_inputs: ConfigDict
-    signature_sha256: str
-
-    @classmethod
-    def create(
-        cls,
-        critical_configuration: Mapping[str, Any],
-        scientific_inputs: Mapping[str, Any],
-    ) -> Self:
-        """Create a signature from normalized compatibility inputs."""
-        payload = {
-            "contract_version": COMPATIBILITY_CONTRACT_VERSION,
-            "critical_configuration": deepcopy(dict(critical_configuration)),
-            "scientific_inputs": deepcopy(dict(scientific_inputs)),
-        }
-        return cls(
-            contract_version=COMPATIBILITY_CONTRACT_VERSION,
-            critical_configuration=payload["critical_configuration"],
-            scientific_inputs=payload["scientific_inputs"],
-            signature_sha256=_canonical_sha256(payload),
-        )
-
-    @classmethod
-    def read(cls, path: Path) -> Self:
-        """Read and validate one persisted compatibility signature."""
-        data = _read_yaml_bytes_mapping(
-            path.read_bytes(),
-            f"configuration compatibility signature {path}",
-        )
-        expected_keys = {
-            "contract_version",
-            "critical_configuration",
-            "scientific_inputs",
-            "signature_sha256",
-        }
-        if set(data) != expected_keys:
-            raise ConfigurationCompatibilityError(
-                f"Compatibility signature {path} must contain exactly "
-                f"{sorted(expected_keys)!r}."
-            )
-        version = data["contract_version"]
-        if version != COMPATIBILITY_CONTRACT_VERSION:
-            raise ConfigurationCompatibilityError(
-                f"Compatibility signature {path} uses contract version "
-                f"{version!r}; TNT supports {COMPATIBILITY_CONTRACT_VERSION}."
-            )
-        critical = _require_mapping(data["critical_configuration"], path)
-        inputs = _require_mapping(data["scientific_inputs"], path)
-        expected_sha256 = _canonical_sha256(
-            {
-                "contract_version": version,
-                "critical_configuration": critical,
-                "scientific_inputs": inputs,
-            }
-        )
-        if data["signature_sha256"] != expected_sha256:
-            raise ConfigurationCompatibilityError(
-                f"Compatibility signature {path} has an invalid SHA-256 digest."
-            )
-        return cls(
-            contract_version=version,
-            critical_configuration=critical,
-            scientific_inputs=inputs,
-            signature_sha256=expected_sha256,
-        )
-
-    def as_dict(self) -> ConfigDict:
-        """Return the complete serializable signature document."""
-        return {
-            "contract_version": self.contract_version,
-            "critical_configuration": deepcopy(self.critical_configuration),
-            "scientific_inputs": deepcopy(self.scientific_inputs),
-            "signature_sha256": self.signature_sha256,
-        }
-
-    def differences(self, other: Self) -> list[str]:
-        """Return field paths whose compatibility-critical values differ."""
-        if self.contract_version != other.contract_version:
-            return ["contract_version"]
-        return _different_paths(
-            {
-                "critical_configuration": self.critical_configuration,
-                "scientific_inputs": self.scientific_inputs,
-            },
-            {
-                "critical_configuration": other.critical_configuration,
-                "scientific_inputs": other.scientific_inputs,
-            },
-        )
-
-
-def build_and_preserve_compatibility_signature(
-    config: Mapping[str, Any],
-    snapshot: ConfigurationSnapshotReference,
-) -> ConfigurationCompatibilitySignature:
-    """Build the current signature and immutably preserve it with its snapshot."""
-    signature = ConfigurationCompatibilitySignature.create(
-        _critical_configuration(config),
-        _scientific_input_hashes(config),
-    )
-    path = compatibility_signature_path(snapshot)
-    if path.exists():
-        persisted = ConfigurationCompatibilitySignature.read(path)
-        differences = persisted.differences(signature)
-        if differences:
-            raise ConfigurationCompatibilityError(
-                "The immutable resolved configuration snapshot now resolves to "
-                "different scientific inputs: " + ", ".join(differences)
-            )
-        return persisted
-    try:
-        _write_yaml_immutably(
-            signature.as_dict(),
-            path,
-            "configuration compatibility signature",
-        )
-    except FileExistsError:
-        persisted = ConfigurationCompatibilitySignature.read(path)
-        differences = persisted.differences(signature)
-        if differences:
-            raise ConfigurationCompatibilityError(
-                "A concurrently created compatibility signature differs at: "
-                + ", ".join(differences)
-            )
-        return persisted
-    return signature
-
-
 def ensure_resume_compatible(
-    current: ConfigurationCompatibilitySignature,
-    current_snapshot: ConfigurationSnapshotReference,
-    historical_snapshots: Sequence[ConfigurationSnapshotReference],
+    current_critical_configuration: Mapping[str, Any],
+    baseline_run: RunManifestReference | None,
     all_models: AllModels,
     which_chi2: str,
 ) -> None:
-    """Reject incompatible historical snapshots or an unusable chi2 selection."""
-    checked: set[str] = set()
-    for snapshot in historical_snapshots:
-        if snapshot.semantic_sha256 in checked:
-            continue
-        checked.add(snapshot.semantic_sha256)
-        if snapshot.semantic_sha256 == current_snapshot.semantic_sha256:
-            historical = current
-        else:
-            path = compatibility_signature_path(snapshot)
-            if not path.is_file():
-                raise ConfigurationCompatibilityError(
-                    f"Cannot establish compatibility: historical snapshot "
-                    f"{snapshot.snapshot_id} has no {COMPATIBILITY_SIGNATURE_FILENAME}."
-                )
-            historical = ConfigurationCompatibilitySignature.read(path)
-        differences = historical.differences(current)
+    """Reject an incompatible baseline run or an unusable chi2 selection."""
+    if baseline_run is not None:
+        path = baseline_run.absolute_resolved_config_path
+        historical_config = _read_yaml_bytes_mapping(
+            path.read_bytes(),
+            f"resolved configuration for baseline run {baseline_run.run_id}",
+        )
+        historical_critical = _critical_configuration(historical_config)
+        differences = _different_paths(
+            historical_critical,
+            current_critical_configuration,
+            "critical_configuration",
+        )
         if differences:
             detail = ", ".join(differences[:20])
             if len(differences) > 20:
                 detail += f", and {len(differences) - 20} more"
             raise ConfigurationCompatibilityError(
-                f"Configuration snapshot {snapshot.snapshot_id} is incompatible "
-                f"with the current snapshot; changed fields: {detail}."
+                f"Configuration for baseline run {baseline_run.run_id} is "
+                f"incompatible with the current run; changed fields: {detail}."
             )
     _validate_selected_chi2(all_models, which_chi2)
-    _validate_parameter_columns(all_models, current.critical_configuration)
-
-
-def compatibility_signature_path(snapshot: ConfigurationSnapshotReference) -> Path:
-    """Return the companion signature path for one resolved snapshot."""
-    snapshot_directory = snapshot.absolute_resolved_config_path.parent
-    return snapshot_directory / COMPATIBILITY_SIGNATURE_FILENAME
+    _validate_parameter_columns(all_models, current_critical_configuration)
 
 
 def _critical_configuration(config: Mapping[str, Any]) -> ConfigDict:
@@ -225,19 +71,13 @@ def _critical_configuration(config: Mapping[str, Any]) -> ConfigDict:
         ),
         "system_attributes": system_attributes,
         "mge_settings": deepcopy(_mapping(config, "mge_settings")),
-        # Contract version 1 deliberately rejects every numerics change.
+        # The current compatibility contract rejects every numerics change.
         "numerics_settings": deepcopy(_mapping(config, "numerics_settings")),
-        "MGEs": sorted(_mapping(config, "MGEs")),
-        "spatial_binnings": _settings_without_file(
-            _mapping(config, "spatial_binnings"), "bins_file"
-        ),
+        "MGEs": deepcopy(_mapping(config, "MGEs")),
+        "spatial_binnings": deepcopy(_mapping(config, "spatial_binnings")),
         "potential": _potential_schema(_mapping(config, "potential")),
-        "kinematic_data": _settings_without_file(
-            _mapping(config, "kinematic_data"), "data_file"
-        ),
-        "population_data": _settings_without_file(
-            _mapping(config, "population_data"), "data_file"
-        ),
+        "kinematic_data": deepcopy(_mapping(config, "kinematic_data")),
+        "population_data": deepcopy(_mapping(config, "population_data")),
         "orbit_library_settings": deepcopy(_mapping(config, "orbit_library_settings")),
         "weight_solver_settings": deepcopy(_mapping(config, "weight_solver_settings")),
     }
@@ -270,85 +110,6 @@ def _potential_schema(potential: Mapping[str, Any]) -> ConfigDict:
         }
         result[component_name] = schema
     return result
-
-
-def _settings_without_file(settings: Mapping[str, Any], file_key: str) -> ConfigDict:
-    """Copy named scientific settings without their relocatable file paths."""
-    return {
-        name: {
-            key: deepcopy(value)
-            for key, value in _require_mapping(raw, Path(name)).items()
-            if key != file_key
-        }
-        for name, raw in settings.items()
-    }
-
-
-def _scientific_input_hashes(config: Mapping[str, Any]) -> ConfigDict:
-    """Hash every raw scientific input addressed by the resolved configuration."""
-    input_directory = Path(_mapping(config, "io_settings")["input_directory"])
-    return {
-        "MGEs": {
-            name: _file_sha256(_input_path(input_directory, filename))
-            for name, filename in _mapping(config, "MGEs").items()
-        },
-        "spatial_binnings": _named_file_hashes(
-            _mapping(config, "spatial_binnings"),
-            "bins_file",
-            input_directory,
-        ),
-        "kinematic_data": _named_file_hashes(
-            _mapping(config, "kinematic_data"),
-            "data_file",
-            input_directory,
-        ),
-        "population_data": _named_file_hashes(
-            _mapping(config, "population_data"),
-            "data_file",
-            input_directory,
-        ),
-    }
-
-
-def _named_file_hashes(
-    settings: Mapping[str, Any],
-    file_key: str,
-    input_directory: Path,
-) -> ConfigDict:
-    """Hash one required file field in every named settings entry."""
-    return {
-        name: _file_sha256(
-            _input_path(
-                input_directory,
-                _require_mapping(raw, Path(name))[file_key],
-            )
-        )
-        for name, raw in settings.items()
-    }
-
-
-def _input_path(input_directory: Path, filename: Any) -> Path:
-    """Resolve and validate one configured scientific input filename."""
-    if not isinstance(filename, str) or not filename:
-        raise ConfigurationCompatibilityError(
-            f"Scientific input filename must be a non-empty string, got {filename!r}."
-        )
-    path = Path(filename).expanduser()
-    if not path.is_absolute():
-        path = input_directory / path
-    path = path.resolve()
-    if not path.is_file():
-        raise FileNotFoundError(f"Scientific input file does not exist: {path}")
-    return path
-
-
-def _file_sha256(path: Path) -> str:
-    """Hash one potentially large scientific input without loading it all at once."""
-    digest = sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _validate_selected_chi2(all_models: AllModels, which_chi2: str) -> None:
@@ -416,18 +177,6 @@ def _different_paths(left: Any, right: Any, prefix: str = "") -> list[str]:
             )
         return differences
     return [] if left == right else [prefix]
-
-
-def _canonical_sha256(value: Mapping[str, Any]) -> str:
-    """Hash a canonical YAML representation with mapping order removed."""
-    content = yaml.safe_dump(
-        dict(value),
-        allow_unicode=True,
-        default_flow_style=False,
-        sort_keys=True,
-    ).encode("utf-8")
-    return sha256(content).hexdigest()
-
 
 def _mapping(config: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     """Return one required mapping from a resolved configuration."""

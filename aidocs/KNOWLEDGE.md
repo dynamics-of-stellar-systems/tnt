@@ -40,8 +40,8 @@
 - Configuration preparation is implemented by `tnt.Configuration`. Its
   `read()` method loads the user YAML, recursively merges package defaults,
   resolves dynamic and kinematics-type defaults, validates the resulting
-  data, and atomically publishes immutable resolved snapshots and run
-  manifests below
+  data, and atomically publishes an immutable resolved configuration and run
+  manifest for each run below
   `<output_directory>/config_repository/`. It does not instantiate scientific
   runtime objects.
 - Preparation-stage validation rejects duplicate keys, unknown or missing
@@ -109,20 +109,24 @@
   `portable_data` and `as_portable_dict()` expose the archived form.
   Configuration preparation requires both path strings but creates only the
   output directory and configuration repository.
-- The configuration repository separates semantic snapshots under
-  `configurations/` from one immutable manifest per TNT run under
-  `manifests/`. Semantic identity hashes a canonical resolved portable
-  configuration, ignoring mapping order and YAML presentation but preserving
-  list order and values. Identical semantic configurations reuse one snapshot.
-  The submitted user profile, its source path, and its byte hash are not
-  persisted. Each manifest records the selected snapshot and its hashes,
-  software versions, Git state, Python/platform/host context, scheduler
-  identifiers, logfile location, and orbit random-seed state.
+- The configuration repository stores one immutable bundle per TNT run under
+  `runs/<run_id>/`, containing `run_manifest.yaml` and
+  `resolved_config.yaml`. Identical configurations are archived again for each
+  run; TNT performs no cross-run deduplication and stores no configuration or
+  scientific-input hashes. The submitted user profile and source path remain
+  transient. Each manifest records software versions, Git state,
+  Python/platform/host context, scheduler identifiers, logfile location, and
+  orbit random-seed state.
+- Exactly one coordinating TNT process may write a given output directory.
+  Parallel workers may calculate models, but only the coordinator may update
+  shared repository or checkpoint files. Scientific input files must not be
+  modified in place while an existing model set may be resumed; TNT does not
+  hash their contents and therefore cannot detect such changes.
 - `RunConfigLog` persists separately as
   `config_repository/run_config_log.ecsv`, with one row per cumulative
   model-search iteration. Rows map iterations to run IDs. Reads and atomic
   writes validate the referenced immutable run manifests; those manifests are
-  the authoritative links to resolved configuration snapshots and execution
+  the authoritative links to per-run resolved configurations and execution
   provenance. ECSV metadata derives `total_runs` and
   `run_ids_without_iterations` from all manifests and the iteration rows on
   every read or write. `ModelIterator.run()` still returns rather than writes
@@ -136,22 +140,28 @@
   models-ahead state because missing provenance is not recoverable. An initial
   zero-model checkpoint writes only the run log because `AllModels` has no
   column schema until its first model.
-- Runtime construction creates a versioned `compatibility_signature.yaml`
-  beside each resolved snapshot and checks it before a resumed model-search
-  proposal. Contract version 1 excludes operational/search/presentation fields
-  and potential parameter values/ranges from the scientific identity. It
-  includes internal units, cosmology, physical system attributes except name,
-  potential/parameter schema, MGE and observational settings, all
-  `numerics_settings`, orbit-library settings, and weight-solver settings.
-  Scientific input paths are excluded but their raw SHA-256 hashes are
-  included. Every historical snapshot reached through `RunConfigLog` must
-  match; `which_chi2` must be finite for every successful historical model,
-  and the required potential parameter columns must exist. Negative configured
-  orbit seeds are valid for fresh and continued runs; changing the configured
-  seed between runs remains incompatible with contract version 1.
-- Configuration preparation cannot record a generated seed or observational
-  input checksums because neither exists yet. A negative seed is recorded as
-  `pending_generation`; the execution phase must update the effective seed.
+- Before resuming, runtime compares the current compatibility-critical
+  configuration directly with the archived resolved configuration from the
+  earliest run that contributed an iteration. The contract excludes
+  operational/search/presentation fields and potential parameter values/ranges.
+  It includes internal units, cosmology, physical system attributes except
+  name, potential/parameter schema, MGE and observational settings including
+  their configured file references, all `numerics_settings`, orbit-library
+  settings, and weight-solver settings. `which_chi2` must be finite for every
+  successful historical model, and the required potential parameter columns
+  must exist. Negative configured orbit seeds are valid for fresh and
+  continued runs; changing the configured seed between runs remains
+  incompatible.
+- The compatibility check currently runs once at the start of each
+  `ModelIterator.run()` invocation, outside its internal iteration loop. When
+  TNT gains a coordinating execution layer, move the check there and perform
+  it once per TNT run after loading the resolved configuration, `AllModels`,
+  and `RunConfigLog`, but before constructing MGEs, observational objects, or
+  `ModelIterator`. Do not replace this with an iterator-local “already checked”
+  flag, because later calls could supply different model or provenance state.
+- Configuration preparation cannot record a generated seed. A negative seed
+  is recorded as `pending_generation`; the execution phase must update the
+  effective seed.
 - The user profile must define the physical system, dynamically named
   potential components and parameters, input directory, and output directory.
 - TNT user profiles generally use snake-case type identifiers and field names.

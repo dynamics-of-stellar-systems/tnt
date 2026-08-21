@@ -38,11 +38,10 @@ if "galax" not in sys.modules:
     sys.modules["galax.potential"] = _fake_galax_potential
 
 import tnt.model_iterator as model_iterator_module
-from tnt.configuration_compatibility import ConfigurationCompatibilitySignature
 from tnt.model_iterator import ModelIterator
 from tnt.run_config_log import (
-    ConfigurationSnapshotReference,
     RunConfigLog,
+    RunManifestReference,
 )
 
 # ---------------------------------------------------------------------------
@@ -113,16 +112,12 @@ class FakeParameterGenerator:
         return [{"bh": {"m": 1.0}}]
 
 
-def _snapshot_reference(
-    snapshot_id: int = 0,
-    semantic_sha256: str = "a" * 64,
-) -> ConfigurationSnapshotReference:
-    directory = f"{snapshot_id:04d}-{semantic_sha256[:8]}"
-    return ConfigurationSnapshotReference(
+def _run_reference(run_id: int = 0) -> RunManifestReference:
+    return RunManifestReference(
         repository=Path("/archive/config_repository"),
-        snapshot_id=snapshot_id,
-        semantic_sha256=semantic_sha256,
-        resolved_config_path=f"configurations/{directory}/resolved_config.yaml",
+        run_id=run_id,
+        run_manifest_path=f"runs/{run_id:04d}/run_manifest.yaml",
+        resolved_config_path=f"runs/{run_id:04d}/resolved_config.yaml",
     )
 
 
@@ -153,11 +148,8 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
         "weight_workers": "all_available",
     }
     iterator.run_id = 0
-    iterator.configuration_snapshot = _snapshot_reference()
-    iterator.compatibility_signature = ConfigurationCompatibilitySignature.create(
-        {"potential": {}},
-        {},
-    )
+    iterator.run_manifest = _run_reference()
+    iterator.critical_configuration = {"potential": {}}
     for name, value in overrides.items():
         setattr(iterator, name, value)
     return iterator
@@ -549,10 +541,12 @@ def test_run_allows_n_new_iter_and_keeps_cumulative_labels_across_calls(
         "ensure_resume_compatible",
         lambda *_: None,
     )
-    monkeypatch.setattr(RunConfigLog, "snapshot_references", lambda *_args, **_kw: [])
+    monkeypatch.setattr(
+        RunConfigLog, "baseline_run_reference", lambda *_args, **_kw: None
+    )
     iterator = _make_iterator(
         parameter_generator=FakeParameterGenerator(n_rounds=2),
-        configuration_snapshot=_snapshot_reference(),
+        run_manifest=_run_reference(),
         stopping_criteria={"n_new_iter": 2, "target_model_count": 10},
     )
     monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
@@ -563,7 +557,7 @@ def test_run_allows_n_new_iter_and_keeps_cumulative_labels_across_calls(
 
     iterator.parameter_generator = FakeParameterGenerator(n_rounds=2)
     iterator.run_id = 1
-    iterator.configuration_snapshot = _snapshot_reference(1, "b" * 64)
+    iterator.run_manifest = _run_reference(1)
     models, config_log = iterator.run(models, config_log)
 
     assert len(models) == 4

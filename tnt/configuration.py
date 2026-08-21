@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import shutil
 import socket
 import subprocess
 import sys
@@ -12,11 +13,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
-from hashlib import sha256
 from importlib.metadata import PackageNotFoundError, version
 from importlib.resources import files
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, mkdtemp
 from typing import Any
 
 import yaml
@@ -31,10 +31,9 @@ from tnt.units import (
 )
 
 CONFIG_REPOSITORY_DIRECTORY = "config_repository"
-CONFIGURATIONS_DIRECTORY = "configurations"
-MANIFESTS_DIRECTORY = "manifests"
+RUNS_DIRECTORY = "runs"
 RESOLVED_CONFIG_FILENAME = "resolved_config.yaml"
-HASH_PREFIX_LENGTH = 8
+RUN_MANIFEST_FILENAME = "run_manifest.yaml"
 
 ConfigDict = dict[str, Any]
 _LOGGER = logging.getLogger(__name__)
@@ -113,23 +112,12 @@ class Configuration:
         validate_resolved_configuration(portable_config)
 
         repository = output_directory / CONFIG_REPOSITORY_DIRECTORY
-        resolved_bytes = _generated_yaml_bytes(
-            portable_config, "resolved configuration"
-        )
-        semantic_sha256 = _semantic_configuration_sha256(portable_config)
-        resolved_path, configuration_version = _preserve_resolved_configuration(
-            repository,
-            resolved_bytes,
-            semantic_sha256,
-        )
-        run_manifest_path, run_id = _preserve_run_manifest(
+        run_manifest_path, resolved_path, run_id = _preserve_run(
             repository=repository,
             workspace_root=workspace_root,
             runtime_config=runtime_config,
-            resolved_path=resolved_path,
+            portable_config=portable_config,
             logfile_path=logfile_path,
-            configuration_version=configuration_version,
-            semantic_sha256=semantic_sha256,
         )
 
         _LOGGER.info("Resolved configuration preserved at %s.", resolved_path)
@@ -525,102 +513,53 @@ def _workspace_relative_path(path: Path, workspace_root: Path) -> str:
     return Path(relative).as_posix()
 
 
-def _semantic_configuration_sha256(config: ConfigDict) -> str:
-    """Hash a resolved configuration independently of mapping presentation."""
-    canonical_bytes = yaml.safe_dump(
-        config,
-        allow_unicode=True,
-        default_flow_style=False,
-        sort_keys=True,
-    ).encode("utf-8")
-    return sha256(canonical_bytes).hexdigest()
-
-
-def _preserve_resolved_configuration(
-    repository: Path,
-    resolved_bytes: bytes,
-    semantic_sha256: str,
-) -> tuple[Path, int]:
-    """Reuse or create one immutable semantic configuration snapshot."""
-    directory = repository / CONFIGURATIONS_DIRECTORY
-    for path in sorted(directory.glob(f"*-*/{RESOLVED_CONFIG_FILENAME}")):
-        archived = _read_yaml_bytes_mapping(
-            path.read_bytes(),
-            f"archived resolved configuration {path}",
-        )
-        if _semantic_configuration_sha256(archived) == semantic_sha256:
-            return path, _leading_index(path.parent.name)
-
-    directory.mkdir(parents=True, exist_ok=True)
-    while True:
-        version = _next_index(directory)
-        snapshot_directory = directory / (
-            f"{version:04d}-{semantic_sha256[:HASH_PREFIX_LENGTH]}"
-        )
-        try:
-            snapshot_directory.mkdir()
-        except FileExistsError:
-            continue
-        path = snapshot_directory / RESOLVED_CONFIG_FILENAME
-        try:
-            _write_bytes_immutably(resolved_bytes, path)
-        except BaseException:
-            snapshot_directory.rmdir()
-            raise
-        return path, version
-
-
-def _preserve_run_manifest(
+def _preserve_run(
     *,
     repository: Path,
     workspace_root: Path,
     runtime_config: ConfigDict,
-    resolved_path: Path,
+    portable_config: ConfigDict,
     logfile_path: Path | None,
-    configuration_version: int,
-    semantic_sha256: str,
-) -> tuple[Path, int]:
-    """Create one immutable manifest for this TNT run."""
-    directory = repository / MANIFESTS_DIRECTORY
-    directory.mkdir(parents=True, exist_ok=True)
-    while True:
-        run_id = _next_index(directory)
-        path = directory / f"{run_id:04d}-run_manifest.yaml"
+) -> tuple[Path, Path, int]:
+    """Atomically publish one immutable manifest/configuration run bundle."""
+    runs_directory = repository / RUNS_DIRECTORY
+    runs_directory.mkdir(parents=True, exist_ok=True)
+    run_id = _next_index(runs_directory)
+    run_directory = runs_directory / f"{run_id:04d}"
+    resolved_path = run_directory / RESOLVED_CONFIG_FILENAME
+    manifest_path = run_directory / RUN_MANIFEST_FILENAME
+    temporary_directory = Path(mkdtemp(dir=runs_directory, prefix=".run-"))
+    try:
+        temporary_resolved_path = temporary_directory / RESOLVED_CONFIG_FILENAME
+        temporary_manifest_path = temporary_directory / RUN_MANIFEST_FILENAME
+        _write_yaml_immutably(
+            portable_config,
+            temporary_resolved_path,
+            "resolved configuration",
+        )
         manifest = _build_run_manifest(
             workspace_root=workspace_root,
             runtime_config=runtime_config,
             repository=repository,
             resolved_path=resolved_path,
-            run_manifest_path=path,
             logfile_path=logfile_path,
-            resolved_config_bytes=resolved_path.read_bytes(),
-            configuration_version=configuration_version,
-            semantic_sha256=semantic_sha256,
             run_id=run_id,
         )
-        try:
-            _write_yaml_immutably(manifest, path, "run manifest")
-        except FileExistsError:
-            continue
-        return path, run_id
+        _write_yaml_immutably(manifest, temporary_manifest_path, "run manifest")
+        os.replace(temporary_directory, run_directory)
+    finally:
+        shutil.rmtree(temporary_directory, ignore_errors=True)
+    return manifest_path, resolved_path, run_id
 
 
 def _next_index(directory: Path) -> int:
     """Return the first index after every indexed entry in `directory`."""
     indices = [
-        _leading_index(path.name)
+        int(path.name)
         for path in directory.iterdir()
-        if path.name.split("-", maxsplit=1)[0].isdigit()
+        if path.is_dir() and path.name.isdigit()
     ]
     return max(indices, default=-1) + 1
-
-
-def _leading_index(name: str) -> int:
-    """Read the numeric prefix from one repository artifact name."""
-    prefix = name.split("-", maxsplit=1)[0]
-    if not prefix.isdigit():
-        raise ValueError(f"Repository artifact {name!r} has no numeric index.")
-    return int(prefix)
 
 
 def _repository_relative(path: Path, repository: Path) -> str:
@@ -634,11 +573,7 @@ def _build_run_manifest(
     runtime_config: ConfigDict,
     repository: Path,
     resolved_path: Path,
-    run_manifest_path: Path,
     logfile_path: Path | None,
-    resolved_config_bytes: bytes,
-    configuration_version: int,
-    semantic_sha256: str,
     run_id: int,
 ) -> ConfigDict:
     """Build provenance for this concrete TNT run."""
@@ -655,7 +590,7 @@ def _build_run_manifest(
         else None
     )
     return {
-        "manifest_version": 2,
+        "manifest_version": 3,
         "run_id": run_id,
         "prepared_at_utc": datetime.now(UTC).isoformat(),
         "tnt": {
@@ -684,14 +619,10 @@ def _build_run_manifest(
             },
         },
         "configuration": {
-            "snapshot_id": configuration_version,
-            "semantic_sha256": semantic_sha256,
             "resolved": _repository_relative(resolved_path, repository),
-            "manifest": _repository_relative(run_manifest_path, repository),
             "logfile": str(logfile_path.resolve()) if logfile_path else None,
             "input_directory": io_settings["input_directory"],
             "output_directory": io_settings["output_directory"],
-            "resolved_config_sha256": sha256(resolved_config_bytes).hexdigest(),
         },
         "randomness": {
             "configured_orbit_library_seed": configured_seed,

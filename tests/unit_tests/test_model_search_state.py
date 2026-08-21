@@ -1,4 +1,3 @@
-from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -7,7 +6,6 @@ from astropy.table import QTable
 
 import tnt.model_search_state as state_module
 from tnt.all_models import AllModels
-from tnt.configuration import _semantic_configuration_sha256
 from tnt.model_search_state import ModelSearchState, ModelSearchStateError
 from tnt.run_config_log import (
     RUN_CONFIG_LOG_FILENAME,
@@ -19,27 +17,17 @@ from tnt.run_config_log import (
 
 def _write_run_manifest(tmp_path: Path, run_id: int) -> Path:
     config = {"run": run_id}
-    semantic_sha256 = _semantic_configuration_sha256(config)
     repository = tmp_path / "config_repository"
-    resolved_path = (
-        repository
-        / "configurations"
-        / f"{run_id:04d}-{semantic_sha256[:8]}"
-        / "resolved_config.yaml"
-    )
+    run_directory = repository / "runs" / f"{run_id:04d}"
+    resolved_path = run_directory / "resolved_config.yaml"
     resolved_path.parent.mkdir(parents=True)
     resolved_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-    manifest_path = repository / "manifests" / f"{run_id:04d}-run_manifest.yaml"
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path = run_directory / "run_manifest.yaml"
     manifest = {
-        "manifest_version": 2,
+        "manifest_version": 3,
         "run_id": run_id,
         "configuration": {
-            "snapshot_id": run_id,
-            "semantic_sha256": semantic_sha256,
             "resolved": resolved_path.relative_to(repository).as_posix(),
-            "manifest": manifest_path.relative_to(repository).as_posix(),
-            "resolved_config_sha256": sha256(resolved_path.read_bytes()).hexdigest(),
         },
     }
     manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")

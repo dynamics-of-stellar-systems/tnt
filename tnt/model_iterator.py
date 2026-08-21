@@ -32,8 +32,7 @@ from unxt import AbstractUnitSystem
 
 from tnt.all_models import AllModels
 from tnt.configuration_compatibility import (
-    ConfigurationCompatibilitySignature,
-    build_and_preserve_compatibility_signature,
+    _critical_configuration,
     ensure_resume_compatible,
 )
 from tnt.kinematics import AbstractKinematics, build_kinematics
@@ -54,7 +53,6 @@ from tnt.parameter_generator import (
 from tnt.populations import Populations, build_populations
 from tnt.potential import Potential, build_potential
 from tnt.run_config_log import (
-    ConfigurationSnapshotReference,
     RunConfigLog,
     RunManifestReference,
 )
@@ -88,8 +86,8 @@ class ModelIterator:
     stopping_criteria: Mapping[str, Any]
     execution_settings: Mapping[str, Any]
     run_id: int
-    configuration_snapshot: ConfigurationSnapshotReference
-    compatibility_signature: ConfigurationCompatibilitySignature
+    run_manifest: RunManifestReference
+    critical_configuration: Mapping[str, Any]
 
     @classmethod
     def from_configuration(
@@ -122,7 +120,6 @@ class ModelIterator:
         """
         _require_supported_model_processing_order(config["execution_settings"])
         run_manifest = RunManifestReference.from_run_manifest(run_manifest_path)
-        configuration_snapshot = run_manifest.configuration_snapshot
         input_directory = config["io_settings"]["input_directory"]
         parameter_space_settings = config["parameter_space_settings"]
 
@@ -143,11 +140,6 @@ class ModelIterator:
         population_data = build_populations(
             config["population_data"], input_directory, unit_system, spatial_binnings
         )
-        compatibility_signature = build_and_preserve_compatibility_signature(
-            config,
-            configuration_snapshot,
-        )
-
         return cls(
             potential_settings=config["potential"],
             mges=mges,
@@ -165,8 +157,8 @@ class ModelIterator:
             stopping_criteria=parameter_space_settings["stopping_criteria"],
             execution_settings=config["execution_settings"],
             run_id=run_manifest.run_id,
-            configuration_snapshot=configuration_snapshot,
-            compatibility_signature=compatibility_signature,
+            run_manifest=run_manifest,
+            critical_configuration=_critical_configuration(config),
         )
 
     def run(
@@ -230,14 +222,12 @@ class ModelIterator:
                 "AllModels and RunConfigLog must describe the same number "
                 f"of iterations; received {models.n_iterations()} and "
                 f"{len(run_config_log)}, respectively."
-            )
+        )
         ensure_resume_compatible(
-            self.compatibility_signature,
-            self.configuration_snapshot,
-            run_config_log.snapshot_references(
-                self.configuration_snapshot.repository,
+            self.critical_configuration,
+            run_config_log.baseline_run_reference(
+                self.run_manifest.repository,
                 current_run_id=self.run_id,
-                current_snapshot=self.configuration_snapshot,
             ),
             models,
             self.which_chi2,

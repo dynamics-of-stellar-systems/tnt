@@ -1,6 +1,5 @@
 import logging
 import sys
-from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -8,7 +7,6 @@ import yaml
 
 from tnt.configuration import (
     Configuration,
-    _semantic_configuration_sha256,
     configuration_session,
 )
 
@@ -65,7 +63,7 @@ io_settings:
     )
 
 
-def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
+def test_read_resolves_defaults_and_writes_run_bundle(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"
     _write_user_config(
@@ -92,8 +90,8 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     repository = output_directory / "config_repository"
     assert config.resolved_path is not None
     expected_path = config.resolved_path
-    assert expected_path.parent.parent == repository / "configurations"
-    assert expected_path.parent.name.startswith("0000-")
+    assert expected_path.parent.parent == repository / "runs"
+    assert expected_path.parent.name == "0000"
     assert expected_path.name == "resolved_config.yaml"
     assert config.resolved_path == expected_path
     assert expected_path.is_file()
@@ -157,10 +155,10 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
 
     assert config.run_manifest_path is not None
     manifest_path = config.run_manifest_path
-    assert manifest_path == repository / "manifests" / "0000-run_manifest.yaml"
+    assert manifest_path == repository / "runs" / "0000" / "run_manifest.yaml"
     assert config.run_manifest_path == manifest_path
     manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["manifest_version"] == 2
+    assert manifest["manifest_version"] == 3
     assert manifest["run_id"] == 0
     assert config.run_id == 0
     assert set(manifest["tnt"]) == {
@@ -173,28 +171,15 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     assert set(manifest["configuration"]) == {
         "input_directory",
         "logfile",
-        "manifest",
         "output_directory",
         "resolved",
-        "resolved_config_sha256",
-        "semantic_sha256",
-        "snapshot_id",
     }
-    assert manifest["configuration"]["snapshot_id"] == 0
-    assert len(manifest["configuration"]["semantic_sha256"]) == 64
     assert manifest["configuration"]["resolved"] == str(
         expected_path.relative_to(repository)
-    )
-    assert manifest["configuration"]["manifest"] == str(
-        manifest_path.relative_to(repository)
     )
     assert manifest["configuration"]["input_directory"] == str(tmp_path / "input")
     assert manifest["configuration"]["output_directory"] == str(output_directory)
     assert manifest["configuration"]["logfile"] is None
-    assert (
-        manifest["configuration"]["resolved_config_sha256"]
-        == sha256(expected_path.read_bytes()).hexdigest()
-    )
     assert manifest["randomness"] == {
         "configured_orbit_library_seed": -1,
         "effective_orbit_library_seed": None,
@@ -202,7 +187,9 @@ def test_read_resolves_defaults_and_writes_snapshot(tmp_path: Path) -> None:
     }
 
 
-def test_repository_deduplicates_semantic_configurations(tmp_path: Path) -> None:
+def test_repository_archives_resolved_configuration_for_every_run(
+    tmp_path: Path,
+) -> None:
     first_user_path = tmp_path / "first.yaml"
     second_user_path = tmp_path / "second.yaml"
     output_directory = tmp_path / "output"
@@ -217,24 +204,29 @@ def test_repository_deduplicates_semantic_configurations(tmp_path: Path) -> None
     repeated = Configuration().read(first_user_path, workspace_root=tmp_path)
     reformatted = Configuration().read(second_user_path, workspace_root=tmp_path)
 
-    assert first.resolved_path == repeated.resolved_path == reformatted.resolved_path
+    resolved_paths = {
+        first.resolved_path,
+        repeated.resolved_path,
+        reformatted.resolved_path,
+    }
+    assert len(resolved_paths) == 3
     repository = output_directory / "config_repository"
-    assert len(list((repository / "configurations").iterdir())) == 1
-    manifests = sorted((repository / "manifests").glob("*-run_manifest.yaml"))
-    assert [path.name for path in manifests] == [
-        "0000-run_manifest.yaml",
-        "0001-run_manifest.yaml",
-        "0002-run_manifest.yaml",
+    run_directories = sorted((repository / "runs").iterdir())
+    assert [path.name for path in run_directories] == [
+        "0000",
+        "0001",
+        "0002",
     ]
+    manifests = [path / "run_manifest.yaml" for path in run_directories]
     manifest_data = [
         yaml.safe_load(path.read_text(encoding="utf-8")) for path in manifests
     ]
     assert [manifest["run_id"] for manifest in manifest_data] == [0, 1, 2]
-    assert [manifest["configuration"]["snapshot_id"] for manifest in manifest_data] == [
-        0,
-        0,
-        0,
+    resolved_data = [
+        yaml.safe_load((path / "resolved_config.yaml").read_text(encoding="utf-8"))
+        for path in run_directories
     ]
+    assert resolved_data == [first.portable_data] * 3
 
 
 def test_repository_versions_changed_resolved_configuration(tmp_path: Path) -> None:
@@ -255,21 +247,8 @@ def test_repository_versions_changed_resolved_configuration(tmp_path: Path) -> N
     assert first.resolved_path != second.resolved_path
     assert first.resolved_path is not None
     assert second.resolved_path is not None
-    assert first.resolved_path.parent.name.startswith("0000-")
-    assert second.resolved_path.parent.name.startswith("0001-")
-
-
-def test_semantic_configuration_hash_ignores_mapping_order() -> None:
-    first = {"section": {"alpha": 1, "beta": [2, 3]}, "enabled": True}
-    reordered = {"enabled": True, "section": {"beta": [2, 3], "alpha": 1}}
-    reordered_list = {"enabled": True, "section": {"beta": [3, 2], "alpha": 1}}
-
-    assert _semantic_configuration_sha256(first) == _semantic_configuration_sha256(
-        reordered
-    )
-    assert _semantic_configuration_sha256(first) != _semantic_configuration_sha256(
-        reordered_list
-    )
+    assert first.resolved_path.parent.name == "0000"
+    assert second.resolved_path.parent.name == "0001"
 
 
 def test_default_workspace_root_is_invoking_script_directory(

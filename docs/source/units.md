@@ -90,11 +90,11 @@ Configuration preparation currently normalizes:
 - light-MGE potential parameter `ml` to internal mass divided by internal
   power.
 
-The semantic snapshot under `config_repository/configurations/` contains plain
-numbers in internal units, so runtime code does not need to repeat conversions
-and the resolved YAML remains portable and easy to serialize. The submitted
-user profile is transient input: TNT does not archive its original notation,
-source path, or byte hash.
+Each per-run `config_repository/runs/<run_id>/resolved_config.yaml` contains
+plain numbers in internal units, so runtime code does not need to repeat
+conversions and the resolved YAML remains portable and easy to serialize. The
+submitted user profile is transient input: TNT does not archive its original
+notation, source path, or bytes.
 
 MGE (multi-Gaussian expansion) contents and quantities read from observational
 data files are intentionally not converted during configuration preparation.
