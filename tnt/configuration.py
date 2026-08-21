@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import shutil
 import socket
 import subprocess
 import sys
@@ -12,11 +13,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
-from hashlib import sha256
 from importlib.metadata import PackageNotFoundError, version
 from importlib.resources import files
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, mkdtemp
 from typing import Any
 
 import yaml
@@ -31,7 +31,7 @@ from tnt.units import (
 )
 
 CONFIG_REPOSITORY_DIRECTORY = "config_repository"
-USER_CONFIG_FILENAME = "user_config.yaml"
+RUNS_DIRECTORY = "runs"
 RESOLVED_CONFIG_FILENAME = "resolved_config.yaml"
 RUN_MANIFEST_FILENAME = "run_manifest.yaml"
 
@@ -54,7 +54,7 @@ class Configuration:
         self.portable_data: ConfigDict = {}
         self.source_path: Path | None = None
         self.workspace_root: Path | None = None
-        self.user_config_path: Path | None = None
+        self.run_id: int | None = None
         self.resolved_path: Path | None = None
         self.run_manifest_path: Path | None = None
         self.unit_systems: UnitSystems | None = None
@@ -81,12 +81,9 @@ class Configuration:
             ValueError: If required configuration values are absent or invalid.
         """
         root = _resolve_workspace_root(workspace_root)
-        source_path, user_config_bytes, merged_config = _load_merged_configuration(
-            filename
-        )
+        source_path, merged_config = _load_merged_configuration(filename)
         return self._resolve_and_write(
             source_path,
-            user_config_bytes,
             merged_config,
             root,
         )
@@ -94,7 +91,6 @@ class Configuration:
     def _resolve_and_write(
         self,
         source_path: Path,
-        user_config_bytes: bytes,
         merged_config: ConfigDict,
         workspace_root: Path,
         logfile_path: Path | None = None,
@@ -116,36 +112,22 @@ class Configuration:
         validate_resolved_configuration(portable_config)
 
         repository = output_directory / CONFIG_REPOSITORY_DIRECTORY
-        user_config_path = repository / USER_CONFIG_FILENAME
-        resolved_path = repository / RESOLVED_CONFIG_FILENAME
-        run_manifest_path = repository / RUN_MANIFEST_FILENAME
-        resolved_bytes = _generated_yaml_bytes(
-            portable_config, "resolved configuration"
-        )
-        manifest = _build_run_manifest(
-            source_path=source_path,
+        run_manifest_path, resolved_path, run_id = _preserve_run(
+            repository=repository,
             workspace_root=workspace_root,
             runtime_config=runtime_config,
-            user_config_path=user_config_path,
-            resolved_path=resolved_path,
-            run_manifest_path=run_manifest_path,
+            portable_config=portable_config,
             logfile_path=logfile_path,
-            user_config_bytes=user_config_bytes,
-            resolved_config_bytes=resolved_bytes,
         )
 
-        _write_bytes_atomically(user_config_bytes, user_config_path)
-        _write_bytes_atomically(resolved_bytes, resolved_path)
-        _write_yaml_atomically(manifest, run_manifest_path, "run manifest")
-        _LOGGER.info("User configuration preserved at %s.", user_config_path)
-        _LOGGER.info("Resolved configuration written to %s.", resolved_path)
+        _LOGGER.info("Resolved configuration preserved at %s.", resolved_path)
         _LOGGER.info("Run manifest written to %s.", run_manifest_path)
 
         self.data = runtime_config
         self.portable_data = portable_config
         self.source_path = source_path.resolve()
         self.workspace_root = workspace_root
-        self.user_config_path = user_config_path.resolve()
+        self.run_id = run_id
         self.resolved_path = resolved_path.resolve()
         self.run_manifest_path = run_manifest_path.resolve()
         self.unit_systems = unit_systems
@@ -192,7 +174,7 @@ def configuration_session(
         ValueError: If bootstrap or full configuration data is invalid.
     """
     root = _resolve_workspace_root(workspace_root)
-    source_path, user_config_bytes, merged_config = _load_merged_configuration(filename)
+    source_path, merged_config = _load_merged_configuration(filename)
     bootstrap_config = _logging_bootstrap_configuration(merged_config, root)
 
     with configure_logging(bootstrap_config) as logging_session:
@@ -204,7 +186,6 @@ def configuration_session(
         try:
             config._resolve_and_write(
                 source_path,
-                user_config_bytes,
                 merged_config,
                 root,
                 logging_session.logfile_path,
@@ -224,7 +205,7 @@ def configuration_session(
 
 def _load_merged_configuration(
     filename: str | Path,
-) -> tuple[Path, bytes, ConfigDict]:
+) -> tuple[Path, ConfigDict]:
     """Load one user profile and merge it with packaged defaults."""
     source_path = Path(filename).expanduser()
     _LOGGER.debug("Reading user configuration from %s.", source_path)
@@ -234,7 +215,7 @@ def _load_merged_configuration(
         "user configuration",
     )
     default_config = _read_packaged_defaults()
-    return source_path, user_config_bytes, _deep_merge(default_config, user_config)
+    return source_path, _deep_merge(default_config, user_config)
 
 
 def _logging_bootstrap_configuration(
@@ -532,19 +513,70 @@ def _workspace_relative_path(path: Path, workspace_root: Path) -> str:
     return Path(relative).as_posix()
 
 
-def _build_run_manifest(
+def _preserve_run(
     *,
-    source_path: Path,
+    repository: Path,
     workspace_root: Path,
     runtime_config: ConfigDict,
-    user_config_path: Path,
-    resolved_path: Path,
-    run_manifest_path: Path,
+    portable_config: ConfigDict,
     logfile_path: Path | None,
-    user_config_bytes: bytes,
-    resolved_config_bytes: bytes,
+) -> tuple[Path, Path, int]:
+    """Atomically publish one immutable manifest/configuration run bundle."""
+    runs_directory = repository / RUNS_DIRECTORY
+    runs_directory.mkdir(parents=True, exist_ok=True)
+    run_id = _next_index(runs_directory)
+    run_directory = runs_directory / f"{run_id:04d}"
+    resolved_path = run_directory / RESOLVED_CONFIG_FILENAME
+    manifest_path = run_directory / RUN_MANIFEST_FILENAME
+    temporary_directory = Path(mkdtemp(dir=runs_directory, prefix=".run-"))
+    try:
+        temporary_resolved_path = temporary_directory / RESOLVED_CONFIG_FILENAME
+        temporary_manifest_path = temporary_directory / RUN_MANIFEST_FILENAME
+        _write_yaml_immutably(
+            portable_config,
+            temporary_resolved_path,
+            "resolved configuration",
+        )
+        manifest = _build_run_manifest(
+            workspace_root=workspace_root,
+            runtime_config=runtime_config,
+            repository=repository,
+            resolved_path=resolved_path,
+            logfile_path=logfile_path,
+            run_id=run_id,
+        )
+        _write_yaml_immutably(manifest, temporary_manifest_path, "run manifest")
+        os.replace(temporary_directory, run_directory)
+    finally:
+        shutil.rmtree(temporary_directory, ignore_errors=True)
+    return manifest_path, resolved_path, run_id
+
+
+def _next_index(directory: Path) -> int:
+    """Return the first index after every indexed entry in `directory`."""
+    indices = [
+        int(path.name)
+        for path in directory.iterdir()
+        if path.is_dir() and path.name.isdigit()
+    ]
+    return max(indices, default=-1) + 1
+
+
+def _repository_relative(path: Path, repository: Path) -> str:
+    """Represent an artifact path relative to the configuration repository."""
+    return path.relative_to(repository).as_posix()
+
+
+def _build_run_manifest(
+    *,
+    workspace_root: Path,
+    runtime_config: ConfigDict,
+    repository: Path,
+    resolved_path: Path,
+    logfile_path: Path | None,
+    run_id: int,
 ) -> ConfigDict:
-    """Build provenance for this concrete configuration preparation."""
+    """Build provenance for this concrete TNT run."""
     io_settings = _optional_mapping(runtime_config, "io_settings", "configuration")
     orbit_settings = _optional_mapping(
         runtime_config,
@@ -558,7 +590,8 @@ def _build_run_manifest(
         else None
     )
     return {
-        "manifest_version": 1,
+        "manifest_version": 3,
+        "run_id": run_id,
         "prepared_at_utc": datetime.now(UTC).isoformat(),
         "tnt": {
             "version": _package_version("tnt"),
@@ -586,15 +619,10 @@ def _build_run_manifest(
             },
         },
         "configuration": {
-            "source": str(source_path.resolve()),
-            "user_copy": str(user_config_path.resolve()),
-            "resolved": str(resolved_path.resolve()),
-            "manifest": str(run_manifest_path.resolve()),
+            "resolved": _repository_relative(resolved_path, repository),
             "logfile": str(logfile_path.resolve()) if logfile_path else None,
             "input_directory": io_settings["input_directory"],
             "output_directory": io_settings["output_directory"],
-            "user_config_sha256": sha256(user_config_bytes).hexdigest(),
-            "resolved_config_sha256": sha256(resolved_config_bytes).hexdigest(),
         },
         "randomness": {
             "configured_orbit_library_seed": configured_seed,
@@ -672,20 +700,20 @@ def _generated_yaml_bytes(config: ConfigDict, description: str) -> bytes:
     return content.encode("utf-8")
 
 
-def _write_yaml_atomically(
+def _write_yaml_immutably(
     config: ConfigDict,
     destination: Path,
     description: str,
 ) -> None:
-    """Write generated YAML using an atomic replacement."""
-    _write_bytes_atomically(
+    """Write generated YAML atomically without replacing an existing file."""
+    _write_bytes_immutably(
         _generated_yaml_bytes(config, description),
         destination,
     )
 
 
-def _write_bytes_atomically(content: bytes, destination: Path) -> None:
-    """Write bytes using an atomic replacement in the destination directory."""
+def _write_bytes_immutably(content: bytes, destination: Path) -> None:
+    """Publish complete bytes atomically without replacing `destination`."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
     try:
@@ -698,8 +726,7 @@ def _write_bytes_atomically(content: bytes, destination: Path) -> None:
         ) as stream:
             temporary_path = Path(stream.name)
             stream.write(content)
-        os.replace(temporary_path, destination)
-    except BaseException:
+        os.link(temporary_path, destination)
+    finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
-        raise

@@ -71,12 +71,147 @@ table contains models but none completed successfully, TNT terminates without
 asking the generator for another round because no valid chi2 base was
 established by the earlier run.
 
-`run()` also accepts and returns an `IterationConfigLog`: one row per round,
-recording which `resolved_config_path` was in effect for it. A search can be
-paused and resumed under an edited configuration, so `AllModels` and
-`Model.iteration` alone can't show which config file produced a given round
--- `IterationConfigLog` is the record of that, meant to be written alongside
-`AllModels` into a run's config archive.
+`run()` also accepts and returns a `RunConfigLog`: one row per round, mapping
+the cumulative iteration number to the ID of the TNT run that produced it.
+Multiple rounds may reference the same run. The run's immutable manifest is
+the authoritative link to its archived resolved configuration and execution
+provenance. Run IDs are allocated during configuration preparation, not by
+`ModelIterator.run()`; see {ref}`run-identity`. A search can be paused and
+resumed under an edited configuration, so `AllModels` and `Model.iteration`
+alone cannot show which run produced a given round.
+
+The log has a fixed persisted location at
+`config_repository/run_config_log.ecsv`. Its `read()` and `write()` methods
+validate contiguous iteration IDs, nonnegative run IDs, and every referenced
+run manifest; `write()` uses atomic replacement so an interrupted write cannot
+destroy the previous log. Model search deliberately returns both state objects
+instead of writing either one internally. The calling execution layer must
+load and save `AllModels` and `RunConfigLog` together; `run()` rejects a pair
+that describes different numbers of iterations:
+
+```python
+from pathlib import Path
+
+from tnt.model_iterator import ModelIterator
+from tnt.model_search_state import ModelSearchState
+from tnt.run_config_log import RunConfigLog
+
+output = Path(config.data["io_settings"]["output_directory"])
+models_path = output / config.data["io_settings"]["all_models_file"]
+log_path = RunConfigLog.path_for(config.run_manifest_path)
+iterator = ModelIterator.from_configuration(
+    config.as_dict(),
+    config.unit_systems.internal,
+    config.run_manifest_path,
+)
+
+state = ModelSearchState.read(
+    models_path,
+    log_path,
+    repair_log_ahead=True,
+)
+models, run_config_log = iterator.run(state.all_models, state.run_config_log)
+ModelSearchState(models, run_config_log).write(models_path, log_path)
+```
+
+The ECSV metadata contains `total_runs` and
+`run_ids_without_iterations`. Both are derived from the immutable manifests
+and the iteration rows whenever the log is read or written. The execution
+layer must therefore write the returned log even when the current run produces
+no iteration; its run ID will then appear in `run_ids_without_iterations`
+without adding a nullable iteration row.
+
+This applies to both initial and resumed runs. A resumed run may add no
+iteration because its stopping criteria are already satisfied, its parameter
+generator proposes nothing, or it cannot continue from the existing models.
+Configuration preparation still creates that run's manifest and run ID, and
+persisting the unchanged search state records the ID in
+`run_ids_without_iterations`. The initial zero-model case is special only
+because no `AllModels` table schema exists yet.
+
+`ModelSearchState.write()` validates both temporary ECSV files before
+publishing them. It replaces the run log first and `AllModels` second. A crash
+between those replacements can therefore leave only safely discardable,
+trailing run-log rows; the explicit `repair_log_ahead=True` option truncates
+them when resuming. TNT rejects the opposite mismatch because models whose run
+provenance is absent cannot be reconstructed safely. An initial zero-model
+checkpoint writes only the run log because `AllModels` has no table schema yet.
+
+The example checkpoints once after `ModelIterator.run()` returns. The iterator
+itself still performs no disk writes; an execution layer that checkpoints after
+every completed iteration must call the same paired writer at each checkpoint.
+
+This log records provenance and verifies that referenced per-run manifests and
+resolved configurations exist and remain readable. It does not decide whether
+different configurations are compatible; that compatibility contract is a
+separate model-resume policy.
+
+## Configuration compatibility on resume
+
+Currently, TNT performs the compatibility check once at the beginning of each
+`ModelIterator.run()` invocation, before entering that method's internal
+iteration loop. It is therefore not repeated for every model-search iteration
+within one invocation. The check uses `RunConfigLog` to identify the earliest
+run that contributed an iteration, then loads that run's archived
+`resolved_config.yaml` and compares its compatibility-critical fields directly
+with the current resolved configuration. An incompatible change raises
+`ConfigurationCompatibilityError` before models or the log are modified. The
+error lists the differing field paths. Runs that produced no iteration do not
+define the model set's compatibility baseline.
+
+One TNT run may invoke `ModelIterator.run()` more than once, so the current
+location can still repeat the check. The future coordinating execution layer
+should instead perform it exactly once per TNT run: after reading the current
+configuration and loading `AllModels` and `RunConfigLog`, but before building
+MGEs, observational-data objects, or the `ModelIterator`. That layer will then
+pass already-validated state into any subsequent `ModelIterator.run()` calls,
+and the check can be removed from `ModelIterator.run()` itself. Moving it
+directly into `Configuration.read()` would be too early because the selected
+chi-square and model-table schema checks require the previous search state.
+
+The current compatibility contract allows changes that control future search,
+execution, presentation, or post-processing without changing existing model
+meaning:
+
+- worker and processing-order settings;
+- stopping criteria, generator settings, and potential-rescaling ranges;
+- values, ranges, fixed/logarithmic flags, and labels of existing potential
+  parameters;
+- display units, logging, and analysis settings; and
+- input/output directory paths, provided the configured scientific file
+  references themselves do not change.
+
+It rejects changes to:
+
+- internal units, `cosmological_parameters`, and physical system attributes
+  such as distance (`system_attributes.name` remains metadata);
+- potential components, inclusion, types, MGE references, parameter names, or
+  remaining parameter-schema fields;
+- MGE settings, spatial binnings, kinematics, population data, or their
+  configured scientific file references;
+- all `numerics_settings` in the current contract;
+- orbit-library settings; and
+- weight-solver settings.
+
+Changing `parameter_space_settings.which_chi2` is allowed only when the chosen
+metric exists and is finite for every successful historical model. A nonempty
+`AllModels` table must also contain every parameter column required by the
+included potential components.
+
+TNT does not hash scientific input files. Users must not modify an MGE,
+spatial-binning, kinematics, or population file in place while an existing
+model set may still be resumed. Changing a configured scientific filename is
+rejected, but changing bytes at the same path cannot be detected. This is an
+explicit user responsibility in exchange for a lean configuration repository.
+
+The same output directory must have only one coordinating TNT writer. Parallel
+workers may calculate different models within an iteration, but they must
+return results to the coordinator; only that process updates `AllModels`,
+`run_config_log.ecsv`, or other shared bookkeeping files.
+
+A negative orbit-library random seed is valid for both fresh and continued
+runs. Like the other orbit-library settings, changing its configured value
+between runs remains incompatible under the current contract.
 
 ## ParameterGenerator
 

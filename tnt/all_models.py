@@ -71,7 +71,7 @@ class AllModels:
         return cls(QTable.read(path, format="ascii.ecsv"))
 
     def write(self, path: Path) -> None:
-        """Write this table to `path`, e.g. `io_settings.all_models_file`."""
+        """Write only this table; checkpoints should use `ModelSearchState`."""
         self.table.write(path, format="ascii.ecsv", overwrite=True)
 
     def append(self, model: Model) -> Self:

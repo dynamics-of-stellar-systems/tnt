@@ -40,9 +40,10 @@
 - Configuration preparation is implemented by `tnt.Configuration`. Its
   `read()` method loads the user YAML, recursively merges package defaults,
   resolves dynamic and kinematics-type defaults, validates the resulting
-  data, and atomically preserves `user_config.yaml`, `resolved_config.yaml`,
-  and `run_manifest.yaml` below `<output_directory>/config_repository/`. It
-  does not instantiate scientific runtime objects.
+  data, and atomically publishes an immutable resolved configuration and run
+  manifest for each run below
+  `<output_directory>/config_repository/`. It does not instantiate scientific
+  runtime objects.
 - Preparation-stage validation rejects duplicate keys, unknown or missing
   fields in preparation-owned schemas, invalid types and enumerations,
   malformed tagged thresholds, and basic numerical inconsistencies before the
@@ -69,8 +70,8 @@
   a required sibling `unit` applying to the parameter value and generator
   range. Dimensionless values remain plain numbers and reject a `unit`.
   Configuration preparation converts supported quantities to plain
-  internal-unit numbers before validation and resolved-YAML generation; the
-  byte-identical user copy retains the submitted notation.
+  internal-unit numbers before validation and resolved-YAML generation. The
+  submitted profile is transient input and is not archived by TNT.
 - The first unit-aware schema covers `cosmological_parameters.H0`,
   `system_attributes.distance`, explicit kinematics histogram width and center,
   Gauss-Hermite `v` and `sigma` systematic uncertainties, Plummer `m` and `a`,
@@ -108,15 +109,67 @@
   `portable_data` and `as_portable_dict()` expose the archived form.
   Configuration preparation requires both path strings but creates only the
   output directory and configuration repository.
-- `config_repository/user_config.yaml` is a byte-identical copy of the user
-  file. `resolved_config.yaml` has all defaults applied with portable paths.
-  `run_manifest.yaml` records materialized paths, configuration checksums,
-  software versions, Git commit and dirty state when available,
+- The configuration repository stores one immutable bundle per TNT run under
+  `runs/<run_id>/`, containing `run_manifest.yaml` and
+  `resolved_config.yaml`. Identical configurations are archived again for each
+  run; TNT performs no cross-run deduplication and stores no configuration or
+  scientific-input hashes. The submitted user profile and source path remain
+  transient. Each manifest records software versions, Git state,
   Python/platform/host context, scheduler identifiers, logfile location, and
   orbit random-seed state.
-- Configuration preparation cannot record a generated seed or observational
-  input checksums because neither exists yet. A negative seed is recorded as
-  `pending_generation`; the execution phase must update the effective seed.
+- Exactly one coordinating TNT process may write a given output directory.
+  Parallel workers may calculate models, but only the coordinator may update
+  shared repository or checkpoint files. Scientific input files must not be
+  modified in place while an existing model set may be resumed; TNT does not
+  hash their contents and therefore cannot detect such changes.
+- `RunConfigLog` persists separately as
+  `config_repository/run_config_log.ecsv`, with one row per cumulative
+  model-search iteration. Rows map iterations to run IDs. Reads and atomic
+  writes validate the referenced immutable run manifests; those manifests are
+  the authoritative links to per-run resolved configurations and execution
+  provenance. ECSV metadata derives `total_runs` and
+  `run_ids_without_iterations` from all manifests and the iteration rows on
+  every read or write. `ModelIterator.run()` still returns rather than writes
+  both `AllModels` and this log, so the execution layer must load and save them
+  together, including after a zero-iteration run. The log records provenance
+  only; it does not implement the configuration-compatibility decision itself.
+- `RunConfigLog` metadata refresh deliberately performs one O(M) scan of the
+  M per-run manifests on every log read or write. The former duplicate
+  validation pass and configuration hashing have been removed. Keep the
+  remaining scan unless profiling shows that it materially affects checkpoint
+  time; run counts are expected to be small relative to model-calculation
+  costs. If optimization becomes necessary, first make metadata refresh use a
+  lightweight numeric run-directory scan instead of introducing a persistent
+  index with additional synchronization and recovery rules.
+- `ModelSearchState` is the coordinated persistence boundary for `AllModels`
+  and `RunConfigLog`. It validates both temporary ECSV files, atomically
+  replaces each file in run-log-first order, explicitly repairs a log-ahead
+  crash state by truncating unpublished trailing rows, and rejects a
+  models-ahead state because missing provenance is not recoverable. An initial
+  zero-model checkpoint writes only the run log because `AllModels` has no
+  column schema until its first model.
+- Before resuming, runtime compares the current compatibility-critical
+  configuration directly with the archived resolved configuration from the
+  earliest run that contributed an iteration. The contract excludes
+  operational/search/presentation fields and potential parameter values/ranges.
+  It includes internal units, cosmology, physical system attributes except
+  name, potential/parameter schema, MGE and observational settings including
+  their configured file references, all `numerics_settings`, orbit-library
+  settings, and weight-solver settings. `which_chi2` must be finite for every
+  successful historical model, and the required potential parameter columns
+  must exist. Negative configured orbit seeds are valid for fresh and
+  continued runs; changing the configured seed between runs remains
+  incompatible.
+- The compatibility check currently runs once at the start of each
+  `ModelIterator.run()` invocation, outside its internal iteration loop. When
+  TNT gains a coordinating execution layer, move the check there and perform
+  it once per TNT run after loading the resolved configuration, `AllModels`,
+  and `RunConfigLog`, but before constructing MGEs, observational objects, or
+  `ModelIterator`. Do not replace this with an iterator-local “already checked”
+  flag, because later calls could supply different model or provenance state.
+- Configuration preparation cannot record a generated seed. A negative seed
+  is recorded as `pending_generation`; the execution phase must update the
+  effective seed.
 - The user profile must define the physical system, dynamically named
   potential components and parameters, input directory, and output directory.
 - TNT user profiles generally use snake-case type identifiers and field names.
@@ -247,8 +300,8 @@
   model and potential rescaling in that iteration. The final count may exceed
   the target; other stopping conditions may end the search below it.
 - `parameter_space_settings.stopping_criteria.n_new_iter` is the maximum number
-  of additional iterations for the current `ModelIterator.run()` invocation,
-  not a cumulative limit across resumed runs. Model and `IterationConfigLog`
+  of additional iterations for the current `ModelIterator.run()` call,
+  not a cumulative limit across resumed runs. Model and `RunConfigLog`
   iteration numbers remain cumulative; a resumed call measures its new
   allowance from the persisted `AllModels.n_iterations()` starting point.
 - `parameter_space_settings.potential_rescalings` controls optional scaling of
