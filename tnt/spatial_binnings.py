@@ -412,15 +412,12 @@ def _validate_bin_ids_cover_binning(
     binning: ProjectedBinning,
     data_file: Path,
 ) -> None:
-    """Require observational IDs to cover every projected bin exactly once."""
-    values = np.asarray(bin_ids)
-    unique, counts = np.unique(values, return_counts=True)
-    observed = {int(value) for value in unique}
+    """Require validated observational IDs to cover every projected bin."""
+    observed = {int(value) for value in np.asarray(bin_ids)}
     expected = set(range(1, binning.n_bins + 1))
     missing = sorted(expected - observed)
     unknown = sorted(observed - expected)
-    duplicates = sorted(int(value) for value in unique[counts > 1])
-    if not missing and not unknown and not duplicates:
+    if not missing and not unknown:
         return
 
     details = []
@@ -430,10 +427,6 @@ def _validate_bin_ids_cover_binning(
         details.append(
             "absent from the referenced binning: "
             + ", ".join(str(value) for value in unknown)
-        )
-    if duplicates:
-        details.append(
-            "duplicated: " + ", ".join(str(value) for value in duplicates)
         )
     raise ValueError(
         f"{data_file}: bin_id must cover every positive spatial bin exactly "

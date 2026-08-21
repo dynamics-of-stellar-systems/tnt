@@ -302,7 +302,6 @@ def test_observational_bin_ids_may_use_any_row_order(tmp_path):
     [
         (np.array([1, 3]), "missing: 2"),
         (np.array([1, 2, 4]), "absent from the referenced binning: 4"),
-        (np.array([1, 2, 3, 3]), "duplicated: 3"),
     ],
 )
 def test_observational_bin_ids_must_cover_binning(tmp_path, bin_ids, message):

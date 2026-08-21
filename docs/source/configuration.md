@@ -325,18 +325,18 @@ populations = build_populations(
 ```
 
 Each returned `Populations` object retains its shared `ProjectedBinning` and
-stores its observations as JAX-backed `unxt.Quantity` arrays. A population
-ECSV file requires a positive unique `bin_id` column and at least one paired
+stores its observations as JAX-backed `unxt.Quantity` arrays. Under the same
+convention as kinematics inputs, a population ECSV file requires a `bin_id`
+column whose positive, unique integer values cover every positive ID in the
+referenced binning exactly once. It also requires at least one paired
 population property and uncertainty, for example `age`/`dage` or
 `metallicity`/`dmetallicity`. Property names are otherwise unrestricted.
 Declared units on each pair must be equivalent and are converted into the
 internal unit system; columns without declared units are dimensionless. All
 values must be finite and all uncertainties must be strictly positive.
 
-The required column is named `bin_id`, and its values must cover every positive
-ID in the referenced binning exactly once under the same convention as
-kinematics inputs. Population objects do not contain an MGE. A population file
-must also be different from every configured kinematics file; sharing only the
+Population objects do not contain an MGE. A population file must also be
+different from every configured kinematics file; sharing only the
 `spatial_binnings` entry is supported.
 
 ## Validation

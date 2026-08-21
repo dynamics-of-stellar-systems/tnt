@@ -174,6 +174,22 @@ def test_populations_require_positive_uncertainties(tmp_path: Path) -> None:
         )
 
 
+def test_populations_reject_duplicate_bin_ids(tmp_path: Path) -> None:
+    data_file = tmp_path / "populations.ecsv"
+    table = QTable(
+        {"bin_id": [1, 1], "metallicity": [0.1, -0.2], "dmetallicity": [0.1, 0.1]}
+    )
+    table.write(data_file, format="ascii.ecsv")
+
+    with pytest.raises(ValueError, match="spatial bin IDs must be positive and unique"):
+        build_populations(
+            {"stars": _settings(data_file)},
+            tmp_path,
+            _unit_system(),
+            {"observed": _binning()},
+        )
+
+
 def test_populations_reject_bin_ids_absent_from_binning(tmp_path: Path) -> None:
     data_file = tmp_path / "populations.ecsv"
     table = QTable(

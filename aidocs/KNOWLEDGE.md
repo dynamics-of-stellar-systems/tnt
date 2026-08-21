@@ -188,12 +188,11 @@
   data share a spatial binning.
 - `tnt.populations.build_populations()` loads each configured population ECSV
   into an immutable JAX/Equinox `Populations` object. It resolves a strictly
-  typed `ProjectedBinning` but no MGE. Files require a positive unique
-  `bin_id` and one or more `property`/`dproperty` column pairs. Paired units
-  must be equivalent; declared quantities are converted to the internal unit
-  system, unitless columns remain dimensionless, and uncertainties must be
-  positive. Observed bin IDs must cover every positive ID in the referenced
-  binning exactly once; ID 0 remains reserved for unbinned pixels.
+  typed `ProjectedBinning` but no MGE. Files require a `bin_id` column and one
+  or more `property`/`dproperty` column pairs. Paired units must be equivalent;
+  declared quantities are converted to the internal unit system, unitless
+  columns remain dimensionless, and uncertainties must be positive. The
+  shared observational bin-ID rule below applies.
 - `tnt.spatial_binnings.build_spatial_binnings()` is the explicit runtime
   boundary that loads the resolved `spatial_binnings` registry into named
   `ProjectedBinning` objects. It validates the complete entry before file
