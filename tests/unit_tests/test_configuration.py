@@ -229,7 +229,9 @@ def test_repository_archives_resolved_configuration_for_every_run(
     assert resolved_data == [first.portable_data] * 3
 
 
-def test_repository_versions_changed_resolved_configuration(tmp_path: Path) -> None:
+def test_repository_preserves_resolved_configuration_for_each_run(
+    tmp_path: Path,
+) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"
     _write_user_config(user_path, output_directory)
@@ -249,6 +251,10 @@ def test_repository_versions_changed_resolved_configuration(tmp_path: Path) -> N
     assert second.resolved_path is not None
     assert first.resolved_path.parent.name == "0000"
     assert second.resolved_path.parent.name == "0001"
+    first_archived = yaml.safe_load(first.resolved_path.read_text(encoding="utf-8"))
+    second_archived = yaml.safe_load(second.resolved_path.read_text(encoding="utf-8"))
+    assert first_archived["system_attributes"]["name"] == "test_system"
+    assert second_archived["system_attributes"]["name"] == "changed_system"
 
 
 def test_default_workspace_root_is_invoking_script_directory(

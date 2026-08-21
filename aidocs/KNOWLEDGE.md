@@ -133,6 +133,14 @@
   both `AllModels` and this log, so the execution layer must load and save them
   together, including after a zero-iteration run. The log records provenance
   only; it does not implement the configuration-compatibility decision itself.
+- `RunConfigLog` metadata refresh deliberately performs one O(M) scan of the
+  M per-run manifests on every log read or write. The former duplicate
+  validation pass and configuration hashing have been removed. Keep the
+  remaining scan unless profiling shows that it materially affects checkpoint
+  time; run counts are expected to be small relative to model-calculation
+  costs. If optimization becomes necessary, first make metadata refresh use a
+  lightweight numeric run-directory scan instead of introducing a persistent
+  index with additional synchronization and recovery rules.
 - `ModelSearchState` is the coordinated persistence boundary for `AllModels`
   and `RunConfigLog`. It validates both temporary ECSV files, atomically
   replaces each file in run-log-first order, explicitly repairs a log-ahead

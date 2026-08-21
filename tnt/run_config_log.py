@@ -11,7 +11,7 @@ from typing import Self
 
 from astropy.table import QTable
 
-from tnt.config_parsing import _mapping, _required
+from tnt.config_parsing import _mapping, _required, _required_string
 from tnt.configuration import (
     RESOLVED_CONFIG_FILENAME,
     RUN_MANIFEST_FILENAME,
@@ -263,15 +263,6 @@ def _validate_run_id(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, Integral) or value < 0:
         raise ValueError("run_id must be a nonnegative integer.")
     return int(value)
-
-
-def _required_string(mapping: object, key: str, path: str) -> str:
-    """Return one required nonempty string from a manifest mapping."""
-    settings = _mapping(mapping, path)
-    value = _required(settings, key, path)
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"{path}.{key} must be a nonempty string.")
-    return value
 
 
 def _run_id(directory_name: str) -> int:

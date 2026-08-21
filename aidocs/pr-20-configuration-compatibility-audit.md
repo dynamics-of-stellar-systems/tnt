@@ -288,11 +288,11 @@ baseline.
 | 1. Concurrent snapshot creation | Obsolete. The shared snapshot store and deduplication algorithm no longer exist. Concurrent coordinators are explicitly unsupported. |
 | 2. Concurrent checkpoint overwrite | Accepted as outside the supported execution contract. One coordinator owns `AllModels` and `RunConfigLog`; parallel workers do not write them. Crash-safe paired checkpoint publication remains. |
 | 3. NaN comparison | Not an exposed configuration bug: configuration validation rejects non-finite numeric values. The former identical-signature self-comparison also no longer exists. |
-| 4. Repeated compatibility reads | Substantially obsolete. There are no historical signatures or hashes to traverse. A resumed run reads only the earliest model-contributing run's resolved YAML, once per `ModelIterator.run()` call. |
-| 5. Repeated manifest validation | Partly addressed. Hashing and the duplicate manifest-validation pass were removed. The linear manifest scan remains because it derives `total_runs` and `run_ids_without_iterations`. |
+| 4. Repeated compatibility reads | Substantially obsolete. There are no historical signatures or hashes to traverse. The check currently runs once at the start of each `ModelIterator.run()` invocation, outside its internal iteration loop, and reads only the earliest model-contributing run's resolved YAML. The future coordinating execution layer should move this check before runtime-object construction and perform it exactly once per TNT run after loading `AllModels` and `RunConfigLog`. |
+| 5. Repeated manifest validation | Partly addressed. Hashing and the duplicate manifest-validation pass were removed. The single O(M) manifest scan remains because it derives `total_runs` and `run_ids_without_iterations`. This is an accepted simple implementation unless profiling shows material checkpoint cost; the first optimization should be a lightweight numeric run-directory scan, not a persistent index. |
 | 6. Linear snapshot scan | Obsolete. Configuration preparation creates the next numbered run directory without scanning or hashing archived configurations for deduplication. |
 | 7. Scientific-input hashing | Obsolete by policy. Scientific files are not hashed; unchanged contents at a stable configured path are a user responsibility. |
-| 8. Duplicated logic | Mostly addressed through removal: both hash implementations, snapshot-ID parsing/validation, signature persistence, and related temporary-write paths disappeared. The distinct checkpoint writers and write-time pair validation remain where they enforce different behavior. |
+| 8. Duplicated logic | Addressed as far as useful without obscuring behavior. Both hash implementations, snapshot-ID parsing/validation, signature persistence, and related paths disappeared. The remaining local manifest `_required_string` duplicate was replaced with `tnt.config_parsing._required_string`. Compatibility-specific mapping errors, immutable versus replaceable temporary writers, standalone versus paired checkpoint writers, and write-time pair validation remain intentionally distinct. |
 | 9. Repeated resolved-config integrity checks | Obsolete. Run manifests no longer contain or verify a resolved-configuration content hash. They validate the fixed per-run path and require the YAML file to exist and be readable. |
 
 The earlier recommendation to retain content-addressed snapshots, full-history
@@ -302,3 +302,13 @@ rejects changes to compatibility-critical resolved settings, validates the
 selected chi-square against successful historical models, and requires the
 expected potential-parameter columns in `AllModels`. Configured scientific file
 references are now critical because file contents are no longer hashed.
+
+Follow-up test cleanup removed the test that modified TNT's own archived
+`resolved_config.yaml` merely to prove that no integrity hash was checked. Such
+modification is not a supported contract: per-run archives remain immutable
+even though TNT does not hash them. The formerly redundant changed-config test
+now verifies instead that each run preserves its own resolved configuration,
+including the historical value after the submitted user file is edited for a
+later run. A focused regression test also confirms that the shared
+`_required_string` helper rejects whitespace-only resolved-config paths in run
+manifests.

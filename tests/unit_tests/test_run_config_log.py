@@ -51,6 +51,21 @@ def test_run_manifest_reference_resolves_per_run_configuration(
     assert run.absolute_resolved_config_path.is_file()
 
 
+def test_run_manifest_reference_rejects_blank_resolved_path(tmp_path: Path) -> None:
+    run = _write_run(tmp_path, 0, {"value": 2})
+    manifest = yaml.safe_load(
+        run.absolute_run_manifest_path.read_text(encoding="utf-8")
+    )
+    manifest["configuration"]["resolved"] = "   "
+    run.absolute_run_manifest_path.write_text(
+        yaml.safe_dump(manifest),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(TypeError, match="must be a non-empty string"):
+        RunManifestReference.from_run_manifest(run.absolute_run_manifest_path)
+
+
 def test_append_requires_cumulative_nonconflicting_iterations() -> None:
     log = RunConfigLog().append(0, 0)
 
@@ -110,20 +125,6 @@ def test_read_refreshes_metadata_after_a_zero_iteration_run(tmp_path: Path) -> N
 
     assert refreshed.table.meta[TOTAL_RUNS_METADATA_KEY] == 2
     assert refreshed.table.meta[RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY] == [1]
-
-
-def test_read_does_not_hash_archived_resolved_configuration(tmp_path: Path) -> None:
-    run = _write_run(tmp_path, 0, {"value": 1})
-    path = run.repository / RUN_CONFIG_LOG_FILENAME
-    RunConfigLog().append(0, run.run_id).write(path)
-    run.absolute_resolved_config_path.write_text(
-        yaml.safe_dump({"value": 2}),
-        encoding="utf-8",
-    )
-
-    restored = RunConfigLog.read(path)
-
-    assert len(restored) == 1
 
 
 def test_read_rejects_manifest_with_different_run_id(tmp_path: Path) -> None:
