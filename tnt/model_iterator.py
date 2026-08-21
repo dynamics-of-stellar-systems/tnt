@@ -57,6 +57,7 @@ from tnt.run_config_log import (
     RunManifestReference,
 )
 from tnt.spatial_binnings import build_spatial_binnings
+from tnt.units import normalize_potential_settings
 from tnt.weight_solver import AbstractWeightSolver, OrbitWeights, build_weight_solver
 
 _LOGGER = logging.getLogger(__name__)
@@ -140,14 +141,18 @@ class ModelIterator:
         population_data = build_populations(
             config["population_data"], input_directory, unit_system, spatial_binnings
         )
+        potential_settings = normalize_potential_settings(
+            config["potential"], unit_system
+        )
+
         return cls(
-            potential_settings=config["potential"],
+            potential_settings=potential_settings,
             mges=mges,
             kinematic_data=kinematic_data,
             population_data=population_data,
             weight_solver=build_weight_solver(config["weight_solver_settings"]),
             parameter_generator=build_parameter_generator(
-                parameter_space_settings, config["potential"]
+                parameter_space_settings, potential_settings
             ),
             orbit_library_settings=config["orbit_library_settings"],
             orbit_sampler=build_orbit_sampler(config["orbit_library_settings"]),
@@ -477,7 +482,8 @@ def _settings_with_parameters(
     """Overlay a proposed `ParameterSet`'s values onto `potential_settings`.
 
     `build_potential` expects the same schema as a resolved configuration's
-    `potential` section (`unit`/`fixed`/`value`/... per parameter); this
+    internal-runtime `potential` section (`fixed`/`value`/... per parameter);
+    declared units have already been converted and removed. This
     keeps every declared field other than `value`, which each parameter
     takes from `parameters` instead of the fixed config.
     """

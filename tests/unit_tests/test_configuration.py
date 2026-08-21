@@ -101,9 +101,10 @@ def test_read_resolves_defaults_and_writes_run_bundle(tmp_path: Path) -> None:
     assert config.workspace_root == tmp_path
     assert "dynamic_object_defaults" not in written
     assert "kinematics_type_defaults" not in written
-    assert written["cosmological_parameters"]["H0"] == pytest.approx(
-        7.158985155319864e-05
-    )
+    assert written["cosmological_parameters"]["H0"] == {
+        "value": 70.0,
+        "unit": "km / (s Mpc)",
+    }
     assert written["units"] == {
         "internal": {
             "length": "kpc",
@@ -132,8 +133,8 @@ def test_read_resolves_defaults_and_writes_run_bundle(tmp_path: Path) -> None:
     assert kinematics["mge"] == "light"
     assert kinematics["maximum_gh_order"] == 4
     assert kinematics["observational_errors"]["systematic_uncertainties"] == {
-        "v": 0.0,
-        "sigma": 0.0,
+        "v": {"value": 0.0, "unit": "km / s"},
+        "sigma": {"value": 0.0, "unit": "km / s"},
         "h3": 0.0,
         "h4": 0.0,
     }
@@ -254,6 +255,38 @@ def test_repository_preserves_resolved_configuration_for_each_run(
     assert second_archived["system_attributes"]["name"] == "changed_system"
 
 
+def test_repository_preserves_equivalent_unit_declarations_per_run(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    first = Configuration().read(user_path, workspace_root=tmp_path)
+    user_path.write_text(
+        user_path.read_text(encoding="utf-8").replace(
+            'distance: {value: 10.0, unit: "kpc"}',
+            'distance: {value: 10000.0, unit: "pc"}',
+        ),
+        encoding="utf-8",
+    )
+
+    second = Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert first.resolved_path != second.resolved_path
+    assert first.resolved_path is not None
+    assert second.resolved_path is not None
+    first_archived = yaml.safe_load(first.resolved_path.read_text(encoding="utf-8"))
+    second_archived = yaml.safe_load(second.resolved_path.read_text(encoding="utf-8"))
+    assert first_archived["system_attributes"]["distance"] == {
+        "value": 10.0,
+        "unit": "kpc",
+    }
+    assert second_archived["system_attributes"]["distance"] == {
+        "value": 10000.0,
+        "unit": "pc",
+    }
+
+
 def test_default_workspace_root_is_invoking_script_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -295,10 +328,14 @@ def test_explicit_histogram_replaces_derived_policy(tmp_path: Path) -> None:
     config = Configuration().read(user_path, workspace_root=tmp_path)
     histogram = config.data["kinematic_data"]["observed"]["histogram"]
 
-    assert histogram == {"width": 1000.0, "center": 10.0, "bins": 101}
+    assert histogram == {
+        "width": {"value": 1000.0, "unit": "kpc / Myr"},
+        "center": {"value": 10.0, "unit": "kpc / Myr"},
+        "bins": 101,
+    }
 
 
-def test_read_normalizes_explicit_quantity(tmp_path: Path) -> None:
+def test_read_preserves_explicit_quantity(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"
     _write_user_config(user_path, output_directory)
@@ -310,10 +347,16 @@ def test_read_normalizes_explicit_quantity(tmp_path: Path) -> None:
 
     config = Configuration().read(user_path, workspace_root=tmp_path)
 
-    assert config.data["system_attributes"]["distance"] == pytest.approx(10000.0)
+    assert config.data["system_attributes"]["distance"] == {
+        "value": 10.0,
+        "unit": "Mpc",
+    }
     assert config.resolved_path is not None
     resolved = yaml.safe_load(config.resolved_path.read_text(encoding="utf-8"))
-    assert resolved["system_attributes"]["distance"] == pytest.approx(10000.0)
+    assert resolved["system_attributes"]["distance"] == {
+        "value": 10.0,
+        "unit": "Mpc",
+    }
 
 
 def test_read_rejects_incompatible_quantity_unit_before_writing(
@@ -726,8 +769,8 @@ def test_gauss_hermite_sets_resolve_independent_orders_and_systematics(
     assert kinematics["secondary"]["observational_errors"][
         "systematic_uncertainties"
     ] == {
-        "v": 1.0,
-        "sigma": 2.0,
+        "v": {"value": 1.0, "unit": "kpc / Myr"},
+        "sigma": {"value": 2.0, "unit": "kpc / Myr"},
         "h3": 0.03,
         "h4": 0.04,
         "h5": 0.05,

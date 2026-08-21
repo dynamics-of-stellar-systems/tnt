@@ -193,6 +193,13 @@ It rejects changes to:
 - orbit-library settings; and
 - weight-solver settings.
 
+This comparison distinguishes declaration identity from physical identity.
+Per-run resolved configurations preserve declared units, while compatibility
+comparison canonicalizes unitful fields into the configured internal unit
+system. It therefore treats declarations such as `1 kpc` and `1000 pc` as
+physically equivalent. Changing the internal unit system itself remains
+incompatible under the current contract.
+
 Changing `parameter_space_settings.which_chi2` is allowed only when the chosen
 metric exists and is finite for every successful historical model. A nonempty
 `AllModels` table must also contain every parameter column required by the

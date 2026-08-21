@@ -3,8 +3,9 @@
 TNT uses [`unxt`](https://unxt.readthedocs.io/) to validate units and define
 two related unit systems:
 
-- `units.internal` controls the canonical units used by resolved
-  configuration values and later numerical calculations.
+- `units.internal` controls the canonical units used by runtime objects,
+  parameter generation, compatibility checks, and later numerical
+  calculations.
 - `units.display` controls presentation preferences. Any dimension not
   overridden there inherits its internal unit.
 
@@ -69,32 +70,46 @@ parameters:
       minimum_step: 10.0
 ```
 
-For a linear parameter, TNT converts the value, bounds, step, and minimum step.
-For a logarithmic parameter, the declared unit is the reference unit for the
-logarithm: TNT shifts the value and bounds into the internal reference unit,
-while logarithmic step sizes remain unchanged.
+At runtime, TNT converts a linear parameter's value, bounds, step, and minimum
+step. For a logarithmic parameter, the declared unit is the reference unit for
+the logarithm: TNT shifts the value and bounds into the internal reference
+unit, while logarithmic step sizes remain unchanged.
 
 Dimensionless fields remain plain numbers and must not add a `unit`. Examples
 include axial ratios, Gauss-Hermite coefficients, relative error factors, and
 unitless warning thresholds.
 
-## Currently unit-aware fields
+## Configuration validation and runtime conversion
 
-Configuration preparation currently normalizes:
+Configuration preparation dimensionally validates:
 
-- `cosmological_parameters.H0` to inverse internal time;
-- `system_attributes.distance` to internal length;
-- explicit kinematics histogram `width` and `center` to internal speed;
-- Gauss-Hermite systematic uncertainties `v` and `sigma` to internal speed;
-- Plummer parameters `m` and `a` to internal mass and length; and
-- light-MGE potential parameter `ml` to internal mass divided by internal
-  power.
+- `cosmological_parameters.H0` as inverse time;
+- `system_attributes.distance` as length;
+- explicit kinematics histogram `width` and `center` as speed;
+- Gauss-Hermite systematic uncertainties `v` and `sigma` as speed;
+- Plummer parameters `m` and `a` as mass and length; and
+- light-MGE potential parameter `ml` as mass divided by power.
 
-Each per-run `config_repository/runs/<run_id>/resolved_config.yaml` contains
-plain numbers in internal units, so runtime code does not need to repeat
-conversions and the resolved YAML remains portable and easy to serialize. The
-submitted user profile is transient input: TNT does not archive its original
-notation, source path, or bytes.
+It does not convert these quantities or remove their units. Each per-run
+`config_repository/runs/<run_id>/resolved_config.yaml` retains the resolved
+`{value, unit}` structures and unitful parameter declarations. The submitted
+user profile remains transient input: TNT does not archive its source path or
+bytes, but its declarations survive after defaults have been applied.
+
+Runtime constructors convert the settings they consume. Kinematics builders
+convert explicit histogram width/center and Gauss-Hermite velocity systematic
+uncertainties. `ModelIterator.from_configuration()` creates one canonical
+internal-unit copy of potential parameters for both the parameter generator
+and potential construction, so those consumers cannot interpret the same
+search coordinates differently. The resolved configuration itself remains
+unchanged. `H0` and system distance currently have no scientific runtime
+object and therefore remain declared quantities unless a compatibility check
+needs their canonical physical values.
+
+Every run receives its own immutable resolved configuration, while resume
+compatibility compares physical meaning. It converts unit-bearing contract
+fields to the configured internal units, so declarations such as `1 kpc` and
+`1000 pc` compare equal.
 
 MGE (multi-Gaussian expansion) contents and quantities read from observational
 data files are intentionally not converted during configuration preparation.

@@ -27,7 +27,6 @@ from tnt.logging import configure_logging
 from tnt.units import (
     UnitSystems,
     build_unit_systems,
-    normalize_configuration_quantities,
 )
 
 CONFIG_REPOSITORY_DIRECTORY = "config_repository"
@@ -100,10 +99,6 @@ class Configuration:
         schema_resolved_config = _apply_schema_defaults(merged_config)
         unit_systems = build_unit_systems(
             _optional_mapping(schema_resolved_config, "units", "configuration")
-        )
-        schema_resolved_config = normalize_configuration_quantities(
-            schema_resolved_config,
-            unit_systems,
         )
         runtime_config, portable_config, output_directory = _resolve_io_directories(
             schema_resolved_config,

@@ -66,8 +66,8 @@ block.
 3. Applies common defaults to every dynamically named potential component and
    parameter.
 4. Applies defaults selected by each kinematics data set's `type`.
-5. Validates the configured unit systems and converts supported unitful
-   quantities to internal units.
+5. Validates the configured unit systems and the dimensions of supported
+   unitful quantities without converting or stripping their declarations.
 6. Validates the generic resolved schema and registry references without
    constructing runtime objects. Type-specific kinematics and population-file
    validation is deferred to runtime construction.
@@ -89,7 +89,7 @@ If a kinematics data set explicitly supplies complete histogram metadata
 derivation policy. Supplying only part of this explicit metadata is an error.
 
 See [Units](units.md) for the internal and display unit systems, accepted
-quantity syntax, and the fields currently normalized during preparation.
+quantity syntax, and the runtime conversion boundaries.
 
 ## Scientific input registries
 
@@ -447,13 +447,13 @@ config_repository/
 ```
 
 - `runs/` contains one numbered, immutable directory per TNT run. Its
-  `resolved_config.yaml` has all defaults applied and stores input and output
-  paths relative to the workspace root. Its `run_manifest.yaml` records the
-  run ID, the resolved-configuration path, TNT and dependency versions, Git
-  state, Python/platform/host context, scheduler identifiers, logfile
-  location, and random-seed state. Repeated identical configurations are
-  archived independently because run directories are intentionally not
-  deduplicated.
+  `resolved_config.yaml` has all defaults applied, preserves declared units,
+  and stores input and output paths relative to the workspace root. Its
+  `run_manifest.yaml` records the run ID, the resolved-configuration path, TNT
+  and dependency versions, Git state, Python/platform/host context, scheduler
+  identifiers, logfile location, and random-seed state. Repeated identical
+  configurations are archived independently because run directories are
+  intentionally not deduplicated.
 - The submitted user profile, its source path, and its bytes are not archived.
   TNT also does not create configuration-content or scientific-input hashes.
 

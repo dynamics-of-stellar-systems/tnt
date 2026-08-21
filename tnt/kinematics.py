@@ -23,7 +23,6 @@ from tnt.config_parsing import (
     _integer,
     _mapping,
     _nonnegative_number,
-    _number,
     _positive_finite,
     _positive_number,
     _read_bin_ids,
@@ -36,6 +35,7 @@ from tnt.config_parsing import (
 )
 from tnt.mge import LightMGE, MassMGE
 from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
+from tnt.units import normalize_unitful_value
 
 if TYPE_CHECKING:
     from tnt.orbit_library import OrbitLibrary
@@ -156,7 +156,9 @@ class GaussHermite(AbstractKinematics):
         if maximum_order < 2:
             raise ValueError(f"{path}.maximum_gh_order must be at least 2.")
 
-        systematics = _gauss_hermite_systematics(settings, maximum_order, path)
+        systematics = _gauss_hermite_systematics(
+            settings, maximum_order, unit_system, path
+        )
         table = QTable.read(data_file, format="ascii.ecsv")
         bin_ids = _read_bin_ids(table, data_file)
         _validate_bin_ids_cover_binning(bin_ids, binning, data_file)
@@ -189,7 +191,7 @@ class GaussHermite(AbstractKinematics):
             settings,
             velocity,
             dispersion,
-            speed_unit,
+            unit_system,
             path,
         )
         return cls(
@@ -285,7 +287,7 @@ class BayesLOSVD(AbstractKinematics):
             _required(settings, "histogram", path), f"{path}.histogram"
         )
         if set(histogram_settings) == {"width", "center", "bins"}:
-            histogram = _explicit_histogram(histogram_settings, speed_unit, path)
+            histogram = _explicit_histogram(histogram_settings, unit_system, path)
         else:
             centers, mean_velocity, histogram = _build_losvd_histogram(
                 histogram_settings,
@@ -293,7 +295,7 @@ class BayesLOSVD(AbstractKinematics):
                 data_bin_width,
                 mean_velocity,
                 flux,
-                speed_unit,
+                unit_system,
                 f"{path}.histogram",
             )
         return cls(
@@ -395,7 +397,7 @@ class ProperMotions(AbstractKinematics):
             bins=(int(distribution.shape[1]), int(distribution.shape[2])),
         )
         histogram = _proper_motion_histogram(
-            settings, observed_histogram, speed_unit, path
+            settings, observed_histogram, unit_system, path
         )
         _warn_about_proper_motion_sampling(
             name, distribution, observed_histogram, thresholds
@@ -558,7 +560,10 @@ def _quadrature_quantity(error: Quantity, systematic: float, unit: Any) -> Quant
 
 
 def _gauss_hermite_systematics(
-    settings: ConfigMapping, maximum_order: int, path: str
+    settings: ConfigMapping,
+    maximum_order: int,
+    unit_system: AbstractUnitSystem,
+    path: str,
 ) -> dict[str, float]:
     errors = _mapping(
         _required(settings, "observational_errors", path),
@@ -580,10 +585,16 @@ def _gauss_hermite_systematics(
     if missing:
         names = ", ".join(sorted(missing))
         raise ValueError(f"{systematics_path} is missing required field(s): {names}.")
-    return {
-        key: _nonnegative_number(systematics[key], f"{systematics_path}.{key}")
-        for key in expected
-    }
+    result = {}
+    for key in expected:
+        key_path = f"{systematics_path}.{key}"
+        value = (
+            normalize_unitful_value(systematics[key], "speed", unit_system, key_path)
+            if key in {"v", "sigma"}
+            else systematics[key]
+        )
+        result[key] = _nonnegative_number(value, key_path)
+    return result
 
 
 def _read_gh_coefficients(
@@ -620,7 +631,9 @@ def _read_gh_coefficients(
 
 
 def _explicit_histogram(
-    settings: ConfigMapping, speed_unit: Any, parent_path: str
+    settings: ConfigMapping,
+    unit_system: AbstractUnitSystem,
+    parent_path: str,
 ) -> Histogram:
     path = (
         f"{parent_path}.histogram"
@@ -632,8 +645,14 @@ def _explicit_histogram(
     if missing:
         names = ", ".join(sorted(missing))
         raise ValueError(f"{path} is missing required field(s): {names}.")
-    width = _positive_number(settings["width"], f"{path}.width")
-    center = _number(settings["center"], f"{path}.center")
+    speed_unit = unit_system[u.dimension("speed")]
+    width = normalize_unitful_value(
+        settings["width"], "speed", unit_system, f"{path}.width"
+    )
+    _positive_number(width, f"{path}.width.value")
+    center = normalize_unitful_value(
+        settings["center"], "speed", unit_system, f"{path}.center"
+    )
     bins = _integer(settings["bins"], f"{path}.bins")
     if bins <= 0 or bins % 2 == 0:
         raise ValueError(f"{path}.bins must be a positive odd integer.")
@@ -648,14 +667,15 @@ def _build_gh_histogram(
     settings: ConfigMapping,
     velocity: Quantity,
     dispersion: Quantity,
-    speed_unit: Any,
+    unit_system: AbstractUnitSystem,
     path: str,
 ) -> Histogram:
+    speed_unit = unit_system[u.dimension("speed")]
     histogram = _mapping(
         _required(settings, "histogram", path), f"{path}.histogram"
     )
     if set(histogram) == {"width", "center", "bins"}:
-        return _explicit_histogram(histogram, speed_unit, path)
+        return _explicit_histogram(histogram, unit_system, path)
     histogram_path = f"{path}.histogram"
     allowed = {"bin_width_sigma_fraction", "center", "sigma_extent"}
     _reject_unknown_keys(histogram, allowed, histogram_path)
@@ -670,7 +690,9 @@ def _build_gh_histogram(
         histogram["bin_width_sigma_fraction"],
         f"{histogram_path}.bin_width_sigma_fraction",
     )
-    center = _number(histogram["center"], f"{histogram_path}.center")
+    center = normalize_unitful_value(
+        histogram["center"], "speed", unit_system, f"{histogram_path}.center"
+    )
     v = velocity.ustrip(speed_unit)
     sigma = dispersion.ustrip(speed_unit)
     width = float(2 * jnp.max(jnp.abs(v) + extent * sigma))
@@ -739,9 +761,10 @@ def _build_losvd_histogram(
     data_bin_width: Quantity,
     mean_velocity: Quantity,
     flux: jnp.ndarray,
-    speed_unit: Any,
+    unit_system: AbstractUnitSystem,
     path: str,
 ) -> tuple[Quantity, Quantity, Histogram]:
+    speed_unit = unit_system[u.dimension("speed")]
     allowed = {"center", "oversampling_factor", "systemic_velocity", "width_scale"}
     _reject_unknown_keys(settings, allowed, path)
     missing = allowed - set(settings)
@@ -754,7 +777,9 @@ def _build_losvd_histogram(
     oversampling = _positive_number(
         settings["oversampling_factor"], f"{path}.oversampling_factor"
     )
-    center = _number(settings["center"], f"{path}.center")
+    center = normalize_unitful_value(
+        settings["center"], "speed", unit_system, f"{path}.center"
+    )
     systemic = jnp.sum(flux * mean_velocity.ustrip(speed_unit)) / jnp.sum(flux)
     shifted_centers = centers - Quantity(systemic, speed_unit)
     shifted_mean = mean_velocity - Quantity(systemic, speed_unit)
@@ -835,14 +860,15 @@ def _validate_proper_motion_arrays(
 def _proper_motion_histogram(
     settings: ConfigMapping,
     observed: Histogram2D,
-    speed_unit: Any,
+    unit_system: AbstractUnitSystem,
     path: str,
 ) -> Histogram2D:
     if "histogram" not in settings:
         return observed
     configured = _explicit_histogram(
-        _mapping(settings["histogram"], f"{path}.histogram"), speed_unit, path
+        _mapping(settings["histogram"], f"{path}.histogram"), unit_system, path
     )
+    speed_unit = unit_system[u.dimension("speed")]
     return Histogram2D(
         width=Quantity(jnp.repeat(configured.width.ustrip(speed_unit), 2), speed_unit),
         center=Quantity(
