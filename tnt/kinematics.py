@@ -296,7 +296,6 @@ class BayesLOSVD(AbstractKinematics):
                 mean_velocity,
                 flux,
                 unit_system,
-                speed_unit,
                 f"{path}.histogram",
             )
         return cls(
@@ -586,16 +585,15 @@ def _gauss_hermite_systematics(
     if missing:
         names = ", ".join(sorted(missing))
         raise ValueError(f"{systematics_path} is missing required field(s): {names}.")
-    result = {
-        key: normalize_unitful_value(
-            systematics[key], "speed", unit_system, f"{systematics_path}.{key}"
+    result = {}
+    for key in expected:
+        key_path = f"{systematics_path}.{key}"
+        value = (
+            normalize_unitful_value(systematics[key], "speed", unit_system, key_path)
+            if key in {"v", "sigma"}
+            else systematics[key]
         )
-        if key in {"v", "sigma"}
-        else _nonnegative_number(systematics[key], f"{systematics_path}.{key}")
-        for key in expected
-    }
-    for key, value in result.items():
-        _nonnegative_number(value, f"{systematics_path}.{key}")
+        result[key] = _nonnegative_number(value, key_path)
     return result
 
 
@@ -764,9 +762,9 @@ def _build_losvd_histogram(
     mean_velocity: Quantity,
     flux: jnp.ndarray,
     unit_system: AbstractUnitSystem,
-    speed_unit: Any,
     path: str,
 ) -> tuple[Quantity, Quantity, Histogram]:
+    speed_unit = unit_system[u.dimension("speed")]
     allowed = {"center", "oversampling_factor", "systemic_velocity", "width_scale"}
     _reject_unknown_keys(settings, allowed, path)
     missing = allowed - set(settings)

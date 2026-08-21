@@ -43,8 +43,8 @@ def _common_settings(data_file: Path, kind: str) -> dict[str, object]:
     }
 
 
-def _speed(value: float) -> dict[str, object]:
-    return {"value": value, "unit": "kpc / Myr"}
+def _speed(value: float, unit: str = "kpc / Myr") -> dict[str, object]:
+    return {"value": value, "unit": unit}
 
 
 def _write_gauss_hermite(
@@ -74,8 +74,8 @@ def test_build_gauss_hermite_converts_units_and_applies_systematics(
             "maximum_gh_order": 4,
             "observational_errors": {
                 "systematic_uncertainties": {
-                    "v": _speed(1.0),
-                    "sigma": _speed(2.0),
+                    "v": _speed(1.0, "km / s"),
+                    "sigma": _speed(2.0, "km / s"),
                     "h3": 0.01,
                     "h4": 0.02,
                 }
@@ -83,7 +83,7 @@ def test_build_gauss_hermite_converts_units_and_applies_systematics(
             "histogram": {
                 "sigma_extent": 3.0,
                 "bin_width_sigma_fraction": 0.1,
-                "center": _speed(0.0),
+                "center": _speed(15.0, "km / s"),
             },
         }
     )
@@ -101,11 +101,15 @@ def test_build_gauss_hermite_converts_units_and_applies_systematics(
     assert result.velocity.unit == u.unit("kpc / Myr")
     assert result.coefficients.shape == (2, 2)
     assert result.histogram.bins % 2 == 1
-    km_s_to_internal = au.Unit("km / s").to(au.Unit("kpc / Myr"))
-    expected_dv = np.sqrt(np.array([3.0, 4.0]) ** 2 + (1.0 / km_s_to_internal) ** 2)
+    expected_dv = np.sqrt(np.array([3.0, 4.0]) ** 2 + 1.0**2)
     assert jnp.allclose(
         result.velocity_uncertainty.ustrip("km / s"), expected_dv
     )
+    expected_dsigma = np.sqrt(np.array([5.0, 6.0]) ** 2 + 2.0**2)
+    assert jnp.allclose(
+        result.dispersion_uncertainty.ustrip("km / s"), expected_dsigma
+    )
+    assert result.histogram.center.ustrip("km / s") == pytest.approx(15.0)
     values, uncertainties = result.observed_values_and_uncertainties()
     assert values.shape == uncertainties.shape == (2, 4)
 
@@ -117,19 +121,19 @@ def test_gauss_hermite_requires_complete_binning_coverage(tmp_path: Path) -> Non
     settings.update(
         {
             "maximum_gh_order": 4,
-                "observational_errors": {
-                    "systematic_uncertainties": {
-                        "v": _speed(0.0),
-                        "sigma": _speed(0.0),
-                        "h3": 0.0,
-                        "h4": 0.0,
-                    }
-                },
-                "histogram": {
-                    "width": _speed(1000.0),
-                    "center": _speed(0.0),
-                    "bins": 101,
-                },
+            "observational_errors": {
+                "systematic_uncertainties": {
+                    "v": _speed(0.0),
+                    "sigma": _speed(0.0),
+                    "h3": 0.0,
+                    "h4": 0.0,
+                }
+            },
+            "histogram": {
+                "width": _speed(1000.0),
+                "center": _speed(0.0),
+                "bins": 101,
+            },
         }
     )
 

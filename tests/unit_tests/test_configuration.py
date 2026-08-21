@@ -273,11 +273,15 @@ def test_repository_preserves_equivalent_unit_declarations_per_run(
     second = Configuration().read(user_path, workspace_root=tmp_path)
 
     assert first.resolved_path != second.resolved_path
-    assert first.portable_data["system_attributes"]["distance"] == {
+    assert first.resolved_path is not None
+    assert second.resolved_path is not None
+    first_archived = yaml.safe_load(first.resolved_path.read_text(encoding="utf-8"))
+    second_archived = yaml.safe_load(second.resolved_path.read_text(encoding="utf-8"))
+    assert first_archived["system_attributes"]["distance"] == {
         "value": 10.0,
         "unit": "kpc",
     }
-    assert second.portable_data["system_attributes"]["distance"] == {
+    assert second_archived["system_attributes"]["distance"] == {
         "value": 10000.0,
         "unit": "pc",
     }
