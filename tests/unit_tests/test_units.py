@@ -105,9 +105,9 @@ def test_normalize_supported_configuration_quantities() -> None:
         },
         "potential": {
             "bh": {
-                "type": "plummer",
+                "type": "PlummerPotential",
                 "parameters": {
-                    "m": {
+                    "m_tot": {
                         "value": 10.0,
                         "logarithmic": True,
                         "unit": "kg",
@@ -118,7 +118,7 @@ def test_normalize_supported_configuration_quantities() -> None:
                             "minimum_step": 0.1,
                         },
                     },
-                    "a": {
+                    "r_s": {
                         "value": 500.0,
                         "logarithmic": False,
                         "unit": "pc",
@@ -169,14 +169,14 @@ def test_normalize_supported_configuration_quantities() -> None:
         7.158985155319864e-05
     )
     bh_parameters = normalized["potential"]["bh"]["parameters"]
-    assert bh_parameters["a"]["value"] == pytest.approx(0.5)
-    assert bh_parameters["a"]["generator_settings"]["step"] == pytest.approx(0.1)
-    assert bh_parameters["m"]["value"] == pytest.approx(10.0 + mass_offset)
-    assert bh_parameters["m"]["generator_settings"]["lower_bound"] == pytest.approx(
+    assert bh_parameters["r_s"]["value"] == pytest.approx(0.5)
+    assert bh_parameters["r_s"]["generator_settings"]["step"] == pytest.approx(0.1)
+    assert bh_parameters["m_tot"]["value"] == pytest.approx(10.0 + mass_offset)
+    assert bh_parameters["m_tot"]["generator_settings"]["lower_bound"] == pytest.approx(
         9.0 + mass_offset
     )
-    assert bh_parameters["m"]["generator_settings"]["step"] == 0.5
-    assert "unit" not in bh_parameters["m"]
+    assert bh_parameters["m_tot"]["generator_settings"]["step"] == 0.5
+    assert "unit" not in bh_parameters["m_tot"]
     histogram = normalized["kinematic_data"]["observed"]["histogram"]
     assert histogram["width"] == pytest.approx(1000.0 * speed_factor)
     assert histogram["center"] == pytest.approx(10.0 * speed_factor)
@@ -197,7 +197,7 @@ def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:
         "system_attributes": {},
         "potential": {
             "halo": {
-                "type": "nfw",
+                "type": "not_a_registered_potential_type",
                 "parameters": {
                     "c": {
                         "value": 1.0,
@@ -220,16 +220,16 @@ def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:
         (
             {
                 "bh": {
-                    "type": "plummer",
+                    "type": "PlummerPotential",
                     "parameters": {
-                        "m": {
+                        "m_tot": {
                             "value": 10.0,
                             "logarithmic": True,
                         }
                     },
                 }
             },
-            r"potential\.bh\.parameters\.m.*required field: unit",
+            r"potential\.bh\.parameters\.m_tot.*required field: unit",
         ),
         (
             {

@@ -3,70 +3,39 @@
 Unlike tests/unit_tests/test_model_iterator.py (which fakes every
 collaborator), this builds the `ModelIterator` via the real
 `from_configuration`, against the real `Configuration`,
-`SinglePointParameterGenerator`, `AllModels`, and `RunConfigLog`.
-Only `build_potential`, `build_weight_solver`, `build_orbit_sampler`, and
-`build_orbit_dithering` are faked, since potential construction, orbit
-integration, and weight solving are still unimplemented (see
-tnt.model_iterator's module docstring).
-
-`tnt.potential` imports `galax.potential` at module level, and this venv's
-installed `galax`/`equinox` versions are mutually incompatible
-(`ImportError: cannot import name '_has_dataclass_init' from
-'equinox._module'`) -- an unrelated, pre-existing environment issue. Stub
-out `galax`/`galax.potential` before importing anything from `tnt` that
-would pull in that chain, so this test can run regardless. Remove this
-stub once the real dependency conflict is fixed.
+`SinglePointParameterGenerator`, `AllModels`, `RunConfigLog`, and
+`build_potential` -- potential construction (including MGE composite
+components and non-native parameterizations) is real end to end. Only
+`Potential.generate_orbit_library`, `build_weight_solver`,
+`build_orbit_sampler`, and `build_orbit_dithering` are faked, since orbit
+integration and weight solving are still unimplemented (see
+tnt.model_iterator's module docstring). `generate_orbit_library` never
+calls `to_galax()`, so the MGE composite types' still-`NotImplementedError`
+`to_galax()` is never reached here either.
 """
 
 from __future__ import annotations
 
-import sys
-import types
 from pathlib import Path
 from typing import Any, NamedTuple
 
-if "galax" not in sys.modules:
-    _fake_galax = types.ModuleType("galax")
-    _fake_galax_potential = types.ModuleType("galax.potential")
-
-    class _FakeAbstractPotentialBase:
-        pass
-
-    _fake_galax_potential.AbstractPotentialBase = _FakeAbstractPotentialBase
-    _fake_galax.potential = _fake_galax_potential
-    sys.modules["galax"] = _fake_galax
-    sys.modules["galax.potential"] = _fake_galax_potential
-
 import numpy as np
 import pytest
+from unxt import Quantity
 
 import tnt.model_iterator as model_iterator_module
 from tnt import Configuration
 from tnt.model_iterator import ModelIterator
 from tnt.model_search_state import ModelSearchState
+from tnt.potential import Potential, _nfw_concentration_m200
 from tnt.run_config_log import RunConfigLog
 
 # ---------------------------------------------------------------------------
-# Fakes standing in for Potential / OrbitLibrary / AbstractWeightSolver --
-# see tests/unit_tests/test_model_iterator.py for the same pattern.
+# Fakes standing in for OrbitLibrary / AbstractWeightSolver -- orbit
+# integration and weight solving, unlike potential construction, are still
+# unimplemented. See tests/unit_tests/test_model_iterator.py for the same
+# pattern.
 # ---------------------------------------------------------------------------
-
-
-class FakePotential:
-    def __init__(self, mass: float = 1.0) -> None:
-        self.mass = mass
-        self.components: dict[str, Any] = {}
-
-    def generate_orbit_library(
-        self,
-        settings: Any,
-        sampler: Any,
-        dithering: Any,
-    ) -> Any:
-        return FakeOrbitLibrary(self.mass)
-
-    def rescale(self, mass_scale: float) -> FakePotential:
-        return FakePotential(mass=self.mass * mass_scale)
 
 
 class FakeOrbitLibrary:
@@ -94,6 +63,38 @@ class FakeWeightSolver:
         )
 
 
+def _fake_orbit_integration_and_weight_solving(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fake only what's still unimplemented: orbit integration and weight solving.
+
+    `build_potential`/`Potential` stay real -- see this module's docstring
+    for why the MGE composite types' unimplemented `to_galax()` is never
+    reached even so.
+    """
+
+    def fake_generate_orbit_library(
+        self: Potential, settings: Any, sampler: Any, dithering: Any
+    ) -> FakeOrbitLibrary:
+        del self, settings, sampler, dithering
+        return FakeOrbitLibrary(mass=1.0)
+
+    monkeypatch.setattr(
+        Potential, "generate_orbit_library", fake_generate_orbit_library
+    )
+    monkeypatch.setattr(
+        model_iterator_module,
+        "build_weight_solver",
+        lambda settings: FakeWeightSolver(),
+    )
+    monkeypatch.setattr(
+        model_iterator_module, "build_orbit_sampler", lambda settings: "fake-sampler"
+    )
+    monkeypatch.setattr(
+        model_iterator_module,
+        "build_orbit_dithering",
+        lambda settings: "fake-dithering",
+    )
+
+
 def test_model_iterator_runs_against_the_resolved_example_configuration(
     example_configuration_path: Path,
     tmp_path: Path,
@@ -105,29 +106,20 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert parameter_space_settings["generator_type"] == "SinglePoint"
 
     captured_settings: list[Any] = []
+    real_build_potential = model_iterator_module.build_potential
 
-    def fake_build_potential(settings: Any, mges: Any) -> FakePotential:
+    def spying_build_potential(
+        settings: Any, mges: Any, unit_system: Any, cosmological_parameters: Any
+    ) -> Potential:
         captured_settings.append(settings)
-        return FakePotential(mass=1.0)
+        return real_build_potential(
+            settings, mges, unit_system, cosmological_parameters
+        )
 
-    monkeypatch.setattr(model_iterator_module, "build_potential", fake_build_potential)
     monkeypatch.setattr(
-        model_iterator_module,
-        "build_weight_solver",
-        lambda settings: FakeWeightSolver(),
+        model_iterator_module, "build_potential", spying_build_potential
     )
-    # generate_orbit_library is faked (via build_potential above), so the
-    # real orbit_sampler/orbit_dithering objects are never touched -- but
-    # build_orbit_sampler/build_orbit_dithering themselves still need
-    # faking, since they're still unimplemented too.
-    monkeypatch.setattr(
-        model_iterator_module, "build_orbit_sampler", lambda settings: "fake-sampler"
-    )
-    monkeypatch.setattr(
-        model_iterator_module,
-        "build_orbit_dithering",
-        lambda settings: "fake-dithering",
-    )
+    _fake_orbit_integration_and_weight_solving(monkeypatch)
 
     assert config.run_manifest_path is not None
     iterator = ModelIterator.from_configuration(
@@ -171,6 +163,84 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert stars_ml["value"] == pytest.approx(5.0)
     assert stars_ml["fixed"] is False
     assert stars_ml["generator_settings"]["upper_bound"] == pytest.approx(9.0)
+
+
+def test_model_iterator_reports_real_potential_in_its_own_parameterization(
+    example_configuration_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`raw_potential_parameters` reports every component correctly, real end to end.
+
+    Unlike the test above (focused on the search loop itself, with a spy on
+    `build_potential`), this test's focus is `dh`'s non-native
+    `concentration_m200` parameterization -- confirming `AllModels`' table
+    reports it (`dh.c`/`dh.M_200`) rather than galax's native `dh.m`/
+    `dh.r_s`, correctly recomputed after every `potential_rescalings` variant
+    despite `_nfw_concentration_m200_inverse` having no closed form.
+    """
+    config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
+    resolved = config.as_dict()
+    _fake_orbit_integration_and_weight_solving(monkeypatch)
+
+    assert config.run_manifest_path is not None
+    iterator = ModelIterator.from_configuration(
+        resolved, config.unit_systems.internal, config.run_manifest_path
+    )
+    models, config_log = iterator.run()
+
+    assert len(models) == 11
+    output = Path(resolved["io_settings"]["output_directory"])
+    models_path = output / resolved["io_settings"]["all_models_file"]
+    log_path = RunConfigLog.path_for(config.run_manifest_path)
+    ModelSearchState(models, config_log).write(models_path, log_path)
+
+    table = models.table
+    assert {"bh.m_tot", "bh.r_s", "dh.c", "dh.M_200", "stars.ml"}.issubset(
+        set(table.colnames)
+    )
+    assert "dh.m" not in table.colnames
+    assert "dh.r_s" not in table.colnames
+
+    unit_system = config.unit_systems.internal
+    h0 = resolved["cosmological_parameters"]["H0"]
+    r_s_values = []
+    m_over_mass_scale_values = []
+    c_values = []
+    for row in table:
+        mass_scale = 10.0 / row["kinchi2"]
+        assert row["bh.m_tot"].to_value("Msun") == pytest.approx(5.0 * mass_scale)
+        assert row["bh.r_s"].to_value("kpc") == pytest.approx(1.0e-3)
+        assert row["stars.ml"].to_value("Msun / Lsun") == pytest.approx(
+            5.0 * mass_scale
+        )
+
+        # Feed the table's own reported (c, M_200) back through the forward
+        # conversion -- there's no closed form for the inverse, so this
+        # self-consistency check (rather than an independently derivable
+        # expected value) is what actually confirms the round trip worked.
+        native = _nfw_concentration_m200(
+            {
+                "c": Quantity(float(row["dh.c"].value), ""),
+                "M_200": Quantity(row["dh.M_200"].to_value("Msun"), "Msun"),
+            },
+            unit_system,
+            {"H0": h0},
+        )
+        r_s_values.append(float(native["r_s"].ustrip("kpc")))
+        m_over_mass_scale_values.append(float(native["m"].ustrip("Msun")) / mass_scale)
+        c_values.append(float(row["dh.c"].value))
+
+    # rescale() holds r_s fixed and scales m linearly with mass_scale
+    # (native-space invariants); the raw (c, M_200) round trip must
+    # reproduce both exactly.
+    assert max(r_s_values) == pytest.approx(min(r_s_values), rel=1e-5)
+    assert max(m_over_mass_scale_values) == pytest.approx(
+        min(m_over_mass_scale_values), rel=1e-5
+    )
+    # Concentration genuinely changes across mass scales -- holding c fixed
+    # would be the wrong (but easy-to-accidentally-implement) shortcut.
+    assert len({round(c, 6) for c in c_values}) > 1
 
 
 def test_model_iterator_rejects_stage_by_stage_before_runtime_construction(

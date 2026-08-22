@@ -6,6 +6,7 @@ Signature-only scaffold.
 from __future__ import annotations
 
 import equinox as eqx
+from unxt import Quantity
 
 from tnt.potential import Potential
 from tnt.weight_solver import OrbitWeights
@@ -32,6 +33,16 @@ class Model(eqx.Module):
     """
 
     potential: Potential
+    raw_parameters: dict[str, dict[str, Quantity]]
+    """`potential`'s components, in their configuration's own parameterization.
+
+    See `tnt.potential.raw_potential_parameters` -- computed once alongside
+    `potential` itself (including for each `potential_rescalings` variant,
+    since a mass rescale changes these values), since recomputing it needs
+    context (`potential_settings`, `cosmological_parameters`) that `Model`
+    doesn't otherwise carry. `AllModels` reads this directly to build its
+    per-parameter table columns.
+    """
     orblib_done: bool
     weights_done: bool
     weights: OrbitWeights | None

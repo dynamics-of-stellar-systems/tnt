@@ -16,6 +16,7 @@ documentation for details.
 
    configuration
    units
+   potential
    logging
    model_search
    dynamite_users

@@ -1,41 +1,22 @@
 """Unit tests for `ModelIterator`'s control flow, using fake collaborators.
 
-Real orbit integration, weight solving, and potential-building are all
-still unimplemented (see `tnt.model_iterator`'s module docstring). These
-tests exercise `ModelIterator`'s own logic -- the generate/evaluate/record/
-stop loop, mass-scale rescaling, failure handling, and logging -- against
-small fakes standing in for `Potential`/`OrbitLibrary`/`AbstractWeightSolver`.
-
-`tnt.potential` imports `galax.potential` at module level, and this venv's
-installed `galax`/`equinox` versions are mutually incompatible
-(`ImportError: cannot import name '_has_dataclass_init' from
-'equinox._module'`) -- an unrelated, pre-existing environment issue. Stub
-out `galax`/`galax.potential` before importing anything from `tnt` that
-would pull in that chain, so these tests can run regardless. Remove this
-stub once the real dependency conflict is fixed.
+Real orbit integration and weight solving are still unimplemented (see
+`tnt.model_iterator`'s module docstring). Potential-building is now real for
+native-galax types (`tnt.potential`), but these tests still exercise
+`ModelIterator`'s own logic -- the generate/evaluate/record/stop loop,
+mass-scale rescaling, failure handling, and logging -- against small fakes
+standing in for `Potential`/`OrbitLibrary`/`AbstractWeightSolver`, with
+`build_potential` itself monkeypatched per test.
 """
 
 from __future__ import annotations
 
 import logging
-import sys
-import types
 from pathlib import Path
 from typing import Any, NamedTuple
 
 import pytest
-
-if "galax" not in sys.modules:
-    _fake_galax = types.ModuleType("galax")
-    _fake_galax_potential = types.ModuleType("galax.potential")
-
-    class _FakeAbstractPotentialBase:
-        pass
-
-    _fake_galax_potential.AbstractPotentialBase = _FakeAbstractPotentialBase
-    _fake_galax.potential = _fake_galax_potential
-    sys.modules["galax"] = _fake_galax
-    sys.modules["galax.potential"] = _fake_galax_potential
+import unxt as u
 
 import tnt.model_iterator as model_iterator_module
 from tnt.model_iterator import ModelIterator
@@ -124,6 +105,8 @@ def _run_reference(run_id: int = 0) -> RunManifestReference:
 def _make_iterator(**overrides: Any) -> ModelIterator:
     iterator = ModelIterator.__new__(ModelIterator)
     iterator.potential_settings = {}
+    iterator.unit_system = u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
+    iterator.cosmological_parameters = {}
     iterator.mges = {}
     iterator.kinematic_data = {}
     iterator.weight_solver = FakeWeightSolver()
@@ -159,7 +142,9 @@ def _patch_build_potential(
     monkeypatch: pytest.MonkeyPatch, potential: FakePotential
 ) -> None:
     monkeypatch.setattr(
-        model_iterator_module, "build_potential", lambda settings, mges: potential
+        model_iterator_module,
+        "build_potential",
+        lambda settings, mges, unit_system, cosmological_parameters: potential,
     )
 
 
@@ -481,7 +466,7 @@ def test_run_continues_after_later_iteration_has_no_success(
     monkeypatch.setattr(
         model_iterator_module,
         "build_potential",
-        lambda settings, mges: next(potentials),
+        lambda settings, mges, unit_system, cosmological_parameters: next(potentials),
     )
 
     with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):
