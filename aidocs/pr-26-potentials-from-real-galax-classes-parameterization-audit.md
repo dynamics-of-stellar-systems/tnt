@@ -509,7 +509,17 @@ In response to section 8's questions directly:
    classes ever be configurable?** Already answered above (see item 3).
 
 Still open, not yet addressed: missing parameter-schema/physical-domain
-validation (now with a natural home to grow into --
-`_SUPPORTED_GALAX_TYPES`'s per-class parameter keys), the split
-parameterization metadata, and the MGE `mge_mass_scale` design decision.
-Working through these next in the recommended order.
+validation -- tracked in
+[issue #30](https://github.com/dynamics-of-stellar-systems/tnt/issues/30),
+which also confirms `galax` itself enforces no parameter constraints to
+lean on (`NFWPotential(m=-1e11 Msun, r_s=-10 kpc, ...)` constructs and
+evaluates without error) -- and the split parameterization metadata. The
+MGE `mge_mass_scale` design decision is resolved (section 8, item 6).
+
+Separately: the unit-handling boundary gap this audit's §High "PR #24
+cannot be combined mechanically" finding first surfaced -- potential
+parameters were being eagerly converted into TNT's internal unit system at
+config-prep time rather than at each object's own construction, contrary
+to issue #14/PR #24's own policy -- is fixed, but as its own branch/PR
+(`unit-handling-boundary`, stacked on this one, not yet merged), since it's
+orthogonal to this PR's own scope.
