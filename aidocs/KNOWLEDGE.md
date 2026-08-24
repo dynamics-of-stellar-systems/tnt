@@ -259,35 +259,63 @@
   scalar `velocity_unit`. Construction validates and normalizes each 2D
   distribution, scales uncertainties by the square root of `variance_scale`,
   and emits configured sampling warnings.
-- `potential.<name>.type` names a `galax.potential` class directly (e.g.
-  `NFWPotential`, `PlummerPotential`), or one of two TNT-specific MGE
+- `potential.<name>.type` names one of a curated set of `galax.potential`
+  classes (`tnt.potential._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
+  `PlummerPotential` -- 25 classes total), or one of two TNT-specific MGE
   composite types, `triaxial_light_mge`/`triaxial_mass_mge`, provided
   directly by TNT since `galax` has no native class for a
   sum-of-triaxial-Gaussians potential. A light-MGE potential requires an
   `ml` parameter; a mass-MGE potential requires `mge_mass_scale` instead
   and validation rejects `ml` on it, since its MGE already contains mass.
+  Deliberately curated rather than "any `AbstractPotential` subclass":
+  `galax` also exports abstract/base classes (which passed the old
+  `issubclass` check and only failed later, confusingly, at `to_galax()`),
+  pre-packaged multi-component bundles with no free parameters of their own
+  like `MilkyWayPotential`/`LM10Potential` (their `disk`/`bulge`/`halo`/
+  `nucleus` fields are themselves sub-potentials, not `ParameterField`s --
+  redundant with TNT's own multi-component `potential:` section anyway),
+  wrapper/transform decorators needing a required nested potential object
+  (e.g. `TranslatedPotential`, `FlattenedInThePotential` -- these do carry
+  their own `ParameterField`s, but the required nested potential still
+  isn't representable), and classes needing a required non-`Quantity`
+  hyperparameter (`MultipolePotential`'s `l_max: int`, which the old
+  dispatch silently mis-wrapped as a dimensionless `Quantity`) -- none
+  representable by the scalar `parameters.<name>.value` schema. Checked
+  directly against every one of galax's 45
+  `AbstractPotential` subclasses: 28 have every field either a scalar
+  `ParameterField` or a galax-provided default (safe under the current
+  schema); the curated 25 drops `HenonHeilesPotential`/`NullPotential`
+  (not astrophysically relevant to TNT) and `AbstractCompositePotential`
+  (an empty-parameter base class) from that 28.
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`
-  constructor kwargs exactly; their physical dimensions are derived
-  dynamically from `galax`'s own `ParameterField(dimensions=...)` metadata
-  (`tnt.potential.native_parameter_dimensions`), not hand-maintained per
-  type. `GalaxPotentialComponent.rescale()` scales every native parameter
-  by `mass_scale ** exponent`, where `exponent` comes from a small table of
-  individually verified dimensions keyed by dimension name
-  (`tnt.potential._RESCALE_EXPONENTS`: mass=1, length/angle/dimensionless=0
-  since shape is held fixed, speed=0.5 -- verified against
-  `LogarithmicPotential`'s `v_c`, which has no mass-dimensioned parameter
-  at all: `Phi = 0.5 * v_c**2 * ln(...)`, so scaling `v_c` by
-  `sqrt(mass_scale)` scales `Phi` linearly, matching a true mass
-  parameter). Each entry requires this kind of direct verification before
-  being added, since dimension alone doesn't determine a parameter's role:
-  a bar's pattern speed (`MonariEtAl2016BarPotential`'s `Omega`, dimension
-  `"frequency"`) shares `v_c`'s time-power but must stay fixed under a mass
-  rescale rather than scale with it, and `"power"` has no current native
-  `galax` parameter to verify against, so both raise `NotImplementedError`
-  via `tnt.potential._rescale_exponent` rather than being derived
-  automatically. `PhysicalType.__str__` joins every
+  constructor kwargs exactly; their physical dimensions are read directly
+  from `_SUPPORTED_GALAX_TYPES` (each entry a `NativeParameter(dimension,
+  exponent)`). Dynamic derivation from `galax`'s own
+  `ParameterField(dimensions=...)` metadata isn't production code at all any
+  more -- since curating dimension by hand costs nothing extra once every
+  parameter is individually verified for its exponent anyway, that
+  derivation now lives only as a test-local helper in
+  `tests/unit_tests/test_potential.py`
+  (`test_supported_galax_types_covers_every_curated_class_parameter` cross-checks
+  the curated table against it).
+  `GalaxPotentialComponent.rescale()` scales every native parameter by
+  `mass_scale ** exponent`, where `exponent` is curated per (class,
+  parameter) directly in `_SUPPORTED_GALAX_TYPES` -- not derived from
+  dimension, since a parameter's role determines its exponent as much as
+  its dimension does: `MonariEtAl2016BarPotential`'s `Omega` (bar pattern
+  speed, dimension `"frequency"`) and `v0` (sets the potential's amplitude,
+  dimension `"speed"`) share the same time-power but need opposite
+  exponents (0.0 vs 0.5) *within the same class*, and
+  `HarmonicOscillatorPotential`'s `omega` (also `"frequency"`) needs 0.5,
+  the same as `v0`, not `Omega`'s 0.0 -- confirming dimension alone can
+  never safely determine role, even restricted to one dimension name.
+  Every entry is individually verified against `galax`'s own potential
+  formula (source inspection plus, for the ambiguous cases, direct
+  numerical confirmation that scaling the parameter by
+  `sqrt(mass_scale)` scales the potential by exactly `mass_scale`) before
+  being added. `PhysicalType.__str__` joins every
   alias with `/` (e.g. `"speed/velocity"`), which `u.dimension()` silently
   treats as dimensionless rather than raising; dimension derivation takes
   the first name from iterating the `PhysicalType` instead. Given

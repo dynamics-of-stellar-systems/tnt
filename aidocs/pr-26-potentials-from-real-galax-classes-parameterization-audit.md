@@ -378,6 +378,44 @@ Working through this list in the order recommended above. Addressed so far:
   This also fixes the example configuration's `dh.M_200`, which was marked
   logarithmic while declaring a plain physical value (`1e12`) -- exactly
   the mixed-convention inconsistency this section 8 question flagged.
+- **High -- "any galax potential class" is not a valid configuration
+  contract**: confirmed and quantified directly rather than taken on faith.
+  Checked every one of `galax`'s 45 `AbstractPotential` subclasses against
+  the scalar-`Quantity` schema: 28 have every field either a scalar
+  `ParameterField` or a galax-provided default (safe); the other 17 fall
+  into exactly the three categories described -- abstract/base classes
+  (which passed the old `issubclass` check and only failed later, at
+  `to_galax()`), pre-packaged multi-component bundles like
+  `MilkyWayPotential` and wrapper/transform decorators (both needing a
+  nested potential object the schema can't represent, and both redundant
+  with TNT's own multi-component `potential:` section), and classes
+  needing a required non-`Quantity` hyperparameter (`MultipolePotential`'s
+  `l_max: int`, confirmed silently mis-wrapped as a dimensionless
+  `Quantity` under the old dispatch). Resolved with an explicit curated
+  allowlist, `tnt.potential._SUPPORTED_GALAX_TYPES` -- 25 classes (the 28
+  minus `HenonHeilesPotential`/`NullPotential`, not astrophysically
+  relevant to TNT, and `AbstractCompositePotential`, an empty-parameter
+  base class that had trivially passed the "every field has a default"
+  check).
+
+  While curating the class list, folded in a related simplification: since
+  every supported class is now individually reviewed anyway, each
+  parameter's mass-rescale exponent is curated directly in the same
+  registry (`{class: {parameter: exponent}}`) rather than derived from
+  dimension via the old `_RESCALE_EXPONENTS`/`_rescale_exponent`
+  (both removed). This closes the standing gap where
+  `MonariEtAl2016BarPotential.Omega` permanently raised
+  `NotImplementedError` on rescale (no confirmed dimension-keyed exponent
+  for "frequency") -- curating it now required an explicit decision
+  (`Omega` stays fixed, verified against galax's own prefactor formula),
+  not indefinite deferral. It also surfaced a second, sharper version of
+  the same dimension-is-not-role problem this PR's `Omega` finding already
+  raised: `HarmonicOscillatorPotential.omega` shares `Omega`'s "frequency"
+  dimension but needs the *opposite* exponent (0.5, verified numerically
+  against `Phi = 0.5*|omega*x|**2`) -- the same dimension name meaning
+  different things in different classes, not just different things from
+  "speed", which a dimension-keyed table could never have expressed
+  correctly for both at once.
 
 In response to section 8's questions directly:
 
@@ -389,9 +427,15 @@ In response to section 8's questions directly:
    (see above), not something the rest of the configuration ever sees.
 2. **Should `AllModels` report physical values, log coordinates, or both?**
    Physical values only.
+3. **Is TNT intentionally supporting every galax class, or only a curated
+   astrophysical subset?** A curated subset -- resolved above
+   (`_SUPPORTED_GALAX_TYPES`, 25 classes). Composite/precomposed/
+   transformed/multipole classes stay unsupported; add a class only when a
+   real use needs it, verified the same way as every class already there.
 
-Still open, not yet addressed: the "any galax potential class" configuration
-contract, missing parameter-schema/physical-domain validation, the
-`galax_type` static-PyTree-field issue, the split parameterization metadata,
-the MGE `mge_mass_scale` design decision, and the documentation build
-failures. Working through these next in the recommended order.
+Still open, not yet addressed: missing parameter-schema/physical-domain
+validation (now with a natural home to grow into --
+`_SUPPORTED_GALAX_TYPES`'s per-class parameter keys), the `galax_type`
+static-PyTree-field issue, the split parameterization metadata, the MGE
+`mge_mass_scale` design decision, and the documentation build failures.
+Working through these next in the recommended order.

@@ -9,14 +9,18 @@ resolution, and the fully-working Plummer/NFW native-mode paths.
 
 from __future__ import annotations
 
+import dataclasses
+
 import galax.potential as gp
 import jax.numpy as jnp
 import pytest
 import unxt as u
+from galax.potential.params import ParameterField
 from unxt import Quantity
 
 from tnt.mge import LightMGE
 from tnt.potential import (
+    _SUPPORTED_GALAX_TYPES,
     AbstractPotentialComponent,
     GalaxPotentialComponent,
     Potential,
@@ -24,13 +28,38 @@ from tnt.potential import (
     _nfw_concentration_m200,
     _nfw_concentration_m200_inverse,
     _nfw_g,
-    _rescale_exponent,
     _solve_nfw_concentration,
     build_potential,
-    native_parameter_dimensions,
     raw_parameter_dimensions,
     raw_potential_parameters,
 )
+
+
+def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
+    """Each of `galax_type`'s native constructor parameters' physical dimension.
+
+    Derived from galax's own `ParameterField(dimensions=...)` metadata,
+    independently of `tnt.potential._SUPPORTED_GALAX_TYPES` -- this is what
+    `test_supported_galax_types_covers_every_curated_class_parameter`
+    cross-checks the curated table against.
+    """
+    cls = getattr(gp, galax_type, None)
+    if not (isinstance(cls, type) and issubclass(cls, gp.AbstractPotential)):
+        return None
+    return {
+        # A PhysicalType with more than one recognized name (e.g. "speed"
+        # and "velocity") stringifies as "speed/velocity", which
+        # u.dimension() doesn't recognize and silently resolves to
+        # "dimensionless" instead of raising -- iterate and take the first
+        # canonical name instead of stringifying the whole object.
+        f.name: next(iter(raw.dimensions))
+        for f in dataclasses.fields(cls)
+        # getattr, not cls.__dict__.get: a ParameterField declared on an
+        # abstract parent (e.g. AbstractMultipolePotential's m_tot/r_s,
+        # inherited by MultipolePotential) isn't in the subclass's own
+        # __dict__, but getattr still finds it via the MRO.
+        if isinstance(raw := getattr(cls, f.name, None), ParameterField)
+    }
 
 
 def _internal_unit_system() -> u.AbstractUnitSystem:
@@ -55,12 +84,15 @@ def _closed_form_plummer_potential(
 
 
 def test_native_parameter_dimensions_matches_known_galax_classes() -> None:
-    assert native_parameter_dimensions("PlummerPotential") == {
+    assert _native_parameter_dimensions("PlummerPotential") == {
         "m_tot": "mass",
         "r_s": "length",
     }
-    assert native_parameter_dimensions("NFWPotential") == {"m": "mass", "r_s": "length"}
-    assert native_parameter_dimensions("TriaxialNFWPotential") == {
+    assert _native_parameter_dimensions("NFWPotential") == {
+        "m": "mass",
+        "r_s": "length",
+    }
+    assert _native_parameter_dimensions("TriaxialNFWPotential") == {
         "m": "mass",
         "r_s": "length",
         "q1": "dimensionless",
@@ -69,7 +101,7 @@ def test_native_parameter_dimensions_matches_known_galax_classes() -> None:
 
 
 def test_native_parameter_dimensions_returns_none_for_non_galax_name() -> None:
-    assert native_parameter_dimensions("NotAPotential") is None
+    assert _native_parameter_dimensions("NotAPotential") is None
 
 
 def test_native_parameter_dimensions_uses_one_name_for_an_aliased_type() -> None:
@@ -79,49 +111,43 @@ def test_native_parameter_dimensions_uses_one_name_for_an_aliased_type() -> None
     # silently treats as dimensionless instead of raising. Regression guard
     # for LogarithmicPotential's v_c, whose declared dimensions="speed"
     # comes back from galax with both aliases attached.
-    dimensions = native_parameter_dimensions("LogarithmicPotential")
+    dimensions = _native_parameter_dimensions("LogarithmicPotential")
     assert dimensions == {"v_c": "speed", "r_s": "length"}
 
 
-def test_rescale_exponent_matches_confirmed_dimensions() -> None:
-    assert _rescale_exponent("mass") == pytest.approx(1.0)
-    assert _rescale_exponent("length") == pytest.approx(0.0)
-    assert _rescale_exponent("speed") == pytest.approx(0.5)
-    assert _rescale_exponent("dimensionless") == pytest.approx(0.0)
-    assert _rescale_exponent("angle") == pytest.approx(0.0)
+def test_supported_galax_types_covers_every_curated_class_parameter() -> None:
+    # Every parameter in every curated class's table must actually be one of
+    # that class's own native ParameterFields, with a matching dimension --
+    # catches typos and stale entries if galax ever renames a parameter or
+    # changes a dimension.
+    for galax_type, parameters in _SUPPORTED_GALAX_TYPES.items():
+        dimensions = _native_parameter_dimensions(galax_type)
+        assert dimensions is not None, f"{galax_type} is not a real galax class"
+        assert set(parameters) == set(dimensions), galax_type
+        for name, parameter in parameters.items():
+            assert parameter.dimension == dimensions[name], f"{galax_type}.{name}"
 
 
-def test_rescale_exponent_refuses_power_until_something_needs_it() -> None:
-    # No native galax.potential parameter currently has dimension "power";
-    # deliberately not pre-added on architectural grounds alone, following
-    # the same discipline the Omega/frequency case established.
-    with pytest.raises(NotImplementedError, match="'power'"):
-        _rescale_exponent("power")
-
-
-def test_rescale_exponent_refuses_to_guess_for_time_bearing_dimensions() -> None:
-    # "frequency" has the same time-power as "speed", but a bar's pattern
-    # speed (galax.potential.MonariEtAl2016BarPotential's Omega) must NOT
-    # scale with mass, unlike a speed parameter that sets the potential's
-    # amplitude (LogarithmicPotential's v_c). Dimension alone can't tell
-    # these apart, so both "time" and "frequency" must raise rather than
-    # silently pick a side.
-    with pytest.raises(NotImplementedError, match="'time'"):
-        _rescale_exponent("time")
-    with pytest.raises(NotImplementedError, match="'frequency'"):
-        _rescale_exponent("frequency")
-
-
-def test_bar_pattern_speed_rescale_refuses_to_guess() -> None:
-    assert native_parameter_dimensions("MonariEtAl2016BarPotential")["Omega"] == (
-        "frequency"
-    )
+def test_bar_pattern_speed_rescale_stays_fixed() -> None:
+    # MonariEtAl2016BarPotential's Omega (bar pattern speed) and v0 (sets
+    # the potential's amplitude) share the same "frequency"/"speed"
+    # time-power but play opposite roles under rescale -- verified against
+    # galax's own prefactor formula (alpha * (v0**2/3) * (R0/Rb)**3).
     component = GalaxPotentialComponent(
         galax_type="MonariEtAl2016BarPotential",
-        parameters={"Omega": Quantity(40.0, "km/(s kpc)")},
+        parameters={
+            "alpha": Quantity(0.02, ""),
+            "R0": Quantity(8.0, "kpc"),
+            "v0": Quantity(220.0, "km/s"),
+            "Rb": Quantity(3.5, "kpc"),
+            "phi_b": Quantity(25.0, "deg"),
+            "Omega": Quantity(40.0, "km/(s kpc)"),
+        },
     )
-    with pytest.raises(NotImplementedError, match="Omega"):
-        component.rescale(2.0)
+    rescaled = component.rescale(4.0)
+    assert rescaled.parameters["Omega"].ustrip("km/(s kpc)") == pytest.approx(40.0)
+    assert rescaled.parameters["v0"].ustrip("km/s") == pytest.approx(440.0)
+    assert rescaled.parameters["alpha"].ustrip("") == pytest.approx(0.02)
 
 
 def test_logarithmic_potential_rescale_scales_v_c_by_sqrt_mass_scale() -> None:
@@ -145,32 +171,82 @@ def test_logarithmic_potential_rescale_scales_v_c_by_sqrt_mass_scale() -> None:
     assert float(phi_after / phi_before) == pytest.approx(4.0)
 
 
-def test_multipole_rescale_finds_a_field_inherited_from_an_abstract_parent() -> None:
-    # MultipolePotential doesn't redeclare m_tot/r_s itself -- they're
-    # ParameterFields on its abstract parent, AbstractMultipolePotential.
-    # Regression guard: an earlier version looked parameters up via
-    # `galax_cls.__dict__.get(name)`, which only sees a class's own
-    # attributes and silently missed anything declared on a parent class.
-    assert "m_tot" in gp.AbstractMultipolePotential.__dict__
-    assert "m_tot" not in gp.MultipolePotential.__dict__
+def test_lmj09_logarithmic_potential_rescale_scales_v_c_by_sqrt_mass_scale() -> None:
+    # Same amplitude role as LogarithmicPotential's v_c
+    # (Phi = 0.5 * v_c**2 * ln(r_s**2 + r2), r2 built from the shape
+    # parameters q1/q2/q3/phi, which rescale holds fixed).
+    component = GalaxPotentialComponent(
+        galax_type="LMJ09LogarithmicPotential",
+        parameters={
+            "v_c": Quantity(200.0, "km/s"),
+            "r_s": Quantity(1.0, "kpc"),
+            "q1": Quantity(1.0, ""),
+            "q2": Quantity(0.9, ""),
+            "q3": Quantity(0.8, ""),
+            "phi": Quantity(0.0, "rad"),
+        },
+    )
+    rescaled = component.rescale(4.0)
+    assert rescaled.parameters["v_c"].ustrip("km/s") == pytest.approx(400.0)
+
+    unit_system = _internal_unit_system()
+    xyz = Quantity(jnp.array([3.0, 0.0, 0.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    phi_before = component.to_galax(unit_system).potential(xyz, t).ustrip("kpc2 / Myr2")
+    phi_after = rescaled.to_galax(unit_system).potential(xyz, t).ustrip("kpc2 / Myr2")
+    assert float(phi_after / phi_before) == pytest.approx(4.0)
+
+
+def test_harmonic_oscillator_rescale_scales_omega_by_sqrt_mass_scale() -> None:
+    # No mass-dimensioned native parameter at all (Phi = 0.5*|omega*x|**2,
+    # same amplitude role as LogarithmicPotential's v_c); rescale must
+    # scale omega so that Phi itself scales linearly with mass_scale.
+    component = GalaxPotentialComponent(
+        galax_type="HarmonicOscillatorPotential",
+        parameters={"omega": Quantity(0.5, "1/Myr")},
+    )
+    rescaled = component.rescale(4.0)
+    assert rescaled.parameters["omega"].ustrip("1/Myr") == pytest.approx(1.0)
+
+    unit_system = _internal_unit_system()
+    xyz = Quantity(jnp.array([3.0, 0.0, 0.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    phi_before = component.to_galax(unit_system).potential(xyz, t).ustrip("kpc2 / Myr2")
+    phi_after = rescaled.to_galax(unit_system).potential(xyz, t).ustrip("kpc2 / Myr2")
+    assert float(phi_after / phi_before) == pytest.approx(4.0)
+
+
+def test_rescale_finds_a_field_inherited_from_an_abstract_parent() -> None:
+    # MN3ExponentialPotential doesn't redeclare m_tot itself -- it's a
+    # ParameterField on an abstract parent. Regression guard: an earlier
+    # version looked parameters up via `galax_cls.__dict__.get(name)`,
+    # which only sees a class's own attributes and silently missed
+    # anything declared on a parent class.
+    cls = gp.MN3ExponentialPotential
+    assert "m_tot" not in cls.__dict__
+    assert isinstance(getattr(cls, "m_tot", None), ParameterField)
+    component = GalaxPotentialComponent(
+        galax_type="MN3ExponentialPotential",
+        parameters={
+            "m_tot": Quantity(1e10, "Msun"),
+            "h_R": Quantity(3.0, "kpc"),
+            "h_z": Quantity(0.3, "kpc"),
+        },
+    )
+    rescaled = component.rescale(4.0)
+    assert rescaled.parameters["m_tot"].ustrip("Msun") == pytest.approx(4e10)
+    assert rescaled.parameters["h_R"].ustrip("kpc") == pytest.approx(3.0)
+
+
+def test_rescale_rejects_an_unsupported_galax_type() -> None:
+    # MultipolePotential is excluded from _SUPPORTED_GALAX_TYPES (its
+    # required l_max: int hyperparameter isn't representable as a scalar
+    # Quantity); rescale() should say so clearly, not KeyError.
     component = GalaxPotentialComponent(
         galax_type="MultipolePotential",
         parameters={"m_tot": Quantity(1e10, "Msun"), "r_s": Quantity(1.0, "kpc")},
     )
-    rescaled = component.rescale(4.0)
-    assert rescaled.parameters["m_tot"].ustrip("Msun") == pytest.approx(4e10)
-    assert rescaled.parameters["r_s"].ustrip("kpc") == pytest.approx(1.0)
-
-
-def test_rescale_raises_clearly_for_a_non_parameter_field_native_argument() -> None:
-    # MultipolePotential.l_max is a plain int hyperparameter, not a
-    # ParameterField/Quantity -- rescale() can't know how to scale it and
-    # should say so clearly rather than a bare KeyError.
-    component = GalaxPotentialComponent(
-        galax_type="MultipolePotential",
-        parameters={"m_tot": Quantity(1e10, "Msun"), "l_max": Quantity(2, "")},
-    )
-    with pytest.raises(NotImplementedError, match="l_max"):
+    with pytest.raises(NotImplementedError, match="MultipolePotential"):
         component.rescale(2.0)
 
 
@@ -204,6 +280,26 @@ def test_from_settings_rejects_unrecognized_type() -> None:
     ):
         AbstractPotentialComponent.from_settings(
             {"type": "NotAPotential", "include": True, "parameters": {}},
+            {},
+            unit_system,
+            _NO_COSMOLOGICAL_PARAMETERS,
+            path="potential.dh",
+        )
+
+
+def test_from_settings_rejects_a_real_but_uncurated_galax_class() -> None:
+    # MultipolePotential is a real galax.potential class -- unlike
+    # test_from_settings_rejects_unrecognized_type's made-up name -- but
+    # isn't in _SUPPORTED_GALAX_TYPES (its required l_max: int
+    # hyperparameter isn't representable by this module's scalar-Quantity
+    # schema). "Any AbstractPotential subclass" would have wrongly
+    # accepted this and failed later, confusingly, at to_galax() instead.
+    unit_system = _internal_unit_system()
+    with pytest.raises(
+        ValueError, match="Unsupported potential.dh.type 'MultipolePotential'"
+    ):
+        AbstractPotentialComponent.from_settings(
+            {"type": "MultipolePotential", "include": True, "parameters": {}},
             {},
             unit_system,
             _NO_COSMOLOGICAL_PARAMETERS,

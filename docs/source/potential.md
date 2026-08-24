@@ -12,12 +12,20 @@ own module docstring for exactly what raises `NotImplementedError`.
 
 ## Component types
 
-TNT potential components are backed by [`galax`](https://github.com/GalacticDynamics/galax),
-a JAX library for galactic dynamics. `potential.<name>.type` should name a
-`galax.potential` class directly -- `"NFWPotential"`, `"PlummerPotential"`,
-`"TriaxialNFWPotential"`, and so on; see `galax.potential`'s
-[`__init__.py`](https://github.com/GalacticDynamics/galax/blob/247a33556809398f2f7c34c1c3fee74f4e46ba45/src/galax/potential/__init__.py)
-for every class it currently provides.
+TNT potential components are backed by [`galax`](https://github.com/GalacticDynamics/galax), a JAX library for galactic dynamics. `potential.<name>.type` names one of a
+curated set of 25 `galax.potential` classes (e.g. `"NFWPotential"`);
+see `tnt.potential._SUPPORTED_GALAX_TYPES` for the exact list.
+
+Some `galax.potential` classes are not supported: abstract/base classes;
+pre-packaged multi-component bundles with no free parameters of their own,
+like `MilkyWayPotential` (its `disk`/`bulge`/`halo`/`nucleus` fields are
+themselves sub-potentials, not `Quantity` parameters); wrapper/transform
+decorators needing a required nested potential object; and classes needing
+a required non-`Quantity` hyperparameter (e.g. `MultipolePotential`'s
+`l_max: int`) -- none representable by a component's scalar
+`parameters.<name>.value` schema. Each curated class also carries a
+mass-rescale exponent per native parameter (see [What's implemented
+today](#whats-implemented-today)).
 
 In addition to `galax` potential components, TNT provides MGE-based
 component types, `"triaxial_light_mge"` and `"triaxial_mass_mge"` (see
@@ -118,17 +126,20 @@ mass-calibrated MGE) are TNT's own parameter names for these two types.
 
 ## What's implemented today
 
-- **Any native-galax-parameterized type** (`parameterization` omitted): the
-  component resolves and `to_galax()` (building the actual `galax`
-  potential object) works for every `galax.potential` class -- verified
-  against `PlummerPotential`, `NFWPotential`, and `TriaxialNFWPotential`.
-  `rescale()` works the same way for parameters with a confirmed
-  mass-rescale exponent (mass, length, angle, dimensionless, speed --
-  verified including `LogarithmicPotential`'s velocity-parameterized
-  `v_c`); each addition to that confirmed set requires the same kind of
-  direct verification, since e.g. a bar's pattern speed
-  (`MonariEtAl2016BarPotential`'s `Omega`) shares `v_c`'s dimension but has
-  to stay fixed under a mass rescale rather than scale with it.
+- **Every curated type** (`parameterization` omitted): the component
+  resolves and `to_galax()` (building the actual `galax` potential object)
+  works for every class in `tnt.potential._SUPPORTED_GALAX_TYPES` -- 25
+  classes, from ordinary single-component potentials (`PlummerPotential`,
+  `NFWPotential`, `HernquistPotential`, ...) to triaxial and bar potentials.
+  `rescale()` works for every native parameter of every curated class,
+  each with an individually confirmed mass-rescale exponent -- curated
+  rather than derived from dimension, since dimension alone doesn't
+  determine a parameter's role: `MonariEtAl2016BarPotential`'s `Omega`
+  (bar pattern speed, stays fixed) and `v0`
+  (sets the potential's amplitude, scales) share the same time-power but
+  play opposite roles. Adding a new class to the curated set requires the
+  same kind of direct verification against `galax`'s own potential formula
+  for every one of its parameters.
 - **NFW's `concentration_m200` parameterization**: implemented and verified
   against `galax`'s own enclosed-mass function. Converts a concentration `c`
   and $M_{200c}$ into native `(m, r_s)` via the critical-density definition
