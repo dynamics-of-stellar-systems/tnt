@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 
 import galax.potential as gp
+import jax
 import jax.numpy as jnp
 import pytest
 import unxt as u
@@ -250,6 +251,22 @@ def test_rescale_rejects_an_unsupported_galax_type() -> None:
         component.rescale(2.0)
 
 
+def test_galax_type_is_a_static_field_under_direct_jit() -> None:
+    # galax_type is a plain str, not an array -- without eqx.field(static=True)
+    # it's a dynamic PyTree leaf, and jax.jit (unlike eqx.filter_jit, which
+    # already excludes non-array leaves) fails tracing a str leaf.
+    component = GalaxPotentialComponent(
+        galax_type="PlummerPotential",
+        parameters={"m_tot": Quantity(1e10, "Msun"), "r_s": Quantity(1.0, "kpc")},
+    )
+
+    @jax.jit
+    def rescaled_mass(c: GalaxPotentialComponent) -> Quantity:
+        return c.rescale(2.0).parameters["m_tot"]
+
+    assert rescaled_mass(component).ustrip("Msun") == pytest.approx(2e10)
+
+
 def test_raw_parameter_dimensions_covers_all_three_sources() -> None:
     # Native galax type, no parameterization.
     assert raw_parameter_dimensions("PlummerPotential", None) == {
@@ -396,9 +413,13 @@ def test_nfw_concentration_m200_raw_dimensions() -> None:
 
 
 def test_solve_nfw_concentration_recovers_a_known_c() -> None:
-    # rel=1e-5, not tighter: this module runs in float32, and _nfw_g's
-    # log(1+c) - c/(1+c) loses several digits to cancellation for small c.
-    for c in (0.1, 1.0, 5.0, 8.0, 20.0, 100.0):
+    # rel=1e-5, not tighter: this module runs in float32. _nfw_g uses
+    # log1p(c), not log(1 + c), which matters down to c ~ 1e-2 -- below
+    # that, ln(1+c) - c/(1+c) is a subtraction of two quantities that are
+    # themselves both ~ c, so cancellation remains even with log1p (that
+    # regime is far below any physically realistic halo concentration
+    # anyway, so not worth a cancellation-safe series expansion here).
+    for c in (0.01, 0.1, 1.0, 5.0, 8.0, 20.0, 100.0):
         target = c**3 / _nfw_g(c)
         assert float(_solve_nfw_concentration(target)) == pytest.approx(c, rel=1e-5)
 

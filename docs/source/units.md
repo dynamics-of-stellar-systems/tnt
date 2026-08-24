@@ -85,7 +85,9 @@ Configuration preparation dimensionally validates:
 - `system_attributes.distance` as length;
 - explicit kinematics histogram `width` and `center` as speed;
 - Gauss-Hermite systematic uncertainties `v` and `sigma` as speed;
-- Plummer parameters `m` and `a` as mass and length; and
+- each configured potential component's raw parameters by their resolved
+  dimension (e.g. `PlummerPotential`'s `m_tot` and `r_s` as mass and
+  length -- see [Potential](potential.md)); and
 - light-MGE potential parameter `ml` as mass divided by power.
 
 It does not convert these quantities or remove their units. Each per-run

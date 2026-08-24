@@ -161,8 +161,8 @@ mass-calibrated MGE) are TNT's own parameter names for these two types.
   potential, so building one needs a custom `galax.potential.AbstractPotential`
   subclass, the same difficulty tier as `AbstractMGE.get_projected_mass`'s
   from-scratch implementation. The MGE `stars` component's own viewing-geometry
-  parameterization (`q_min`, `p_min`, `u` -> `theta`, `phi`, `psi`) needs a
-  formula from the triaxial-Schwarzschild-modeling / DYNAMITE-successor
-  literature that hasn't been confirmed yet.
+  parameterization (`q`, `p`, `u` -> `theta`, `phi`, `psi`) needs a formula
+  from the triaxial-Schwarzschild-modeling / DYNAMITE-successor literature
+  that hasn't been confirmed yet.
 - **`Potential.generate_orbit_library`**: not implemented -- blocked on
   `tnt.orbit_library`, itself still a full scaffold.

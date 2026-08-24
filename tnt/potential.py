@@ -269,8 +269,12 @@ def _nfw_concentration_m200(
 
 
 def _nfw_g(c: Any) -> Any:
-    """`ln(1 + c) - c / (1 + c)`, NFW's enclosed-mass shape function."""
-    return jnp.log(1 + c) - c / (1 + c)
+    """`ln(1 + c) - c / (1 + c)`, NFW's enclosed-mass shape function.
+
+    `log1p(c)`, not `log(1 + c)`: for small `c`, `1 + c` loses precision
+    that `log1p` avoids by not forming that sum.
+    """
+    return jnp.log1p(c) - c / (1 + c)
 
 
 def _solve_nfw_concentration(target: Any) -> Any:
@@ -501,7 +505,12 @@ class AbstractPotentialComponent(eqx.Module):
 class GalaxPotentialComponent(AbstractPotentialComponent):
     """A component built directly from a named `galax.potential` class."""
 
-    galax_type: str
+    # static: a structural type identifier, not a value JAX transforms
+    # should trace -- without this, `jax.jit` directly over a component
+    # sees `galax_type` as a dynamic string leaf and fails (though
+    # `eqx.filter_jit`, which already excludes non-array leaves, works
+    # either way).
+    galax_type: str = eqx.field(static=True)
 
     @classmethod
     def _extra_fields(

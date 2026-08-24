@@ -416,6 +416,38 @@ Working through this list in the order recommended above. Addressed so far:
   different things in different classes, not just different things from
   "speed", which a dimension-keyed table could never have expressed
   correctly for both at once.
+- **Medium -- `galax_type` is a dynamic string PyTree leaf**: confirmed
+  directly -- `eqx.filter_jit` and `vmap` over the resulting `galax`
+  potential worked, but wrapping a `GalaxPotentialComponent` method in bare
+  `jax.jit` failed on the string leaf, exactly as described. Fixed with
+  `galax_type: str = eqx.field(static=True)`; a regression test
+  (`test_galax_type_is_a_static_field_under_direct_jit`) now `jax.jit`s a
+  `rescale()` call directly, confirmed failing before the fix and passing
+  after.
+- **Low -- `_nfw_g`'s numerical hygiene**: switched `log(1 + c)` to
+  `log1p(c)`. This only fixes precision lost forming `1 + c` before the
+  log, not the outer subtraction `log1p(c) - c/(1+c)`, which is still a
+  cancellation of two quantities both `~ c` for small `c` -- the fix moves
+  the regime where `_solve_nfw_concentration` round-trips to `rel=1e-5` from
+  `c >= 0.1` down to `c >= 0.01`, confirmed numerically (at `c = 1e-4`, the
+  old formula was off by >100%; the new one by ~0.1%, still short of
+  `rel=1e-5`). Realistic halo concentrations are nowhere near that regime,
+  so a fully cancellation-safe series expansion wasn't worth it here;
+  `test_solve_nfw_concentration_recovers_a_known_c` now covers down to
+  `c = 0.01` instead of `c = 0.1`.
+- **Documentation build (`-W`) failures**: the three broken internal links
+  were all same-page anchors (`#whats-implemented-today`,
+  `#mge-composite-types`) that MyST never generates without
+  `myst_heading_anchors` set -- added `myst_heading_anchors = 3` to
+  `conf.py` rather than removing the links, since they're legitimate
+  same-page navigation. Also fixed the doc-accuracy items from section 4:
+  `configuration.md`'s stale `nfw`/`plummer` type-name list (now points at
+  the curated `galax.potential` class set), `units.md`'s stale
+  Plummer-specific `m`/`a` dimension example (now `PlummerPotential`'s
+  actual native names, `m_tot`/`r_s`), and `potential.md`'s `q_min`/`p_min`
+  MGE viewing-geometry names (no longer matched any real field or
+  configuration -- corrected to `q`/`p`, matching `tnt/mge.py` and the
+  integration test fixture). `sphinx-build -E -b html -W` now passes.
 
 In response to section 8's questions directly:
 
@@ -432,10 +464,52 @@ In response to section 8's questions directly:
    (`_SUPPORTED_GALAX_TYPES`, 25 classes). Composite/precomposed/
    transformed/multipole classes stay unsupported; add a class only when a
    real use needs it, verified the same way as every class already there.
+   This also closes item 9 below: no curated class requires a
+   time-varying input -- every native `ParameterField` accepts a plain
+   constant `Quantity`, which is all TNT's schema ever supplies, so
+   nothing about the curated set is actually time-dependent in practice.
+4. **Is `M_200` specifically present-day `M_200c`, or must redshift/full
+   cosmology be represented?** Should eventually allow redshift, and the
+   extension is trivial: `rho_crit = 3 H**2 / (8 pi G)` doesn't change,
+   only which Hubble parameter goes in it -- so this is just replacing
+   `cosmological_parameters.H0` with a user-supplied `H(z)` at the halo's
+   own epoch, not a redshift/cosmology-model addition. Deferred rather than
+   built now; tracked in
+   [issue #28](https://github.com/dynamics-of-stellar-systems/tnt/issues/28).
+5. **Is uniform rescaling defined as scaling native NFW `m` at fixed `r_s`,
+   thereby changing `c` and `M_200`?** Yes -- that's the correct rescaling.
+   `rescale()` holds shape (`r_s`) fixed and scales only the mass-like
+   native parameter (`m`); `c`/`M_200` are then recomputed from the
+   rescaled `(m, r_s)` afterward (`_nfw_concentration_m200_inverse`), not
+   held fixed themselves. This is what lets a mass rescale reuse the same
+   integrated orbit library instead of re-running orbit integration for a
+   different concentration.
+6. **Must a mass MGE always have `mge_mass_scale`, or should its
+   file-defined mass be sufficient until optional rescaling?**
+   `mge_mass_scale` should always be present for mass-MGE components,
+   purely so the potential can still be rescaled later if desired --
+   `parameter_space_settings.potential_rescalings` needs a native
+   parameter to act on; without `mge_mass_scale`, a mass-MGE component
+   would have nothing for `rescale()` to scale.
+7. **Are the intended triaxial search coordinates `q,p,u`, `q_min,p_min,u`,
+   or viewing angles `theta,phi,psi`?** `q`/`p`/`u` will be the default
+   parameterization (confirmed against `tnt/mge.py` and the integration
+   test fixture -- `potential.md`'s incorrect `q_min`/`p_min` mention has
+   been corrected). An alternative parameterization via viewing angles
+   (`theta`/`phi`/`psi`, plus others not yet determined) will also be
+   supported once this is implemented. `q_min`/`p_min` don't correspond to
+   any real TNT concept -- unclear where that naming came from originally;
+   it shouldn't appear anywhere going forward.
+8. **Is float32 acceptable for production halo conversion and orbit
+   construction, or should TNT enable/use float64 for this boundary?**
+   Uncertain -- deferred until real orbit integration exists
+   (`tnt.orbit_library` is still fully scaffolded) so precision adequacy
+   can actually be measured rather than guessed. Revisit then.
+9. **Should time-dependent, transformed, multipole and composite galax
+   classes ever be configurable?** Already answered above (see item 3).
 
 Still open, not yet addressed: missing parameter-schema/physical-domain
 validation (now with a natural home to grow into --
-`_SUPPORTED_GALAX_TYPES`'s per-class parameter keys), the `galax_type`
-static-PyTree-field issue, the split parameterization metadata, the MGE
-`mge_mass_scale` design decision, and the documentation build failures.
+`_SUPPORTED_GALAX_TYPES`'s per-class parameter keys), the split
+parameterization metadata, and the MGE `mge_mass_scale` design decision.
 Working through these next in the recommended order.
