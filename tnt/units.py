@@ -10,6 +10,7 @@ from numbers import Real
 from typing import Any
 
 import unxt as u
+from unxt import Quantity
 
 from tnt.config_parsing import (
     _mapping,
@@ -222,6 +223,23 @@ def normalize_potential_settings(
                 f"{potential_path}.parameters",
             )
     return normalized
+
+
+def resolve_cosmological_parameters(
+    cosmological_parameters: Mapping[str, Any],
+) -> dict[str, Quantity]:
+    """Convert a resolved configuration's declared `cosmological_parameters`.
+
+    Preserved as `{value, unit}` by configuration preparation (see this
+    module's docstring); consumers that need cosmological context (e.g.
+    `tnt.potential`'s NFW `concentration_m200` parameterization, via `H0`)
+    use the resulting `Quantity`s directly and let `unxt` handle unit
+    conversion, rather than assuming a specific declared unit.
+    """
+    return {
+        name: Quantity(declared["value"], declared["unit"])
+        for name, declared in cosmological_parameters.items()
+    }
 
 
 def normalize_unitful_value(

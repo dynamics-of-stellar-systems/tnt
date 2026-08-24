@@ -52,7 +52,8 @@ from tnt.mge import LightMGE, MassMGE
 from tnt.orbit_library import AbstractOrbitDithering, AbstractOrbitSampler, OrbitLibrary
 
 ParameterizationConverter = Callable[
-    [dict[str, Quantity], AbstractUnitSystem, Mapping[str, Any]], dict[str, Quantity]
+    [dict[str, Quantity], AbstractUnitSystem, Mapping[str, Quantity]],
+    dict[str, Quantity],
 ]
 
 
@@ -214,7 +215,7 @@ def _resolve_unit(unit_system: AbstractUnitSystem, dimension: str) -> Any:
 def _nfw_concentration_m200(
     raw: dict[str, Quantity],
     unit_system: AbstractUnitSystem,
-    cosmological_parameters: Mapping[str, Any],
+    cosmological_parameters: Mapping[str, Quantity],
 ) -> dict[str, Quantity]:
     """Convert NFW's `(c, M_200)` parameterization to native `(m, r_s)`.
 
@@ -228,20 +229,18 @@ def _nfw_concentration_m200(
     float32 precision, and that the resulting `r_200` truly encloses a mean
     density of exactly `200 * rho_crit`.
     """
-    mass_unit = unit_system[u.dimension("mass")]
-    length_unit = unit_system[u.dimension("length")]
-    time_unit = unit_system[u.dimension("time")]
+    c = raw["c"]
+    m200 = raw["M_200"]
+    h0 = cosmological_parameters["H0"]
 
-    c = raw["c"].ustrip("")
-    m200 = raw["M_200"].ustrip(mass_unit)
-    h0 = float(cosmological_parameters["H0"])
-    g_newton = _G.ustrip(length_unit**3 / (mass_unit * time_unit**2))
-
-    rho_crit = 3 * h0**2 / (8 * jnp.pi * g_newton)
+    rho_crit = 3 * h0**2 / (8 * jnp.pi * _G)
     r200 = (3 * m200 / (4 * jnp.pi * 200 * rho_crit)) ** (1 / 3)
     r_s = r200 / c
-    m = m200 / _nfw_g(c)
-    return {"m": Quantity(m, mass_unit), "r_s": Quantity(r_s, length_unit)}
+    m = m200 / _nfw_g(c.ustrip(""))
+    return {
+        "m": m.to(unit_system[u.dimension("mass")]),
+        "r_s": r_s.to(unit_system[u.dimension("length")]),
+    }
 
 
 def _nfw_g(c: Any) -> Any:
@@ -275,7 +274,7 @@ def _solve_nfw_concentration(target: Any) -> Any:
 def _nfw_concentration_m200_inverse(
     native: dict[str, Quantity],
     unit_system: AbstractUnitSystem,
-    cosmological_parameters: Mapping[str, Any],
+    cosmological_parameters: Mapping[str, Quantity],
 ) -> dict[str, Quantity]:
     """Convert NFW's native `(m, r_s)` back to `(c, M_200)`.
 
@@ -292,20 +291,15 @@ def _nfw_concentration_m200_inverse(
     `(c, M_200)` genuinely differs from the original and must be recomputed
     here, not just carried through unchanged.
     """
-    mass_unit = unit_system[u.dimension("mass")]
-    length_unit = unit_system[u.dimension("length")]
-    time_unit = unit_system[u.dimension("time")]
+    m = native["m"]
+    r_s = native["r_s"]
+    h0 = cosmological_parameters["H0"]
 
-    m = native["m"].ustrip(mass_unit)
-    r_s = native["r_s"].ustrip(length_unit)
-    h0 = float(cosmological_parameters["H0"])
-    g_newton = _G.ustrip(length_unit**3 / (mass_unit * time_unit**2))
-
-    rho_crit = 3 * h0**2 / (8 * jnp.pi * g_newton)
-    target = m / (4 * jnp.pi * 200 * rho_crit / 3 * r_s**3)
+    rho_crit = 3 * h0**2 / (8 * jnp.pi * _G)
+    target = (m / (4 * jnp.pi * 200 * rho_crit / 3 * r_s**3)).ustrip("")
     c = _solve_nfw_concentration(target)
     m200 = m * _nfw_g(c)
-    return {"c": Quantity(c, ""), "M_200": Quantity(m200, mass_unit)}
+    return {"c": Quantity(c, ""), "M_200": m200.to(unit_system[u.dimension("mass")])}
 
 
 _PARAMETERIZATIONS: dict[str, dict[str, Parameterization]] = {
@@ -341,7 +335,7 @@ class AbstractPotentialComponent(eqx.Module):
         settings: Mapping[str, Any],
         mges: Mapping[str, LightMGE | MassMGE],
         unit_system: AbstractUnitSystem,
-        cosmological_parameters: Mapping[str, Any],
+        cosmological_parameters: Mapping[str, Quantity],
         *,
         path: str = "potential.<component>",
     ) -> AbstractPotentialComponent:
@@ -461,7 +455,7 @@ class AbstractPotentialComponent(eqx.Module):
         self,
         parameterization: str | None,
         unit_system: AbstractUnitSystem,
-        cosmological_parameters: Mapping[str, Any],
+        cosmological_parameters: Mapping[str, Quantity],
     ) -> dict[str, Quantity]:
         """This component's parameters in the resolved config's own parameterization.
 
@@ -526,7 +520,7 @@ class GalaxPotentialComponent(AbstractPotentialComponent):
         self,
         parameterization: str | None,
         unit_system: AbstractUnitSystem,
-        cosmological_parameters: Mapping[str, Any],
+        cosmological_parameters: Mapping[str, Quantity],
     ) -> dict[str, Quantity]:
         if parameterization is None:
             return self.parameters
@@ -637,7 +631,7 @@ class Potential(eqx.Module):
         settings: Mapping[str, Mapping[str, Any]],
         mges: Mapping[str, LightMGE | MassMGE],
         unit_system: AbstractUnitSystem,
-        cosmological_parameters: Mapping[str, Any],
+        cosmological_parameters: Mapping[str, Quantity],
     ) -> Self:
         """Build a `Potential` from a resolved configuration's `potential` section."""
         components: dict[str, AbstractPotentialComponent] = {}
@@ -707,7 +701,7 @@ def build_potential(
     potential: Mapping[str, Mapping[str, Any]],
     mges: Mapping[str, LightMGE | MassMGE],
     unit_system: AbstractUnitSystem,
-    cosmological_parameters: Mapping[str, Any],
+    cosmological_parameters: Mapping[str, Quantity],
 ) -> Potential:
     """Build the `Potential` from a resolved configuration's `potential` section.
 
@@ -733,7 +727,7 @@ def raw_potential_parameters(
     potential_settings: Mapping[str, Mapping[str, Any]],
     potential: Potential,
     unit_system: AbstractUnitSystem,
-    cosmological_parameters: Mapping[str, Any],
+    cosmological_parameters: Mapping[str, Quantity],
 ) -> dict[str, dict[str, Quantity]]:
     """Every included component's parameters, in the config's own parameterization.
 

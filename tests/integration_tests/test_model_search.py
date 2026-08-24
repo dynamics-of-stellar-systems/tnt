@@ -29,6 +29,7 @@ from tnt.model_iterator import ModelIterator
 from tnt.model_search_state import ModelSearchState
 from tnt.potential import Potential, _nfw_concentration_m200
 from tnt.run_config_log import RunConfigLog
+from tnt.units import resolve_cosmological_parameters
 
 # ---------------------------------------------------------------------------
 # Fakes standing in for OrbitLibrary / AbstractWeightSolver -- orbit
@@ -203,7 +204,9 @@ def test_model_iterator_reports_real_potential_in_its_own_parameterization(
     assert "dh.r_s" not in table.colnames
 
     unit_system = config.unit_systems.internal
-    h0 = resolved["cosmological_parameters"]["H0"]
+    cosmological_parameters = resolve_cosmological_parameters(
+        resolved["cosmological_parameters"]
+    )
     r_s_values = []
     m_over_mass_scale_values = []
     c_values = []
@@ -225,7 +228,7 @@ def test_model_iterator_reports_real_potential_in_its_own_parameterization(
                 "M_200": Quantity(row["dh.M_200"].to_value("Msun"), "Msun"),
             },
             unit_system,
-            {"H0": h0},
+            cosmological_parameters,
         )
         r_s_values.append(float(native["r_s"].ustrip("kpc")))
         m_over_mass_scale_values.append(float(native["m"].ustrip("Msun")) / mass_scale)

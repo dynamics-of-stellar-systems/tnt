@@ -57,7 +57,7 @@ from tnt.run_config_log import (
     RunManifestReference,
 )
 from tnt.spatial_binnings import build_spatial_binnings
-from tnt.units import normalize_potential_settings
+from tnt.units import normalize_potential_settings, resolve_cosmological_parameters
 from tnt.weight_solver import AbstractWeightSolver, OrbitWeights, build_weight_solver
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ class ModelIterator:
 
     potential_settings: Mapping[str, Mapping[str, Any]]
     unit_system: AbstractUnitSystem
-    cosmological_parameters: Mapping[str, Any]
+    cosmological_parameters: Mapping[str, Quantity]
     mges: Mapping[str, LightMGE | MassMGE]
     kinematic_data: Mapping[str, AbstractKinematics]
     population_data: Mapping[str, Populations]
@@ -146,11 +146,14 @@ class ModelIterator:
         potential_settings = normalize_potential_settings(
             config["potential"], unit_system
         )
+        cosmological_parameters = resolve_cosmological_parameters(
+            config["cosmological_parameters"]
+        )
 
         return cls(
             potential_settings=potential_settings,
             unit_system=unit_system,
-            cosmological_parameters=config["cosmological_parameters"],
+            cosmological_parameters=cosmological_parameters,
             mges=mges,
             kinematic_data=kinematic_data,
             population_data=population_data,
@@ -223,15 +226,13 @@ class ModelIterator:
         """
         _require_supported_model_processing_order(self.execution_settings)
         models = AllModels() if all_models is None else all_models
-        run_config_log = (
-            RunConfigLog() if run_config_log is None else run_config_log
-        )
+        run_config_log = RunConfigLog() if run_config_log is None else run_config_log
         if len(run_config_log) != models.n_iterations():
             raise ValueError(
                 "AllModels and RunConfigLog must describe the same number "
                 f"of iterations; received {models.n_iterations()} and "
                 f"{len(run_config_log)}, respectively."
-        )
+            )
         ensure_resume_compatible(
             self.critical_configuration,
             run_config_log.baseline_run_reference(

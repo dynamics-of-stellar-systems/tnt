@@ -255,7 +255,9 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
 
     unit_system = _internal_unit_system()
     c, m200 = 8.0, 1.0e12
-    h0 = 7.158985155319864e-05  # 70 km/s/Mpc, in this unit system's 1/Myr
+    h0 = Quantity(
+        7.158985155319864e-05, "1 / Myr"
+    )  # 70 km/s/Mpc, in this unit system's 1/Myr
 
     component = AbstractPotentialComponent.from_settings(
         {
@@ -277,8 +279,9 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
     assert recovered_m200 == pytest.approx(m200, rel=1e-6)
 
     # And r_200 itself must enclose a mean density of exactly 200 * rho_crit.
+    h0_bare = h0.ustrip("1 / Myr")
     g = float(Quantity(6.6743e-11, "m3 / (kg s2)").ustrip("kpc3 / (Msun Myr2)"))
-    rho_crit = 3 * h0**2 / (8 * jnp.pi * g)
+    rho_crit = 3 * h0_bare**2 / (8 * jnp.pi * g)
     mean_density = m200 / (4 / 3 * jnp.pi * r200**3)
     assert float(mean_density / rho_crit) == pytest.approx(200.0, rel=1e-5)
 
@@ -306,7 +309,9 @@ def test_solve_nfw_concentration_recovers_a_known_c() -> None:
 
 def test_nfw_concentration_m200_inverse_round_trips_the_forward_conversion() -> None:
     unit_system = _internal_unit_system()
-    h0 = 7.158985155319864e-05  # 70 km/s/Mpc, in this unit system's 1/Myr
+    h0 = Quantity(
+        7.158985155319864e-05, "1 / Myr"
+    )  # 70 km/s/Mpc, in this unit system's 1/Myr
     for c, m200 in ((3.0, 1.0e11), (8.0, 1.0e12), (20.0, 5.0e13)):
         raw = {"c": Quantity(c, ""), "M_200": Quantity(m200, "Msun")}
         native = _nfw_concentration_m200(raw, unit_system, {"H0": h0})
@@ -321,7 +326,7 @@ def test_nfw_concentration_m200_inverse_is_self_consistent_after_rescale() -> No
     # and scaling M_200), so the only checkable invariant is that inverting
     # and then re-converting forward reproduces the same rescaled (m, r_s).
     unit_system = _internal_unit_system()
-    h0 = 7.158985155319864e-05
+    h0 = Quantity(7.158985155319864e-05, "1 / Myr")
     raw = {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")}
     native = _nfw_concentration_m200(raw, unit_system, {"H0": h0})
 
@@ -351,7 +356,7 @@ def test_nfw_concentration_m200_inverse_is_self_consistent_after_rescale() -> No
 
 def test_raw_potential_parameters_uses_each_component_own_parameterization() -> None:
     unit_system = _internal_unit_system()
-    h0 = 7.158985155319864e-05
+    h0 = Quantity(7.158985155319864e-05, "1 / Myr")
     settings = {
         "bh": {
             "type": "PlummerPotential",

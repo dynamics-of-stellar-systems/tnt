@@ -304,7 +304,29 @@
   like this one that need `H0` can use it. `cosmological_parameters` is
   threaded from `Configuration` through `ModelIterator` (a stored field, set
   in `from_configuration`) into `build_potential`, mirroring how
-  `unit_system` is already threaded. Hand-maintained dimension tables now
+  `unit_system` is already threaded. Since configuration preparation now
+  preserves declared quantities as `{value, unit}` rather than stripping
+  them (see the units-handling entries above), `ModelIterator.from_configuration`
+  converts `cosmological_parameters` into `Quantity`s once via
+  `tnt.units.resolve_cosmological_parameters` -- in `tnt.units`, not
+  `tnt.potential`, since it's generic declared-quantity conversion with no
+  potential-specific knowledge, matching `normalize_unitful_value`/
+  `normalize_potential_settings`'s existing home rather than the opposite
+  direction (`tnt.units` importing `raw_parameter_dimensions` from
+  `tnt.potential`, which *does* need `tnt.potential`'s own domain
+  knowledge -- galax `ParameterField` metadata, the parameterization
+  registry -- and couldn't move the other way).
+  `_nfw_concentration_m200`/its inverse do their entire calculation in
+  `Quantity` arithmetic rather than eagerly stripping every input to a bare
+  float in one specific unit -- `unxt` composes/converts units automatically
+  through the whole chain (verified: mixing `H0` in `km / (s Mpc)` with `_G`
+  in `m3 / (kg s2)` and `M_200` in `Msun` still gives the correct `r_s`/`m`
+  once converted to `unit_system`'s units at the very end), so `H0` works in
+  whatever unit it's declared in, not just the internal unit system's.
+  Bare-number stripping only remains where a library function isn't
+  `Quantity`-aware (`_nfw_g`'s `jnp.log`) or where `_solve_nfw_concentration`'s
+  bisection needs a plain number to compare against. Hand-maintained
+  dimension tables now
   cover only non-native parameterizations and the two MGE composite types'
   own parameters
   (`tnt.potential.PARAMETERIZATION_RAW_DIMENSIONS`/`_MGE_RAW_DIMENSIONS`),
