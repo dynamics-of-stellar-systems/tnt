@@ -84,6 +84,24 @@
   generator and potential construction, leaving the resolved configuration
   unchanged. Values without a scientific runtime object, currently `H0` and
   system distance, remain declared quantities in configuration data.
+- `tnt.configuration_compatibility._critical_configuration` calls
+  `normalize_configuration_quantities`, which raises plain `TypeError`/
+  `ValueError` on malformed unit-bearing fields rather than
+  `ConfigurationCompatibilityError`. A field the write-time validator doesn't
+  cover (e.g. `spatial_binnings`, since `ProjectedBinning.from_settings` owns
+  its validation at construction instead) can pass preparation and later break
+  resume-compatibility checking with an undocumented exception type. Known;
+  not patched locally, since redefining "run" so archiving only happens after
+  a configuration is fully proven constructible (tracked in issue #27) removes
+  the pathway entirely.
+- Prep-time validation and construction-time conversion don't cover the same
+  fields consistently, and this isn't one shared policy: `spatial_binnings`
+  has no prep-time check at all (construction owns it exclusively);
+  kinematics histogram and systematic-uncertainty fields are checked at both
+  prep time and construction time, independently; potential parameters are
+  checked at prep time and converted once, early, in
+  `ModelIterator.from_configuration()`, before `Potential.from_settings` runs.
+  Three different patterns for the same nominal split.
 - MGE contents and quantities inside observational files are deliberately
   deferred to the object-construction/data-loading phase. Configuration
   preparation does not open those files. `tnt.kinematics.build_kinematics`
