@@ -343,3 +343,55 @@ GitHub still reports no reviews, inline comments or CI runs. The PR is mergeable
 - Should time-dependent, transformed, multipole and composite galax classes ever be configurable?
 
 The best path is focused correction rather than a wholesale rewrite: preserve the overall runtime-object layering, but make parameter metadata a coherent registry, settle log/physical coordinates, and rebase onto PR #24 before proceeding.
+
+## Response (in progress)
+
+Working through this list in the order recommended above. Addressed so far:
+
+- **Rebased onto merged PR #24** (recommendation 6). Two real conflicts
+  resolved (`tnt/model_iterator.py`, `tnt/units.py`), both from #24
+  restructuring the same functions this PR touches -- see commit history
+  for the resolution.
+- **High -- PR #24 cannot be combined mechanically**: confirmed exactly as
+  described. `cosmological_parameters.H0` now arrives as `{value, unit}`
+  instead of a bare float once #24's declarative-preservation lands, and
+  `_nfw_concentration_m200`'s `float(cosmological_parameters["H0"])` broke
+  on it immediately after rebasing. Fixed by converting
+  `cosmological_parameters` into `Quantity`s once, in
+  `ModelIterator.from_configuration` (`tnt.units.resolve_cosmological_parameters`,
+  mirroring how `potential_settings` is already prepared), and rewriting
+  `_nfw_concentration_m200`/its inverse to do the whole calculation in
+  `Quantity` arithmetic rather than eagerly stripping every input to a bare
+  float in one specific unit. `H0` now works in whatever unit it's declared
+  in, not just the internal system's -- verified directly before
+  rewriting the functions.
+- **Critical -- logarithmic coordinates**: confirmed, reproduced exactly as
+  described (`log10(M_BH/Msun)=5` built as literally `5 Msun`). Resolved by
+  removing `logarithmic` entirely for now rather than patching the missing
+  exponentiation step: `GridSearchParameterGenerator`, the only generator
+  that could meaningfully consume a log-scaled search range, isn't
+  implemented, so this was half-finished machinery for a feature with no
+  working consumer. `logarithmic` search-coordinate representation is also
+  a simpler instance of the same open question the cross-component "prior"
+  concept (issue #25) needs to answer, so we're deferring it to be designed
+  alongside that rather than resurrecting the current half-implementation.
+  This also fixes the example configuration's `dh.M_200`, which was marked
+  logarithmic while declaring a plain physical value (`1e12`) -- exactly
+  the mixed-convention inconsistency this section 8 question flagged.
+
+In response to section 8's questions directly:
+
+1. **Does `logarithmic: true` mean values are stored as log10 coordinates?**
+   Moot now that it's removed, but for the record: yes, that reading was
+   correct. Going forward, every value in the configuration should be
+   assumed physical, never logged -- log-space search coordinates, if and
+   when they return, are the parameter generator's own internal concern
+   (see above), not something the rest of the configuration ever sees.
+2. **Should `AllModels` report physical values, log coordinates, or both?**
+   Physical values only.
+
+Still open, not yet addressed: the "any galax potential class" configuration
+contract, missing parameter-schema/physical-domain validation, the
+`galax_type` static-PyTree-field issue, the split parameterization metadata,
+the MGE `mge_mass_scale` design decision, and the documentation build
+failures. Working through these next in the recommended order.
