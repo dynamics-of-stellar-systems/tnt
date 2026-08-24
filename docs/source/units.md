@@ -98,11 +98,15 @@ bytes, but its declarations survive after defaults have been applied.
 
 Runtime constructors convert the settings they consume. Kinematics builders
 convert explicit histogram width/center and Gauss-Hermite velocity systematic
-uncertainties. `ModelIterator.from_configuration()` creates one canonical
-internal-unit copy of potential parameters for both the parameter generator
-and potential construction, so those consumers cannot interpret the same
-search coordinates differently. The resolved configuration itself remains
-unchanged. `ModelIterator.from_configuration()` converts
+uncertainties. Potential parameters are different: they keep their own
+declared unit all the way through `AbstractParameterGenerator` and
+`Potential` construction -- nothing coerces them into a shared internal unit
+system, since `galax`'s own potential classes already convert generically at
+evaluation time. Configuration preparation still validates that a declared
+unit's *dimension* is correct (as listed above), but that check is against
+each dimension's own fixed reference unit, not the configured internal unit
+system (see [Potential](potential.md)). The resolved configuration itself
+remains unchanged. `ModelIterator.from_configuration()` converts
 `cosmological_parameters`, including `H0`, into `Quantity` objects for runtime
 consumers such as NFW's `concentration_m200` parameterization. System distance
 remains a declared quantity until a runtime consumer needs it; compatibility

@@ -155,7 +155,7 @@ mass-calibrated MGE) are TNT's own parameter names for these two types.
   (converting the recovered `(c, M_200)` forward again reproduces the same
   rescaled `(m, r_s)`), since there's no independent closed-form answer to
   check against.
-- **The two MGE composite types**: `from_settings` resolves the component
+- **The two MGE composite types**: `resolve()` resolves the component
   and its named MGE, but `to_galax()` raises `NotImplementedError` -- no
   native `galax.potential` class exists for a sum-of-triaxial-Gaussians
   potential, so building one needs a custom `galax.potential.AbstractPotential`

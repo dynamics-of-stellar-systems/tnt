@@ -106,15 +106,18 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     parameter_space_settings = resolved["parameter_space_settings"]
     assert parameter_space_settings["generator_type"] == "SinglePoint"
 
-    captured_settings: list[Any] = []
+    captured_parameter_values: list[Any] = []
     real_build_potential = model_iterator_module.build_potential
 
     def spying_build_potential(
-        settings: Any, mges: Any, unit_system: Any, cosmological_parameters: Any
+        resolved: Any,
+        parameter_values: Any,
+        unit_system: Any,
+        cosmological_parameters: Any,
     ) -> Potential:
-        captured_settings.append(settings)
+        captured_parameter_values.append(parameter_values)
         return real_build_potential(
-            settings, mges, unit_system, cosmological_parameters
+            resolved, parameter_values, unit_system, cosmological_parameters
         )
 
     monkeypatch.setattr(
@@ -156,14 +159,15 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     best = models.best("kinchi2")
     assert best["kinchi2"] == pytest.approx(min(models.table["kinchi2"]))
 
-    # _settings_with_parameters overlaid SinglePoint's proposed values onto
-    # the shared runtime potential settings without disturbing anything else.
-    # ModelIterator converts the preserved declarations into internal parameter
-    # coordinates once for both the generator and potential construction.
-    stars_ml = captured_settings[0]["stars"]["parameters"]["ml"]
-    assert stars_ml["value"] == pytest.approx(5.0)
-    assert stars_ml["fixed"] is False
-    assert stars_ml["generator_settings"]["upper_bound"] == pytest.approx(9.0)
+    # SinglePoint proposes ml as a Quantity, in its declared unit -- resolved
+    # config still carries fixed/generator_settings unmodified, since
+    # ModelIterator no longer overlays proposed values into a settings-shaped
+    # blob (see tnt.potential's module docstring).
+    stars_ml_settings = resolved["potential"]["stars"]["parameters"]["ml"]
+    assert stars_ml_settings["fixed"] is False
+    assert stars_ml_settings["generator_settings"]["upper_bound"] == pytest.approx(9.0)
+    stars_ml_value = captured_parameter_values[0]["stars"]["ml"]
+    assert stars_ml_value.ustrip("Msun / Lsun") == pytest.approx(5.0)
 
 
 def test_model_iterator_reports_real_potential_in_its_own_parameterization(

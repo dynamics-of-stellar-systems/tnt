@@ -12,6 +12,16 @@ physical dimensions read directly from `_SUPPORTED_GALAX_TYPES` (see
 registered conversion from some other raw parameter convention into those
 same native fields.
 
+Each parameter keeps its own declared unit all the way through
+construction -- `Potential.resolve`/`build` never coerce it into a shared
+internal unit system (`galax`'s own `ParameterField` machinery already
+converts generically at evaluation time; see `ResolvedPotentialComponent.build`).
+Resolving a component's static structure (`type`/`parameterization`/`mge`)
+is split from building it at a given point in parameter space
+(`Potential.resolve`/`Potential.build`), so a caller building many
+`Potential`s from the same configuration -- e.g. `ModelIterator`, once per
+proposed point -- resolves once and reuses the result.
+
 This module is filled in incrementally, one object at a time -- the same
 approach already used for `ProjectedBinning`. `Potential.generate_orbit_library`
 and the two MGE composite components' `to_galax` remain `NotImplementedError`.
@@ -20,7 +30,7 @@ and the two MGE composite components' `to_galax` remain `NotImplementedError`.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, ClassVar, NamedTuple, Self
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple, Self
 
 import equinox as eqx
 import galax.potential
@@ -30,15 +40,15 @@ from unxt import AbstractUnitSystem, Quantity
 
 from tnt.config_parsing import (
     _mapping,
-    _number,
-    _required,
-    _required_mapping,
     _required_string,
     _resolve_typed_reference,
     _string,
 )
 from tnt.mge import LightMGE, MassMGE
 from tnt.orbit_library import AbstractOrbitDithering, AbstractOrbitSampler, OrbitLibrary
+
+if TYPE_CHECKING:
+    from tnt.parameter_generator import ParameterSet
 
 ParameterizationConverter = Callable[
     [dict[str, Quantity], AbstractUnitSystem, Mapping[str, Quantity]],
@@ -180,21 +190,27 @@ _SUPPORTED_GALAX_TYPES: dict[str, dict[str, NativeParameter]] = {
 
 # Hand-declared raw parameter dimensions for the two TNT MGE composite
 # types. `triaxial_mass_mge`'s own mass parameter is `mge_mass_scale`, a
-# pure multiplicative scale factor with no physical unit of its own
-# (dimensionless, so it has no entry here); it still declares `ml` so that
-# a config mistakenly setting one on a mass-MGE component gets normalized
-# as mass_to_light, letting `_validate_potential` raise the more specific
-# "ml is invalid for a mass MGE potential" error.
+# pure multiplicative scale factor -- dimensionless, but still given an
+# explicit entry (not omitted) so `_validate_parameter_units` can reject a
+# stray declared `unit` on it with a specific message. `ml` has no entry
+# under `triaxial_mass_mge` -- it's invalid there, not just dimensionless;
+# rejected directly by `configuration_validation.py`'s `_validate_potential`,
+# which runs before this module's dimension check specifically so a config
+# mistakenly declaring `ml` there gets that specific "ml is invalid for a
+# mass MGE potential" error rather than a generic dimension one.
 _MGE_RAW_DIMENSIONS: dict[str, dict[str, str]] = {
     "triaxial_light_mge": {"ml": "mass_to_light"},
-    "triaxial_mass_mge": {"ml": "mass_to_light"},
+    "triaxial_mass_mge": {"mge_mass_scale": "dimensionless"},
 }
 
 # Raw parameter dimensions for registered non-native parameterizations,
 # keyed by (type, parameterization). Populated alongside `_PARAMETERIZATIONS`
 # below.
 PARAMETERIZATION_RAW_DIMENSIONS: dict[tuple[str, str], dict[str, str]] = {
-    ("NFWPotential", "concentration_m200"): {"M_200": "mass"},  # c dimensionless
+    ("NFWPotential", "concentration_m200"): {
+        "c": "dimensionless",
+        "M_200": "mass",
+    },
 }
 
 # Newton's gravitational constant, for parameterizations that need it (e.g.
@@ -213,7 +229,7 @@ def raw_parameter_dimensions(kind: str, parameterization: str | None) -> dict[st
     -- a curated galax class's native constructor kwargs, read directly from
     `_SUPPORTED_GALAX_TYPES`. Returns `{}` (every parameter treated as
     dimensionless) for anything unrecognized, deferring the "is this
-    actually a valid type" question to `AbstractPotentialComponent.from_settings`.
+    actually a valid type" question to `AbstractPotentialComponent.resolve`.
     """
     if parameterization is not None:
         return PARAMETERIZATION_RAW_DIMENSIONS.get((kind, parameterization), {})
@@ -223,18 +239,6 @@ def raw_parameter_dimensions(kind: str, parameterization: str | None) -> dict[st
         name: parameter.dimension
         for name, parameter in _SUPPORTED_GALAX_TYPES.get(kind, {}).items()
     }
-
-
-def _resolve_unit(unit_system: AbstractUnitSystem, dimension: str) -> Any:
-    """Resolve one of `raw_parameter_dimensions`' dimension names to a concrete unit.
-
-    Mirrors `tnt.units._internal_unit`'s handling of `"mass_to_light"` -- a
-    TNT pseudo-dimension (not a real astropy physical type) that appears
-    here via the two MGE composite types' `ml` parameter.
-    """
-    if dimension == "mass_to_light":
-        return unit_system[u.dimension("mass")] / unit_system[u.dimension("power")]
-    return unit_system[u.dimension(dimension)]
 
 
 def _nfw_concentration_m200(
@@ -340,6 +344,61 @@ _PARAMETERIZATIONS: dict[str, dict[str, Parameterization]] = {
 }
 
 
+class ResolvedPotentialComponent(NamedTuple):
+    """One potential component's static structure, resolved once from its config entry.
+
+    Everything needed to build the component except the current parameter
+    values -- fixed for a whole run, independent of any proposed point in
+    parameter space. Computed once by `AbstractPotentialComponent.resolve`;
+    reused across every call to `build` for the same component.
+    """
+
+    component_cls: type[AbstractPotentialComponent]
+    raw_dimensions: dict[str, str]
+    convert: ParameterizationConverter | None
+    extra_fields: dict[str, Any]
+
+    def build(
+        self,
+        parameter_values: Mapping[str, Quantity],
+        unit_system: AbstractUnitSystem,
+        cosmological_parameters: Mapping[str, Quantity],
+    ) -> AbstractPotentialComponent:
+        """Build this component from one proposed point in parameter space.
+
+        `parameter_values` should have this component's raw parameter names
+        (native, or under a `parameterization`), each already a `Quantity`
+        in whatever unit it was declared/proposed in -- no unit-system
+        conversion happens here (see this module's docstring for why).
+        Passed straight through as-is, including any extra key --
+        e.g. the MGE composite types' still-unimplemented viewing-geometry
+        parameters (`q`/`p`/`u`), staged in configuration ahead of a
+        parameterization that doesn't exist yet (see `docs/source/potential.md`).
+        A missing or otherwise wrong parameter surfaces at `to_galax()` (a
+        native `galax` constructor error) or a registered `parameterization`
+        converter, not here -- parameter-schema validation (exact expected
+        names, positivity, ...) is a separate, not-yet-implemented concern.
+
+        Args:
+            parameter_values: This component's current values, e.g. one
+                entry of a `tnt.parameter_generator.ParameterSet`.
+            unit_system: Passed through to a registered `parameterization`
+                converter (e.g. NFW's `concentration_m200` needs it to
+                compute a critical density) and to the resulting component's
+                own construction.
+            cosmological_parameters: Passed through to a registered
+                `parameterization` converter that needs it, e.g. NFW's
+                `concentration_m200` via `H0`.
+        """
+        raw = dict(parameter_values)
+        canonical = (
+            self.convert(raw, unit_system, cosmological_parameters)
+            if self.convert is not None
+            else raw
+        )
+        return self.component_cls(parameters=canonical, **self.extra_fields)
+
+
 class AbstractPotentialComponent(eqx.Module):
     """One named term of the total potential (e.g. a halo, a light MGE).
 
@@ -359,36 +418,33 @@ class AbstractPotentialComponent(eqx.Module):
     parameters: dict[str, Quantity]
 
     @classmethod
-    def from_settings(
+    def resolve(
         cls,
         settings: Mapping[str, Any],
         mges: Mapping[str, LightMGE | MassMGE],
-        unit_system: AbstractUnitSystem,
-        cosmological_parameters: Mapping[str, Quantity],
         *,
         path: str = "potential.<component>",
-    ) -> AbstractPotentialComponent:
-        """Build one potential component from its resolved config entry.
+    ) -> ResolvedPotentialComponent:
+        """Resolve one potential component's static structure from its config entry.
+
+        Everything here is fixed for a whole run, independent of any
+        proposed point in parameter space -- a caller building many
+        `Potential`s from the same configuration (e.g. `ModelIterator`,
+        once per proposed `ParameterSet`) should call this once and reuse
+        the result via `ResolvedPotentialComponent.build`, rather than
+        re-deriving it every time. `Potential.from_settings` calls this
+        internally for one-shot construction.
 
         Args:
             settings: One resolved `potential.<name>` entry: `type`, an
                 optional `parameterization`, and `parameters`.
             mges: Named MGEs, e.g. from `tnt.mge.build_mges` -- used only by
                 the two MGE composite types.
-            unit_system: The unit system `parameters` values are already
-                expressed in (post `tnt.units` normalization) and that any
-                resulting `galax` potential will be constructed with.
-            cosmological_parameters: A resolved configuration's
-                `cosmological_parameters` section -- used only by
-                parameterizations that need it, e.g. NFW's
-                `concentration_m200`.
             path: This entry's location in the configuration, used in error
                 messages.
 
         Returns:
-            The resolved component, either a `GalaxPotentialComponent` (for
-            a class in `_SUPPORTED_GALAX_TYPES`) or one of the two MGE composite
-            components.
+            This component's resolved static structure.
 
         Raises:
             ValueError: If `type` names neither a supported
@@ -426,28 +482,12 @@ class AbstractPotentialComponent(eqx.Module):
                     f"implemented for type {kind!r}; implemented: {allowed}."
                 ) from error
 
-        raw_dimensions = raw_parameter_dimensions(kind, parameterization_name)
-        raw_settings = _required_mapping(settings, "parameters", path)
-        raw: dict[str, Quantity] = {}
-        for name, parameter_value in raw_settings.items():
-            parameter_path = f"{path}.parameters.{name}"
-            parameter = _mapping(parameter_value, parameter_path)
-            value = _number(
-                _required(parameter, "value", parameter_path), f"{parameter_path}.value"
-            )
-            dimension = raw_dimensions.get(name)
-            unit = (
-                _resolve_unit(unit_system, dimension) if dimension is not None else ""
-            )
-            raw[name] = Quantity(value, unit)
-
-        canonical = (
-            convert(raw, unit_system, cosmological_parameters)
-            if convert is not None
-            else raw
+        return ResolvedPotentialComponent(
+            component_cls=component_cls,
+            raw_dimensions=raw_parameter_dimensions(kind, parameterization_name),
+            convert=convert,
+            extra_fields=component_cls._extra_fields(kind, settings, mges, path=path),
         )
-        extra = component_cls._extra_fields(kind, settings, mges, path=path)
-        return component_cls(parameters=canonical, **extra)
 
     @classmethod
     def _extra_fields(
@@ -489,9 +529,9 @@ class AbstractPotentialComponent(eqx.Module):
     ) -> dict[str, Quantity]:
         """This component's parameters in the resolved config's own parameterization.
 
-        The inverse of `from_settings`'s conversion, so `AllModels` can
-        report every component the way its configuration actually
-        specified it, regardless of `rescale`. Identity by default:
+        The inverse of `ResolvedPotentialComponent.build`'s conversion, so
+        `AllModels` can report every component the way its configuration
+        actually specified it, regardless of `rescale`. Identity by default:
         `parameters` already *is* the raw, parameterization-independent
         representation for anything without a registered non-native
         parameterization -- both MGE composite types (which don't support
@@ -660,30 +700,83 @@ class Potential(eqx.Module):
     components: dict[str, AbstractPotentialComponent]
 
     @classmethod
-    def from_settings(
+    def resolve(
         cls,
         settings: Mapping[str, Mapping[str, Any]],
         mges: Mapping[str, LightMGE | MassMGE],
-        unit_system: AbstractUnitSystem,
-        cosmological_parameters: Mapping[str, Quantity],
-    ) -> Self:
-        """Build a `Potential` from a resolved configuration's `potential` section."""
-        components: dict[str, AbstractPotentialComponent] = {}
+    ) -> dict[str, ResolvedPotentialComponent]:
+        """Resolve every included component's static structure, once per run.
+
+        See `AbstractPotentialComponent.resolve` -- a caller building many
+        `Potential`s from the same configuration (e.g. `ModelIterator`,
+        once per proposed `ParameterSet`) should call this once and reuse
+        the result via `Potential.build`.
+        """
+        resolved: dict[str, ResolvedPotentialComponent] = {}
         for name, component_value in settings.items():
             path = f"potential.{name}"
             component_settings = _mapping(component_value, path)
             if not component_settings.get("include", True):
                 continue
-            components[name] = AbstractPotentialComponent.from_settings(
-                component_settings,
-                mges,
-                unit_system,
-                cosmological_parameters,
-                path=path,
+            resolved[name] = AbstractPotentialComponent.resolve(
+                component_settings, mges, path=path
             )
-        if not components:
+        if not resolved:
             raise ValueError("potential must contain at least one included component.")
-        return cls(components=components)
+        return resolved
+
+    @classmethod
+    def build(
+        cls,
+        resolved: Mapping[str, ResolvedPotentialComponent],
+        parameter_values: ParameterSet,
+        unit_system: AbstractUnitSystem,
+        cosmological_parameters: Mapping[str, Quantity],
+    ) -> Self:
+        """Build a `Potential` from resolved static structure and a proposed point.
+
+        Args:
+            resolved: Every included component's static structure, e.g.
+                from `Potential.resolve`.
+            parameter_values: The current point in parameter space, e.g. a
+                `tnt.parameter_generator.ParameterSet`.
+            unit_system: Passed through to each component's construction --
+                see `ResolvedPotentialComponent.build`.
+            cosmological_parameters: A resolved configuration's
+                `cosmological_parameters` section -- used only by
+                parameterizations that need it, e.g. NFW's `concentration_m200`.
+        """
+        return cls(
+            components={
+                name: component.build(
+                    parameter_values.get(name, {}), unit_system, cosmological_parameters
+                )
+                for name, component in resolved.items()
+            }
+        )
+
+    @classmethod
+    def from_settings(
+        cls,
+        settings: Mapping[str, Mapping[str, Any]],
+        parameter_values: ParameterSet,
+        mges: Mapping[str, LightMGE | MassMGE],
+        unit_system: AbstractUnitSystem,
+        cosmological_parameters: Mapping[str, Quantity],
+    ) -> Self:
+        """Build a `Potential` from a resolved configuration's `potential` section.
+
+        A one-shot convenience combining `Potential.resolve`/`Potential.build`
+        -- callers that build many `Potential`s from the same configuration
+        (e.g. `ModelIterator`) should call those directly instead, resolving
+        once and reusing the result.
+        """
+        return cls.build(
+            cls.resolve(settings, mges),
+            parameter_values,
+            unit_system,
+            cosmological_parameters,
+        )
 
     def to_galax(
         self, unit_system: AbstractUnitSystem
@@ -732,19 +825,20 @@ class Potential(eqx.Module):
 
 
 def build_potential(
-    potential: Mapping[str, Mapping[str, Any]],
-    mges: Mapping[str, LightMGE | MassMGE],
+    resolved: Mapping[str, ResolvedPotentialComponent],
+    parameter_values: ParameterSet,
     unit_system: AbstractUnitSystem,
     cosmological_parameters: Mapping[str, Quantity],
 ) -> Potential:
-    """Build the `Potential` from a resolved configuration's `potential` section.
+    """Build the `Potential` from pre-resolved static structure and a proposed point.
 
     Args:
-        potential: A resolved configuration's `potential` section.
-        mges: Named MGEs, e.g. from `tnt.mge.build_mges`.
-        unit_system: The unit system `potential`'s parameter values are
-            already expressed in, and that the resulting `galax` potential
-            will be constructed with.
+        resolved: Every included component's static structure, e.g. from
+            `Potential.resolve(config["potential"], mges)`, called once per
+            run.
+        parameter_values: The current point in parameter space, e.g. a
+            `tnt.parameter_generator.ParameterSet`.
+        unit_system: Passed through to each component's construction.
         cosmological_parameters: A resolved configuration's
             `cosmological_parameters` section -- used only by
             parameterizations that need it, e.g. NFW's `concentration_m200`.
@@ -752,8 +846,8 @@ def build_potential(
     Returns:
         A `Potential` assembled from every included component.
     """
-    return Potential.from_settings(
-        potential, mges, unit_system, cosmological_parameters
+    return Potential.build(
+        resolved, parameter_values, unit_system, cosmological_parameters
     )
 
 
@@ -784,7 +878,9 @@ def raw_potential_parameters(
             component's `parameterization` is used.
         potential: The resolved `Potential` to report, e.g. from
             `build_potential`, possibly after `Potential.rescale`.
-        unit_system: The unit system `potential`'s parameters are expressed in.
+        unit_system: Passed through to a registered `parameterization`'s
+            inverse converter, e.g. NFW's `concentration_m200` needs it to
+            compute a critical density.
         cosmological_parameters: A resolved configuration's
             `cosmological_parameters` section -- used only by
             parameterizations that need it, e.g. NFW's `concentration_m200`.

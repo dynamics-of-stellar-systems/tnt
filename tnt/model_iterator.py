@@ -36,7 +36,7 @@ from tnt.configuration_compatibility import (
     ensure_resume_compatible,
 )
 from tnt.kinematics import AbstractKinematics, build_kinematics
-from tnt.mge import LightMGE, MassMGE, build_mges
+from tnt.mge import build_mges
 from tnt.model import Model
 from tnt.orbit_library import (
     AbstractOrbitDithering,
@@ -51,13 +51,18 @@ from tnt.parameter_generator import (
     build_parameter_generator,
 )
 from tnt.populations import Populations, build_populations
-from tnt.potential import Potential, build_potential, raw_potential_parameters
+from tnt.potential import (
+    Potential,
+    ResolvedPotentialComponent,
+    build_potential,
+    raw_potential_parameters,
+)
 from tnt.run_config_log import (
     RunConfigLog,
     RunManifestReference,
 )
 from tnt.spatial_binnings import build_spatial_binnings
-from tnt.units import normalize_potential_settings, resolve_cosmological_parameters
+from tnt.units import resolve_cosmological_parameters
 from tnt.weight_solver import AbstractWeightSolver, OrbitWeights, build_weight_solver
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,16 +72,19 @@ _LOGGER = logging.getLogger(__name__)
 class ModelIterator:
     """Owns the parameter search loop and its stopping decision.
 
-    `potential_settings`/`mges` hold the fixed, per-run potential-component
-    structure (types, MGE references, `include` flags) that
-    `AbstractParameterGenerator` fills in with concrete parameter values
-    each iteration -- see `tnt.potential.build_potential`.
+    `potential_settings` is the resolved configuration's `potential`
+    section, as declared -- `AbstractParameterGenerator` reads each
+    parameter's declared value/unit from it every round.
+    `resolved_potential` is `potential_settings`' fixed per-run static
+    structure (types, MGE references, `include` flags), resolved once via
+    `tnt.potential.Potential.resolve` rather than re-derived on every
+    proposed point -- see `tnt.potential.build_potential`.
     """
 
     potential_settings: Mapping[str, Mapping[str, Any]]
+    resolved_potential: Mapping[str, ResolvedPotentialComponent]
     unit_system: AbstractUnitSystem
     cosmological_parameters: Mapping[str, Quantity]
-    mges: Mapping[str, LightMGE | MassMGE]
     kinematic_data: Mapping[str, AbstractKinematics]
     population_data: Mapping[str, Populations]
     weight_solver: AbstractWeightSolver
@@ -143,18 +151,17 @@ class ModelIterator:
         population_data = build_populations(
             config["population_data"], input_directory, unit_system, spatial_binnings
         )
-        potential_settings = normalize_potential_settings(
-            config["potential"], unit_system
-        )
+        potential_settings = config["potential"]
+        resolved_potential = Potential.resolve(potential_settings, mges)
         cosmological_parameters = resolve_cosmological_parameters(
             config["cosmological_parameters"]
         )
 
         return cls(
             potential_settings=potential_settings,
+            resolved_potential=resolved_potential,
             unit_system=unit_system,
             cosmological_parameters=cosmological_parameters,
-            mges=mges,
             kinematic_data=kinematic_data,
             population_data=population_data,
             weight_solver=build_weight_solver(config["weight_solver_settings"]),
@@ -395,8 +402,8 @@ class ModelIterator:
         docstring).
         """
         potential = build_potential(
-            _settings_with_parameters(self.potential_settings, parameters),
-            self.mges,
+            self.resolved_potential,
+            parameters,
             self.unit_system,
             self.cosmological_parameters,
         )
@@ -496,34 +503,6 @@ class ModelIterator:
             mass_scale_range["minimum"], mass_scale_range["maximum"], range_count
         )
         return tuple(float(scale) for scale in scales if not np.isclose(scale, 1.0))
-
-
-def _settings_with_parameters(
-    potential_settings: Mapping[str, Mapping[str, Any]], parameters: ParameterSet
-) -> dict[str, dict[str, Any]]:
-    """Overlay a proposed `ParameterSet`'s values onto `potential_settings`.
-
-    `build_potential` expects the same schema as a resolved configuration's
-    internal-runtime `potential` section (`fixed`/`value`/... per parameter);
-    declared units have already been converted and removed. This
-    keeps every declared field other than `value`, which each parameter
-    takes from `parameters` instead of the fixed config.
-    """
-    return {
-        component_name: {
-            **component,
-            "parameters": {
-                parameter_name: (
-                    {**parameter, "value": parameters[component_name][parameter_name]}
-                    if component_name in parameters
-                    and parameter_name in parameters[component_name]
-                    else parameter
-                )
-                for parameter_name, parameter in component.get("parameters", {}).items()
-            },
-        }
-        for component_name, component in potential_settings.items()
-    }
 
 
 def _require_supported_model_processing_order(

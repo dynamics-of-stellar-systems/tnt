@@ -75,6 +75,17 @@ def validate_resolved_configuration(config: ConfigDict) -> None:
         },
         "configuration",
     )
+    # _validate_potential's schema-specific checks (e.g. "ml is invalid for
+    # a mass MGE potential") run before validate_configuration_quantities'
+    # generic dimension check on purpose: both would reject the same
+    # mistakenly-declared ml, but only this order gives the specific
+    # message instead of a generic "unit not supported for this parameter"
+    # one. Needs only mges, itself independent of everything else here.
+    mges = _validate_mges(_required_mapping(config, "MGEs", "configuration"))
+    _validate_potential(
+        _required_mapping(config, "potential", "configuration"),
+        mges,
+    )
     validate_configuration_quantities(config)
 
     _validate_units(_required_mapping(config, "units", "configuration"))
@@ -91,13 +102,8 @@ def validate_resolved_configuration(config: ConfigDict) -> None:
     _validate_system_attributes(
         _required_mapping(config, "system_attributes", "configuration")
     )
-    mges = _validate_mges(_required_mapping(config, "MGEs", "configuration"))
     binnings = _validate_spatial_binnings(
         _required_mapping(config, "spatial_binnings", "configuration")
-    )
-    _validate_potential(
-        _required_mapping(config, "potential", "configuration"),
-        mges,
     )
     kinematic_data = _required_mapping(config, "kinematic_data", "configuration")
     kinematic_files = _validate_kinematics(
