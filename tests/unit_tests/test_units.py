@@ -1,4 +1,5 @@
 import math
+from copy import deepcopy
 
 import pytest
 import unxt as u
@@ -7,6 +8,7 @@ from tnt.units import (
     build_unit_systems,
     normalize_configuration_quantities,
     normalize_unitful_value,
+    validate_configuration_quantities,
 )
 
 
@@ -67,7 +69,7 @@ def test_normalize_unitful_value_accepts_explicit_value_and_unit() -> None:
     assert normalize_unitful_value(
         {"value": 2.5, "unit": "Mpc"},
         "length",
-        systems,
+        systems.internal,
         "system_attributes.distance",
     ) == pytest.approx(2500.0)
 
@@ -79,7 +81,7 @@ def test_normalize_unitful_value_rejects_bare_number() -> None:
         normalize_unitful_value(
             2.5,
             "length",
-            systems,
+            systems.internal,
             "system_attributes.distance",
         )
 
@@ -91,7 +93,7 @@ def test_normalize_unitful_value_rejects_sequence_shorthand() -> None:
         normalize_unitful_value(
             [2.5, "Mpc"],
             "length",
-            systems,
+            systems.internal,
             "system_attributes.distance",
         )
 
@@ -188,6 +190,35 @@ def test_normalize_supported_configuration_quantities() -> None:
     assert normalized["potential"]["stars"]["parameters"]["ml"]["value"] == 5.0
     assert "unit" not in normalized["potential"]["stars"]["parameters"]["ml"]
     assert config["system_attributes"]["distance"]["unit"] == "Mpc"
+
+
+def test_configuration_quantity_validation_does_not_modify_declarations() -> None:
+    config = {
+        "cosmological_parameters": {
+            "H0": {"value": 70.0, "unit": "km / (s Mpc)"}
+        },
+        "system_attributes": {
+            "distance": {"value": 2.0, "unit": "Mpc"},
+        },
+        "potential": {
+            "stars": {
+                "type": "triaxial_light_mge",
+                "parameters": {
+                    "ml": {
+                        "value": 5.0,
+                        "logarithmic": False,
+                        "unit": "Msun / Lsun",
+                    }
+                },
+            }
+        },
+        "kinematic_data": {},
+    }
+    original = deepcopy(config)
+
+    validate_configuration_quantities(config)
+
+    assert config == original
 
 
 def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:

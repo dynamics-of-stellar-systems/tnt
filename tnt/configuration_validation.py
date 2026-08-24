@@ -16,6 +16,7 @@ from tnt.config_parsing import (
     _required_mapping,
     _string,
 )
+from tnt.units import declared_quantity_value, validate_configuration_quantities
 
 ConfigDict = dict[str, Any]
 
@@ -69,6 +70,7 @@ def validate_resolved_configuration(config: ConfigDict) -> None:
         },
         "configuration",
     )
+    validate_configuration_quantities(config)
 
     _validate_units(_required_mapping(config, "units", "configuration"))
     _validate_cosmological_parameters(
@@ -125,7 +127,8 @@ def _validate_cosmological_parameters(settings: ConfigDict) -> None:
     path = "cosmological_parameters"
     _reject_unknown_keys(settings, {"H0"}, path)
     _require_keys(settings, {"H0"}, path)
-    _positive_number(settings["H0"], f"{path}.H0")
+    value = declared_quantity_value(settings["H0"], "inverse_time", f"{path}.H0")
+    _positive_number(value, f"{path}.H0.value")
 
 
 def _validate_units(settings: ConfigDict) -> None:
@@ -194,7 +197,10 @@ def _validate_system_attributes(attributes: ConfigDict) -> None:
     path = "system_attributes"
     _reject_unknown_keys(attributes, {"distance", "name"}, path)
     _require_keys(attributes, {"distance", "name"}, path)
-    _positive_number(attributes["distance"], f"{path}.distance")
+    distance = declared_quantity_value(
+        attributes["distance"], "length", f"{path}.distance"
+    )
+    _positive_number(distance, f"{path}.distance.value")
     _string(attributes["name"], f"{path}.name")
 
 
@@ -357,6 +363,7 @@ def _validate_parameters(
                 "generator_settings",
                 "latex_label",
                 "logarithmic",
+                "unit",
                 "value",
             },
             parameter_path,
