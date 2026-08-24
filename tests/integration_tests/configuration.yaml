@@ -28,14 +28,13 @@ potential:
       m_tot:
         unit: "Msun"
         generator_settings:
-          lower_bound: 1.0
-          upper_bound: 10.0
-          step: 1.0
+          lower_bound: 1.0e+4
+          upper_bound: 1.0e+6
+          step: 1.0e+4
           minimum_step: 0.0
         fixed: true
-        value: 5.0
-        logarithmic: true
-        latex_label: "$\\log(M_\\mathrm{BH}/M_\\odot)$"
+        value: 1.0e+5
+        latex_label: "$M_\\mathrm{BH}/M_\\odot$"
       r_s:
         unit: "kpc"
         fixed: true
@@ -55,8 +54,7 @@ potential:
           minimum_step: 0.1
         fixed: true
         value: 3.0
-        logarithmic: true
-        latex_label: "$\\log(C)$"
+        latex_label: "$C$"
       M_200:
         unit: "Msun"
         generator_settings:
@@ -66,8 +64,7 @@ potential:
           minimum_step: 0.1
         fixed: true
         value: 1.0e+12
-        logarithmic: true
-        latex_label: "$\\log(M_{200}/M_\\odot)$"
+        latex_label: "$M_{200}/M_\\odot$"
 
   stars:
     type: "triaxial_light_mge"

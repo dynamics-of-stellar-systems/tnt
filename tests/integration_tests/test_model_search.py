@@ -212,7 +212,7 @@ def test_model_iterator_reports_real_potential_in_its_own_parameterization(
     c_values = []
     for row in table:
         mass_scale = 10.0 / row["kinchi2"]
-        assert row["bh.m_tot"].to_value("Msun") == pytest.approx(5.0 * mass_scale)
+        assert row["bh.m_tot"].to_value("Msun") == pytest.approx(1.0e5 * mass_scale)
         assert row["bh.r_s"].to_value("kpc") == pytest.approx(1.0e-3)
         assert row["stars.ml"].to_value("Msun / Lsun") == pytest.approx(
             5.0 * mass_scale

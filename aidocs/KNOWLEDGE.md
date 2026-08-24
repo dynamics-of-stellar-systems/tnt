@@ -75,9 +75,8 @@
 - The first unit-aware schema covers `cosmological_parameters.H0`,
   `system_attributes.distance`, explicit kinematics histogram width and center,
   Gauss-Hermite `v` and `sigma` systematic uncertainties, Plummer `m` and `a`,
-  and light-MGE potential `ml`. At runtime, linear parameter steps are
-  converted; logarithmic parameter values and bounds are shifted between
-  reference units while log step sizes remain unchanged.
+  and light-MGE potential `ml`. At runtime, parameter values, bounds, and
+  steps are converted from their declared unit into the internal one.
 - Runtime kinematics construction converts configured histogram quantities and
   Gauss-Hermite velocity systematics. `ModelIterator.from_configuration()`
   creates one internal-unit potential-settings copy shared by the parameter

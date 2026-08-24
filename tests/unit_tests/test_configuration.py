@@ -127,7 +127,6 @@ def test_read_resolves_defaults_and_writes_run_bundle(tmp_path: Path) -> None:
     assert written["potential"]["stars"]["include"] is True
     parameter = written["potential"]["stars"]["parameters"]["q"]
     assert parameter["fixed"] is False
-    assert parameter["logarithmic"] is False
     kinematics = written["kinematic_data"]["observed"]
     assert kinematics["binning"] == "observed"
     assert kinematics["mge"] == "light"

@@ -366,7 +366,6 @@ def _validate_parameters(
                 "fixed",
                 "generator_settings",
                 "latex_label",
-                "logarithmic",
                 "unit",
                 "value",
             },
@@ -374,11 +373,10 @@ def _validate_parameters(
         )
         _require_keys(
             parameter,
-            {"fixed", "logarithmic", "value"},
+            {"fixed", "value"},
             parameter_path,
         )
         _boolean(parameter["fixed"], f"{parameter_path}.fixed")
-        _boolean(parameter["logarithmic"], f"{parameter_path}.logarithmic")
         value = _number(parameter["value"], f"{parameter_path}.value")
         if "latex_label" in parameter:
             _string(parameter["latex_label"], f"{parameter_path}.latex_label")

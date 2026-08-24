@@ -342,35 +342,17 @@ def _normalize_parameters(
         )
         target = _internal_unit(unit_system, dimension)
         factor = float(source.to(target, 1.0))
-        logarithmic = parameter.get("logarithmic", False)
-        if not isinstance(logarithmic, bool):
-            raise TypeError(f"{parameter_path}.logarithmic must be a boolean.")
-
-        if logarithmic:
-            offset = math.log10(factor)
-            _shift_log_value(parameter, "value", offset, parameter_path)
-            generator = parameter.get("generator_settings")
-            if generator is not None:
-                generator = _mapping(generator, f"{parameter_path}.generator_settings")
-                for key in ("lower_bound", "upper_bound"):
-                    _shift_log_value(
-                        generator,
-                        key,
-                        offset,
-                        f"{parameter_path}.generator_settings",
-                    )
-        else:
-            _scale_field(parameter, "value", factor, parameter_path)
-            generator = parameter.get("generator_settings")
-            if generator is not None:
-                generator = _mapping(generator, f"{parameter_path}.generator_settings")
-                for key in ("lower_bound", "upper_bound", "step", "minimum_step"):
-                    _scale_field(
-                        generator,
-                        key,
-                        factor,
-                        f"{parameter_path}.generator_settings",
-                    )
+        _scale_field(parameter, "value", factor, parameter_path)
+        generator = parameter.get("generator_settings")
+        if generator is not None:
+            generator = _mapping(generator, f"{parameter_path}.generator_settings")
+            for key in ("lower_bound", "upper_bound", "step", "minimum_step"):
+                _scale_field(
+                    generator,
+                    key,
+                    factor,
+                    f"{parameter_path}.generator_settings",
+                )
 
 
 def _normalize_field(
@@ -424,17 +406,6 @@ def _scale_field(mapping: ConfigDict, key: str, factor: float, path: str) -> Non
     numeric = float(value)
     _require_finite(numeric, f"{path}.{key}")
     mapping[key] = numeric * factor
-
-
-def _shift_log_value(mapping: ConfigDict, key: str, offset: float, path: str) -> None:
-    if key not in mapping:
-        return
-    value = mapping[key]
-    if not _is_number(value):
-        raise TypeError(f"{path}.{key} must be a number.")
-    numeric = float(value)
-    _require_finite(numeric, f"{path}.{key}")
-    mapping[key] = numeric + offset
 
 
 def _internal_unit(

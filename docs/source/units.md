@@ -70,10 +70,8 @@ parameters:
       minimum_step: 10.0
 ```
 
-At runtime, TNT converts a linear parameter's value, bounds, step, and minimum
-step. For a logarithmic parameter, the declared unit is the reference unit for
-the logarithm: TNT shifts the value and bounds into the internal reference
-unit, while logarithmic step sizes remain unchanged.
+At runtime, TNT converts a parameter's value, bounds, step, and minimum step
+from its declared unit into the internal reference unit.
 
 Dimensionless fields remain plain numbers and must not add a `unit`. Examples
 include axial ratios, Gauss-Hermite coefficients, relative error factors, and
