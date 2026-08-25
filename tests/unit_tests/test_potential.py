@@ -393,6 +393,43 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
     assert float(mean_density / rho_crit) == pytest.approx(200.0, rel=1e-5)
 
 
+def test_nfw_parameterization_is_invariant_to_declared_units() -> None:
+    unit_system = _internal_unit_system()
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "NFWPotential",
+            "parameterization": "concentration_m200",
+            "include": True,
+            "parameters": {},
+        },
+        {},
+        path="potential.dh",
+    )
+    m200 = Quantity(1.0e12, "Msun")
+    h0 = Quantity(70.0, "km / (s Mpc)")
+
+    internal = resolved.build(
+        {"c": Quantity(8.0, ""), "M_200": m200.to("Msun")},
+        unit_system,
+        {"H0": h0.to("1 / Myr")},
+    )
+    differently_declared = resolved.build(
+        {
+            "c": Quantity(8.0, ""),
+            "M_200": Quantity(100.0, "1e10 Msun"),
+        },
+        unit_system,
+        {"H0": h0},
+    )
+
+    assert differently_declared.parameters["m"].ustrip("Msun") == pytest.approx(
+        internal.parameters["m"].ustrip("Msun"), rel=1e-6
+    )
+    assert differently_declared.parameters["r_s"].ustrip("kpc") == pytest.approx(
+        internal.parameters["r_s"].ustrip("kpc"), rel=1e-6
+    )
+
+
 def test_nfw_concentration_m200_raw_dimensions() -> None:
     assert raw_parameter_dimensions("NFWPotential", "concentration_m200") == {
         "c": "dimensionless",
@@ -528,6 +565,40 @@ def test_plummer_to_galax_matches_closed_form_potential() -> None:
     g = float(u.Quantity(6.6743e-11, "m3 / (kg s2)").ustrip("kpc3 / (Msun Myr2)"))
     expected = _closed_form_plummer_potential(m_tot, r_s, r, g)
     assert value == pytest.approx(expected, rel=1e-5)
+
+
+def test_plummer_potential_is_invariant_to_declared_parameter_units() -> None:
+    unit_system = _internal_unit_system()
+    settings = {"bh": {"type": "PlummerPotential", "include": True, "parameters": {}}}
+    resolved = Potential.resolve(settings, {})
+    mass = Quantity(5.0, "Msun")
+
+    internal = Potential.build(
+        resolved,
+        {"bh": {"m_tot": mass, "r_s": Quantity(1.0, "kpc")}},
+        unit_system,
+        _NO_COSMOLOGICAL_PARAMETERS,
+    ).to_galax(unit_system)
+    differently_declared = Potential.build(
+        resolved,
+        {
+            "bh": {
+                "m_tot": Quantity(float(mass.ustrip("kg")), "kg"),
+                "r_s": Quantity(1000.0, "pc"),
+            }
+        },
+        unit_system,
+        _NO_COSMOLOGICAL_PARAMETERS,
+    ).to_galax(unit_system)
+
+    xyz = Quantity(jnp.array([2.0, 0.0, 0.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    internal_value = internal.potential(xyz, t).ustrip("kpc2 / Myr2")
+    differently_declared_value = differently_declared.potential(xyz, t).ustrip(
+        "kpc2 / Myr2"
+    )
+
+    assert differently_declared_value == pytest.approx(internal_value, rel=1e-6)
 
 
 def test_plummer_rescale_scales_only_the_mass_parameter() -> None:
