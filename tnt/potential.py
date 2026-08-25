@@ -38,14 +38,14 @@ import jax.numpy as jnp
 import unxt as u
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt.config_parsing import (
+from tnt.mge import LightMGE, MassMGE
+from tnt.orbit_library import AbstractOrbitDithering, AbstractOrbitSampler, OrbitLibrary
+from tnt.validation import (
     _mapping,
     _required_string,
     _resolve_typed_reference,
     _string,
 )
-from tnt.mge import LightMGE, MassMGE
-from tnt.orbit_library import AbstractOrbitDithering, AbstractOrbitSampler, OrbitLibrary
 
 if TYPE_CHECKING:
     from tnt.parameter_generator import ParameterSet

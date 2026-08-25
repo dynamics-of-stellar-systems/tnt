@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from tnt import configuration_validation
 from tnt.all_models import AllModels
+from tnt.configuration import validation as configuration_validation
 from tnt.parameter_generator import _GENERATOR_CLASSES, SinglePointParameterGenerator
 
 

@@ -14,8 +14,8 @@ import equinox as eqx
 from unxt import Quantity
 
 from tnt.all_models import AllModels
-from tnt.config_parsing import _mapping, _number, _required
 from tnt.potential import raw_parameter_dimensions
+from tnt.validation import _mapping, _number, _required
 
 ParameterSet = dict[str, dict[str, Quantity]]
 """One proposed point in parameter space: component name -> {parameter name: value}.

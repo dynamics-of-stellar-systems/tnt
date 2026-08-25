@@ -13,7 +13,8 @@ import unxt as u
 from astropy.table import QTable
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt.config_parsing import (
+from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
+from tnt.validation import (
     BIN_ID_COLUMN,
     ConfigMapping,
     _finite,
@@ -24,7 +25,6 @@ from tnt.config_parsing import (
     _required_string,
     _resolve_typed_reference,
 )
-from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
 
 
 class Populations(eqx.Module):

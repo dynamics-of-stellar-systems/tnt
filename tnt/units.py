@@ -12,13 +12,13 @@ from typing import Any
 import unxt as u
 from unxt import Quantity
 
-from tnt.config_parsing import (
+from tnt.potential import raw_parameter_dimensions
+from tnt.validation import (
     _mapping,
     _optional_mapping,
     _reject_unknown_keys,
     _require_keys,
 )
-from tnt.potential import raw_parameter_dimensions
 
 ConfigDict = dict[str, Any]
 

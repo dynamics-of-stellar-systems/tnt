@@ -13,16 +13,16 @@ import unxt as u
 from astropy.table import QTable
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt.config_parsing import (
+from tnt.mge import LightMGE, MassMGE
+from tnt.spatial_binnings import ProjectedBinning
+from tnt.units import normalize_unitful_value
+from tnt.validation import (
     ConfigMapping,
     _finite,
     _integer,
     _positive_number,
     _reject_unknown_keys,
 )
-from tnt.mge import LightMGE, MassMGE
-from tnt.spatial_binnings import ProjectedBinning
-from tnt.units import normalize_unitful_value
 
 if TYPE_CHECKING:
     from tnt.orbit_library import OrbitLibrary

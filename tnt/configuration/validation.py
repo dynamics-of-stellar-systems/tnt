@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from tnt.config_parsing import (
+from tnt.units import declared_quantity_value, validate_configuration_quantities
+from tnt.validation import (
     _integer,
     _mapping,
     _nonnegative_number,
@@ -16,7 +17,6 @@ from tnt.config_parsing import (
     _required_mapping,
     _string,
 )
-from tnt.units import declared_quantity_value, validate_configuration_quantities
 
 ConfigDict = dict[str, Any]
 

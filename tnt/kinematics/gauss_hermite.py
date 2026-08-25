@@ -12,18 +12,6 @@ import unxt as u
 from astropy.table import QTable
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt.config_parsing import (
-    ConfigMapping,
-    _finite,
-    _integer,
-    _mapping,
-    _nonnegative_number,
-    _positive_finite,
-    _positive_number,
-    _read_bin_ids,
-    _reject_unknown_keys,
-    _required,
-)
 from tnt.kinematics.base import (
     AbstractKinematics,
     Histogram,
@@ -35,6 +23,18 @@ from tnt.kinematics.base import (
 from tnt.mge import LightMGE, MassMGE
 from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
 from tnt.units import normalize_unitful_value
+from tnt.validation import (
+    ConfigMapping,
+    _finite,
+    _integer,
+    _mapping,
+    _nonnegative_number,
+    _positive_finite,
+    _positive_number,
+    _read_bin_ids,
+    _reject_unknown_keys,
+    _required,
+)
 
 
 class GaussHermite(AbstractKinematics):

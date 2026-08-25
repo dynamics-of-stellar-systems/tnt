@@ -7,19 +7,19 @@ from pathlib import Path
 
 from unxt import AbstractUnitSystem
 
-from tnt.config_parsing import (
-    ConfigMapping,
-    _mapping,
-    _required_string,
-    _resolve_typed_reference,
-    _string,
-)
 from tnt.kinematics.base import AbstractKinematics, Histogram, Histogram2D
 from tnt.kinematics.bayes_losvd import BayesLOSVD
 from tnt.kinematics.gauss_hermite import GaussHermite
 from tnt.kinematics.proper_motions import ProperMotions
 from tnt.mge import LightMGE, MassMGE
 from tnt.spatial_binnings import ProjectedBinning
+from tnt.validation import (
+    ConfigMapping,
+    _mapping,
+    _required_string,
+    _resolve_typed_reference,
+    _string,
+)
 
 __all__ = [
     "AbstractKinematics",

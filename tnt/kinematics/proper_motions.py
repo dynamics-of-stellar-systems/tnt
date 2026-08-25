@@ -13,7 +13,15 @@ import numpy as np
 import unxt as u
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt.config_parsing import (
+from tnt.kinematics.base import (
+    AbstractKinematics,
+    Histogram2D,
+    _explicit_histogram,
+    _nonnegative_finite,
+)
+from tnt.mge import LightMGE, MassMGE
+from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
+from tnt.validation import (
     BIN_ID_COLUMN,
     ConfigMapping,
     _mapping,
@@ -23,14 +31,6 @@ from tnt.config_parsing import (
     _required,
     _validated_bin_ids,
 )
-from tnt.kinematics.base import (
-    AbstractKinematics,
-    Histogram2D,
-    _explicit_histogram,
-    _nonnegative_finite,
-)
-from tnt.mge import LightMGE, MassMGE
-from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
 
 _LOGGER = logging.getLogger(__name__)
 

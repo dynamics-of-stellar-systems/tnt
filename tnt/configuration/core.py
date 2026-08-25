@@ -21,13 +21,13 @@ from typing import Any
 
 import yaml
 
-from tnt.config_parsing import _mapping, _optional_mapping
-from tnt.configuration_validation import validate_resolved_configuration
+from tnt.configuration.validation import validate_resolved_configuration
 from tnt.logging import configure_logging
 from tnt.units import (
     UnitSystems,
     build_unit_systems,
 )
+from tnt.validation import _mapping, _optional_mapping
 
 CONFIG_REPOSITORY_DIRECTORY = "config_repository"
 RUNS_DIRECTORY = "runs"
