@@ -387,8 +387,8 @@ class AbstractPotentialComponent(eqx.Module):
 
         Returns:
             The resolved component, either a `GalaxPotentialComponent` (for
-            any real `galax.potential` class name) or one of the two MGE
-            composite components.
+            a class in `_SUPPORTED_GALAX_TYPES`) or one of the two MGE composite
+            components.
 
         Raises:
             ValueError: If `type` names neither a supported

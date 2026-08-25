@@ -74,15 +74,18 @@
   by TNT.
 - The first unit-aware schema covers `cosmological_parameters.H0`,
   `system_attributes.distance`, explicit kinematics histogram width and center,
-  Gauss-Hermite `v` and `sigma` systematic uncertainties, Plummer `m` and `a`,
-  and light-MGE potential `ml`. At runtime, parameter values, bounds, and
-  steps are converted from their declared unit into the internal one.
+  Gauss-Hermite `v` and `sigma` systematic uncertainties,
+  `PlummerPotential`'s native `m_tot` and `r_s`, and light-MGE potential `ml`.
+  At runtime, parameter values, bounds, and steps are converted from their
+  declared unit into the internal one.
 - Runtime kinematics construction converts configured histogram quantities and
   Gauss-Hermite velocity systematics. `ModelIterator.from_configuration()`
   creates one internal-unit potential-settings copy shared by the parameter
   generator and potential construction, leaving the resolved configuration
-  unchanged. Values without a scientific runtime object, currently `H0` and
-  system distance, remain declared quantities in configuration data.
+  unchanged. It also converts `cosmological_parameters`, including `H0`, into
+  `Quantity` objects for runtime consumers such as NFW's
+  `concentration_m200` parameterization. System distance remains a declared
+  quantity until a runtime consumer needs it.
 - `tnt.configuration_compatibility._critical_configuration` calls
   `normalize_configuration_quantities`, which raises plain `TypeError`/
   `ValueError` on malformed unit-bearing fields rather than

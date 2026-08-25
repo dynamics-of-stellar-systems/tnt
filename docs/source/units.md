@@ -102,9 +102,11 @@ uncertainties. `ModelIterator.from_configuration()` creates one canonical
 internal-unit copy of potential parameters for both the parameter generator
 and potential construction, so those consumers cannot interpret the same
 search coordinates differently. The resolved configuration itself remains
-unchanged. `H0` and system distance currently have no scientific runtime
-object and therefore remain declared quantities unless a compatibility check
-needs their canonical physical values.
+unchanged. `ModelIterator.from_configuration()` converts
+`cosmological_parameters`, including `H0`, into `Quantity` objects for runtime
+consumers such as NFW's `concentration_m200` parameterization. System distance
+remains a declared quantity until a runtime consumer needs it; compatibility
+checks can still compare its canonical physical value.
 
 Every run receives its own immutable resolved configuration, while resume
 compatibility compares physical meaning. It converts unit-bearing contract

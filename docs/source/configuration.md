@@ -344,9 +344,12 @@ different from every configured kinematics file; sharing only the
 
 Preparation rejects duplicate YAML keys, generic unknown fields, missing
 required registry fields, incorrect generic value types, unsupported type
-identifiers, and inconsistent tagged thresholds. It also checks non-kinematics
-data-only numerical constraints, including parameter bounds, positive worker
-counts, and orbit-grid limits. Concrete kinematics and population constructors
+identifiers owned by the preparation schema, and inconsistent tagged
+thresholds. A potential component's curated `galax` class name and optional
+parameterization are resolved later by `tnt.potential` during runtime-object
+construction. Preparation also checks non-kinematics data-only numerical
+constraints, including parameter bounds, positive worker counts, and orbit-grid
+limits. Concrete kinematics and population constructors
 check explicit histogram bin counts, Gauss-Hermite order and
 systematic-uncertainty mappings, Bayesian LOSVD policies, proper-motion
 variance scaling and warning thresholds, population value/uncertainty pairs,

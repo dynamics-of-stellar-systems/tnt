@@ -79,7 +79,7 @@ potential:
           minimum_step: 0.02
         fixed: true
         value: 0.54
-        latex_label: "$q_\\mathrm{min}$"
+        latex_label: "$q$"
       p:
         generator_settings:
           lower_bound: 0.99
@@ -88,7 +88,7 @@ potential:
           minimum_step: 0.01
         fixed: true
         value: 0.99
-        latex_label: "$p_\\mathrm{min}$"
+        latex_label: "$p$"
       u:
         generator_settings:
           lower_bound: 0.95
