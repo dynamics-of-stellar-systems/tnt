@@ -76,8 +76,9 @@
   `system_attributes.distance`, explicit kinematics histogram width and center,
   Gauss-Hermite `v` and `sigma` systematic uncertainties,
   `PlummerPotential`'s native `m_tot` and `r_s`, and light-MGE potential `ml`.
-  At runtime, parameter values, bounds, and steps are converted from their
-  declared unit into the internal one.
+  Their runtime handling is consumer-specific rather than one blanket
+  normalization step; in particular, potential parameter values, bounds, and
+  steps remain expressed in their declared unit.
 - Runtime kinematics construction converts configured histogram quantities and
   Gauss-Hermite velocity systematics. Potential parameters instead keep their
   own declared unit all the way through `AbstractParameterGenerator` and

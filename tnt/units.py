@@ -207,7 +207,7 @@ def normalize_potential_settings(
     potential: Mapping[str, Any],
     unit_system: u.AbstractUnitSystem,
 ) -> ConfigDict:
-    """Return potential settings in the shared internal runtime coordinates."""
+    """Canonicalize potential settings for physical compatibility comparison."""
     normalized = deepcopy(_mapping(potential, "potential"))
     for potential_name, potential_value in normalized.items():
         potential_path = f"potential.{potential_name}"

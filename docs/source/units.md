@@ -3,9 +3,10 @@
 TNT uses [`unxt`](https://unxt.readthedocs.io/) to validate units and define
 two related unit systems:
 
-- `units.internal` controls the canonical units used by runtime objects,
-  parameter generation, compatibility checks, and later numerical
-  calculations.
+- `units.internal` defines the canonical units used by runtime converters,
+  compatibility checks, and later numerical calculations. Potential parameter
+  proposals are an explicit exception: they retain each parameter's declared
+  unit until potential construction consumes them, as described below.
 - `units.display` controls presentation preferences. Any dimension not
   overridden there inherits its internal unit.
 
@@ -70,8 +71,11 @@ parameters:
       minimum_step: 10.0
 ```
 
-At runtime, TNT converts a parameter's value, bounds, step, and minimum step
-from its declared unit into the internal reference unit.
+For a potential parameter, `value`, bounds, `step`, and `minimum_step` are all
+coordinates in its declared unit. Parameter generators retain that unit rather
+than eagerly converting the coordinates into the internal unit system;
+potential construction converts or transforms a proposed `Quantity` only when
+its native component or registered parameterization needs it.
 
 Dimensionless fields remain plain numbers and must not add a `unit`. Examples
 include axial ratios, Gauss-Hermite coefficients, relative error factors, and
