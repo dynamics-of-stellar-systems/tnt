@@ -9,9 +9,9 @@ components and non-native parameterizations) is real end to end. Only
 `Potential.generate_orbit_library`, `build_weight_solver`,
 `build_orbit_sampler`, and `build_orbit_dithering` are faked, since orbit
 integration and weight solving are still unimplemented (see
-tnt.model_iterator's module docstring). `generate_orbit_library` never
-calls `to_galax()`, so the MGE composite types' still-`NotImplementedError`
-`to_galax()` is never reached here either.
+tnt.model_iterator's module docstring). `Potential.to_galax` (including the
+MGE composite types') is real and implemented, but `generate_orbit_library`
+never calls it, so it's never reached here either.
 """
 
 from __future__ import annotations
@@ -68,8 +68,7 @@ def _fake_orbit_integration_and_weight_solving(monkeypatch: pytest.MonkeyPatch) 
     """Fake only what's still unimplemented: orbit integration and weight solving.
 
     `build_potential`/`Potential` stay real -- see this module's docstring
-    for why the MGE composite types' unimplemented `to_galax()` is never
-    reached even so.
+    for why `to_galax()` is never reached even so.
     """
 
     def fake_generate_orbit_library(

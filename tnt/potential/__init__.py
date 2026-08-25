@@ -2,8 +2,8 @@
 
 `potential.<name>.type` names either a curated `galax.potential` class (see
 `_SUPPORTED_GALAX_TYPES`, e.g. `"NFWPotential"`, `"PlummerPotential"`) or one
-of two TNT-specific MGE composite potentials, `"triaxial_light_mge"`/
-`"triaxial_mass_mge"`, each built from a named MGE, and pairs every
+of two TNT-specific MGE composite potentials, `"TriaxialLightMGEPotential"`/
+`"TriaxialMassMGEPotential"`, each built from a named MGE, and pairs every
 included class with each native parameter's mass-rescale exponent.
 `parameterization` is a separate, optional concern: when omitted,
 `parameters` use the resolved type's own native constructor kwargs, with
@@ -24,14 +24,16 @@ proposed point -- resolves once and reuses the result.
 
 This module is filled in incrementally, one object at a time -- the same
 approach already used for `ProjectedBinning`. `Potential.generate_orbit_library`
-and the two MGE composite components' `to_galax` remain `NotImplementedError`.
+remains `NotImplementedError`.
 
-Split across four submodules by concern: `registry` (curated `galax` types
-and their native parameters' dimensions/mass-rescale exponents), `nfw` (the
+Split across submodules by concern: `registry` (curated `galax` types and
+their native parameters' dimensions/mass-rescale exponents), `nfw` (the
 `concentration_m200` parameterization's self-contained numerics),
-`components` (the component class hierarchy and static-structure
-resolution), and `core` (`Potential` itself and the module-level helpers
-around it).
+`components` (the abstract base and the native-`galax` component,
+resolution/dispatch included), `triaxial_mge` (the triaxial MGE-backed
+composite types -- other MGE-backed types, e.g. axisymmetric, get their own
+sibling module alongside it), and `core` (`Potential` itself and the
+module-level helpers around it).
 """
 
 from __future__ import annotations
@@ -40,8 +42,6 @@ from tnt.potential.components import (
     AbstractPotentialComponent,
     GalaxPotentialComponent,
     ResolvedPotentialComponent,
-    TriaxialLightMGEComponent,
-    TriaxialMassMGEComponent,
 )
 from tnt.potential.core import Potential, build_potential, raw_potential_parameters
 from tnt.potential.nfw import (
@@ -59,6 +59,10 @@ from tnt.potential.registry import (
     Parameterization,
     raw_parameter_dimensions,
 )
+from tnt.potential.triaxial_mge import (
+    TriaxialLightMGEPotential,
+    TriaxialMassMGEPotential,
+)
 
 __all__ = [
     "PARAMETERIZATION_RAW_DIMENSIONS",
@@ -68,8 +72,8 @@ __all__ = [
     "Parameterization",
     "Potential",
     "ResolvedPotentialComponent",
-    "TriaxialLightMGEComponent",
-    "TriaxialMassMGEComponent",
+    "TriaxialLightMGEPotential",
+    "TriaxialMassMGEPotential",
     "build_potential",
     "raw_parameter_dimensions",
     "raw_potential_parameters",

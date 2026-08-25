@@ -131,7 +131,7 @@ def test_normalize_supported_configuration_quantities() -> None:
                 },
             },
             "stars": {
-                "type": "triaxial_light_mge",
+                "type": "TriaxialLightMGEPotential",
                 "parameters": {
                     "ml": {
                         "value": 5.0,
@@ -200,7 +200,7 @@ def test_configuration_quantity_validation_does_not_modify_declarations() -> Non
         },
         "potential": {
             "stars": {
-                "type": "triaxial_light_mge",
+                "type": "TriaxialLightMGEPotential",
                 "parameters": {
                     "ml": {
                         "value": 5.0,
@@ -260,7 +260,7 @@ def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:
         (
             {
                 "stars": {
-                    "type": "triaxial_light_mge",
+                    "type": "TriaxialLightMGEPotential",
                     "parameters": {
                         "ml": {
                             "value": 5.0,

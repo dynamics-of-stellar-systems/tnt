@@ -1,17 +1,22 @@
 """One named term of a `Potential`: resolving its static structure and building it.
 
-`AbstractPotentialComponent` and its concrete subclasses -- a component
-built directly from a curated `galax.potential` class, and the two
-not-yet-implemented TNT MGE composite types. `ResolvedPotentialComponent`
-is a component's static structure (`type`/`parameterization`/`mge`),
-resolved once from its config entry and reused across every proposed point
-in parameter space; see `AbstractPotentialComponent.resolve`.
+`AbstractPotentialComponent` (here) is the base every concrete component
+subclasses -- `GalaxPotentialComponent` (also here, built directly from a
+curated `galax.potential` class) and the MGE-backed composite types
+(`tnt.potential.triaxial_mge`, with more planned as separate modules
+alongside it). `resolve` dispatches to whichever subclass matches a
+config entry's `type` purely by walking `cls.__subclasses__()` -- a new
+subclass with a `_type` participates automatically, without needing to be
+registered here. `ResolvedPotentialComponent` is a component's static
+structure (`type`/`parameterization`/`mge`), resolved once from its config
+entry and reused across every proposed point in parameter space; see
+`AbstractPotentialComponent.resolve`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, ClassVar, NamedTuple, Self
+from typing import Any, NamedTuple, Self
 
 import equinox as eqx
 import galax.potential
@@ -25,7 +30,7 @@ from tnt.potential.registry import (
     ParameterizationConverter,
     raw_parameter_dimensions,
 )
-from tnt.validation import _required_string, _resolve_typed_reference, _string
+from tnt.validation import _required_string, _string
 
 _PARAMETERIZATIONS: dict[str, dict[str, Parameterization]] = {
     "NFWPotential": {
@@ -62,14 +67,12 @@ class ResolvedPotentialComponent(NamedTuple):
         (native, or under a `parameterization`), each already a `Quantity`
         in whatever unit it was declared/proposed in -- no unit-system
         conversion happens here (see `tnt.potential`'s module docstring for
-        why). Passed straight through as-is, including any extra key --
-        e.g. the MGE composite types' still-unimplemented viewing-geometry
-        parameters (`q`/`p`/`u`), staged in configuration ahead of a
-        parameterization that doesn't exist yet (see `docs/source/potential.md`).
-        A missing or otherwise wrong parameter surfaces at `to_galax()` (a
-        native `galax` constructor error) or a registered `parameterization`
-        converter, not here -- parameter-schema validation (exact expected
-        names, positivity, ...) is a separate, not-yet-implemented concern.
+        why). Passed straight through as-is -- a missing or otherwise wrong
+        parameter surfaces at `to_galax()` (a native `galax` constructor
+        error, or `AbstractMGE.deproject_triaxial` for the two MGE composite
+        types) or a registered `parameterization` converter, not here --
+        parameter-schema validation (exact expected names, positivity, ...)
+        is a separate, not-yet-implemented concern.
 
         Args:
             parameter_values: This component's current values, e.g. one
@@ -142,19 +145,29 @@ class AbstractPotentialComponent(eqx.Module):
         Raises:
             ValueError: If `type` names neither a supported
                 `galax.potential` class (see
-                `tnt.potential.registry._SUPPORTED_GALAX_TYPES`) nor one of
-                the two MGE composite type names.
+                `tnt.potential.registry._SUPPORTED_GALAX_TYPES`) nor a
+                registered composite type's `_type`.
             NotImplementedError: If an explicit `parameterization` isn't
                 registered for this `type`.
         """
         kind = _required_string(settings, "type", path)
-        component_cls = _MGE_COMPOSITE_CLASSES.get(kind, GalaxPotentialComponent)
+        # Every non-native concrete subclass (e.g. the MGE composite types
+        # in tnt.potential.triaxial_mge) declares its own `_type`;
+        # GalaxPotentialComponent doesn't, and stays the default -- walking
+        # __subclasses__() here, rather than a hand-maintained registry,
+        # means a new subclass participates the moment it's imported.
+        registered = {
+            subclass._type: subclass
+            for subclass in cls.__subclasses__()
+            if hasattr(subclass, "_type")
+        }
+        component_cls = registered.get(kind, GalaxPotentialComponent)
         unsupported = (
             component_cls is GalaxPotentialComponent
             and kind not in _SUPPORTED_GALAX_TYPES
         )
         if unsupported:
-            allowed = ", ".join(sorted(_MGE_COMPOSITE_CLASSES))
+            allowed = ", ".join(sorted(registered))
             raise ValueError(
                 f"Unsupported {path}.type {kind!r}; expected a supported "
                 "galax.potential class name (see "
@@ -294,95 +307,3 @@ class GalaxPotentialComponent(AbstractPotentialComponent):
             return self.parameters
         invert = _PARAMETERIZATIONS[self.galax_type][parameterization].invert
         return invert(self.parameters, unit_system, cosmological_parameters)
-
-
-class TriaxialLightMGEComponent(AbstractPotentialComponent):
-    """A triaxial potential from a light MGE, via its `ml` parameter.
-
-    Not yet implemented: no native `galax.potential` class exists for a
-    sum-of-triaxial-Gaussians potential; building one needs a custom
-    `galax.potential.AbstractPotential` subclass, the same difficulty tier
-    as `AbstractMGE.get_projected_mass`'s from-scratch Cappellari-2002
-    implementation -- a separate, larger effort.
-    """
-
-    _type: ClassVar[str] = "triaxial_light_mge"
-    mge: LightMGE
-
-    @classmethod
-    def _extra_fields(
-        cls,
-        kind: str,
-        settings: Mapping[str, Any],
-        mges: Mapping[str, LightMGE | MassMGE],
-        *,
-        path: str,
-    ) -> dict[str, Any]:
-        del kind
-        mge_name = _required_string(settings, "mge", path)
-        return {
-            "mge": _resolve_typed_reference(
-                mges, mge_name, f"{path}.mge", "MGEs", LightMGE
-            )
-        }
-
-    def to_galax(
-        self, unit_system: AbstractUnitSystem
-    ) -> galax.potential.AbstractPotential:
-        raise NotImplementedError
-
-    def rescale(self, mass_scale: float) -> Self:
-        rescaled = dict(self.parameters)
-        rescaled["ml"] = rescaled["ml"] * mass_scale
-        return eqx.tree_at(lambda c: c.parameters, self, rescaled)
-
-
-class TriaxialMassMGEComponent(AbstractPotentialComponent):
-    """A triaxial potential from an already-mass-calibrated MGE.
-
-    `mge_mass_scale` is the analogue of a light MGE's `ml` for a component
-    whose shape template is already in mass units: a normalization on top
-    of an otherwise-fixed mass map, typically left `fixed` (see `rescale`'s
-    docstring for why it can still move regardless). Not yet implemented,
-    for the same reason as `TriaxialLightMGEComponent`.
-    """
-
-    _type: ClassVar[str] = "triaxial_mass_mge"
-    mge: MassMGE
-
-    @classmethod
-    def _extra_fields(
-        cls,
-        kind: str,
-        settings: Mapping[str, Any],
-        mges: Mapping[str, LightMGE | MassMGE],
-        *,
-        path: str,
-    ) -> dict[str, Any]:
-        del kind
-        mge_name = _required_string(settings, "mge", path)
-        return {
-            "mge": _resolve_typed_reference(
-                mges, mge_name, f"{path}.mge", "MGEs", MassMGE
-            )
-        }
-
-    def to_galax(
-        self, unit_system: AbstractUnitSystem
-    ) -> galax.potential.AbstractPotential:
-        raise NotImplementedError
-
-    def rescale(self, mass_scale: float) -> Self:
-        rescaled = dict(self.parameters)
-        rescaled["mge_mass_scale"] = rescaled["mge_mass_scale"] * mass_scale
-        return eqx.tree_at(lambda c: c.parameters, self, rescaled)
-
-
-def _mge_composite_registry() -> dict[str, type[AbstractPotentialComponent]]:
-    return {
-        TriaxialLightMGEComponent._type: TriaxialLightMGEComponent,
-        TriaxialMassMGEComponent._type: TriaxialMassMGEComponent,
-    }
-
-
-_MGE_COMPOSITE_CLASSES = _mge_composite_registry()

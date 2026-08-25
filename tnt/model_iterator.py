@@ -62,7 +62,7 @@ from tnt.run_config_log import (
     RunManifestReference,
 )
 from tnt.spatial_binnings import build_spatial_binnings
-from tnt.units import resolve_cosmological_parameters
+from tnt.units import resolve_cosmological_parameters, resolve_system_distance
 from tnt.weight_solver import AbstractWeightSolver, OrbitWeights, build_weight_solver
 
 _LOGGER = logging.getLogger(__name__)
@@ -134,7 +134,8 @@ class ModelIterator:
         input_directory = config["io_settings"]["input_directory"]
         parameter_space_settings = config["parameter_space_settings"]
 
-        mges = build_mges(config["MGEs"], input_directory, unit_system)
+        distance = resolve_system_distance(config["system_attributes"])
+        mges = build_mges(config["MGEs"], input_directory, unit_system, distance)
         spatial_binnings = build_spatial_binnings(
             config["spatial_binnings"],
             input_directory,

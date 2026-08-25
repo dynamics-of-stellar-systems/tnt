@@ -67,37 +67,40 @@ potential:
         latex_label: "$M_{200}/M_\\odot$"
 
   stars:
-    type: "triaxial_light_mge"
+    type: "TriaxialLightMGEPotential"
     include: true
     mge: "mge_lum"
     parameters:
-      q:
+      theta:
+        unit: "rad"
         generator_settings:
-          lower_bound: 0.05
-          upper_bound: 0.99
-          step: 0.04
-          minimum_step: 0.02
-        fixed: true
-        value: 0.54
-        latex_label: "$q$"
-      p:
-        generator_settings:
-          lower_bound: 0.99
-          upper_bound: 0.999
-          step: 0.02
+          lower_bound: 0.0
+          upper_bound: 3.141592653589793
+          step: 0.1
           minimum_step: 0.01
         fixed: true
-        value: 0.99
-        latex_label: "$p$"
-      u:
+        value: 1.0
+        latex_label: "$\\theta$"
+      phi:
+        unit: "rad"
         generator_settings:
-          lower_bound: 0.95
-          upper_bound: 1.0
-          step: 0.01
+          lower_bound: 0.0
+          upper_bound: 1.5707963267948966
+          step: 0.1
           minimum_step: 0.01
         fixed: true
-        value: 0.9999
-        latex_label: "$u_\\mathrm{min}$"
+        value: 0.5
+        latex_label: "$\\phi$"
+      psi:
+        unit: "rad"
+        generator_settings:
+          lower_bound: 0.0
+          upper_bound: 3.141592653589793
+          step: 0.1
+          minimum_step: 0.01
+        fixed: true
+        value: 0.0
+        latex_label: "$\\psi$"
       ml:
         unit: "Msun / Lsun"
         generator_settings:

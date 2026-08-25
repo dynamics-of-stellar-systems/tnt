@@ -153,18 +153,19 @@ _SUPPORTED_GALAX_TYPES: dict[str, dict[str, NativeParameter]] = {
 
 
 # Hand-declared raw parameter dimensions for the two TNT MGE composite
-# types. `triaxial_mass_mge`'s own mass parameter is `mge_mass_scale`, a
+# types. `TriaxialMassMGEPotential`'s own mass parameter is `mge_mass_scale`, a
 # pure multiplicative scale factor -- dimensionless, but still given an
 # explicit entry (not omitted) so `_validate_parameter_units` can reject a
 # stray declared `unit` on it with a specific message. `ml` has no entry
-# under `triaxial_mass_mge` -- it's invalid there, not just dimensionless;
+# under `TriaxialMassMGEPotential` -- it's invalid there, not just dimensionless;
 # rejected directly by `tnt.configuration.validation`'s `_validate_potential`,
 # which runs before this module's dimension check specifically so a config
 # mistakenly declaring `ml` there gets that specific "ml is invalid for a
 # mass MGE potential" error rather than a generic dimension one.
+_VIEWING_ANGLES: dict[str, str] = {"theta": "angle", "phi": "angle", "psi": "angle"}
 _MGE_RAW_DIMENSIONS: dict[str, dict[str, str]] = {
-    "triaxial_light_mge": {"ml": "mass_to_light"},
-    "triaxial_mass_mge": {"mge_mass_scale": "dimensionless"},
+    "TriaxialLightMGEPotential": {"ml": "mass_to_light", **_VIEWING_ANGLES},
+    "TriaxialMassMGEPotential": {"mge_mass_scale": "dimensionless", **_VIEWING_ANGLES},
 }
 
 # Raw parameter dimensions for registered non-native parameterizations,

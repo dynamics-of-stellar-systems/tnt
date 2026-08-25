@@ -241,6 +241,16 @@ def resolve_cosmological_parameters(
     }
 
 
+def resolve_system_distance(system_attributes: Mapping[str, Any]) -> Quantity:
+    """Convert a resolved configuration's declared `system_attributes.distance`.
+
+    Preserved as `{value, unit}` by configuration preparation, same as
+    `cosmological_parameters` (see `resolve_cosmological_parameters`).
+    """
+    declared = system_attributes["distance"]
+    return Quantity(declared["value"], declared["unit"])
+
+
 def normalize_unitful_value(
     value: Any,
     dimension: str,

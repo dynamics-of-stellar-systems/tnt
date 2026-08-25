@@ -275,7 +275,7 @@
 - `potential.<name>.type` names one of a curated set of `galax.potential`
   classes (`tnt.potential._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
   `PlummerPotential` -- 25 classes total), or one of two TNT-specific MGE
-  composite types, `triaxial_light_mge`/`triaxial_mass_mge`, provided
+  composite types, `TriaxialLightMGEPotential`/`TriaxialMassMGEPotential`, provided
   directly by TNT since `galax` has no native class for a
   sum-of-triaxial-Gaussians potential. A light-MGE potential requires an
   `ml` parameter; a mass-MGE potential requires `mge_mass_scale` instead

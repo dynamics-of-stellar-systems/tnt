@@ -111,12 +111,15 @@ spatial_binnings:
 
 potential:
   stars:
-    type: "triaxial_light_mge"
+    type: "TriaxialLightMGEPotential"
     mge: "stellar_light"
     parameters:
       ml:
         value: 5.0
         unit: "Msun / Lsun"
+      theta: {value: 1.0, unit: "rad"}
+      phi: {value: 0.5, unit: "rad"}
+      psi: {value: 0.0, unit: "rad"}
 
 kinematic_data:
   central_spectroscopy:
@@ -151,12 +154,14 @@ Population observations must always be supplied through their own
 embedded in a kinematics data file, even when both data sets use the same
 `spatial_binnings` entry.
 
-The supported potential types are `triaxial_light_mge`, `triaxial_mass_mge`,
+The supported potential types are `TriaxialLightMGEPotential`, `TriaxialMassMGEPotential`,
 and a curated set of `galax.potential` class names (see
 [Potential](potential.md)). A light-MGE potential requires an `ml`
 mass-to-light parameter. A mass-MGE potential must not declare `ml`,
-because its input MGE already represents mass. MGE contents and their physical
-units are inspected only in the later object-construction phase.
+because its input MGE already represents mass. Both MGE types also require
+`theta`/`phi`/`psi`, the global viewing angles the named MGE is deprojected
+under. MGE contents and their physical units are inspected only in the
+later object-construction phase.
 
 ## Loading configured MGEs
 
@@ -167,6 +172,7 @@ configuration, load the registered MGEs explicitly:
 ```python
 from tnt import Configuration
 from tnt.mge import build_mges
+from tnt.units import resolve_system_distance
 
 config = Configuration().read("configuration.yaml")
 resolved = config.as_dict()
@@ -175,13 +181,16 @@ mges = build_mges(
     resolved["MGEs"],
     resolved["io_settings"]["input_directory"],
     config.unit_systems.internal,
+    resolve_system_distance(resolved["system_attributes"]),
 )
 ```
 
 The returned dictionary uses the configured MGE names as keys. Each value is
 a `LightMGE` or `MassMGE`, inferred from the physical unit of the ECSV `I`
-column. File contents and units are validated during this runtime-loading
-step, so loading can fail even after configuration preparation succeeded.
+column, and already converted from angular to physical units via
+`angular_to_physical(distance)`. File contents and units are validated
+during this runtime-loading step, so loading can fail even after
+configuration preparation succeeded.
 
 ## Loading configured spatial binnings
 

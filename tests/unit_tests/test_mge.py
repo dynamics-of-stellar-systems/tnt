@@ -163,14 +163,20 @@ def test_build_mges_reads_each_named_file(tmp_path):
         {"light": "light.ecsv", "mass": "mass.ecsv"},
         tmp_path,
         _internal_unit_system(),
+        u.Quantity(30.5, "Mpc"),
     )
 
     assert isinstance(mges["light"], LightMGE)
     assert isinstance(mges["mass"], MassMGE)
+    # angular_to_physical already applied -- sigma is length-like, not angular.
+    mges["light"].sigma.ustrip("Mpc")
+    mges["mass"].sigma.ustrip("Mpc")
 
 
 def test_build_mges_without_entries_returns_empty_dict(tmp_path):
-    assert build_mges({}, tmp_path, _internal_unit_system()) == {}
+    assert (
+        build_mges({}, tmp_path, _internal_unit_system(), u.Quantity(30.5, "Mpc")) == {}
+    )
 
 
 @pytest.mark.parametrize("bad_q", [0.0, -0.5, 1.5])
@@ -228,6 +234,21 @@ def test_to_mass_with_per_component_ratio():
     assert jnp.allclose(
         mass.I.ustrip("Msun / rad2"), light.I.ustrip("Lsun / rad2") * ratios
     )
+
+
+def test_rescaled_multiplies_intensity_and_keeps_everything_else():
+    light = _multi_component_light_mge()
+    factor = u.Quantity(2.0, "")
+
+    rescaled = light.rescaled(factor)
+
+    assert isinstance(rescaled, LightMGE)
+    assert jnp.allclose(
+        rescaled.I.ustrip("Lsun / rad2"), light.I.ustrip("Lsun / rad2") * 2.0
+    )
+    assert jnp.allclose(rescaled.sigma.ustrip("rad"), light.sigma.ustrip("rad"))
+    assert jnp.allclose(rescaled.q.ustrip(""), light.q.ustrip(""))
+    assert jnp.allclose(rescaled.PA_twist.ustrip("rad"), light.PA_twist.ustrip("rad"))
 
 
 def test_to_mass_rejects_mismatched_component_count():

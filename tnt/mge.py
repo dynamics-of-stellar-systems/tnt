@@ -95,6 +95,25 @@ class AbstractMGE(eqx.Module):
         table = QTable.read(path, format="ascii.ecsv")
         return cls.from_qtable(table, unit_system)
 
+    def rescaled(self, factor: Quantity) -> Self:
+        """Multiply `I` by a dimensionless factor, keeping every other field.
+
+        Used for `TriaxialMassMGEPotential`'s `mge_mass_scale`, a normalization on
+        top of an otherwise-fixed mass map (see
+        `tnt.potential.triaxial_mge.TriaxialMassMGEPotential`).
+
+        Args:
+            factor: The multiplicative factor, either a single value applied
+                to every component, or an array with one value per Gaussian
+                component.
+
+        Returns:
+            An MGE of the same kind with ``I = self.I * factor``.
+        """
+        return type(self)(
+            I=self.I * factor, sigma=self.sigma, q=self.q, PA_twist=self.PA_twist
+        )
+
     def angular_to_physical(self, distance: Quantity) -> Self:
         """Convert `sigma` and `I` from angular to physical (length) units.
 
@@ -517,11 +536,15 @@ def build_mges(
     mges: Mapping[str, str],
     input_directory: str | Path,
     unit_system: AbstractUnitSystem,
+    distance: Quantity,
 ) -> dict[str, AbstractMGE]:
     """Build the named MGEs from a resolved configuration's ``MGEs`` mapping.
 
     Each MGE's kind (light or mass) is inferred from its file's declared
-    units -- see `read_mge`. This deliberately takes already-resolved,
+    units -- see `read_mge`. Every MGE is converted to physical units via
+    `angular_to_physical` before being returned, since every consumer (e.g.
+    `tnt.potential`'s MGE composite components) needs physical `sigma` to
+    build a 3D potential. This deliberately takes already-resolved,
     plain-data inputs rather than a `tnt.configuration.Configuration`, since
     that class explicitly holds no instantiated runtime objects.
 
@@ -531,12 +554,15 @@ def build_mges(
         input_directory: Directory that each filename is resolved against,
             e.g. a resolved configuration's ``io_settings.input_directory``.
         unit_system: The unit system to convert each MGE's columns into.
+        distance: The distance to the object, e.g. a resolved
+            configuration's ``system_attributes.distance``.
 
     Returns:
-        A dict mapping each identifier to its `LightMGE` or `MassMGE`.
+        A dict mapping each identifier to its physical-unit `LightMGE` or
+        `MassMGE`.
     """
     directory = Path(input_directory)
     return {
-        name: read_mge(directory / filename, unit_system)
+        name: read_mge(directory / filename, unit_system).angular_to_physical(distance)
         for name, filename in mges.items()
     }

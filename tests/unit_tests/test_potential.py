@@ -1,10 +1,10 @@
 """Unit tests for `tnt.potential`.
 
-`Potential.generate_orbit_library` and the two MGE composite components'
-`to_galax` remain `NotImplementedError` (see `tnt.potential`'s module
-docstring); these tests cover what's actually implemented: dynamic
-derivation from galax's own `ParameterField` metadata, type/parameterization
-resolution, and the fully-working Plummer/NFW native-mode paths.
+`Potential.generate_orbit_library` remains `NotImplementedError` (see
+`tnt.potential`'s module docstring); these tests cover what's actually
+implemented: dynamic derivation from galax's own `ParameterField` metadata,
+type/parameterization resolution, the fully-working Plummer/NFW native-mode
+paths, and the two MGE composite types' `to_galax`.
 """
 
 from __future__ import annotations
@@ -19,13 +19,14 @@ import unxt as u
 from galax.potential.params import ParameterField
 from unxt import Quantity
 
-from tnt.mge import LightMGE
+from tnt.mge import LightMGE, MassMGE
 from tnt.potential import (
     _SUPPORTED_GALAX_TYPES,
     AbstractPotentialComponent,
     GalaxPotentialComponent,
     Potential,
-    TriaxialLightMGEComponent,
+    TriaxialLightMGEPotential,
+    TriaxialMassMGEPotential,
     _nfw_concentration_m200,
     _nfw_concentration_m200_inverse,
     _nfw_g,
@@ -279,8 +280,11 @@ def test_raw_parameter_dimensions_covers_all_three_sources() -> None:
         "M_200": "mass",
     }
     # TNT MGE composite type.
-    assert raw_parameter_dimensions("triaxial_light_mge", None) == {
-        "ml": "mass_to_light"
+    assert raw_parameter_dimensions("TriaxialLightMGEPotential", None) == {
+        "ml": "mass_to_light",
+        "theta": "angle",
+        "phi": "angle",
+        "psi": "angle",
     }
     # Unrecognized (type, parameterization) pair -- defer to resolve().
     assert raw_parameter_dimensions("not_a_type", None) == {}
@@ -675,23 +679,47 @@ def test_nfw_component_plumbing_works_without_from_settings() -> None:
 
 
 # ---------------------------------------------------------------------------
-# MGE composite types -- from_settings works, to_galax stays NotImplementedError.
+# MGE composite types: from_settings resolution and to_galax.
+#
+# to_galax's viewing-angle tests below deliberately use q=1 (circular)
+# components: tnt.mge.AbstractMGE.deproject_triaxial has no real solution
+# for arbitrary (q_obs, theta, phi, psi) combinations (it returns nan rather
+# than raising, since viewing angles may be fit parameters under jax.jit --
+# see its own docstring). A circular projection is the one case that's
+# valid for *any* viewing angle -- it deprojects to an exactly spherical
+# Deprojected3DMGE (p = q = 1) regardless of theta/phi/psi -- which lets
+# these tests check to_galax's actual wiring (mass-to-light/mass-scale
+# conversion, deprojection, per-component TriaxialGaussianPotential
+# construction, CompositePotential summation) against galax's own
+# independent, dedicated GaussianPotential, without also needing to
+# reimplement/verify the deprojection formula itself (already covered by
+# tests/unit_tests/test_mge.py's own forward-projection round-trip tests).
 # ---------------------------------------------------------------------------
 
 
-def test_mge_component_from_settings_resolves_mge_but_to_galax_is_not_implemented() -> (
-    None
-):
-    unit_system = _internal_unit_system()
-    light_mge = LightMGE(
-        I=Quantity(jnp.array([1.0]), "Lsun / rad2"),
-        sigma=Quantity(jnp.array([1.0]), "rad"),
-        q=Quantity(jnp.array([0.5]), ""),
-        PA_twist=Quantity(jnp.array([0.0]), "rad"),
+def _circular_light_mge(I: list[float], sigma: list[float]) -> LightMGE:
+    return LightMGE(
+        I=Quantity(jnp.array(I), "Lsun / rad2"),
+        sigma=Quantity(jnp.array(sigma), "rad"),
+        q=Quantity(jnp.ones(len(I)), ""),
+        PA_twist=Quantity(jnp.zeros(len(I)), "rad"),
+    )
+
+
+_VIEWING_ANGLES = {
+    "theta": Quantity(1.1, "rad"),
+    "phi": Quantity(0.6, "rad"),
+    "psi": Quantity(-0.4, "rad"),
+}
+
+
+def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
+    light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
+        Quantity(30.0, "Mpc")
     )
     resolved = AbstractPotentialComponent.resolve(
         {
-            "type": "triaxial_light_mge",
+            "type": "TriaxialLightMGEPotential",
             "include": True,
             "mge": "mge_lum",
             "parameters": {},
@@ -700,16 +728,129 @@ def test_mge_component_from_settings_resolves_mge_but_to_galax_is_not_implemente
         path="potential.stars",
     )
     component = resolved.build(
-        {"ml": Quantity(5.0, "Msun / Lsun")},
-        unit_system,
+        {"ml": Quantity(5.0, "Msun / Lsun"), **_VIEWING_ANGLES},
+        _internal_unit_system(),
         _NO_COSMOLOGICAL_PARAMETERS,
     )
-    assert isinstance(component, TriaxialLightMGEComponent)
+    assert isinstance(component, TriaxialLightMGEPotential)
     assert component.mge is light_mge
     assert component.parameters["ml"].ustrip("Msun / Lsun") == pytest.approx(5.0)
 
-    with pytest.raises(NotImplementedError):
-        component.to_galax(unit_system)
+
+def test_triaxial_light_mge_to_galax_matches_spherical_gaussian() -> None:
+    unit_system = _internal_unit_system()
+    distance = Quantity(30.0, "Mpc")
+    light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
+    ml = Quantity(5.0, "Msun / Lsun")
+    component = TriaxialLightMGEPotential(
+        parameters={"ml": ml, **_VIEWING_ANGLES}, mge=light_mge
+    )
+
+    potential = component.to_galax(unit_system)
+
+    mass_mge = light_mge.to_mass(ml)
+    deprojected = mass_mge.deproject_triaxial(**_VIEWING_ANGLES)
+    assert deprojected.p.ustrip("") == pytest.approx(1.0)
+    assert deprojected.q.ustrip("") == pytest.approx(1.0)
+    m_tot = (
+        deprojected.I[0]
+        * deprojected.p[0]
+        * deprojected.q[0]
+        * (2 * jnp.pi) ** 1.5
+        * deprojected.sigma[0] ** 3
+    )
+    reference = gp.GaussianPotential(
+        m_tot=m_tot, r_s=deprojected.sigma[0], units=unit_system
+    )
+
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    for xyz in (
+        Quantity(jnp.array([3.0, 0.5, -1.0]), "kpc"),
+        Quantity(jnp.array([50.0, -20.0, 8.0]), "kpc"),
+    ):
+        t = Quantity(0.0, "Myr")
+        r = jnp.sqrt(jnp.sum(xyz.ustrip("kpc") ** 2))
+        radial_xyz = Quantity(jnp.array([r, 0.0, 0.0]), "kpc")
+        assert potential.potential(radial_xyz, t).ustrip(speed2) == pytest.approx(
+            reference.potential(radial_xyz, t).ustrip(speed2), rel=1e-5
+        )
+
+
+def test_triaxial_light_mge_to_galax_sums_every_component() -> None:
+    unit_system = _internal_unit_system()
+    distance = Quantity(30.0, "Mpc")
+    light_mge = _circular_light_mge([2.0, 0.5], [1.5, 4.0]).angular_to_physical(
+        distance
+    )
+    ml = Quantity(5.0, "Msun / Lsun")
+    component = TriaxialLightMGEPotential(
+        parameters={"ml": ml, **_VIEWING_ANGLES}, mge=light_mge
+    )
+
+    potential = component.to_galax(unit_system)
+
+    deprojected = light_mge.to_mass(ml).deproject_triaxial(**_VIEWING_ANGLES)
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    xyz = Quantity(jnp.array([3.0, 0.5, -1.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    individual_sum = Quantity(0.0, speed2)
+    for i in range(2):
+        m_tot = (
+            deprojected.I[i]
+            * deprojected.p[i]
+            * deprojected.q[i]
+            * (2 * jnp.pi) ** 1.5
+            * deprojected.sigma[i] ** 3
+        )
+        component_i = gp.TriaxialGaussianPotential(
+            m_tot=m_tot,
+            r_s=deprojected.sigma[i],
+            q1=deprojected.p[i],
+            q2=deprojected.q[i],
+            units=unit_system,
+        )
+        individual_sum = individual_sum + component_i.potential(xyz, t)
+
+    assert potential.potential(xyz, t).ustrip(speed2) == pytest.approx(
+        individual_sum.ustrip(speed2), rel=1e-5
+    )
+
+
+def test_triaxial_mass_mge_to_galax_uses_mge_mass_scale() -> None:
+    unit_system = _internal_unit_system()
+    distance = Quantity(30.0, "Mpc")
+    mass_mge = MassMGE(
+        I=Quantity(jnp.array([1e2]), "Msun / rad2"),
+        sigma=Quantity(jnp.array([1.5]), "rad"),
+        q=Quantity(jnp.array([1.0]), ""),
+        PA_twist=Quantity(jnp.array([0.0]), "rad"),
+    ).angular_to_physical(distance)
+    mge_mass_scale = Quantity(3.0, "")
+    component = TriaxialMassMGEPotential(
+        parameters={"mge_mass_scale": mge_mass_scale, **_VIEWING_ANGLES}, mge=mass_mge
+    )
+
+    potential = component.to_galax(unit_system)
+
+    scaled = mass_mge.rescaled(mge_mass_scale)
+    deprojected = scaled.deproject_triaxial(**_VIEWING_ANGLES)
+    m_tot = (
+        deprojected.I[0]
+        * deprojected.p[0]
+        * deprojected.q[0]
+        * (2 * jnp.pi) ** 1.5
+        * deprojected.sigma[0] ** 3
+    )
+    reference = gp.GaussianPotential(
+        m_tot=m_tot, r_s=deprojected.sigma[0], units=unit_system
+    )
+
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    xyz = Quantity(jnp.array([4.0, 0.0, 0.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    assert potential.potential(xyz, t).ustrip(speed2) == pytest.approx(
+        reference.potential(xyz, t).ustrip(speed2), rel=1e-5
+    )
 
 
 def test_potential_generate_orbit_library_not_implemented() -> None:

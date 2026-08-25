@@ -35,11 +35,20 @@ spatial_binnings:
     bins_file: bins.npy
 potential:
   stars:
-    type: triaxial_light_mge
+    type: TriaxialLightMGEPotential
     mge: light
     parameters:
       q:
         value: 0.7
+      theta:
+        unit: "rad"
+        value: 1.0
+      phi:
+        unit: "rad"
+        value: 0.5
+      psi:
+        unit: "rad"
+        value: 0.0
       ml:
         unit: "Msun / Lsun"
         value: 5.0
@@ -944,7 +953,7 @@ def test_mass_mge_potential_rejects_ml_parameter(tmp_path: Path) -> None:
     output_directory = tmp_path / "output"
     _write_user_config(user_path, output_directory)
     user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
-    user_data["potential"]["stars"]["type"] = "triaxial_mass_mge"
+    user_data["potential"]["stars"]["type"] = "TriaxialMassMGEPotential"
     user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
 
     with pytest.raises(ValueError, match=r"parameters\.ml is invalid for a mass MGE"):
