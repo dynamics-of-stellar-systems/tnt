@@ -152,20 +152,39 @@ _SUPPORTED_GALAX_TYPES: dict[str, dict[str, NativeParameter]] = {
 }
 
 
-# Hand-declared raw parameter dimensions for the two TNT MGE composite
-# types. `TriaxialMassMGEPotential`'s own mass parameter is `mge_mass_scale`, a
-# pure multiplicative scale factor -- dimensionless, but still given an
-# explicit entry (not omitted) so `_validate_parameter_units` can reject a
-# stray declared `unit` on it with a specific message. `ml` has no entry
-# under `TriaxialMassMGEPotential` -- it's invalid there, not just dimensionless;
-# rejected directly by `tnt.configuration.validation`'s `_validate_potential`,
-# which runs before this module's dimension check specifically so a config
+# Hand-declared raw parameter dimensions for the four TNT MGE composite
+# types. Each mass-type's own mass parameter is `mge_mass_scale`, a pure
+# multiplicative scale factor -- dimensionless, but still given an explicit
+# entry (not omitted) so `_validate_parameter_units` can reject a stray
+# declared `unit` on it with a specific message. `ml` has no entry under a
+# mass type -- it's invalid there, not just dimensionless; rejected
+# directly by `tnt.configuration.validation`'s `_validate_potential`, which
+# runs before this module's dimension check specifically so a config
 # mistakenly declaring `ml` there gets that specific "ml is invalid for a
 # mass MGE potential" error rather than a generic dimension one.
-_VIEWING_ANGLES: dict[str, str] = {"theta": "angle", "phi": "angle", "psi": "angle"}
+_TRIAXIAL_VIEWING_ANGLES: dict[str, str] = {
+    "theta": "angle",
+    "phi": "angle",
+    "psi": "angle",
+}
+_AXISYM_VIEWING_ANGLE: dict[str, str] = {"inclination": "angle"}
 _MGE_RAW_DIMENSIONS: dict[str, dict[str, str]] = {
-    "TriaxialLightMGEPotential": {"ml": "mass_to_light", **_VIEWING_ANGLES},
-    "TriaxialMassMGEPotential": {"mge_mass_scale": "dimensionless", **_VIEWING_ANGLES},
+    "TriaxialLightMGEPotential": {
+        "ml": "mass_to_light",
+        **_TRIAXIAL_VIEWING_ANGLES,
+    },
+    "TriaxialMassMGEPotential": {
+        "mge_mass_scale": "dimensionless",
+        **_TRIAXIAL_VIEWING_ANGLES,
+    },
+    "AxisymmetricLightMGEPotential": {
+        "ml": "mass_to_light",
+        **_AXISYM_VIEWING_ANGLE,
+    },
+    "AxisymmetricMassMGEPotential": {
+        "mge_mass_scale": "dimensionless",
+        **_AXISYM_VIEWING_ANGLE,
+    },
 }
 
 # Raw parameter dimensions for registered non-native parameterizations,

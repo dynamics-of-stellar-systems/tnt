@@ -39,12 +39,22 @@ _TOP_LEVEL_KEYS = {
     "units",
     "weight_solver_settings",
 }
-# `potential.<name>.type` names either one of these two TNT-specific MGE
+# `potential.<name>.type` names either one of these four TNT-specific MGE
 # composite potentials, or -- for every other value -- a `galax.potential`
 # class name, resolved dynamically by `tnt.potential` at runtime rather than
 # validated against a closed set here (this module deliberately avoids
-# constructing scientific objects; see module docstring).
-_MGE_POTENTIAL_TYPES = {"TriaxialLightMGEPotential", "TriaxialMassMGEPotential"}
+# constructing scientific objects; see module docstring). Two orthogonal
+# axes: mass-parameterization (light's `ml` vs. mass's `mge_mass_scale`)
+# and deprojection convention (triaxial's `theta`/`phi`/`psi` vs.
+# axisymmetric's single `inclination`).
+_LIGHT_MGE_TYPES = {"TriaxialLightMGEPotential", "AxisymmetricLightMGEPotential"}
+_MASS_MGE_TYPES = {"TriaxialMassMGEPotential", "AxisymmetricMassMGEPotential"}
+_TRIAXIAL_MGE_TYPES = {"TriaxialLightMGEPotential", "TriaxialMassMGEPotential"}
+_AXISYMMETRIC_MGE_TYPES = {
+    "AxisymmetricLightMGEPotential",
+    "AxisymmetricMassMGEPotential",
+}
+_MGE_POTENTIAL_TYPES = _LIGHT_MGE_TYPES | _MASS_MGE_TYPES
 _KINEMATICS_TYPES = {"bayes_losvd", "gauss_hermite", "proper_motions"}
 
 
@@ -320,13 +330,13 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         parameter_names = set(parameters) if isinstance(parameters, dict) else set()
         if (
             include
-            and component_type == "TriaxialLightMGEPotential"
+            and component_type in _LIGHT_MGE_TYPES
             and "ml" not in parameter_names
         ):
             raise ValueError(
                 f"{component_path}.parameters is missing required field: ml."
             )
-        if component_type == "TriaxialMassMGEPotential" and "ml" in parameter_names:
+        if component_type in _MASS_MGE_TYPES and "ml" in parameter_names:
             raise ValueError(
                 f"{component_path}.parameters.ml is invalid for a mass MGE potential."
             )
@@ -338,25 +348,24 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         # potential_rescalings.
         if (
             include
-            and component_type == "TriaxialMassMGEPotential"
+            and component_type in _MASS_MGE_TYPES
             and "mge_mass_scale" not in parameter_names
         ):
             raise ValueError(
                 f"{component_path}.parameters is missing required field: "
                 "mge_mass_scale."
             )
-        if (
-            component_type == "TriaxialLightMGEPotential"
-            and "mge_mass_scale" in parameter_names
-        ):
+        if component_type in _LIGHT_MGE_TYPES and "mge_mass_scale" in parameter_names:
             raise ValueError(
                 f"{component_path}.parameters.mge_mass_scale is invalid for a "
                 "light MGE potential."
             )
-        # theta/phi/psi are the global viewing angles both MGE composite
-        # types deproject against (tnt.mge.AbstractMGE.deproject_triaxial) --
-        # required regardless of light vs. mass.
-        if include and is_mge_potential:
+        # theta/phi/psi are the global viewing angles a triaxial MGE
+        # composite deprojects against
+        # (tnt.mge.AbstractMGE.deproject_triaxial); an axisymmetric one
+        # needs only a single inclination
+        # (tnt.mge.AbstractMGE.deproject_axisymmetric).
+        if include and component_type in _TRIAXIAL_MGE_TYPES:
             missing_angles = {"theta", "phi", "psi"} - parameter_names
             if missing_angles:
                 names = ", ".join(sorted(missing_angles))
@@ -364,6 +373,14 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
                     f"{component_path}.parameters is missing required field(s): "
                     f"{names}."
                 )
+        if (
+            include
+            and component_type in _AXISYMMETRIC_MGE_TYPES
+            and "inclination" not in parameter_names
+        ):
+            raise ValueError(
+                f"{component_path}.parameters is missing required field: inclination."
+            )
 
 
 def _validate_parameters(

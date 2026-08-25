@@ -274,12 +274,17 @@
   and emits configured sampling warnings.
 - `potential.<name>.type` names one of a curated set of `galax.potential`
   classes (`tnt.potential._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
-  `PlummerPotential` -- 25 classes total), or one of two TNT-specific MGE
-  composite types, `TriaxialLightMGEPotential`/`TriaxialMassMGEPotential`, provided
-  directly by TNT since `galax` has no native class for a
-  sum-of-triaxial-Gaussians potential. A light-MGE potential requires an
-  `ml` parameter; a mass-MGE potential requires `mge_mass_scale` instead
-  and validation rejects `ml` on it, since its MGE already contains mass.
+  `PlummerPotential` -- 25 classes total), or one of four TNT-specific MGE
+  composite types -- triaxial (`TriaxialLightMGEPotential`/
+  `TriaxialMassMGEPotential`, `tnt/potential/triaxial_mge.py`) or
+  axisymmetric (`AxisymmetricLightMGEPotential`/
+  `AxisymmetricMassMGEPotential`, `tnt/potential/axisym_mge.py`) -- provided
+  directly by TNT since `galax` had no native class for a sum-of-Gaussians
+  potential when these were first scoped (it does now, but TNT still owns
+  the MGE-specific deprojection/composition wiring). A light-MGE potential
+  requires an `ml` parameter; a mass-MGE potential requires
+  `mge_mass_scale` instead and validation rejects `ml` on it, since its MGE
+  already contains mass.
   Deliberately curated rather than "any `AbstractPotential` subclass":
   `galax` also exports abstract/base classes (which passed the old
   `issubclass` check and only failed later, confusingly, at `to_galax()`),
@@ -367,7 +372,7 @@
   `Quantity`-aware (`_nfw_g`'s `jnp.log`) or where `_solve_nfw_concentration`'s
   bisection needs a plain number to compare against. Hand-maintained
   dimension tables now
-  cover only non-native parameterizations and the two MGE composite types'
+  cover only non-native parameterizations and the MGE composite types'
   own parameters
   (`tnt.potential.PARAMETERIZATION_RAW_DIMENSIONS`/`_MGE_RAW_DIMENSIONS`),
   not native-galax types. A parameterization is deliberately scoped to one

@@ -154,14 +154,16 @@ Population observations must always be supplied through their own
 embedded in a kinematics data file, even when both data sets use the same
 `spatial_binnings` entry.
 
-The supported potential types are `TriaxialLightMGEPotential`, `TriaxialMassMGEPotential`,
-and a curated set of `galax.potential` class names (see
-[Potential](potential.md)). A light-MGE potential requires an `ml`
-mass-to-light parameter. A mass-MGE potential must not declare `ml`,
-because its input MGE already represents mass. Both MGE types also require
-`theta`/`phi`/`psi`, the global viewing angles the named MGE is deprojected
-under. MGE contents and their physical units are inspected only in the
-later object-construction phase.
+The supported potential types are `TriaxialLightMGEPotential`,
+`TriaxialMassMGEPotential`, `AxisymmetricLightMGEPotential`,
+`AxisymmetricMassMGEPotential`, and a curated set of `galax.potential`
+class names (see [Potential](potential.md)). A light-MGE potential requires
+an `ml` mass-to-light parameter. A mass-MGE potential must not declare
+`ml`, because its input MGE already represents mass. Triaxial MGE types
+also require `theta`/`phi`/`psi`, the global viewing angles the named MGE
+is deprojected under; axisymmetric MGE types require a single
+`inclination` instead. MGE contents and their physical units are inspected
+only in the later object-construction phase.
 
 ## Loading configured MGEs
 

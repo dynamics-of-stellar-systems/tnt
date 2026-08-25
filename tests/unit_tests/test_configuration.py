@@ -960,6 +960,42 @@ def test_mass_mge_potential_rejects_ml_parameter(tmp_path: Path) -> None:
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
+def test_axisymmetric_mge_potential_requires_inclination_parameter(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    user_data["potential"]["stars"]["type"] = "AxisymmetricLightMGEPotential"
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError, match=r"parameters is missing required field: inclination"
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_axisymmetric_mge_potential_resolves_with_inclination(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    user_data["potential"]["stars"]["type"] = "AxisymmetricLightMGEPotential"
+    parameters = user_data["potential"]["stars"]["parameters"]
+    for angle in ("theta", "phi", "psi"):
+        del parameters[angle]
+    parameters["inclination"] = {"unit": "deg", "value": 90.0}
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert config.data["potential"]["stars"]["type"] == "AxisymmetricLightMGEPotential"
+    assert config.data["potential"]["stars"]["parameters"]["inclination"]["value"] == (
+        90.0
+    )
+
+
 def test_read_rejects_invalid_potential_rescaling_range(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"

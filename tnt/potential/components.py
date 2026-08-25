@@ -69,10 +69,10 @@ class ResolvedPotentialComponent(NamedTuple):
         conversion happens here (see `tnt.potential`'s module docstring for
         why). Passed straight through as-is -- a missing or otherwise wrong
         parameter surfaces at `to_galax()` (a native `galax` constructor
-        error, or `AbstractMGE.deproject_triaxial` for the two MGE composite
-        types) or a registered `parameterization` converter, not here --
-        parameter-schema validation (exact expected names, positivity, ...)
-        is a separate, not-yet-implemented concern.
+        error, or `AbstractMGE.deproject_triaxial`/`deproject_axisymmetric`
+        for the MGE composite types) or a registered `parameterization`
+        converter, not here -- parameter-schema validation (exact expected
+        names, positivity, ...) is a separate, not-yet-implemented concern.
 
         Args:
             parameter_values: This component's current values, e.g. one
@@ -102,12 +102,12 @@ class AbstractPotentialComponent(eqx.Module):
     its own exponent, curated per class (see
     `tnt.potential.registry._SUPPORTED_GALAX_TYPES`) -- e.g.
     `LogarithmicPotential`'s `v_c` scales alongside a true mass parameter
-    like Plummer's `m_tot`, each by its own confirmed exponent. For the two
-    MGE composite types, `rescale` multiplies their one TNT-defined
+    like Plummer's `m_tot`, each by its own confirmed exponent. For the MGE
+    composite types, `rescale` multiplies their one TNT-defined
     mass-normalization parameter (`ml`/`mge_mass_scale`) directly.
     `parameters` always holds canonical, parameterization-independent
     fields: for a native galax type these are exactly that class's own
-    constructor kwarg names; for the two MGE composite types, TNT's own
+    constructor kwarg names; for the MGE composite types, TNT's own
     `ml`/`mge_mass_scale`.
     """
 
@@ -135,7 +135,7 @@ class AbstractPotentialComponent(eqx.Module):
             settings: One resolved `potential.<name>` entry: `type`, an
                 optional `parameterization`, and `parameters`.
             mges: Named MGEs, e.g. from `tnt.mge.build_mges` -- used only by
-                the two MGE composite types.
+                the MGE composite types.
             path: This entry's location in the configuration, used in error
                 messages.
 
@@ -241,7 +241,7 @@ class AbstractPotentialComponent(eqx.Module):
         actually specifies it, regardless of `rescale`. Identity by default:
         `parameters` already *is* the raw, parameterization-independent
         representation for anything without a registered non-native
-        parameterization -- both MGE composite types (which don't support
+        parameterization -- every MGE composite type (none of which support
         one at all) and a native `galax` type with `parameterization`
         omitted.
         """
