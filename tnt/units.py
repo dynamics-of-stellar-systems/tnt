@@ -110,9 +110,7 @@ def normalize_configuration_quantities(
         "system_attributes",
     )
 
-    spatial_binnings = _optional_mapping(
-        resolved, "spatial_binnings", "configuration"
-    )
+    spatial_binnings = _optional_mapping(resolved, "spatial_binnings", "configuration")
     for binning_name, binning_value in spatial_binnings.items():
         binning_path = f"spatial_binnings.{binning_name}"
         binning = _mapping(binning_value, binning_path)
@@ -189,10 +187,11 @@ def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
 def _potential_parameter_dimensions(settings: Mapping[str, Any]) -> Mapping[str, str]:
     """One potential component's raw parameter dimensions, from `tnt.potential`.
 
-    `type`/`parameterization` are validated as strings by `_validate_potential`,
-    which runs after normalization -- fall back to no declared dimensions
-    (nothing scaled) for a malformed value here rather than duplicating that
-    validation.
+    `configuration_validation.py`'s `_validate_potential` already validates
+    `type`/`parameterization` as strings, and runs before this (see that
+    module's comment for why) -- but fall back to no declared dimensions
+    (nothing scaled) for a malformed value here anyway, rather than
+    depending on that ordering or duplicating its validation.
     """
     potential_type = settings.get("type")
     parameterization = settings.get("parameterization")
@@ -208,7 +207,7 @@ def normalize_potential_settings(
     potential: Mapping[str, Any],
     unit_system: u.AbstractUnitSystem,
 ) -> ConfigDict:
-    """Return potential settings in the shared internal runtime coordinates."""
+    """Canonicalize potential settings for physical compatibility comparison."""
     normalized = deepcopy(_mapping(potential, "potential"))
     for potential_name, potential_value in normalized.items():
         potential_path = f"potential.{potential_name}"
@@ -325,7 +324,7 @@ def _normalize_parameters(
         parameter_path = f"{path}.{name}"
         parameter = _mapping(parameter_value, parameter_path)
         dimension = dimensions.get(name)
-        if dimension is None:
+        if dimension is None or dimension == "dimensionless":
             if "unit" in parameter:
                 raise ValueError(
                     f"{parameter_path}.unit is not supported because this "
@@ -382,7 +381,7 @@ def _validate_parameter_units(
         parameter_path = f"{path}.{name}"
         parameter = _mapping(parameter_value, parameter_path)
         dimension = dimensions.get(name)
-        if dimension is None:
+        if dimension is None or dimension == "dimensionless":
             if "unit" in parameter:
                 raise ValueError(
                     f"{parameter_path}.unit is not supported because this "
@@ -392,9 +391,7 @@ def _validate_parameter_units(
             continue
         if "unit" not in parameter:
             raise ValueError(f"{parameter_path} is missing required field: unit.")
-        _validated_declared_unit(
-            parameter["unit"], dimension, f"{parameter_path}.unit"
-        )
+        _validated_declared_unit(parameter["unit"], dimension, f"{parameter_path}.unit")
 
 
 def _scale_field(mapping: ConfigDict, key: str, factor: float, path: str) -> None:

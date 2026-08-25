@@ -11,18 +11,54 @@ from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
 import equinox as eqx
+from unxt import Quantity
 
 from tnt.all_models import AllModels
+from tnt.config_parsing import _mapping, _number, _required
+from tnt.potential import raw_parameter_dimensions
 
-ParameterSet = dict[str, dict[str, float]]
+ParameterSet = dict[str, dict[str, Quantity]]
 """One proposed point in parameter space: component name -> {parameter name: value}.
 
 Mass parameters (`ml`, `mge_mass_scale`, ...) and shape parameters are both
 just entries here -- `AbstractParameterGenerator` doesn't distinguish
 between them. `parameter_space_settings.potential_rescalings` is a
 separate, `ModelIterator`-owned mechanism layered on top of whichever
-`ParameterSet`s the generator proposes; it isn't part of this type.
+`ParameterSet`s the generator proposes; it isn't part of this type. Each
+`Quantity` keeps whatever unit its parameter was declared in -- nothing
+here converts into a shared internal unit system (see `tnt.potential`'s
+module docstring for why).
 """
+
+
+def _declared_parameter_quantity(
+    parameter: Mapping[str, Any], dimension: str | None, path: str
+) -> Quantity:
+    """Parse one declared potential parameter's `{value, unit}` into a `Quantity`.
+
+    Returns a `Quantity` in its own **declared** unit -- no unit-system
+    conversion here, matching `tnt.spatial_binnings`' `_declared_angle_quantity`.
+    `dimension=None` (not a recognized parameter) and `dimension="dimensionless"`
+    both mean no unit -- `unit` must be absent then, treated identically
+    (matching `tnt.units._validate_parameter_units`/`_normalize_parameters`'s
+    own handling of the same distinction). The declared unit's *physical*
+    correctness is already guaranteed by `tnt.units.validate_configuration_quantities`,
+    which runs during configuration resolution, well before any
+    `AbstractParameterGenerator` exists -- this only checks `unit`'s
+    presence matches `dimension`, the same structural check that
+    validation already enforces, not a re-validation of unit correctness.
+    """
+    value = _number(_required(parameter, "value", path), f"{path}.value")
+    if dimension is None or dimension == "dimensionless":
+        if "unit" in parameter:
+            raise ValueError(
+                f"{path}.unit is not supported because this parameter is "
+                "dimensionless or does not yet have a declared dimension."
+            )
+        return Quantity(value, "")
+    if "unit" not in parameter:
+        raise ValueError(f"{path} is missing required field: unit.")
+    return Quantity(value, parameter["unit"])
 
 
 class AbstractParameterGenerator(eqx.Module):
@@ -30,10 +66,10 @@ class AbstractParameterGenerator(eqx.Module):
 
     `_type` matches `parameter_space_settings.generator_type`.
 
-    `potential_settings` (a resolved configuration's `potential` section
-    converted into shared internal runtime coordinates -- every parameter's
-    value and, for a search, its allowed range/step) is common to every
-    generator, since even a fixed single point is drawn from it.
+    `potential_settings` (a resolved configuration's `potential` section,
+    as declared -- every parameter's value, unit, and, for a search, its
+    allowed range/step) is common to every generator, since even a fixed
+    single point is drawn from it.
     `generator_settings` is
     `parameter_space_settings.generator_settings`; not every generator type
     needs any of it, so `_required_generator_settings` names the subset of
@@ -58,6 +94,31 @@ class AbstractParameterGenerator(eqx.Module):
         """
         raise NotImplementedError
 
+    def _declared_component_values(
+        self, component_name: str, component: Mapping[str, Any]
+    ) -> dict[str, Quantity]:
+        """This component's parameters, as declared, each as a `Quantity`.
+
+        Every `AbstractParameterGenerator` subclass proposing values reads
+        them through here, so "every generator returns unit-ful
+        `Quantity`s in their own declared unit" is a property of this base
+        class, not something each subclass has to remember to do itself.
+        """
+        dimensions = raw_parameter_dimensions(
+            component.get("type"), component.get("parameterization")
+        )
+        return {
+            parameter_name: _declared_parameter_quantity(
+                _mapping(
+                    parameter,
+                    f"potential.{component_name}.parameters.{parameter_name}",
+                ),
+                dimensions.get(parameter_name),
+                f"potential.{component_name}.parameters.{parameter_name}",
+            )
+            for parameter_name, parameter in component.get("parameters", {}).items()
+        }
+
 
 class GridSearchParameterGenerator(AbstractParameterGenerator):
     """Proposes parameters on a grid, per each parameter's `generator_settings`."""
@@ -72,7 +133,7 @@ class GridSearchParameterGenerator(AbstractParameterGenerator):
 
 
 class SinglePointParameterGenerator(AbstractParameterGenerator):
-    """Proposes one fixed `ParameterSet`, taken from each parameter's `value`.
+    """Proposes one fixed `ParameterSet`, taken from each parameter's declared value.
 
     Ignores `all_models` and always proposes the same point -- meant for
     evaluating one nominal potential rather than searching parameter space.
@@ -85,12 +146,9 @@ class SinglePointParameterGenerator(AbstractParameterGenerator):
     def generate_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
         return [
             {
-                component_name: {
-                    parameter_name: parameter["value"]
-                    for parameter_name, parameter in component.get(
-                        "parameters", {}
-                    ).items()
-                }
+                component_name: self._declared_component_values(
+                    component_name, component
+                )
                 for component_name, component in self.potential_settings.items()
             }
         ]
@@ -108,7 +166,8 @@ def build_parameter_generator(
     Args:
         parameter_space_settings: A resolved configuration's
             `parameter_space_settings` section.
-        potential_settings: Unit-normalized runtime `potential` settings.
+        potential_settings: A resolved configuration's `potential` section,
+            as declared.
 
     Returns:
         The `AbstractParameterGenerator` matching

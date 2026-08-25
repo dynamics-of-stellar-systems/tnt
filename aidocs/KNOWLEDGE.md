@@ -76,16 +76,21 @@
   `system_attributes.distance`, explicit kinematics histogram width and center,
   Gauss-Hermite `v` and `sigma` systematic uncertainties,
   `PlummerPotential`'s native `m_tot` and `r_s`, and light-MGE potential `ml`.
-  At runtime, parameter values, bounds, and steps are converted from their
-  declared unit into the internal one.
+  Their runtime handling is consumer-specific rather than one blanket
+  normalization step; in particular, potential parameter values, bounds, and
+  steps remain expressed in their declared unit.
 - Runtime kinematics construction converts configured histogram quantities and
-  Gauss-Hermite velocity systematics. `ModelIterator.from_configuration()`
-  creates one internal-unit potential-settings copy shared by the parameter
-  generator and potential construction, leaving the resolved configuration
-  unchanged. It also converts `cosmological_parameters`, including `H0`, into
-  `Quantity` objects for runtime consumers such as NFW's
-  `concentration_m200` parameterization. System distance remains a declared
-  quantity until a runtime consumer needs it.
+  Gauss-Hermite velocity systematics. Potential parameters instead keep their
+  own declared unit all the way through `AbstractParameterGenerator` and
+  `Potential` construction -- `ModelIterator.from_configuration()` no longer
+  pre-converts them into a shared internal-unit copy; `galax`'s own
+  potential classes already convert generically at evaluation time, so
+  nothing needs them pre-normalized (see `tnt.potential`'s module
+  docstring). `ModelIterator.from_configuration()` also converts
+  `cosmological_parameters`, including `H0`, into `Quantity` objects for
+  runtime consumers such as NFW's `concentration_m200` parameterization.
+  System distance remains a declared quantity until a runtime consumer needs
+  it.
 - `tnt.configuration_compatibility._critical_configuration` calls
   `normalize_configuration_quantities`, which raises plain `TypeError`/
   `ValueError` on malformed unit-bearing fields rather than
@@ -95,15 +100,20 @@
   resume-compatibility checking with an undocumented exception type. Known;
   not patched locally, since redefining "run" so archiving only happens after
   a configuration is fully proven constructible (tracked in issue #27) removes
-  the pathway entirely.
+  the pathway entirely. `normalize_potential_settings`/`_normalize_parameters`
+  (in `tnt/units.py`) are kept, unchanged, purely for this canonicalize-for-
+  comparison use -- no longer used to feed the parameter generator or
+  potential construction.
 - Prep-time validation and construction-time conversion don't cover the same
   fields consistently, and this isn't one shared policy: `spatial_binnings`
   has no prep-time check at all (construction owns it exclusively);
   kinematics histogram and systematic-uncertainty fields are checked at both
-  prep time and construction time, independently; potential parameters are
-  checked at prep time and converted once, early, in
-  `ModelIterator.from_configuration()`, before `Potential.from_settings` runs.
-  Three different patterns for the same nominal split.
+  prep time and construction time, independently. Potential parameters now
+  follow the same pattern as `spatial_binnings`: checked at prep time
+  (`validate_configuration_quantities`) and converted -- or, for potential
+  parameters specifically, just kept in their declared unit -- at
+  construction time (`AbstractParameterGenerator`/`Potential.resolve`/
+  `Potential.build`), not eagerly at prep time.
 - MGE contents and quantities inside observational files are deliberately
   deferred to the object-construction/data-loading phase. Configuration
   preparation does not open those files. `tnt.kinematics.build_kinematics`

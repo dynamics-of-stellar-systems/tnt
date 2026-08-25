@@ -105,9 +105,9 @@ def _run_reference(run_id: int = 0) -> RunManifestReference:
 def _make_iterator(**overrides: Any) -> ModelIterator:
     iterator = ModelIterator.__new__(ModelIterator)
     iterator.potential_settings = {}
+    iterator.resolved_potential = {}
     iterator.unit_system = u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
     iterator.cosmological_parameters = {}
-    iterator.mges = {}
     iterator.kinematic_data = {}
     iterator.weight_solver = FakeWeightSolver()
     iterator.orbit_library_settings = {}
@@ -144,7 +144,9 @@ def _patch_build_potential(
     monkeypatch.setattr(
         model_iterator_module,
         "build_potential",
-        lambda settings, mges, unit_system, cosmological_parameters: potential,
+        lambda resolved, parameter_values, unit_system, cosmological_parameters: (
+            potential
+        ),
     )
 
 
