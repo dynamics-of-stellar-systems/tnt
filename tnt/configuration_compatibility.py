@@ -20,7 +20,6 @@ _SEARCH_PARAMETER_KEYS = {
     "fixed",
     "generator_settings",
     "latex_label",
-    "logarithmic",
     "value",
 }
 

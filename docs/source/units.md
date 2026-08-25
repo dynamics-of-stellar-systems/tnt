@@ -70,10 +70,8 @@ parameters:
       minimum_step: 10.0
 ```
 
-At runtime, TNT converts a linear parameter's value, bounds, step, and minimum
-step. For a logarithmic parameter, the declared unit is the reference unit for
-the logarithm: TNT shifts the value and bounds into the internal reference
-unit, while logarithmic step sizes remain unchanged.
+At runtime, TNT converts a parameter's value, bounds, step, and minimum step
+from its declared unit into the internal reference unit.
 
 Dimensionless fields remain plain numbers and must not add a `unit`. Examples
 include axial ratios, Gauss-Hermite coefficients, relative error factors, and
@@ -87,7 +85,9 @@ Configuration preparation dimensionally validates:
 - `system_attributes.distance` as length;
 - explicit kinematics histogram `width` and `center` as speed;
 - Gauss-Hermite systematic uncertainties `v` and `sigma` as speed;
-- Plummer parameters `m` and `a` as mass and length; and
+- each configured potential component's raw parameters by their resolved
+  dimension (e.g. `PlummerPotential`'s `m_tot` and `r_s` as mass and
+  length -- see [Potential](potential.md)); and
 - light-MGE potential parameter `ml` as mass divided by power.
 
 It does not convert these quantities or remove their units. Each per-run
@@ -102,9 +102,11 @@ uncertainties. `ModelIterator.from_configuration()` creates one canonical
 internal-unit copy of potential parameters for both the parameter generator
 and potential construction, so those consumers cannot interpret the same
 search coordinates differently. The resolved configuration itself remains
-unchanged. `H0` and system distance currently have no scientific runtime
-object and therefore remain declared quantities unless a compatibility check
-needs their canonical physical values.
+unchanged. `ModelIterator.from_configuration()` converts
+`cosmological_parameters`, including `H0`, into `Quantity` objects for runtime
+consumers such as NFW's `concentration_m200` parameterization. System distance
+remains a declared quantity until a runtime consumer needs it; compatibility
+checks can still compare its canonical physical value.
 
 Every run receives its own immutable resolved configuration, while resume
 compatibility compares physical meaning. It converts unit-bearing contract

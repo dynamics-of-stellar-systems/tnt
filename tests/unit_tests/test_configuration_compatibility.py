@@ -72,7 +72,6 @@ def _config(input_directory: Path) -> dict[str, object]:
                     "q": {
                         "value": 0.8,
                         "fixed": False,
-                        "logarithmic": False,
                         "latex_label": "q",
                         "generator_settings": {"lower_bound": 0.5},
                     },
@@ -157,7 +156,6 @@ def test_operational_and_search_changes_are_compatible(tmp_path: Path) -> None:
         {
             "value": 0.7,
             "fixed": True,
-            "logarithmic": True,
             "latex_label": "changed",
             "generator_settings": {"lower_bound": 0.2},
         }

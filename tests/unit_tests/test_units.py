@@ -1,4 +1,3 @@
-import math
 from copy import deepcopy
 
 import pytest
@@ -107,11 +106,10 @@ def test_normalize_supported_configuration_quantities() -> None:
         },
         "potential": {
             "bh": {
-                "type": "plummer",
+                "type": "PlummerPotential",
                 "parameters": {
-                    "m": {
+                    "m_tot": {
                         "value": 10.0,
-                        "logarithmic": True,
                         "unit": "kg",
                         "generator_settings": {
                             "lower_bound": 9.0,
@@ -120,9 +118,8 @@ def test_normalize_supported_configuration_quantities() -> None:
                             "minimum_step": 0.1,
                         },
                     },
-                    "a": {
+                    "r_s": {
                         "value": 500.0,
-                        "logarithmic": False,
                         "unit": "pc",
                         "generator_settings": {
                             "lower_bound": 100.0,
@@ -138,7 +135,6 @@ def test_normalize_supported_configuration_quantities() -> None:
                 "parameters": {
                     "ml": {
                         "value": 5.0,
-                        "logarithmic": False,
                         "unit": "Msun / Lsun",
                     }
                 },
@@ -164,21 +160,23 @@ def test_normalize_supported_configuration_quantities() -> None:
 
     normalized = normalize_configuration_quantities(config, systems)
     speed_factor = float(u.unit("km / s").to(u.unit("kpc / Myr"), 1.0))
-    mass_offset = math.log10(float(u.unit("kg").to(u.unit("Msun"), 1.0)))
+    mass_factor = float(u.unit("kg").to(u.unit("Msun"), 1.0))
 
     assert normalized["system_attributes"]["distance"] == pytest.approx(2000.0)
     assert normalized["cosmological_parameters"]["H0"] == pytest.approx(
         7.158985155319864e-05
     )
     bh_parameters = normalized["potential"]["bh"]["parameters"]
-    assert bh_parameters["a"]["value"] == pytest.approx(0.5)
-    assert bh_parameters["a"]["generator_settings"]["step"] == pytest.approx(0.1)
-    assert bh_parameters["m"]["value"] == pytest.approx(10.0 + mass_offset)
-    assert bh_parameters["m"]["generator_settings"]["lower_bound"] == pytest.approx(
-        9.0 + mass_offset
+    assert bh_parameters["r_s"]["value"] == pytest.approx(0.5)
+    assert bh_parameters["r_s"]["generator_settings"]["step"] == pytest.approx(0.1)
+    assert bh_parameters["m_tot"]["value"] == pytest.approx(10.0 * mass_factor)
+    assert bh_parameters["m_tot"]["generator_settings"]["lower_bound"] == pytest.approx(
+        9.0 * mass_factor
     )
-    assert bh_parameters["m"]["generator_settings"]["step"] == 0.5
-    assert "unit" not in bh_parameters["m"]
+    assert bh_parameters["m_tot"]["generator_settings"]["step"] == pytest.approx(
+        0.5 * mass_factor
+    )
+    assert "unit" not in bh_parameters["m_tot"]
     histogram = normalized["kinematic_data"]["observed"]["histogram"]
     assert histogram["width"] == pytest.approx(1000.0 * speed_factor)
     assert histogram["center"] == pytest.approx(10.0 * speed_factor)
@@ -206,7 +204,6 @@ def test_configuration_quantity_validation_does_not_modify_declarations() -> Non
                 "parameters": {
                     "ml": {
                         "value": 5.0,
-                        "logarithmic": False,
                         "unit": "Msun / Lsun",
                     }
                 },
@@ -228,11 +225,10 @@ def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:
         "system_attributes": {},
         "potential": {
             "halo": {
-                "type": "nfw",
+                "type": "not_a_registered_potential_type",
                 "parameters": {
                     "c": {
                         "value": 1.0,
-                        "logarithmic": False,
                         "unit": "m",
                     }
                 },
@@ -251,16 +247,15 @@ def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:
         (
             {
                 "bh": {
-                    "type": "plummer",
+                    "type": "PlummerPotential",
                     "parameters": {
-                        "m": {
+                        "m_tot": {
                             "value": 10.0,
-                            "logarithmic": True,
                         }
                     },
                 }
             },
-            r"potential\.bh\.parameters\.m.*required field: unit",
+            r"potential\.bh\.parameters\.m_tot.*required field: unit",
         ),
         (
             {
@@ -269,7 +264,6 @@ def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:
                     "parameters": {
                         "ml": {
                             "value": 5.0,
-                            "logarithmic": False,
                         }
                     },
                 }

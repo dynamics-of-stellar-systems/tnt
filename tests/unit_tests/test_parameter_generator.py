@@ -1,31 +1,6 @@
-"""Unit tests for `tnt.parameter_generator`.
-
-`tnt.parameter_generator` imports `tnt.all_models`, which (via `tnt.model`/
-`tnt.potential`) imports `galax.potential` at module level, and this venv's
-installed `galax`/`equinox` versions are mutually incompatible
-(`ImportError: cannot import name '_has_dataclass_init' from
-'equinox._module'`) -- an unrelated, pre-existing environment issue. Stub
-out `galax`/`galax.potential` before importing anything from `tnt` that
-would pull in that chain, so these tests can run regardless. Remove this
-stub once the real dependency conflict is fixed.
-"""
+"""Unit tests for `tnt.parameter_generator`."""
 
 from __future__ import annotations
-
-import sys
-import types
-
-if "galax" not in sys.modules:
-    _fake_galax = types.ModuleType("galax")
-    _fake_galax_potential = types.ModuleType("galax.potential")
-
-    class _FakeAbstractPotentialBase:
-        pass
-
-    _fake_galax_potential.AbstractPotentialBase = _FakeAbstractPotentialBase
-    _fake_galax.potential = _fake_galax_potential
-    sys.modules["galax"] = _fake_galax
-    sys.modules["galax.potential"] = _fake_galax_potential
 
 from tnt import configuration_validation
 from tnt.parameter_generator import _GENERATOR_CLASSES

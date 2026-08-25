@@ -10,6 +10,7 @@ from numbers import Real
 from typing import Any
 
 import unxt as u
+from unxt import Quantity
 
 from tnt.config_parsing import (
     _mapping,
@@ -17,6 +18,7 @@ from tnt.config_parsing import (
     _reject_unknown_keys,
     _require_keys,
 )
+from tnt.potential import raw_parameter_dimensions
 
 ConfigDict = dict[str, Any]
 
@@ -31,13 +33,6 @@ _REFERENCE_UNITS = {
     "speed": "m / s",
     "inverse_time": "1 / s",
     "mass_to_light": "kg / W",
-}
-_POTENTIAL_PARAMETER_DIMENSIONS = {
-    "plummer": {"m": "mass", "a": "length"},
-    "triaxial_light_mge": {"ml": "mass_to_light"},
-    # Normalize first so schema validation can issue the more specific error
-    # that mass MGE potentials must not declare an ml parameter.
-    "triaxial_mass_mge": {"ml": "mass_to_light"},
 }
 
 
@@ -158,7 +153,7 @@ def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
     for potential_name, potential_value in potential.items():
         potential_path = f"potential.{potential_name}"
         settings = _mapping(potential_value, potential_path)
-        dimensions = _POTENTIAL_PARAMETER_DIMENSIONS.get(settings.get("type"), {})
+        dimensions = _potential_parameter_dimensions(settings)
         parameters = settings.get("parameters")
         if parameters is not None:
             _validate_parameter_units(
@@ -191,6 +186,24 @@ def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
                 _validate_field(systematics, "sigma", "speed", systematics_path)
 
 
+def _potential_parameter_dimensions(settings: Mapping[str, Any]) -> Mapping[str, str]:
+    """One potential component's raw parameter dimensions, from `tnt.potential`.
+
+    `type`/`parameterization` are validated as strings by `_validate_potential`,
+    which runs after normalization -- fall back to no declared dimensions
+    (nothing scaled) for a malformed value here rather than duplicating that
+    validation.
+    """
+    potential_type = settings.get("type")
+    parameterization = settings.get("parameterization")
+    if not (
+        isinstance(potential_type, str)
+        and (parameterization is None or isinstance(parameterization, str))
+    ):
+        return {}
+    return raw_parameter_dimensions(potential_type, parameterization)
+
+
 def normalize_potential_settings(
     potential: Mapping[str, Any],
     unit_system: u.AbstractUnitSystem,
@@ -200,7 +213,7 @@ def normalize_potential_settings(
     for potential_name, potential_value in normalized.items():
         potential_path = f"potential.{potential_name}"
         settings = _mapping(potential_value, potential_path)
-        dimensions = _POTENTIAL_PARAMETER_DIMENSIONS.get(settings.get("type"), {})
+        dimensions = _potential_parameter_dimensions(settings)
         parameters = settings.get("parameters")
         if parameters is not None:
             _normalize_parameters(
@@ -210,6 +223,23 @@ def normalize_potential_settings(
                 f"{potential_path}.parameters",
             )
     return normalized
+
+
+def resolve_cosmological_parameters(
+    cosmological_parameters: Mapping[str, Any],
+) -> dict[str, Quantity]:
+    """Convert a resolved configuration's declared `cosmological_parameters`.
+
+    Preserved as `{value, unit}` by configuration preparation (see this
+    module's docstring); consumers that need cosmological context (e.g.
+    `tnt.potential`'s NFW `concentration_m200` parameterization, via `H0`)
+    use the resulting `Quantity`s directly and let `unxt` handle unit
+    conversion, rather than assuming a specific declared unit.
+    """
+    return {
+        name: Quantity(declared["value"], declared["unit"])
+        for name, declared in cosmological_parameters.items()
+    }
 
 
 def normalize_unitful_value(
@@ -312,35 +342,17 @@ def _normalize_parameters(
         )
         target = _internal_unit(unit_system, dimension)
         factor = float(source.to(target, 1.0))
-        logarithmic = parameter.get("logarithmic", False)
-        if not isinstance(logarithmic, bool):
-            raise TypeError(f"{parameter_path}.logarithmic must be a boolean.")
-
-        if logarithmic:
-            offset = math.log10(factor)
-            _shift_log_value(parameter, "value", offset, parameter_path)
-            generator = parameter.get("generator_settings")
-            if generator is not None:
-                generator = _mapping(generator, f"{parameter_path}.generator_settings")
-                for key in ("lower_bound", "upper_bound"):
-                    _shift_log_value(
-                        generator,
-                        key,
-                        offset,
-                        f"{parameter_path}.generator_settings",
-                    )
-        else:
-            _scale_field(parameter, "value", factor, parameter_path)
-            generator = parameter.get("generator_settings")
-            if generator is not None:
-                generator = _mapping(generator, f"{parameter_path}.generator_settings")
-                for key in ("lower_bound", "upper_bound", "step", "minimum_step"):
-                    _scale_field(
-                        generator,
-                        key,
-                        factor,
-                        f"{parameter_path}.generator_settings",
-                    )
+        _scale_field(parameter, "value", factor, parameter_path)
+        generator = parameter.get("generator_settings")
+        if generator is not None:
+            generator = _mapping(generator, f"{parameter_path}.generator_settings")
+            for key in ("lower_bound", "upper_bound", "step", "minimum_step"):
+                _scale_field(
+                    generator,
+                    key,
+                    factor,
+                    f"{parameter_path}.generator_settings",
+                )
 
 
 def _normalize_field(
@@ -394,17 +406,6 @@ def _scale_field(mapping: ConfigDict, key: str, factor: float, path: str) -> Non
     numeric = float(value)
     _require_finite(numeric, f"{path}.{key}")
     mapping[key] = numeric * factor
-
-
-def _shift_log_value(mapping: ConfigDict, key: str, offset: float, path: str) -> None:
-    if key not in mapping:
-        return
-    value = mapping[key]
-    if not _is_number(value):
-        raise TypeError(f"{path}.{key} must be a number.")
-    numeric = float(value)
-    _require_finite(numeric, f"{path}.{key}")
-    mapping[key] = numeric + offset
 
 
 def _internal_unit(

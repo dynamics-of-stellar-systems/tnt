@@ -74,16 +74,18 @@
   by TNT.
 - The first unit-aware schema covers `cosmological_parameters.H0`,
   `system_attributes.distance`, explicit kinematics histogram width and center,
-  Gauss-Hermite `v` and `sigma` systematic uncertainties, Plummer `m` and `a`,
-  and light-MGE potential `ml`. At runtime, linear parameter steps are
-  converted; logarithmic parameter values and bounds are shifted between
-  reference units while log step sizes remain unchanged.
+  Gauss-Hermite `v` and `sigma` systematic uncertainties,
+  `PlummerPotential`'s native `m_tot` and `r_s`, and light-MGE potential `ml`.
+  At runtime, parameter values, bounds, and steps are converted from their
+  declared unit into the internal one.
 - Runtime kinematics construction converts configured histogram quantities and
   Gauss-Hermite velocity systematics. `ModelIterator.from_configuration()`
   creates one internal-unit potential-settings copy shared by the parameter
   generator and potential construction, leaving the resolved configuration
-  unchanged. Values without a scientific runtime object, currently `H0` and
-  system distance, remain declared quantities in configuration data.
+  unchanged. It also converts `cosmological_parameters`, including `H0`, into
+  `Quantity` objects for runtime consumers such as NFW's
+  `concentration_m200` parameterization. System distance remains a declared
+  quantity until a runtime consumer needs it.
 - `tnt.configuration_compatibility._critical_configuration` calls
   `normalize_configuration_quantities`, which raises plain `TypeError`/
   `ValueError` on malformed unit-bearing fields rather than
@@ -260,9 +262,136 @@
   scalar `velocity_unit`. Construction validates and normalizes each 2D
   distribution, scales uncertainties by the square root of `variance_scale`,
   and emits configured sampling warnings.
-- Potential types are `triaxial_light_mge`, `triaxial_mass_mge`, `nfw`, and
-  `plummer`. A light-MGE potential requires an `ml` parameter. A mass-MGE
-  potential rejects `ml` because its MGE already contains mass.
+- `potential.<name>.type` names one of a curated set of `galax.potential`
+  classes (`tnt.potential._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
+  `PlummerPotential` -- 25 classes total), or one of two TNT-specific MGE
+  composite types, `triaxial_light_mge`/`triaxial_mass_mge`, provided
+  directly by TNT since `galax` has no native class for a
+  sum-of-triaxial-Gaussians potential. A light-MGE potential requires an
+  `ml` parameter; a mass-MGE potential requires `mge_mass_scale` instead
+  and validation rejects `ml` on it, since its MGE already contains mass.
+  Deliberately curated rather than "any `AbstractPotential` subclass":
+  `galax` also exports abstract/base classes (which passed the old
+  `issubclass` check and only failed later, confusingly, at `to_galax()`),
+  pre-packaged multi-component bundles with no free parameters of their own
+  like `MilkyWayPotential`/`LM10Potential` (their `disk`/`bulge`/`halo`/
+  `nucleus` fields are themselves sub-potentials, not `ParameterField`s --
+  redundant with TNT's own multi-component `potential:` section anyway),
+  wrapper/transform decorators needing a required nested potential object
+  (e.g. `TranslatedPotential`, `FlattenedInThePotential` -- these do carry
+  their own `ParameterField`s, but the required nested potential still
+  isn't representable), and classes needing a required non-`Quantity`
+  hyperparameter (`MultipolePotential`'s `l_max: int`, which the old
+  dispatch silently mis-wrapped as a dimensionless `Quantity`) -- none
+  representable by the scalar `parameters.<name>.value` schema. Checked
+  directly against every one of galax's 45
+  `AbstractPotential` subclasses: 28 have every field either a scalar
+  `ParameterField` or a galax-provided default (safe under the current
+  schema); the curated 25 drops `HenonHeilesPotential`/`NullPotential`
+  (not astrophysically relevant to TNT) and `AbstractCompositePotential`
+  (an empty-parameter base class) from that 28.
+- `parameterization` is a separate, optional field controlling how config
+  `parameters` map onto a component's canonical fields. Omitted, raw
+  parameter names must match the resolved `type`'s own native `galax`
+  constructor kwargs exactly; their physical dimensions are read directly
+  from `_SUPPORTED_GALAX_TYPES` (each entry a `NativeParameter(dimension,
+  exponent)`). Dynamic derivation from `galax`'s own
+  `ParameterField(dimensions=...)` metadata isn't production code at all any
+  more -- since curating dimension by hand costs nothing extra once every
+  parameter is individually verified for its exponent anyway, that
+  derivation now lives only as a test-local helper in
+  `tests/unit_tests/test_potential.py`
+  (`test_supported_galax_types_covers_every_curated_class_parameter` cross-checks
+  the curated table against it).
+  `GalaxPotentialComponent.rescale()` scales every native parameter by
+  `mass_scale ** exponent`, where `exponent` is curated per (class,
+  parameter) directly in `_SUPPORTED_GALAX_TYPES` -- not derived from
+  dimension, since a parameter's role determines its exponent as much as
+  its dimension does: `MonariEtAl2016BarPotential`'s `Omega` (bar pattern
+  speed, dimension `"frequency"`) and `v0` (sets the potential's amplitude,
+  dimension `"speed"`) share the same time-power but need opposite
+  exponents (0.0 vs 0.5) *within the same class*, and
+  `HarmonicOscillatorPotential`'s `omega` (also `"frequency"`) needs 0.5,
+  the same as `v0`, not `Omega`'s 0.0 -- confirming dimension alone can
+  never safely determine role, even restricted to one dimension name.
+  Every entry is individually verified against `galax`'s own potential
+  formula (source inspection plus, for the ambiguous cases, direct
+  numerical confirmation that scaling the parameter by
+  `sqrt(mass_scale)` scales the potential by exactly `mass_scale`) before
+  being added. `PhysicalType.__str__` joins every
+  alias with `/` (e.g. `"speed/velocity"`), which `u.dimension()` silently
+  treats as dimensionless rather than raising; dimension derivation takes
+  the first name from iterating the `PhysicalType` instead. Given
+  explicitly, `parameterization` names a registered non-native conversion.
+  NFW registers `concentration_m200`, implemented and verified against
+  `galax`'s own NFW enclosed-mass function. It converts a concentration `c`
+  and $M_{200c}$ (mass enclosed within the radius where mean density is
+  200x the critical density) into native `(m, r_s)` via
+  `rho_crit = 3*H0**2 / (8*pi*G)`, `r200 = (3*M200 / (4*pi*200*rho_crit))**(1/3)`,
+  `r_s = r200 / c`, `m = M200 / (ln(1+c) - c/(1+c))`. Converters receive the
+  resolved configuration's `cosmological_parameters` as a third argument
+  (`tnt.potential.ParameterizationConverter`'s signature) so parameterizations
+  like this one that need `H0` can use it. `cosmological_parameters` is
+  threaded from `Configuration` through `ModelIterator` (a stored field, set
+  in `from_configuration`) into `build_potential`, mirroring how
+  `unit_system` is already threaded. Since configuration preparation now
+  preserves declared quantities as `{value, unit}` rather than stripping
+  them (see the units-handling entries above), `ModelIterator.from_configuration`
+  converts `cosmological_parameters` into `Quantity`s once via
+  `tnt.units.resolve_cosmological_parameters` -- in `tnt.units`, not
+  `tnt.potential`, since it's generic declared-quantity conversion with no
+  potential-specific knowledge, matching `normalize_unitful_value`/
+  `normalize_potential_settings`'s existing home rather than the opposite
+  direction (`tnt.units` importing `raw_parameter_dimensions` from
+  `tnt.potential`, which *does* need `tnt.potential`'s own domain
+  knowledge -- galax `ParameterField` metadata, the parameterization
+  registry -- and couldn't move the other way).
+  `_nfw_concentration_m200`/its inverse do their entire calculation in
+  `Quantity` arithmetic rather than eagerly stripping every input to a bare
+  float in one specific unit -- `unxt` composes/converts units automatically
+  through the whole chain (verified: mixing `H0` in `km / (s Mpc)` with `_G`
+  in `m3 / (kg s2)` and `M_200` in `Msun` still gives the correct `r_s`/`m`
+  once converted to `unit_system`'s units at the very end), so `H0` works in
+  whatever unit it's declared in, not just the internal unit system's.
+  Bare-number stripping only remains where a library function isn't
+  `Quantity`-aware (`_nfw_g`'s `jnp.log`) or where `_solve_nfw_concentration`'s
+  bisection needs a plain number to compare against. Hand-maintained
+  dimension tables now
+  cover only non-native parameterizations and the two MGE composite types'
+  own parameters
+  (`tnt.potential.PARAMETERIZATION_RAW_DIMENSIONS`/`_MGE_RAW_DIMENSIONS`),
+  not native-galax types. A parameterization is deliberately scoped to one
+  component's own raw parameters (plus `unit_system`/`cosmological_parameters`)
+  -- it can't depend on another component's resolved state. NFW's
+  `(c, f) -> (m, r_s)` "concentration + mass fraction" parameterization
+  (`f = M_200 / M*_TOT`, `M*_TOT` derived from the stellar MGE component)
+  was removed for exactly this reason: `Potential.from_settings` resolves
+  each component independently in one pass, so no component-local converter
+  can see another component's resolved mass. That kind of cross-component
+  relationship belongs to a separate, not-yet-designed "prior" concept,
+  consumed by the parameter generator/search space rather than by potential
+  construction -- deliberately deferred rather than shoehorned into
+  `parameterization`.
+- Every registered parameterization converts both ways: `_PARAMETERIZATIONS`
+  maps to a `tnt.potential.Parameterization(convert, invert)` pair, not a
+  bare converter, so one direction can never be registered without the
+  other. `AbstractPotentialComponent.raw_parameters`/
+  `tnt.potential.raw_potential_parameters` use `invert` to report a
+  `Potential`'s components back in their configuration's own
+  parameterization (`Model.raw_parameters`, read by
+  `AllModels._model_row` for its table columns) -- necessary because
+  `Potential.rescale` only knows how to scale native `galax` parameters, so
+  the raw values must be recomputed from the rescaled native ones, not
+  carried through unchanged. `concentration_m200`'s inverse has no closed
+  form: `rescale` holds `r_s` fixed and scales only `m`, which is not the
+  same as holding `c` fixed and scaling `M_200`, so recovering `c` means
+  solving `c**3 / (ln(1+c) - c/(1+c)) = target` for `c` --
+  `tnt.potential._solve_nfw_concentration` does this via fixed-iteration
+  bisection, relying on that function being verified (numerically) strictly
+  monotonically increasing in `c`. Verified by round-trip self-consistency
+  (`forward(inverse(native)) == native`, including after a rescale) rather
+  than against any independently derivable expected value, since none
+  exists.
 - Explicit kinematics histogram metadata is grouped under `histogram` as
   `width`, `center`, and `bins`.
 - Defaults for properties of dynamically named potential components and

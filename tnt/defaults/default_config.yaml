@@ -68,7 +68,6 @@ dynamic_object_defaults:
   # AbstractPotentialComponent.rescale in tnt/potential.py.
   parameter:
     fixed: false
-    logarithmic: false
 
 # Defaults selected by the type of each dynamically named kinematics data set.
 # User-supplied values on an individual data set override these policies.

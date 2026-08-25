@@ -175,8 +175,7 @@ meaning:
 
 - worker and processing-order settings;
 - stopping criteria, generator settings, and potential-rescaling ranges;
-- values, ranges, fixed/logarithmic flags, and labels of existing potential
-  parameters;
+- values, ranges, fixed flags, and labels of existing potential parameters;
 - display units, logging, and analysis settings; and
 - input/output directory paths, provided the configured scientific file
   references themselves do not change.
