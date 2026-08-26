@@ -403,6 +403,30 @@ Preparation does not instantiate system components, inspect observational data
 or MGE files, or verify optional runtime dependencies. Those checks belong to
 the later execution phase. Unsupported fields are reported as errors.
 
+## Priors
+
+A potential parameter's optional `prior` field (`{distribution: "<numpyro.distributions
+class>", args: [...]}`, sibling to `value`/`unit`/`fixed`) declares its
+search-space distribution. `parameter_space_settings.priors` names any
+cross-component/custom prior plugins -- Python functions in their own `.py`
+file, resolved relative to `io_settings.input_directory`:
+
+```yaml
+parameter_space_settings:
+  priors:
+    dh_mass_fraction:
+      plugin: "priors/mass_fraction.py:mass_fraction"
+```
+
+Preparation validates this structurally only -- that `plugin` has the shape
+`<path>:<function_name>` and that a declared `prior` has a `distribution`
+string and numeric `args`. It does not check that `distribution` names a
+real `numpyro.distributions` class, or load and inspect the plugin file
+itself; both are the plugin author's responsibility. Neither a parameter's
+`prior` nor `parameter_space_settings.priors` is resume-critical -- see
+[Model search](model_search.md) for the full `PriorSampler`/`Prior` model
+and the `sample`/`factor` plugin contract.
+
 ## Paths and side effects
 
 The user profile must define non-empty `io_settings.input_directory` and

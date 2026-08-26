@@ -160,12 +160,12 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert best["kinchi2"] == pytest.approx(min(models.table["kinchi2"]))
 
     # SinglePoint proposes ml as a Quantity, in its declared unit -- resolved
-    # config still carries fixed/generator_settings unmodified, since
-    # ModelIterator no longer overlays proposed values into a settings-shaped
-    # blob (see tnt.potential's module docstring).
+    # config still carries fixed/prior unmodified, since ModelIterator no
+    # longer overlays proposed values into a settings-shaped blob (see
+    # tnt.potential's module docstring).
     stars_ml_settings = resolved["potential"]["stars"]["parameters"]["ml"]
     assert stars_ml_settings["fixed"] is False
-    assert stars_ml_settings["generator_settings"]["upper_bound"] == pytest.approx(9.0)
+    assert stars_ml_settings["prior"]["args"][1] == pytest.approx(9.0)
     stars_ml_value = captured_parameter_values[0]["stars"]["ml"]
     assert stars_ml_value.ustrip("Msun / Lsun") == pytest.approx(5.0)
 

@@ -111,22 +111,12 @@ def test_normalize_supported_configuration_quantities() -> None:
                     "m_tot": {
                         "value": 10.0,
                         "unit": "kg",
-                        "generator_settings": {
-                            "lower_bound": 9.0,
-                            "upper_bound": 11.0,
-                            "step": 0.5,
-                            "minimum_step": 0.1,
-                        },
+                        "prior": {"distribution": "Uniform", "args": [9.0, 11.0]},
                     },
                     "r_s": {
                         "value": 500.0,
                         "unit": "pc",
-                        "generator_settings": {
-                            "lower_bound": 100.0,
-                            "upper_bound": 1000.0,
-                            "step": 100.0,
-                            "minimum_step": 10.0,
-                        },
+                        "prior": {"distribution": "Uniform", "args": [100.0, 1000.0]},
                     },
                 },
             },
@@ -168,14 +158,17 @@ def test_normalize_supported_configuration_quantities() -> None:
     )
     bh_parameters = normalized["potential"]["bh"]["parameters"]
     assert bh_parameters["r_s"]["value"] == pytest.approx(0.5)
-    assert bh_parameters["r_s"]["generator_settings"]["step"] == pytest.approx(0.1)
+    # `prior` is a search-space declaration (like `fixed`/`latex_label`),
+    # not a physical quantity -- left untouched, not unit-converted.
+    assert bh_parameters["r_s"]["prior"] == {
+        "distribution": "Uniform",
+        "args": [100.0, 1000.0],
+    }
     assert bh_parameters["m_tot"]["value"] == pytest.approx(10.0 * mass_factor)
-    assert bh_parameters["m_tot"]["generator_settings"]["lower_bound"] == pytest.approx(
-        9.0 * mass_factor
-    )
-    assert bh_parameters["m_tot"]["generator_settings"]["step"] == pytest.approx(
-        0.5 * mass_factor
-    )
+    assert bh_parameters["m_tot"]["prior"] == {
+        "distribution": "Uniform",
+        "args": [9.0, 11.0],
+    }
     assert "unit" not in bh_parameters["m_tot"]
     histogram = normalized["kinematic_data"]["observed"]["histogram"]
     assert histogram["width"] == pytest.approx(1000.0 * speed_factor)
@@ -192,9 +185,7 @@ def test_normalize_supported_configuration_quantities() -> None:
 
 def test_configuration_quantity_validation_does_not_modify_declarations() -> None:
     config = {
-        "cosmological_parameters": {
-            "H0": {"value": 70.0, "unit": "km / (s Mpc)"}
-        },
+        "cosmological_parameters": {"H0": {"value": 70.0, "unit": "km / (s Mpc)"}},
         "system_attributes": {
             "distance": {"value": 2.0, "unit": "Mpc"},
         },

@@ -27,11 +27,6 @@ potential:
     parameters:
       m_tot:
         unit: "Msun"
-        generator_settings:
-          lower_bound: 1.0e+4
-          upper_bound: 1.0e+6
-          step: 1.0e+4
-          minimum_step: 0.0
         fixed: true
         value: 1.0e+5
         latex_label: "$M_\\mathrm{BH}/M_\\odot$"
@@ -47,21 +42,11 @@ potential:
     include: true
     parameters:
       c:
-        generator_settings:
-          lower_bound: 2.0
-          upper_bound: 4.0
-          step: 1.0
-          minimum_step: 0.1
         fixed: true
         value: 3.0
         latex_label: "$C$"
       M_200:
         unit: "Msun"
-        generator_settings:
-          lower_bound: 1.0e+11
-          upper_bound: 1.0e+13
-          step: 1.0
-          minimum_step: 0.1
         fixed: true
         value: 1.0e+12
         latex_label: "$M_{200}/M_\\odot$"
@@ -72,39 +57,20 @@ potential:
     mge: "mge_lum"
     parameters:
       q:
-        generator_settings:
-          lower_bound: 0.05
-          upper_bound: 0.99
-          step: 0.04
-          minimum_step: 0.02
         fixed: true
         value: 0.54
         latex_label: "$q$"
       p:
-        generator_settings:
-          lower_bound: 0.99
-          upper_bound: 0.999
-          step: 0.02
-          minimum_step: 0.01
         fixed: true
         value: 0.99
         latex_label: "$p$"
       u:
-        generator_settings:
-          lower_bound: 0.95
-          upper_bound: 1.0
-          step: 0.01
-          minimum_step: 0.01
         fixed: true
         value: 0.9999
         latex_label: "$u_\\mathrm{min}$"
       ml:
         unit: "Msun / Lsun"
-        generator_settings:
-          lower_bound: 1.0
-          upper_bound: 9.0
-          step: 4.0
-          minimum_step: 0.5
+        prior: {distribution: "Uniform", args: [1.0, 9.0]}
         fixed: false
         value: 5.0
         latex_label: "$Y_\\mathrm{r}$"
@@ -165,6 +131,7 @@ weight_solver_settings:
 parameter_space_settings:
   generator_type: "SinglePoint"
   which_chi2: "kinchi2"
+  priors: {}
   potential_rescalings:
     enabled: true
     range_count: 10
@@ -180,6 +147,7 @@ parameter_space_settings:
       value: 0.5
     target_model_count: 3
     n_new_iter: 10
+    max_new_mods_per_iter: 10
 
 io_settings:
   input_directory: "NGC6278_input/"

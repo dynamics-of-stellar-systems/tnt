@@ -225,9 +225,12 @@
   potential components and parameters, input directory, and output directory.
 - TNT user profiles generally use snake-case type identifiers and field names.
   The established `MGEs` registry name and projected-binning `PA` field are
-  current schema exceptions. Parameter search bounds belong under
-  `generator_settings` as `lower_bound`, `upper_bound`, `step`, and
-  `minimum_step`; display labels use `latex_label`.
+  current schema exceptions. A parameter's search-space declaration belongs
+  under `prior` as `{distribution: "<numpyro.distributions class>", args:
+  [...]}` (replaced `generator_settings`'s `lower_bound`/`upper_bound`/
+  `step`/`minimum_step` -- `step`/`minimum_step` had no consumer and were
+  dropped rather than carried forward, matching how `logarithmic` was
+  removed for the same reason, see below); display labels use `latex_label`.
 - Scientific inputs use independent named registries: `MGEs` maps MGE names to
   files; `spatial_binnings` maps names to inline rectangular aperture geometry
   (`min_x`, `min_y`, `x_extent`, `y_extent`, and `PA`) plus a `bins_file`
@@ -393,10 +396,27 @@
   was removed for exactly this reason: `Potential.from_settings` resolves
   each component independently in one pass, so no component-local converter
   can see another component's resolved mass. That kind of cross-component
-  relationship belongs to a separate, not-yet-designed "prior" concept,
-  consumed by the parameter generator/search space rather than by potential
-  construction -- deliberately deferred rather than shoehorned into
-  `parameterization`.
+  relationship is now `tnt.priors`: consumed by the parameter generator
+  (`PriorSampler`) rather than potential construction, never by
+  `parameterization`. TNT ships no built-in priors, including a
+  mass-fraction one -- only the mechanism (`tnt.priors.Prior`, the
+  `sample`/`factor` plugin contract) and a documented worked example (see
+  `docs/source/model_search.md`'s "Priors" section). A plugin is a plain
+  Python function loaded from its own `.py` file (file-path-only, resolved
+  relative to `io_settings.input_directory`, not an installed package) that
+  may only call `numpyro.factor` -- never `sample`/`deterministic` -- so it
+  can add a soft preference over already-established values but can never
+  independently assign or overwrite a parameter, ruling out any collision
+  with that parameter's own ordinary `prior` by construction, not
+  validation. `Prior.sample` auto-selects `numpyro.infer.Predictive` (no
+  factor sites) or `numpyro.infer.MCMC`/`NUTS` (any factor sites present) --
+  a hard `Uniform.log_prob` factor does not work well with NUTS (flat
+  interior gradient, discontinuous boundary; verified empirically, not just
+  reasoned about) -- use a smooth distribution (`Normal`, `TruncatedNormal`,
+  ...) for factor terms instead. Genuine posterior sampling (conditioning on
+  a `Model`'s real chi2) needs a further bridge -- turning chi2 into a
+  `numpyro.factor` -- that doesn't exist yet; deliberately out of scope,
+  real future work reusing the same composed-model machinery.
 - Every registered parameterization converts both ways:
   `tnt.potential.components._PARAMETERIZATIONS`
   maps to a `tnt.potential.Parameterization(convert, invert)` pair, not a

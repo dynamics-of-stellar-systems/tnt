@@ -342,16 +342,6 @@ def _normalize_parameters(
         target = _internal_unit(unit_system, dimension)
         factor = float(source.to(target, 1.0))
         _scale_field(parameter, "value", factor, parameter_path)
-        generator = parameter.get("generator_settings")
-        if generator is not None:
-            generator = _mapping(generator, f"{parameter_path}.generator_settings")
-            for key in ("lower_bound", "upper_bound", "step", "minimum_step"):
-                _scale_field(
-                    generator,
-                    key,
-                    factor,
-                    f"{parameter_path}.generator_settings",
-                )
 
 
 def _normalize_field(
