@@ -85,7 +85,7 @@
   stripping them; per-run resolved configurations preserve the `{value, unit}`
   declarations. The submitted profile is transient input and is not archived
   by TNT.
-- The first unit-aware schema covers `cosmological_parameters.H0`,
+- The first unit-aware schema covers `cosmological_parameters.H`,
   `system_attributes.distance`, explicit kinematics histogram width and center,
   Gauss-Hermite `v` and `sigma` systematic uncertainties,
   `PlummerPotential`'s native `m_tot` and `r_s`, and light-MGE potential `ml`.
@@ -100,7 +100,7 @@
   potential classes already convert generically at evaluation time, so
   nothing needs them pre-normalized (see `tnt.potential`'s module
   docstring). `ModelIterator.from_configuration()` also converts
-  `cosmological_parameters`, including `H0`, into `Quantity` objects for
+  `cosmological_parameters`, including `H`, into `Quantity` objects for
   runtime consumers such as NFW's `concentration_m200` parameterization.
   System distance remains a declared quantity until a runtime consumer needs
   it.
@@ -350,11 +350,11 @@
   `galax`'s own NFW enclosed-mass function. It converts a concentration `c`
   and $M_{200c}$ (mass enclosed within the radius where mean density is
   200x the critical density) into native `(m, r_s)` via
-  `rho_crit = 3*H0**2 / (8*pi*G)`, `r200 = (3*M200 / (4*pi*200*rho_crit))**(1/3)`,
+  `rho_crit = 3*H**2 / (8*pi*G)`, `r200 = (3*M200 / (4*pi*200*rho_crit))**(1/3)`,
   `r_s = r200 / c`, `m = M200 / (ln(1+c) - c/(1+c))`. Converters receive the
   resolved configuration's `cosmological_parameters` as a third argument
   (`tnt.potential.registry.ParameterizationConverter`'s signature) so
-  parameterizations like this one that need `H0` can use it.
+  parameterizations like this one that need `H` can use it.
   `cosmological_parameters` is
   threaded from `Configuration` through `ModelIterator` (a stored field, set
   in `from_configuration`) into `build_potential`, mirroring how
@@ -373,9 +373,9 @@
   `_nfw_concentration_m200`/its inverse do their entire calculation in
   `Quantity` arithmetic rather than eagerly stripping every input to a bare
   float in one specific unit -- `unxt` composes/converts units automatically
-  through the whole chain (verified: mixing `H0` in `km / (s Mpc)` with `_G`
+  through the whole chain (verified: mixing `H` in `km / (s Mpc)` with `_G`
   in `m3 / (kg s2)` and `M_200` in `Msun` still gives the correct `r_s`/`m`
-  once converted to `unit_system`'s units at the very end), so `H0` works in
+  once converted to `unit_system`'s units at the very end), so `H` works in
   whatever unit it's declared in, not just the internal unit system's.
   Bare-number stripping only remains where a library function isn't
   `Quantity`-aware (`_nfw_g`'s `jnp.log`) or where `_solve_nfw_concentration`'s
@@ -439,8 +439,9 @@
   dispersion.
 - Values describing the background cosmology belong under
   `cosmological_parameters`; they are not attributes of the modelled system.
-- The present-day Hubble parameter is named `H0`, distinguishing it from the
-  Hubble parameter at other cosmological times.
+- The Hubble parameter used for the modelled halo's epoch is named `H` under
+  `cosmological_parameters`; it is not restricted to the present-day value
+  `H0`.
 - `mge_settings.intrinsic_mass_quad_order` and
   `mge_settings.projected_mass_quad_order` are positive fixed Gauss-Legendre
   quadrature orders for intrinsic spherical-grid and projected pixel
