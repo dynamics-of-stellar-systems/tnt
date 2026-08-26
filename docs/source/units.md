@@ -46,7 +46,7 @@ kinematic_data:
       center: {value: 0.0, unit: "km / s"}
 
 cosmological_parameters:
-  H0:
+  H:
     value: 70.0
     unit: "km / (s Mpc)"
 ```
@@ -85,7 +85,7 @@ unitless warning thresholds.
 
 Configuration preparation dimensionally validates:
 
-- `cosmological_parameters.H0` as inverse time;
+- `cosmological_parameters.H` as inverse time;
 - `system_attributes.distance` as length;
 - explicit kinematics histogram `width` and `center` as speed;
 - Gauss-Hermite systematic uncertainties `v` and `sigma` as speed;
@@ -111,7 +111,7 @@ unit's *dimension* is correct (as listed above), but that check is against
 each dimension's own fixed reference unit, not the configured internal unit
 system (see [Potential](potential.md)). The resolved configuration itself
 remains unchanged. `ModelIterator.from_configuration()` converts
-`cosmological_parameters`, including `H0`, into `Quantity` objects for runtime
+`cosmological_parameters`, including `H`, into `Quantity` objects for runtime
 consumers such as NFW's `concentration_m200` parameterization. System distance
 remains a declared quantity until a runtime consumer needs it; compatibility
 checks can still compare its canonical physical value.

@@ -136,10 +136,10 @@ def validate_resolved_configuration(config: ConfigDict) -> None:
 
 def _validate_cosmological_parameters(settings: ConfigDict) -> None:
     path = "cosmological_parameters"
-    _reject_unknown_keys(settings, {"H0"}, path)
-    _require_keys(settings, {"H0"}, path)
-    value = declared_quantity_value(settings["H0"], "inverse_time", f"{path}.H0")
-    _positive_number(value, f"{path}.H0.value")
+    _reject_unknown_keys(settings, {"H"}, path)
+    _require_keys(settings, {"H"}, path)
+    value = declared_quantity_value(settings["H"], "inverse_time", f"{path}.H")
+    _positive_number(value, f"{path}.H.value")
 
 
 def _validate_units(settings: ConfigDict) -> None:

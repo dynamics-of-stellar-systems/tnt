@@ -22,7 +22,7 @@ units:
     speed: "km / s"
 
 cosmological_parameters:
-  H0: {value: 70.0, unit: "km / (s Mpc)"}
+  H: {value: 70.0, unit: "km / (s Mpc)"}
 
 # Fixed-order Gauss-Legendre quadrature orders for the two MGE integrals that
 # aren't fully analytic: the intrinsic (3D) mass in a spherical grid cell
