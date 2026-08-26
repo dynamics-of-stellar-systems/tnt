@@ -10,7 +10,7 @@ from tnt.parameter_generator import _GENERATOR_CLASSES, SinglePointParameterGene
 
 
 def test_generator_settings_keys_match_the_real_classes() -> None:
-    """`configuration_validation._GENERATOR_SETTINGS_KEYS` is duplicated,
+    """`tnt.configuration.validation._GENERATOR_SETTINGS_KEYS` is duplicated,
     plain-data information -- it can't import these classes directly (see
     its own comment for why: preparation-phase code shouldn't depend on
     execution-phase modules). This is the regression test that keeps that
