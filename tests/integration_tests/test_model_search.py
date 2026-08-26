@@ -168,6 +168,27 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert manifest["run_id"] == 0
     assert manifest["configuration"]["logfile"] is None
     assert manifest["configuration"]["resolved"] == "runs/0000/resolved_config.yaml"
+    # Full manifest shape, not just the fields the rest of this test happens to
+    # use -- restores the coverage test_configuration.py had before archiving
+    # moved out of Configuration.read() (see the PR 37 run-boundary audit).
+    assert set(manifest["tnt"]) == {"version", "git_commit", "git_working_tree_dirty"}
+    assert "unxt" in manifest["dependencies"]
+    assert manifest["execution"]["workspace_root"] == str(tmp_path)
+    assert set(manifest["configuration"]) == {
+        "input_directory",
+        "logfile",
+        "output_directory",
+        "resolved",
+    }
+    assert manifest["configuration"]["input_directory"] == (
+        resolved["io_settings"]["input_directory"]
+    )
+    assert manifest["configuration"]["output_directory"] == str(output)
+    assert manifest["randomness"] == {
+        "configured_orbit_library_seed": 4242,
+        "effective_orbit_library_seed": 4242,
+        "status": "fixed",
+    }
     models_path = output / resolved["io_settings"]["all_models_file"]
     log_path = RunConfigLog.path_for(manifest_path)
     ModelSearchState(models, config_log).write(models_path, log_path)
@@ -299,6 +320,14 @@ def test_model_iterator_rejects_stage_by_stage_before_runtime_construction(
 
     output = Path(config.data["io_settings"]["output_directory"])
     assert not (output / "config_repository").exists()
+
+
+def test_from_configuration_rejects_an_unread_configuration() -> None:
+    with pytest.raises(
+        RuntimeError,
+        match="Configuration must be read before construction",
+    ):
+        ModelIterator.from_configuration(Configuration())
 
 
 def test_invalid_runtime_owned_configuration_is_not_archived(
