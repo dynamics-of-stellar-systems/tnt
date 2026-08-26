@@ -53,10 +53,9 @@
 - Configuration preparation is implemented by `tnt.Configuration`. Its
   `read()` method loads the user YAML, recursively merges package defaults,
   resolves dynamic and kinematics-type defaults, validates the resulting
-  data, and atomically publishes an immutable resolved configuration and run
-  manifest for each run below
-  `<output_directory>/config_repository/`. It does not instantiate scientific
-  runtime objects.
+  data, and retains runtime and portable representations in memory. It does
+  not instantiate scientific runtime objects, allocate a run ID, or write the
+  configuration repository.
 - Preparation-stage validation rejects duplicate keys, unknown or missing
   fields in preparation-owned schemas, invalid types and enumerations,
   malformed tagged thresholds, and basic numerical inconsistencies before the
@@ -104,19 +103,15 @@
   runtime consumers such as NFW's `concentration_m200` parameterization.
   System distance remains a declared quantity until a runtime consumer needs
   it.
-- `tnt.configuration.compatibility._critical_configuration` calls
-  `normalize_configuration_quantities`, which raises plain `TypeError`/
-  `ValueError` on malformed unit-bearing fields rather than
-  `ConfigurationCompatibilityError`. A field the write-time validator doesn't
-  cover (e.g. `spatial_binnings`, since `ProjectedBinning.from_settings` owns
-  its validation at construction instead) can pass preparation and later break
-  resume-compatibility checking with an undocumented exception type. Known;
-  not patched locally, since redefining "run" so archiving only happens after
-  a configuration is fully proven constructible (tracked in issue #27) removes
-  the pathway entirely. `normalize_potential_settings`/`_normalize_parameters`
-  (in `tnt/units.py`) are kept, unchanged, purely for this canonicalize-for-
-  comparison use -- no longer used to feed the parameter generator or
-  potential construction.
+- `tnt.configuration.compatibility._critical_configuration` still calls
+  `normalize_configuration_quantities` for canonical comparison. Whether that
+  eager traversal can be narrowed or removed is tracked separately in issue
+  #36. The former normal-workflow failure path is closed by the run boundary:
+  `Configuration.read()` does not archive, and
+  `ModelIterator.from_configuration()` must successfully construct every
+  runtime object before `run()` can publish the configuration. Malformed
+  runtime-owned fields such as `spatial_binnings.*.min_x` therefore fail before
+  any run bundle exists.
 - Prep-time validation and construction-time conversion don't cover the same
   fields consistently, and this isn't one shared policy: `spatial_binnings`
   has no prep-time check at all (construction owns it exclusively);
@@ -155,17 +150,23 @@
   configuration data materializes both paths as absolute; the resolved YAML
   stores them relative to the workspace root.
 - `Configuration.data` and `as_dict()` expose runtime paths;
-  `portable_data` and `as_portable_dict()` expose the archived form.
-  Configuration preparation requires both path strings but creates only the
-  output directory and configuration repository.
+  `portable_data` and `as_portable_dict()` expose the portable form retained
+  for later archiving. `Configuration.read()` requires both path strings but
+  does not create the output directory or configuration repository;
+  `configuration_session()` may create the output/log directory to start its
+  logging lifecycle.
 - The configuration repository stores one immutable bundle per TNT run under
   `runs/<run_id>/`, containing `run_manifest.yaml` and
-  `resolved_config.yaml`. Identical configurations are archived again for each
-  run; TNT performs no cross-run deduplication and stores no configuration or
-  scientific-input hashes. The submitted user profile and source path remain
-  transient. Each manifest records software versions, Git state,
-  Python/platform/host context, scheduler identifiers, logfile location, and
-  orbit random-seed state.
+  `resolved_config.yaml`. One invocation of `ModelIterator.run()` is exactly
+  one run; it allocates and publishes the bundle only after
+  `ModelIterator.from_configuration()` has successfully constructed all
+  runtime objects and its state/resume preflight checks pass. A second call on
+  the same iterator raises `RuntimeError`. Identical configurations are
+  archived again for separate iterator runs; TNT performs no cross-run
+  deduplication and stores no configuration or scientific-input hashes. The
+  submitted user profile and source path remain transient. Each manifest
+  records software versions, Git state, Python/platform/host context,
+  scheduler identifiers, logfile location, and orbit random-seed state.
 - Exactly one coordinating TNT process may write a given output directory.
   Parallel workers may calculate models, but only the coordinator may update
   shared repository or checkpoint files. Scientific input files must not be
@@ -211,16 +212,13 @@
   incompatible. Unit-bearing compatibility fields are canonicalized into the
   configured internal units first, so physically equivalent declarations such
   as `1 kpc` and `1000 pc` compare equal.
-- The compatibility check currently runs once at the start of each
-  `ModelIterator.run()` invocation, outside its internal iteration loop. When
-  TNT gains a coordinating execution layer, move the check there and perform
-  it once per TNT run after loading the resolved configuration, `AllModels`,
-  and `RunConfigLog`, but before constructing MGEs, observational objects, or
-  `ModelIterator`. Do not replace this with an iterator-local “already checked”
-  flag, because later calls could supply different model or provenance state.
-- Configuration preparation cannot record a generated seed. A negative seed
-  is recorded as `pending_generation`; the execution phase must update the
-  effective seed.
+- The compatibility check runs once at the start of the iterator's single
+  `run()` invocation, after runtime construction but before allocating the new
+  run identity or modifying model-search state. It cannot run in
+  `Configuration.read()` because the selected chi-square and model-table
+  schema checks require the previous search state.
+- A negative seed is recorded as `pending_generation` in the run manifest;
+  the execution phase must update the effective seed.
 - The user profile must define the physical system, dynamically named
   potential components and parameters, input directory, and output directory.
 - TNT user profiles generally use snake-case type identifiers and field names.

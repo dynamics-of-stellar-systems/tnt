@@ -130,12 +130,33 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
         "orbit_workers": "all_available",
         "weight_workers": "all_available",
     }
-    iterator.run_id = 0
-    iterator.run_manifest = _run_reference()
+    iterator.runtime_configuration = {}
+    iterator.portable_configuration = {}
+    iterator.workspace_root = Path("/workspace")
+    iterator.logfile_path = None
+    iterator.configuration_repository = Path("/archive/config_repository")
     iterator.critical_configuration = {"potential": {}}
+    iterator.run_id = None
+    iterator.run_manifest = None
+    iterator._run_started = False
     for name, value in overrides.items():
         setattr(iterator, name, value)
     return iterator
+
+
+@pytest.fixture(autouse=True)
+def _isolate_run_archiving(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep control-flow unit tests independent of filesystem provenance."""
+    monkeypatch.setattr(
+        ModelIterator,
+        "_archive_run",
+        lambda self: _run_reference(getattr(self, "_test_run_id", 0)),
+    )
+    monkeypatch.setattr(
+        RunConfigLog,
+        "baseline_run_reference",
+        lambda *_args, **_kwargs: None,
+    )
 
 
 def _patch_build_potential(
@@ -436,7 +457,7 @@ def test_run_does_not_resume_an_all_failed_model_table(
     assert "Resumed AllModels contains no successful model" in caplog.text
 
 
-def test_run_rejects_mismatched_models_and_config_log(
+def test_run_rejects_second_call_on_the_same_iterator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     iterator = _make_iterator()
@@ -444,10 +465,28 @@ def test_run_rejects_mismatched_models_and_config_log(
     models, _ = iterator.run()
 
     with pytest.raises(
+        RuntimeError,
+        match=r"may be called only once per iterator",
+    ):
+        iterator.run(models, RunConfigLog())
+
+
+def test_run_rejects_mismatched_models_and_config_log_before_archiving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_iterator = _make_iterator()
+    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    models, _ = first_iterator.run()
+    resumed_iterator = _make_iterator()
+
+    with pytest.raises(
         ValueError,
         match="AllModels and RunConfigLog must describe the same number",
     ):
-        iterator.run(models, RunConfigLog())
+        resumed_iterator.run(models, RunConfigLog())
+
+    assert resumed_iterator.run_manifest is None
+    assert resumed_iterator._run_started is False
 
 
 def test_run_continues_after_later_iteration_has_no_success(
@@ -520,7 +559,7 @@ def test_run_records_one_config_log_row_per_iteration_not_per_model(
     assert len(config_log) == 2  # still one row per round
 
 
-def test_run_allows_n_new_iter_and_keeps_cumulative_labels_across_calls(
+def test_new_run_keeps_cumulative_labels_when_resuming(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -528,24 +567,22 @@ def test_run_allows_n_new_iter_and_keeps_cumulative_labels_across_calls(
         "ensure_resume_compatible",
         lambda *_: None,
     )
-    monkeypatch.setattr(
-        RunConfigLog, "baseline_run_reference", lambda *_args, **_kw: None
-    )
-    iterator = _make_iterator(
+    first_iterator = _make_iterator(
         parameter_generator=FakeParameterGenerator(n_rounds=2),
-        run_manifest=_run_reference(),
         stopping_criteria={"n_new_iter": 2, "target_model_count": 10},
     )
     monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
     _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
 
-    models, config_log = iterator.run()
+    models, config_log = first_iterator.run()
     assert len(models) == 2
 
-    iterator.parameter_generator = FakeParameterGenerator(n_rounds=2)
-    iterator.run_id = 1
-    iterator.run_manifest = _run_reference(1)
-    models, config_log = iterator.run(models, config_log)
+    resumed_iterator = _make_iterator(
+        parameter_generator=FakeParameterGenerator(n_rounds=2),
+        stopping_criteria={"n_new_iter": 2, "target_model_count": 10},
+        _test_run_id=1,
+    )
+    models, config_log = resumed_iterator.run(models, config_log)
 
     assert len(models) == 4
     assert models.n_iterations() == 4
