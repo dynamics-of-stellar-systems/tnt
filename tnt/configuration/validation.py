@@ -333,9 +333,8 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         # mge_mass_scale is a mass MGE's analogue of a light MGE's ml -- a
         # mass-normalization parameter on top of an otherwise-fixed shape.
         # It's typically `fixed`, but nothing requires that: see
-        # AbstractPotentialComponent.rescale in tnt/potential/components.py
-        # for why a fixed mass parameter can still move under
-        # potential_rescalings.
+        # tnt.potential.components.AbstractPotentialComponent.rescale explains
+        # why a fixed mass parameter can still move under potential_rescalings.
         if (
             include
             and component_type == "TriaxialMassMGEPotential"

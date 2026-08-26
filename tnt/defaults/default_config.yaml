@@ -65,7 +65,7 @@ dynamic_object_defaults:
   # parameter_space_settings.potential_rescalings, which still rescales it --
   # every component's mass parameter must move together, fixed or not, or the
   # potential's shape would silently no longer match its orbit library. See
-  # AbstractPotentialComponent.rescale in tnt/potential.py.
+  # tnt.potential.components.AbstractPotentialComponent.rescale.
   parameter:
     fixed: false
 

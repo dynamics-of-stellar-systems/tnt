@@ -83,7 +83,7 @@ class RandomOrbitSampler(AbstractOrbitSampler):
 
     Fields beyond `logrmin`/`logrmax` are still undecided -- only `type`,
     `logrmin`, and `logrmax` are validated so far
-    (`configuration_validation._validate_orbit_sampler`).
+    (`tnt.configuration.validation._validate_orbit_sampler`).
     """
 
     _type: ClassVar[str] = "Random"
