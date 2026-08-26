@@ -1,7 +1,7 @@
-"""Shared helpers for parsing and validating resolved TNT configuration data.
+"""Shared helpers for validating already-loaded TNT configuration data.
 
 Used across the package wherever a piece of resolved configuration --
-anywhere from the whole config dict (`tnt.configuration_validation`) down to
+anywhere from the whole config dict (`tnt.configuration.validation`) down to
 one `<registry>.<name>` entry plus its data file (`tnt.kinematics`,
 `tnt.populations`) -- needs the same handful of primitives: check a value is
 a mapping, look up a required field, reject unknown fields, validate a

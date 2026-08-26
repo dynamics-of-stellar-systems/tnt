@@ -10,11 +10,11 @@ from typing import Any
 import numpy as np
 
 from tnt.all_models import AllModels
-from tnt.config_parsing import _mapping as _parse_mapping
-from tnt.config_parsing import _required_mapping as _parse_required_mapping
-from tnt.configuration import ConfigDict, _read_yaml_bytes_mapping
+from tnt.configuration.core import ConfigDict, _read_yaml_bytes_mapping
 from tnt.run_config_log import RunManifestReference
 from tnt.units import build_unit_systems, normalize_configuration_quantities
+from tnt.validation import _mapping as _parse_mapping
+from tnt.validation import _required_mapping as _parse_required_mapping
 
 _SEARCH_PARAMETER_KEYS = {
     "fixed",
@@ -186,7 +186,7 @@ def _different_paths(left: Any, right: Any, prefix: str = "") -> list[str]:
 def _mapping(config: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     """Return one required mapping from a resolved configuration.
 
-    Delegates the actual shape check to `tnt.config_parsing`'s shared
+    Delegates the actual shape check to `tnt.validation`'s shared
     `_required_mapping`, translating its generic `TypeError`/`ValueError`
     into this module's own `ConfigurationCompatibilityError` -- the check
     itself isn't duplicated, only the exception type this module commits to

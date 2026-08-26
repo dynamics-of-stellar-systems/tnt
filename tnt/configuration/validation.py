@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from tnt.config_parsing import (
+from tnt.units import declared_quantity_value, validate_configuration_quantities
+from tnt.validation import (
     _integer,
     _mapping,
     _nonnegative_number,
@@ -16,7 +17,6 @@ from tnt.config_parsing import (
     _required_mapping,
     _string,
 )
-from tnt.units import declared_quantity_value, validate_configuration_quantities
 
 ConfigDict = dict[str, Any]
 
@@ -333,8 +333,8 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         # mge_mass_scale is a mass MGE's analogue of a light MGE's ml -- a
         # mass-normalization parameter on top of an otherwise-fixed shape.
         # It's typically `fixed`, but nothing requires that: see
-        # AbstractPotentialComponent.rescale in tnt/potential.py for why a
-        # fixed mass parameter can still move under potential_rescalings.
+        # tnt.potential.components.AbstractPotentialComponent.rescale explains
+        # why a fixed mass parameter can still move under potential_rescalings.
         if (
             include
             and component_type == "triaxial_mass_mge"

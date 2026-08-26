@@ -56,7 +56,7 @@ class NNLSWeightSolver(AbstractWeightSolver):
     `solver` names a JAX-native NNLS implementation -- cvxopt/scipy are no
     longer supported, since they aren't traceable/jittable. Which JAX
     option(s) `solver` picks between is still undecided (see
-    `weight_solver_settings.nnls_solver` in `configuration_validation.py`);
+    `weight_solver_settings.nnls_solver` in `tnt.configuration.validation`);
     once chosen, `solve` becoming jittable removes what was otherwise the
     main obstacle to jitting `ModelIterator._evaluate`.
     """

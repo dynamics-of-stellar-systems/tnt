@@ -31,7 +31,7 @@ import numpy as np
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.all_models import AllModels
-from tnt.configuration_compatibility import (
+from tnt.configuration.compatibility import (
     _critical_configuration,
     ensure_resume_compatible,
 )

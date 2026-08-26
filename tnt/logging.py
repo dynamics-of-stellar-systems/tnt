@@ -14,7 +14,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
-from tnt.config_parsing import _required_mapping, _required_string
+from tnt.validation import _required_mapping, _required_string
 
 _LOGGER_NAME = "tnt"
 _OWNED_HANDLER_ATTRIBUTE = "_tnt_owned_handler"

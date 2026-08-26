@@ -11,13 +11,13 @@ from typing import Self
 
 from astropy.table import QTable
 
-from tnt.config_parsing import _mapping, _required, _required_string
 from tnt.configuration import (
     RESOLVED_CONFIG_FILENAME,
     RUN_MANIFEST_FILENAME,
     RUNS_DIRECTORY,
     _read_yaml_bytes_mapping,
 )
+from tnt.validation import _mapping, _required, _required_string
 
 RUN_CONFIG_LOG_FILENAME = "run_config_log.ecsv"
 TOTAL_RUNS_METADATA_KEY = "total_runs"

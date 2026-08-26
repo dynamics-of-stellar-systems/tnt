@@ -12,13 +12,13 @@ from typing import Any
 import unxt as u
 from unxt import Quantity
 
-from tnt.config_parsing import (
+from tnt.potential import raw_parameter_dimensions
+from tnt.validation import (
     _mapping,
     _optional_mapping,
     _reject_unknown_keys,
     _require_keys,
 )
-from tnt.potential import raw_parameter_dimensions
 
 ConfigDict = dict[str, Any]
 
@@ -187,11 +187,11 @@ def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
 def _potential_parameter_dimensions(settings: Mapping[str, Any]) -> Mapping[str, str]:
     """One potential component's raw parameter dimensions, from `tnt.potential`.
 
-    `configuration_validation.py`'s `_validate_potential` already validates
+    `tnt.configuration.validation._validate_potential` already validates
     `type`/`parameterization` as strings, and runs before this (see that
     module's comment for why) -- but fall back to no declared dimensions
-    (nothing scaled) for a malformed value here anyway, rather than
-    depending on that ordering or duplicating its validation.
+    (nothing scaled) for a malformed value here anyway, rather than depending
+    on that ordering or duplicating its validation.
     """
     potential_type = settings.get("type")
     parameterization = settings.get("parameterization")

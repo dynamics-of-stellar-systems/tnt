@@ -6,7 +6,7 @@ import yaml
 from astropy.table import QTable
 
 from tnt.all_models import AllModels
-from tnt.configuration_compatibility import (
+from tnt.configuration.compatibility import (
     ConfigurationCompatibilityError,
     _critical_configuration,
     _different_paths,

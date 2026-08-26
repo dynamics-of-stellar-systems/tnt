@@ -14,8 +14,8 @@ import equinox as eqx
 from unxt import Quantity
 
 from tnt.all_models import AllModels
-from tnt.config_parsing import _mapping, _number, _required
 from tnt.potential import raw_parameter_dimensions
+from tnt.validation import _mapping, _number, _required
 
 ParameterSet = dict[str, dict[str, Quantity]]
 """One proposed point in parameter space: component name -> {parameter name: value}.
@@ -73,7 +73,7 @@ class AbstractParameterGenerator(eqx.Module):
     `generator_settings` is
     `parameter_space_settings.generator_settings`; not every generator type
     needs any of it, so `_required_generator_settings` names the subset of
-    its keys this `_type` actually reads -- `configuration_validation`
+    its keys this `_type` actually reads -- `tnt.configuration.validation`
     mirrors this set (it can't import this module -- see its own note)
     to validate `generator_settings` against whichever `generator_type`
     is configured.
