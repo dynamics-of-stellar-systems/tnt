@@ -103,10 +103,13 @@
   runtime consumers such as NFW's `concentration_m200` parameterization.
   System distance remains a declared quantity until a runtime consumer needs
   it.
-- `tnt.configuration.compatibility._critical_configuration` calls
-  `normalize_configuration_quantities` for canonical comparison. Whether that
-  eager traversal can be narrowed or removed is tracked separately in issue
-  #36. At the run boundary, `Configuration.read()` does not archive, and
+- `tnt.configuration.compatibility._critical_configuration` projects the
+  preserved resolved configuration without normalizing it. Its recursive
+  comparator treats complete `{value, unit}` mappings as atomic quantities,
+  converts one value to the other's unit only for that comparison, and requires
+  exact numerical equality after conversion. Incompatible dimensions are
+  differences; malformed declarations raise `ConfigurationCompatibilityError`.
+  At the run boundary, `Configuration.read()` does not archive, and
   `ModelIterator.from_configuration()` successfully constructs every
   runtime object before `run()` can publish the configuration. Malformed
   runtime-owned fields such as `spatial_binnings.*.min_x` therefore fail before
@@ -202,7 +205,8 @@
 - Before resuming, runtime compares the current compatibility-critical
   configuration directly with the archived resolved configuration from the
   earliest run that contributed an iteration. The contract excludes
-  operational/search/presentation fields and potential parameter values/ranges.
+  operational/search/presentation fields and potential parameter
+  values/units/ranges.
   It includes internal units, cosmology, physical system attributes except
   name, potential/parameter schema, MGE and observational settings including
   their configured file references, all `numerics_settings`, orbit-library
@@ -210,9 +214,9 @@
   successful historical model, and the required potential parameter columns
   must exist. Negative configured orbit seeds are valid for fresh and
   continued runs; changing the configured seed between runs remains
-  incompatible. Unit-bearing compatibility fields are canonicalized into the
-  configured internal units first, so physically equivalent declarations such
-  as `1 kpc` and `1000 pc` compare equal.
+  incompatible. Complete unit-bearing compatibility fields are compared by
+  physical value on demand, so equivalent declarations such as `1 kpc` and
+  `1000 pc` compare equal without an eager configuration-wide traversal.
 - The compatibility check runs once at the start of each `run()` invocation,
   after runtime construction but before allocating that call's new run
   identity or modifying model-search state. It cannot run in
@@ -363,9 +367,9 @@
   converts `cosmological_parameters` into `Quantity`s once via
   `tnt.units.resolve_cosmological_parameters` -- in `tnt.units`, not
   `tnt.potential`, since it's generic declared-quantity conversion with no
-  potential-specific knowledge, matching `normalize_unitful_value`/
-  `normalize_potential_settings`'s existing home rather than the opposite
-  direction (`tnt.units` importing `raw_parameter_dimensions` from
+  potential-specific knowledge, matching `normalize_unitful_value`'s existing
+  home rather than the opposite direction (`tnt.units` importing
+  `raw_parameter_dimensions` from
   `tnt.potential`, which *does* need `tnt.potential`'s own domain
   knowledge -- galax `ParameterField` metadata, the parameterization
   registry -- and couldn't move the other way).

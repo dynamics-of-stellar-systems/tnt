@@ -1,6 +1,7 @@
 from copy import deepcopy
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 from astropy.table import QTable
@@ -229,6 +230,74 @@ def test_equivalent_declared_units_are_compatible(tmp_path: Path) -> None:
         _critical_configuration(baseline),
         _critical_configuration(equivalent),
     ) == []
+
+
+def test_quantity_comparison_handles_nested_arrays_and_exact_values() -> None:
+    baseline = {
+        "nested": [{"value": [1.0, 2.0], "unit": "kpc"}],
+        "array": np.array([1.0, 2.0]),
+    }
+    equivalent = {
+        "nested": [{"value": [1000.0, 2000.0], "unit": "pc"}],
+        "array": np.array([1.0, 2.0]),
+    }
+
+    assert _different_paths(baseline, equivalent, "critical_configuration") == []
+
+    equivalent["nested"][0]["value"][1] = 2000.0000000001
+    assert _different_paths(baseline, equivalent, "critical_configuration") == [
+        "critical_configuration.nested[0]"
+    ]
+
+
+def test_quantity_comparison_reports_shape_and_dimension_changes() -> None:
+    baseline = {"value": [1.0, 2.0], "unit": "kpc"}
+
+    assert _different_paths(
+        baseline,
+        {"value": [1000.0], "unit": "pc"},
+        "distance",
+    ) == ["distance"]
+    assert _different_paths(
+        baseline,
+        {"value": [1.0, 2.0], "unit": "Myr"},
+        "distance",
+    ) == ["distance"]
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        {"value": 1.0},
+        {"value": 1.0, "unit": "kpc", "extra": True},
+        {"value": "one", "unit": "kpc"},
+        {"value": float("nan"), "unit": "kpc"},
+        {"value": 1.0, "unit": "not-a-unit"},
+    ],
+)
+def test_quantity_comparison_rejects_malformed_declarations(
+    declaration: dict[str, object],
+) -> None:
+    with pytest.raises(ConfigurationCompatibilityError, match="distance"):
+        _different_paths(
+            {"value": 1.0, "unit": "kpc"},
+            declaration,
+            "distance",
+        )
+
+
+def test_critical_projection_preserves_declarations_but_excludes_parameter_units(
+    tmp_path: Path,
+) -> None:
+    input_directory = tmp_path / "input"
+    _write_inputs(input_directory)
+    critical = _critical_configuration(_config(input_directory))
+
+    assert critical["system_attributes"]["distance"] == {
+        "value": 10.0,
+        "unit": "kpc",
+    }
+    assert critical["potential"]["stars"]["parameters"]["ml"] == {}
 
 
 @pytest.mark.parametrize(

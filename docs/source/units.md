@@ -3,10 +3,10 @@
 TNT uses [`unxt`](https://unxt.readthedocs.io/) to validate units and define
 two related unit systems:
 
-- `units.internal` defines the canonical units used by runtime converters,
-  compatibility checks, and later numerical calculations. Potential parameter
-  proposals are an explicit exception: they retain each parameter's declared
-  unit until potential construction consumes them, as described below.
+- `units.internal` defines the canonical units used by runtime converters and
+  later numerical calculations. Potential parameter proposals are an explicit
+  exception: they retain each parameter's declared unit until potential
+  construction consumes them, as described below.
 - `units.display` controls presentation preferences. Any dimension not
   overridden there inherits its internal unit.
 
@@ -114,12 +114,15 @@ remains unchanged. `ModelIterator.from_configuration()` converts
 `cosmological_parameters`, including `H`, into `Quantity` objects for runtime
 consumers such as NFW's `concentration_m200` parameterization. System distance
 remains a declared quantity until a runtime consumer needs it; compatibility
-checks can still compare its canonical physical value.
+checks compare its physical value directly from the preserved declaration.
 
 Every run receives its own immutable resolved configuration, while resume
-compatibility compares physical meaning. It converts unit-bearing contract
-fields to the configured internal units, so declarations such as `1 kpc` and
-`1000 pc` compare equal.
+compatibility compares physical meaning. It recognizes atomic `{value, unit}`
+declarations and converts one value to the other's unit only while comparing
+that field. It does not normalize the complete configuration. Consequently,
+declarations such as `1 kpc` and `1000 pc` compare equal, incompatible
+dimensions compare unequal, and malformed declarations raise a compatibility
+error.
 
 MGE (multi-Gaussian expansion) contents and quantities read from observational
 data files are intentionally not converted during configuration preparation.
