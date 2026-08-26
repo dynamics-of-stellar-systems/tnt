@@ -33,6 +33,7 @@ def test_build_named_inputs_from_resolved_configuration(
         input_directory,
         unit_system,
         resolved["mge_settings"]["projected_mass_quad_order"],
+        distance,
     )
     binning = binnings["kinset1_binning"]
     assert isinstance(binning, ProjectedBinning)

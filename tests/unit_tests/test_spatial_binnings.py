@@ -9,6 +9,7 @@ from tnt.spatial_binnings import (
 )
 
 _QUAD_ORDER = 3
+_DISTANCE = u.Quantity(30.0, "Mpc")
 
 
 def _internal_unit_system() -> u.AbstractUnitSystem:
@@ -33,22 +34,57 @@ def test_build_spatial_binnings_reads_each_named_binning(tmp_path):
     np.save(tmp_path / "bins.npy", bins)
 
     binnings = build_spatial_binnings(
-        {"observed": _settings()}, tmp_path, _internal_unit_system(), _QUAD_ORDER
+        {"observed": _settings()},
+        tmp_path,
+        _internal_unit_system(),
+        _QUAD_ORDER,
+        _DISTANCE,
     )
 
     binning = binnings["observed"]
     assert isinstance(binning, ProjectedBinning)
-    assert binning.min_x == u.Quantity(-1.0, "rad")
-    assert binning.min_y == u.Quantity(-2.0, "rad")
-    assert binning.x_extent == u.Quantity(3.0, "rad")
-    assert binning.y_extent == u.Quantity(4.0, "rad")
+    # Converted to physical units (see
+    # test_build_spatial_binnings_returns_physical_units below for the
+    # conversion itself) -- PA (an orientation, not a size) stays angular.
+    assert binning.min_x.unit.is_equivalent("kpc")
     assert binning.PA == u.Quantity(0.5, "rad")
     assert np.array_equal(binning.bins, bins)
 
 
+def test_build_spatial_binnings_returns_physical_units(tmp_path):
+    bins = np.array([[0, 1], [2, 0], [1, 1]])
+    np.save(tmp_path / "bins.npy", bins)
+    angular = ProjectedBinning.from_settings(
+        _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+    )
+
+    binnings = build_spatial_binnings(
+        {"observed": _settings()},
+        tmp_path,
+        _internal_unit_system(),
+        _QUAD_ORDER,
+        _DISTANCE,
+    )
+
+    expected = angular.angular_to_physical(_DISTANCE)
+    binning = binnings["observed"]
+    assert binning.min_x == expected.min_x
+    assert binning.min_y == expected.min_y
+    assert binning.x_extent == expected.x_extent
+    assert binning.y_extent == expected.y_extent
+    assert binning.PA == expected.PA
+
+
 def test_build_spatial_binnings_without_entries_returns_empty_dict(tmp_path):
     assert (
-        build_spatial_binnings({}, tmp_path, _internal_unit_system(), _QUAD_ORDER) == {}
+        build_spatial_binnings(
+            {},
+            tmp_path,
+            _internal_unit_system(),
+            _QUAD_ORDER,
+            _DISTANCE,
+        )
+        == {}
     )
 
 
@@ -57,7 +93,11 @@ def test_build_spatial_binnings_rejects_non_mapping_entry(tmp_path):
         TypeError, match=r"spatial_binnings\.observed must be a mapping"
     ):
         build_spatial_binnings(
-            {"observed": None}, tmp_path, _internal_unit_system(), _QUAD_ORDER
+            {"observed": None},
+            tmp_path,
+            _internal_unit_system(),
+            _QUAD_ORDER,
+            _DISTANCE,
         )
 
 
@@ -67,7 +107,11 @@ def test_build_spatial_binnings_rejects_missing_bins_file(tmp_path):
 
     with pytest.raises(ValueError, match="missing required field: bins_file"):
         build_spatial_binnings(
-            {"observed": settings}, tmp_path, _internal_unit_system(), _QUAD_ORDER
+            {"observed": settings},
+            tmp_path,
+            _internal_unit_system(),
+            _QUAD_ORDER,
+            _DISTANCE,
         )
 
 
@@ -79,6 +123,7 @@ def test_build_spatial_binnings_rejects_invalid_bins_file(tmp_path, bins_file):
             tmp_path,
             _internal_unit_system(),
             _QUAD_ORDER,
+            _DISTANCE,
         )
 
 
@@ -88,7 +133,11 @@ def test_build_spatial_binnings_validates_geometry_before_opening_file(tmp_path)
 
     with pytest.raises(ValueError, match="missing required field: PA"):
         build_spatial_binnings(
-            {"observed": settings}, tmp_path, _internal_unit_system(), _QUAD_ORDER
+            {"observed": settings},
+            tmp_path,
+            _internal_unit_system(),
+            _QUAD_ORDER,
+            _DISTANCE,
         )
 
 
@@ -102,6 +151,7 @@ def test_build_spatial_binnings_rejects_unknown_field(tmp_path):
             tmp_path,
             _internal_unit_system(),
             _QUAD_ORDER,
+            _DISTANCE,
         )
 
 
@@ -117,6 +167,7 @@ def test_build_spatial_binnings_rejects_empty_loaded_bins(tmp_path):
             tmp_path,
             _internal_unit_system(),
             _QUAD_ORDER,
+            _DISTANCE,
         )
 
 
@@ -329,7 +380,11 @@ def test_projected_binning_infers_npix_from_bins_shape(
     np.save(tmp_path / "bins.npy", bins)
 
     binnings = build_spatial_binnings(
-        {"observed": _settings()}, tmp_path, _internal_unit_system(), _QUAD_ORDER
+        {"observed": _settings()},
+        tmp_path,
+        _internal_unit_system(),
+        _QUAD_ORDER,
+        _DISTANCE,
     )
 
     binning = binnings["observed"]

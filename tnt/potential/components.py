@@ -5,9 +5,13 @@ subclasses -- `GalaxPotentialComponent` (also here, built directly from a
 curated `galax.potential` class) and the MGE-backed composite types
 (`tnt.potential.triaxial_mge`, with more planned as separate modules
 alongside it). `resolve` dispatches to whichever subclass matches a
-config entry's `type` purely by walking `cls.__subclasses__()` -- a new
+config entry's `type` by walking `cls.__subclasses__()` -- a new *direct*
 subclass with a `_type` participates automatically, without needing to be
-registered here. `ResolvedPotentialComponent` is a component's static
+registered here, but this walk isn't recursive and doesn't check for a
+duplicate `_type` across two subclasses (unlike, e.g.,
+`tnt.kinematics`'s equivalent registry) -- narrower than it sounds; a
+metadata-on-class redesign that closes both gaps is tracked separately
+rather than fixed here. `ResolvedPotentialComponent` is a component's static
 structure (`type`/`parameterization`/`mge`), resolved once from its config
 entry and reused across every proposed point in parameter space; see
 `AbstractPotentialComponent.resolve`.
@@ -68,11 +72,12 @@ class ResolvedPotentialComponent(NamedTuple):
         in whatever unit it was declared/proposed in -- no unit-system
         conversion happens here (see `tnt.potential`'s module docstring for
         why). Passed straight through as-is -- a missing or otherwise wrong
-        parameter surfaces at `to_galax()` (a native `galax` constructor
+        parameter surfaces at construction (a native `galax` constructor
         error, or `AbstractMGE.deproject_triaxial` for the two MGE composite
-        types) or a registered `parameterization` converter, not here --
-        parameter-schema validation (exact expected names, positivity, ...)
-        is a separate, not-yet-implemented concern.
+        types, via `AbstractPotentialComponent._build`) or a registered
+        `parameterization` converter, not here -- parameter-schema
+        validation (exact expected names, positivity, ...) is a separate,
+        not-yet-implemented concern.
 
         Args:
             parameter_values: This component's current values, e.g. one
@@ -91,7 +96,9 @@ class ResolvedPotentialComponent(NamedTuple):
             if self.convert is not None
             else raw
         )
-        return self.component_cls(parameters=canonical, **self.extra_fields)
+        return self.component_cls._build(
+            canonical, unit_system, cosmological_parameters, self.extra_fields
+        )
 
 
 class AbstractPotentialComponent(eqx.Module):
@@ -155,7 +162,10 @@ class AbstractPotentialComponent(eqx.Module):
         # in tnt.potential.triaxial_mge) declares its own `_type`;
         # GalaxPotentialComponent doesn't, and stays the default -- walking
         # __subclasses__() here, rather than a hand-maintained registry,
-        # means a new subclass participates the moment it's imported.
+        # means a new *direct* subclass participates the moment it's
+        # imported. Doesn't recurse into further subclasses, and a
+        # duplicate `_type` across two subclasses silently overwrites
+        # rather than raising (see this module's own docstring).
         registered = {
             subclass._type: subclass
             for subclass in cls.__subclasses__()
@@ -207,6 +217,38 @@ class AbstractPotentialComponent(eqx.Module):
     ) -> dict[str, Any]:
         """Extra constructor kwargs beyond `parameters` (e.g. `galax_type`, `mge`)."""
         return {}
+
+    @classmethod
+    def _build(
+        cls,
+        parameters: dict[str, Quantity],
+        unit_system: AbstractUnitSystem,
+        cosmological_parameters: Mapping[str, Quantity],
+        extra_fields: dict[str, Any],
+    ) -> Self:
+        """Construct this component from its canonical `parameters` and static fields.
+
+        The default just constructs directly -- the two MGE composite types
+        (`tnt.potential.triaxial_mge`) override this to deproject and validate
+        their MGE eagerly, here, rather than lazily inside `to_galax()`: this is
+        the point where the proposed parameter values are turned into a concrete
+        potential, so it's the appropriate place for that potential to fail if
+        it's invalid (e.g. `tnt.mge.MGEDeprojectionError`), before anything
+        downstream (like orbit integration) is attempted.
+
+        Args:
+            parameters: This component's canonical, parameterization-independent
+                parameter values (post-`ResolvedPotentialComponent.build`'s
+                `convert` step).
+            unit_system: Passed through for subclasses that need it; unused by
+                the default implementation.
+            cosmological_parameters: Passed through for subclasses that need it;
+                unused by the default implementation.
+            extra_fields: This component's resolved static structure beyond
+                `parameters`, e.g. `galax_type` or `mge` -- see `_extra_fields`.
+        """
+        del unit_system, cosmological_parameters
+        return cls(parameters=parameters, **extra_fields)
 
     def to_galax(
         self, unit_system: AbstractUnitSystem

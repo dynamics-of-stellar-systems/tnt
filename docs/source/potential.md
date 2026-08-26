@@ -160,8 +160,13 @@ the named MGE is deprojected under (`AbstractMGE.deproject_triaxial`).
   (converting the recovered `(c, M_200)` forward again reproduces the same
   rescaled `(m, r_s)`), since there's no independent closed-form answer to
   check against.
-- **The two MGE composite types**: implemented. `to_galax()` deprojects the
-  named MGE under `theta`/`phi`/`psi` (`AbstractMGE.deproject_triaxial`) and
+- **The two MGE composite types**: implemented. The named MGE is deprojected
+  under `theta`/`phi`/`psi` (`AbstractMGE.deproject_triaxial`) once, when the
+  component itself is built from a proposed point in parameter space -- not
+  lazily inside `to_galax()` -- so an invalid viewing geometry
+  (`tnt.mge.MGEDeprojectionError`, for a deprojection with no real solution
+  or intrinsic axial ratios outside TNT's `0 < q <= p <= 1` convention)
+  surfaces there, before anything downstream is attempted. `to_galax()` then
   sums one `galax.potential.TriaxialGaussianPotential` per Gaussian
   component -- `galax` gained native axisymmetric/triaxial Gaussian
   potentials and `CompositePotential` after this was first scoped, so no

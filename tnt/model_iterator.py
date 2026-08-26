@@ -36,7 +36,7 @@ from tnt.configuration.compatibility import (
     ensure_resume_compatible,
 )
 from tnt.kinematics import AbstractKinematics, build_kinematics
-from tnt.mge import build_mges
+from tnt.mge import MGEDeprojectionError, build_mges
 from tnt.model import Model
 from tnt.orbit_library import (
     AbstractOrbitDithering,
@@ -141,6 +141,7 @@ class ModelIterator:
             input_directory,
             unit_system,
             config["mge_settings"]["projected_mass_quad_order"],
+            distance,
         )
         kinematic_data = build_kinematics(
             config["kinematic_data"],
@@ -386,13 +387,16 @@ class ModelIterator:
         Each returned `Model.iteration` is a placeholder -- `run` stamps the
         real one on afterward (see module docstring).
 
-        Sets `Model.orblib_done`/`weights_done` (and `weights`/`chi2`) to
-        reflect what actually happened, per `Model`'s own docstring, rather
-        than assuming success. A failed orbit integration or weight solve is
-        caught as a bare `Exception` -- there's no narrower exception type
-        established anywhere else in the codebase yet for either failure, so
-        this is a placeholder pending one. Deliberately makes only one attempt
-        at each; configuration requires
+        Sets `Model.valid_potential`/`orblib_done`/`weights_done` (and
+        `weights`/`chi2`) to reflect what actually happened, per `Model`'s own
+        docstring, rather than assuming success. `build_potential` failing
+        with `MGEDeprojectionError` (an invalid MGE viewing geometry) is
+        caught specifically, since it's the one currently-possible way a
+        `Potential` itself can fail to build. A failed orbit integration or
+        weight solve, distinct from that, is caught as a bare `Exception` --
+        there's no narrower exception type established anywhere else in the
+        codebase yet for either failure, so this is a placeholder pending one.
+        Deliberately makes only one attempt at each; configuration requires
         `weight_solver_settings.reattempt_failures: false` until retry behavior
         is implemented.
 
@@ -402,12 +406,16 @@ class ModelIterator:
         which proposed point a given `OrbitLibrary` belongs to (see module
         docstring).
         """
-        potential = build_potential(
-            self.resolved_potential,
-            parameters,
-            self.unit_system,
-            self.cosmological_parameters,
-        )
+        try:
+            potential = build_potential(
+                self.resolved_potential,
+                parameters,
+                self.unit_system,
+                self.cosmological_parameters,
+            )
+        except MGEDeprojectionError as error:
+            _LOGGER.warning("Invalid potential for %s: %s", parameters, error)
+            return [_invalid_potential_model(parameters)]
 
         try:
             orbit_library = potential.generate_orbit_library(
@@ -546,6 +554,7 @@ def _model(
     """A `Model` for `potential`, given its `OrbitLibrary`'s already-solved weights."""
     return Model(
         potential=potential,
+        valid_potential=True,
         raw_parameters=raw_parameters,
         orblib_done=True,
         weights_done=solved.weights_done,
@@ -561,7 +570,22 @@ def _unsolved_model(
     """A `Model` for `potential`, whose orbit integration itself didn't succeed."""
     return Model(
         potential=potential,
+        valid_potential=True,
         raw_parameters=raw_parameters,
+        orblib_done=False,
+        weights_done=False,
+        weights=None,
+        chi2=None,
+        iteration=0,
+    )
+
+
+def _invalid_potential_model(parameters: ParameterSet) -> Model:
+    """A `Model` for a proposed point whose `Potential` itself couldn't be built."""
+    return Model(
+        potential=None,
+        valid_potential=False,
+        raw_parameters=parameters,
         orblib_done=False,
         weights_done=False,
         weights=None,

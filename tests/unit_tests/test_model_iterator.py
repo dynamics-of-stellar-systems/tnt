@@ -19,6 +19,7 @@ import pytest
 import unxt as u
 
 import tnt.model_iterator as model_iterator_module
+from tnt.mge import MGEDeprojectionError
 from tnt.model_iterator import ModelIterator
 from tnt.run_config_log import (
     RunConfigLog,
@@ -185,6 +186,32 @@ def test_evaluate_logs_and_flags_orbit_integration_failure(
     [record] = caplog.records
     assert record.levelno == logging.WARNING
     assert "orbit integration failed" in record.message.lower()
+    assert "{'bh': {'m': 1.0}}" in record.message
+
+
+def test_evaluate_logs_and_flags_invalid_potential_build(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    iterator = _make_iterator()
+
+    def _raise_invalid(
+        resolved, parameter_values, unit_system, cosmological_parameters
+    ):
+        raise MGEDeprojectionError("bad viewing geometry")
+
+    monkeypatch.setattr(model_iterator_module, "build_potential", _raise_invalid)
+
+    with caplog.at_level(logging.WARNING, logger="tnt.model_iterator"):
+        (model,) = iterator._evaluate({"bh": {"m": 1.0}})
+
+    assert model.potential is None
+    assert model.valid_potential is False
+    assert model.orblib_done is False
+    assert model.weights_done is False
+    assert model.raw_parameters == {"bh": {"m": 1.0}}
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING
+    assert "invalid potential" in record.message.lower()
     assert "{'bh': {'m': 1.0}}" in record.message
 
 
@@ -477,6 +504,7 @@ def test_run_continues_after_later_iteration_has_no_success(
     assert generator.calls == 4
     assert len(models) == 3
     assert models.n_iterations() == 3
+    assert list(models.table["valid_potential"]) == [True, True, True]
     assert list(models.table["weights_done"]) == [True, False, True]
     assert len(config_log) == 3
     assert "Iteration 1 produced no successful model" in caplog.text

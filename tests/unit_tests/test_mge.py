@@ -12,6 +12,7 @@ from tnt.mge import (
     Deprojected3DMGE,
     LightMGE,
     MassMGE,
+    MGEDeprojectionError,
     build_mges,
     read_mge,
 )
@@ -314,16 +315,15 @@ def test_deproject_axisymmetric_requires_zero_pa_twist():
         twisted.deproject_axisymmetric(u.Quantity(90.0, "deg"))
 
 
-def test_deproject_axisymmetric_invalid_inclination_gives_nan():
+def test_deproject_axisymmetric_invalid_inclination_raises():
     distance = u.Quantity(30.5, "Mpc")
     mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
 
     # Smallest q in the fixture is ~0.55, so an inclination close to face-on
     # (cos(i) close to 1) makes deprojection impossible for that component.
-    deprojected = physical.deproject_axisymmetric(u.Quantity(5.0, "deg"))
-
-    assert jnp.any(jnp.isnan(deprojected.q.ustrip("")))
+    with pytest.raises(MGEDeprojectionError):
+        physical.deproject_axisymmetric(u.Quantity(5.0, "deg"))
 
 
 def _single_component_light_mge(q_obs: float, psi: float) -> LightMGE:
@@ -407,6 +407,22 @@ def test_deproject_triaxial_requires_physical_units():
         )
 
 
+def test_deproject_triaxial_convention_violating_geometry_raises():
+    # Same theta/phi/q_obs as test_deproject_triaxial_gives_valid_axial_ratios
+    # (which uses psi=0), but psi=0.1 gives a finite p=1.026, q=1.871 --
+    # q > p > 1, violating TNT's 0 < q <= p <= 1 convention without being
+    # unsolvable (complementing test_deproject_axisymmetric_invalid_inclination_raises'
+    # nan case, since both go through the same validity check).
+    mge = _single_component_light_mge(q_obs=0.9, psi=0.0)
+
+    with pytest.raises(MGEDeprojectionError):
+        mge.deproject_triaxial(
+            theta=u.Quantity(0.3, "rad"),
+            phi=u.Quantity(0.96, "rad"),
+            psi=u.Quantity(0.1, "rad"),
+        )
+
+
 def _forward_project_triaxial(
     sigma: float, p: float, q: float, theta: float, phi: float
 ):
@@ -483,10 +499,10 @@ def test_deproject_triaxial_global_psi_and_pa_twist_are_additive():
     theta, phi = u.Quantity(0.3, "rad"), u.Quantity(0.96, "rad")
 
     shifted_psi = _single_component_light_mge(q_obs=0.9, psi=-1.0).deproject_triaxial(
-        theta=theta, phi=phi, psi=u.Quantity(0.4, "rad")
+        theta=theta, phi=phi, psi=u.Quantity(-0.06, "rad")
     )
     shifted_twist = _single_component_light_mge(
-        q_obs=0.9, psi=-1.0 + 0.4
+        q_obs=0.9, psi=-1.0 + -0.06
     ).deproject_triaxial(theta=theta, phi=phi, psi=u.Quantity(0.0, "rad"))
 
     assert jnp.allclose(shifted_psi.p.ustrip(""), shifted_twist.p.ustrip(""))

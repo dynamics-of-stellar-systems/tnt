@@ -200,6 +200,7 @@ preparation. Build the named registry explicitly from the resolved settings:
 ```python
 from tnt import Configuration
 from tnt.spatial_binnings import build_spatial_binnings
+from tnt.units import resolve_system_distance
 
 config = Configuration().read("configuration.yaml")
 resolved = config.as_dict()
@@ -209,6 +210,7 @@ binnings = build_spatial_binnings(
     resolved["io_settings"]["input_directory"],
     config.unit_systems.internal,
     resolved["mge_settings"]["projected_mass_quad_order"],
+    resolve_system_distance(resolved["system_attributes"]),
 )
 ```
 
@@ -216,12 +218,13 @@ The returned dictionary uses the configured binning names as keys and contains
 `ProjectedBinning` values. This loading step opens each `.npy` file, validates
 the exact entry schema and inline geometry, and rejects empty, negative, or
 non-contiguous pixel-to-bin arrays. It converts the geometry to the internal
-angle unit and precomputes pixel edges and quadrature nodes.
+angle unit, then to physical units via `angular_to_physical(distance)` --
+matching `build_mges` above, so that MGEs and spatial binnings loaded this way
+are always dimensionally consistent -- and precomputes pixel edges and
+quadrature nodes.
 
 `AbstractMGE.get_projected_mass()` integrates an MGE over a
-`ProjectedBinning` and returns the total in each positive bin ID. Convert both
-objects with their `angular_to_physical()` methods before integration when
-working in physical rather than angular coordinates.
+`ProjectedBinning`; both must be angular or both physical.
 
 The fixed Gauss-Legendre quadrature orders are configured under
 `mge_settings`. `intrinsic_mass_quad_order` applies to intrinsic
@@ -274,15 +277,18 @@ the resolved registries:
 from tnt.kinematics import build_kinematics
 from tnt.mge import build_mges
 from tnt.spatial_binnings import build_spatial_binnings
+from tnt.units import resolve_system_distance
 
 input_directory = config.data["io_settings"]["input_directory"]
 unit_system = config.unit_systems.internal
-mges = build_mges(config.data["MGEs"], input_directory, unit_system)
+distance = resolve_system_distance(config.data["system_attributes"])
+mges = build_mges(config.data["MGEs"], input_directory, unit_system, distance)
 spatial_binnings = build_spatial_binnings(
     config.data["spatial_binnings"],
     input_directory,
     unit_system,
     config.data["mge_settings"]["projected_mass_quad_order"],
+    distance,
 )
 
 kinematics = build_kinematics(

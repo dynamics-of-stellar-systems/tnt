@@ -24,6 +24,7 @@ def test_build_kinematics_from_resolved_configuration(
         input_directory,
         unit_system,
         resolved["mge_settings"]["projected_mass_quad_order"],
+        distance,
     )
 
     kinematics = build_kinematics(

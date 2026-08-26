@@ -19,7 +19,7 @@ import unxt as u
 from galax.potential.params import ParameterField
 from unxt import Quantity
 
-from tnt.mge import LightMGE, MassMGE
+from tnt.mge import LightMGE, MassMGE, MGEDeprojectionError
 from tnt.potential import (
     _SUPPORTED_GALAX_TYPES,
     AbstractPotentialComponent,
@@ -737,13 +737,65 @@ def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
     assert component.parameters["ml"].ustrip("Msun / Lsun") == pytest.approx(5.0)
 
 
+def test_mge_component_build_raises_for_invalid_geometry_not_to_galax() -> None:
+    # theta=0.3, phi=0.96, psi=0.1 with q_obs=0.9 is a known finite-but-
+    # convention-violating deprojection (q > p), see
+    # test_deproject_triaxial_convention_violating_geometry_raises in
+    # tests/unit_tests/test_mge.py.
+    light_mge = LightMGE(
+        I=Quantity(jnp.array([2.0]), "Lsun / rad2"),
+        sigma=Quantity(jnp.array([1.5]), "rad"),
+        q=Quantity(jnp.array([0.9]), ""),
+        PA_twist=Quantity(jnp.array([0.0]), "rad"),
+    ).angular_to_physical(Quantity(30.0, "Mpc"))
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "TriaxialLightMGEPotential",
+            "include": True,
+            "mge": "mge_lum",
+            "parameters": {},
+        },
+        {"mge_lum": light_mge},
+        path="potential.stars",
+    )
+    bad_angles = {
+        "theta": Quantity(0.3, "rad"),
+        "phi": Quantity(0.96, "rad"),
+        "psi": Quantity(0.1, "rad"),
+    }
+    # Same theta/phi, but psi=-1.08 -- numerically confirmed valid (finite,
+    # 0 < q <= p <= 1) for this q_obs=0.9 MGE.
+    good_angles = {**bad_angles, "psi": Quantity(-1.08, "rad")}
+
+    # Raises from build() itself, before to_galax() is ever reached.
+    with pytest.raises(MGEDeprojectionError):
+        resolved.build(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **bad_angles},
+            _internal_unit_system(),
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+
+    # A component that *did* build successfully can't have to_galax() raise
+    # it -- deprojection already happened, and was already validated, at
+    # build time.
+    component = resolved.build(
+        {"ml": Quantity(5.0, "Msun / Lsun"), **good_angles},
+        _internal_unit_system(),
+        _NO_COSMOLOGICAL_PARAMETERS,
+    )
+    component.to_galax(_internal_unit_system())
+
+
 def test_triaxial_light_mge_to_galax_matches_spherical_gaussian() -> None:
     unit_system = _internal_unit_system()
     distance = Quantity(30.0, "Mpc")
     light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
     ml = Quantity(5.0, "Msun / Lsun")
-    component = TriaxialLightMGEPotential(
-        parameters={"ml": ml, **_VIEWING_ANGLES}, mge=light_mge
+    component = TriaxialLightMGEPotential._build(
+        {"ml": ml, **_VIEWING_ANGLES},
+        unit_system,
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": light_mge},
     )
 
     potential = component.to_galax(unit_system)
@@ -783,8 +835,11 @@ def test_triaxial_light_mge_to_galax_sums_every_component() -> None:
         distance
     )
     ml = Quantity(5.0, "Msun / Lsun")
-    component = TriaxialLightMGEPotential(
-        parameters={"ml": ml, **_VIEWING_ANGLES}, mge=light_mge
+    component = TriaxialLightMGEPotential._build(
+        {"ml": ml, **_VIEWING_ANGLES},
+        unit_system,
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": light_mge},
     )
 
     potential = component.to_galax(unit_system)
@@ -826,8 +881,11 @@ def test_triaxial_mass_mge_to_galax_uses_mge_mass_scale() -> None:
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
     ).angular_to_physical(distance)
     mge_mass_scale = Quantity(3.0, "")
-    component = TriaxialMassMGEPotential(
-        parameters={"mge_mass_scale": mge_mass_scale, **_VIEWING_ANGLES}, mge=mass_mge
+    component = TriaxialMassMGEPotential._build(
+        {"mge_mass_scale": mge_mass_scale, **_VIEWING_ANGLES},
+        unit_system,
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": mass_mge},
     )
 
     potential = component.to_galax(unit_system)
@@ -857,3 +915,85 @@ def test_potential_generate_orbit_library_not_implemented() -> None:
     potential = Potential(components={})
     with pytest.raises(NotImplementedError):
         potential.generate_orbit_library({}, None, None)
+
+
+def test_triaxial_light_mge_to_galax_density_matches_analytic_along_each_axis() -> None:
+    # The existing to_galax tests deliberately use circular Gaussians
+    # (q_obs=1, so p=q=1 always), which can't detect a swapped p<->q1 or
+    # q<->q2 mapping -- x/y/z all look the same. This uses a genuinely
+    # non-spherical, non-axisymmetric deprojection (p != q != 1, both
+    # numerically confirmed valid in test_mge.py) and checks density -- not
+    # potential -- independently along all three intrinsic axes against the
+    # closed-form Gaussian, which only matches if q1/q2 land on the right
+    # axes.
+    unit_system = _internal_unit_system()
+    mge = LightMGE(
+        I=Quantity(jnp.array([5.0]), "Lsun / kpc2"),
+        sigma=Quantity(jnp.array([2.0]), "kpc"),
+        q=Quantity(jnp.array([0.9]), ""),
+        PA_twist=Quantity(jnp.array([-1.0]), "rad"),
+    )
+    angles = {
+        "theta": Quantity(0.3, "rad"),
+        "phi": Quantity(0.96, "rad"),
+        "psi": Quantity(0.0, "rad"),
+    }
+    ml = Quantity(5.0, "Msun / Lsun")
+    component = TriaxialLightMGEPotential._build(
+        {"ml": ml, **angles}, unit_system, _NO_COSMOLOGICAL_PARAMETERS, {"mge": mge}
+    )
+    potential = component.to_galax(unit_system)
+
+    p = float(component.deprojected.p.ustrip("")[0])
+    q = float(component.deprojected.q.ustrip("")[0])
+    assert p != pytest.approx(q)  # genuinely triaxial, not axisymmetric
+    sigma = float(component.deprojected.sigma.ustrip("kpc")[0])
+    rho_0 = float(component.deprojected.I.ustrip("Msun / kpc3")[0])
+
+    t = Quantity(0.0, "Myr")
+    density_unit = unit_system["mass"] / unit_system["length"] ** 3
+    for axis_index, axial_ratio in ((0, 1.0), (1, p), (2, q)):
+        xyz = [0.0, 0.0, 0.0]
+        xyz[axis_index] = 3.0
+        analytic = rho_0 * jnp.exp(-0.5 * (3.0 / (axial_ratio * sigma)) ** 2)
+        density = potential.density(Quantity(jnp.array(xyz), "kpc"), t)
+        assert density.ustrip(density_unit) == pytest.approx(analytic, rel=1e-5)
+
+
+def test_triaxial_light_mge_rescale_scales_to_galax_without_ml_recompute() -> None:
+    # rescale() should scale to_galax()'s output by mass_scale without
+    # re-deriving the deprojection (p/q/sigma are mass-invariant; only
+    # deprojected.I scales) -- confirms both that the potential value itself
+    # scales correctly, and that shape is preserved.
+    unit_system = _internal_unit_system()
+    distance = Quantity(30.0, "Mpc")
+    light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
+    ml = Quantity(5.0, "Msun / Lsun")
+    component = TriaxialLightMGEPotential._build(
+        {"ml": ml, **_VIEWING_ANGLES},
+        unit_system,
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": light_mge},
+    )
+
+    mass_scale = 2.0
+    rescaled = component.rescale(mass_scale)
+
+    assert rescaled.parameters["ml"].ustrip("Msun / Lsun") == pytest.approx(
+        ml.ustrip("Msun / Lsun") * mass_scale
+    )
+    assert rescaled.deprojected.p.ustrip("") == pytest.approx(
+        component.deprojected.p.ustrip("")
+    )
+    assert rescaled.deprojected.q.ustrip("") == pytest.approx(
+        component.deprojected.q.ustrip("")
+    )
+
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    xyz = Quantity(jnp.array([3.0, 0.5, -1.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    original_potential = component.to_galax(unit_system).potential(xyz, t)
+    rescaled_potential = rescaled.to_galax(unit_system).potential(xyz, t)
+    assert rescaled_potential.ustrip(speed2) == pytest.approx(
+        original_potential.ustrip(speed2) * mass_scale, rel=1e-5
+    )
