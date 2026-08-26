@@ -142,7 +142,12 @@ class RunConfigLog:
     def path_for(run_manifest_path: Path) -> Path:
         """Return the fixed log path for a validated run manifest."""
         run = RunManifestReference.from_run_manifest(run_manifest_path)
-        return run.repository / RUN_CONFIG_LOG_FILENAME
+        return RunConfigLog.path_for_repository(run.repository)
+
+    @staticmethod
+    def path_for_repository(repository: Path) -> Path:
+        """Return the fixed log path below a configuration repository."""
+        return repository / RUN_CONFIG_LOG_FILENAME
 
     def write(self, path: Path) -> None:
         """Write only this log; checkpoints should use `ModelSearchState`."""
@@ -192,15 +197,11 @@ class RunConfigLog:
     def baseline_run_reference(
         self,
         repository: Path,
-        *,
-        current_run_id: int,
     ) -> RunManifestReference | None:
         """Return an earlier run that contributed the first search iteration."""
         if not len(self.table):
             return None
         run_id = _validate_run_id(self.table["run_id"][0])
-        if run_id == _validate_run_id(current_run_id):
-            return None
         return RunManifestReference.from_run_id(repository, run_id)
 
     def __len__(self) -> int:

@@ -39,14 +39,16 @@ output and logging settings, and then performs the same complete preparation.
 
 ### `Configuration.read()` versus `configuration_session()`
 
-Both interfaces apply the same defaults and validation, return the same kind
-of resolved `Configuration` object, and write the same configuration-repository
-artifacts. Their difference is ownership of the logging lifecycle:
+Both interfaces apply the same defaults and validation and return the same kind
+of resolved `Configuration` object. Neither allocates a run or writes the
+configuration repository; that happens only when a successfully constructed
+`ModelIterator` starts `run()`. Their difference is ownership of the logging
+lifecycle:
 
 | Behavior | `Configuration.read()` | `configuration_session()` |
 | --- | --- | --- |
 | Resolves and validates configuration | Yes | Yes |
-| Writes the configuration repository | Yes | Yes |
+| Writes the configuration repository | No | No |
 | Starts TNT logfile and terminal handlers | No | Yes |
 | Logs configuration preparation | Only through logging already configured by the caller | Yes |
 | Logs exceptions from subsequent model execution | No | Yes, while execution remains inside the `with` block |
@@ -71,9 +73,8 @@ block.
 6. Validates the generic resolved schema and registry references without
    constructing runtime objects. Type-specific kinematics and population-file
    validation is deferred to runtime construction.
-7. Preserves the portable resolved configuration and a run-specific manifest
-   below
-   `<output_directory>/config_repository/`.
+7. Retains runtime and portable forms in memory for later runtime construction
+   and run archiving.
 
 Mapping values are merged recursively. A user value replaces a default scalar
 or list. User values always take precedence over applicable defaults.
@@ -396,8 +397,8 @@ the later execution phase produces only the unscaled model. See
 [Model search](model_search.md) for how rescaled potentials are evaluated and
 recorded at runtime.
 
-Errors identify the configuration path containing the invalid value. The
-resolved file is written only after every preparation-stage check succeeds.
+Errors identify the configuration path containing the invalid value. No
+resolved file or run manifest is written during preparation.
 
 Preparation does not instantiate system components, inspect observational data
 or MGE files, or verify optional runtime dependencies. Those checks belong to
@@ -431,11 +432,15 @@ workspace root therefore gives the most useful archived configuration.
 `Configuration.data` and `Configuration.as_dict()` contain materialized
 absolute input and output paths for runtime consumers. The corresponding
 portable values are available through `Configuration.portable_data` and
-`Configuration.as_portable_dict()`.
+`Configuration.as_portable_dict()`. `Configuration.logfile_path` records the
+active session logfile for later inclusion in a run manifest, or is `None`
+when the caller owns logging.
 
 ## Configuration repository
 
-After successful validation, TNT publishes immutable artifacts under
+After `ModelIterator.from_configuration()` has successfully constructed every
+runtime object, each subsequent `run()` invocation that passes its state and
+resume preflight publishes immutable artifacts under
 `<output_directory>/config_repository/`:
 
 ```text
@@ -461,11 +466,13 @@ config_repository/
 - The submitted user profile, its source path, and its bytes are not archived.
   TNT also does not create configuration-content or scientific-input hashes.
 
-Numeric directory names provide stable human-readable run IDs.
-`Configuration.resolved_path` and `Configuration.run_manifest_path` identify
-the artifacts created by the current run. `Configuration.run_id` records the
-numeric run ID. `Configuration.source_path` remains available only in memory
-for the active process.
+Numeric directory names provide stable human-readable run IDs. After `run()`
+starts, `ModelIterator.run_manifest` identifies the immutable bundle and
+`ModelIterator.run_id` contains its numeric run ID. Both are `None` before the
+first invocation and identify the latest invocation after sequential calls.
+Earlier provenance remains accessible through `RunConfigLog` and the
+repository. `Configuration.source_path` remains available only in memory for
+the active process.
 
 TNT supports exactly one coordinating process writing a given output directory
 at a time. Model calculations may use multiple workers, but workers must return
@@ -476,15 +483,15 @@ unsupported.
 (run-identity)=
 ### Run identity
 
-A successful `Configuration.read()` defines the start of a TNT run for
-provenance purposes: it creates a new immutable run manifest and assigns the
-next run ID. Reusing that prepared `Configuration` and its `ModelIterator`
-across multiple `ModelIterator.run()` calls retains the same run ID. Reading a
-configuration again creates another run manifest and assigns another run ID,
-and archives another resolved configuration even when it is identical to an
-earlier one. The future top-level execution layer should read the configuration
-once at the beginning of each invocation and use the resulting run ID for every
-model-search iteration in that invocation.
+One invocation of `ModelIterator.run()` is exactly one TNT run. A run identity
+is allocated only after `ModelIterator.from_configuration()` has successfully
+constructed every configured MGE, spatial binning, observational data set,
+population, potential component, and model-search service. A configuration
+that fails runtime construction is therefore never archived. Sequential
+`run()` calls on the same iterator are supported; every call repeats the
+state/resume preflight, receives a fresh run ID, and archives the resolved
+configuration again. This intentional duplication distinguishes execution
+attempts even when they share one configuration and process.
 
 `run_config_log.ecsv` is created when the model-search caller explicitly
 persists `AllModels` and `RunConfigLog` through the coordinated
@@ -496,13 +503,14 @@ records `total_runs` and `run_ids_without_iterations`; callers must persist the
 state even when a run produces no iteration so that these summaries are
 updated.
 
-A negative configured orbit-library seed still means that execution must
-generate a seed. Until that happens, the preparation manifest records the
-effective seed as `null` with status `pending_generation`; the future execution
-stage must update it once the actual seed is known.
+A negative configured orbit-library seed means that execution must
+generate a seed. Until that happens, the run manifest records the effective
+seed as `null` with status `pending_generation`; the future execution stage
+must update it once the actual seed is known.
 
-Configuration preparation creates the output directory and its
-`config_repository` subdirectories when necessary. Existing artifacts are
-never replaced. It atomically publishes each manifest and resolved
-configuration as one run directory. It does not instantiate components, load
-observational data, checksum observational inputs, or execute modelling code.
+`Configuration.read()` does not create the output directory or
+`config_repository`; `configuration_session()` may create the output and log
+directories for its logging lifecycle. `ModelIterator.run()` creates the
+repository when needed and atomically publishes its manifest and resolved
+configuration as one run directory after preflight state and
+resume-compatibility checks succeed. Existing artifacts are never replaced.

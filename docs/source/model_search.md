@@ -54,7 +54,7 @@ match it exactly. Other stopping conditions may also end the search below the
 target.
 
 `n_new_iter` limits only the number of additional iterations performed by the
-current `ModelIterator.run()` call. If a persisted search already contains five
+current TNT run. If a persisted search already contains five
 iterations and `n_new_iter` is 3, a resumed call may perform iterations 5, 6,
 and 7. The model and configuration-log iteration labels therefore remain
 cumulative even though the allowance is renewed for each resumed call.
@@ -66,7 +66,7 @@ the ordinary generator, iteration-count, and model-count limits.
 
 Because `run()` accepts a previously written `AllModels` to resume from, the
 model-count target is tracked cumulatively, while `n_new_iter` grants the
-current call its configured number of additional iterations. If the resumed
+current run its configured number of additional iterations. If the resumed
 table contains models but none completed successfully, TNT terminates without
 asking the generator for another round because no valid chi2 base was
 established by the earlier run.
@@ -75,10 +75,10 @@ established by the earlier run.
 the cumulative iteration number to the ID of the TNT run that produced it.
 Multiple rounds may reference the same run. The run's immutable manifest is
 the authoritative link to its archived resolved configuration and execution
-provenance. Run IDs are allocated during configuration preparation, not by
-`ModelIterator.run()`; see {ref}`run-identity`. A search can be paused and
-resumed under an edited configuration, so `AllModels` and `Model.iteration`
-alone cannot show which run produced a given round.
+provenance. `ModelIterator.run()` allocates the run ID after runtime-object
+construction and preflight validation succeed; see {ref}`run-identity`. A
+search can be paused and resumed under an edited configuration, so `AllModels`
+and `Model.iteration` alone cannot show which run produced a given round.
 
 The log has a fixed persisted location at
 `config_repository/run_config_log.ecsv`. Its `read()` and `write()` methods
@@ -98,12 +98,8 @@ from tnt.run_config_log import RunConfigLog
 
 output = Path(config.data["io_settings"]["output_directory"])
 models_path = output / config.data["io_settings"]["all_models_file"]
-log_path = RunConfigLog.path_for(config.run_manifest_path)
-iterator = ModelIterator.from_configuration(
-    config.as_dict(),
-    config.unit_systems.internal,
-    config.run_manifest_path,
-)
+iterator = ModelIterator.from_configuration(config)
+log_path = RunConfigLog.path_for_repository(iterator.configuration_repository)
 
 state = ModelSearchState.read(
     models_path,
@@ -124,7 +120,7 @@ without adding a nullable iteration row.
 This applies to both initial and resumed runs. A resumed run may add no
 iteration because its stopping criteria are already satisfied, its parameter
 generator proposes nothing, or it cannot continue from the existing models.
-Configuration preparation still creates that run's manifest and run ID, and
+The `run()` invocation creates that run's manifest and run ID, and
 persisting the unchanged search state records the ID in
 `run_ids_without_iterations`. The initial zero-model case is special only
 because no `AllModels` table schema exists yet.
@@ -138,8 +134,9 @@ provenance is absent cannot be reconstructed safely. An initial zero-model
 checkpoint writes only the run log because `AllModels` has no table schema yet.
 
 The example checkpoints once after `ModelIterator.run()` returns. The iterator
-itself still performs no disk writes; an execution layer that checkpoints after
-every completed iteration must call the same paired writer at each checkpoint.
+writes only its immutable run bundle; it does not write model-search
+checkpoints. An execution layer that checkpoints after every completed
+iteration must call the same paired writer at each checkpoint.
 
 This log records provenance and verifies that referenced per-run manifests and
 resolved configurations exist and remain readable. It does not decide whether
@@ -148,26 +145,21 @@ separate model-resume policy.
 
 ## Configuration compatibility on resume
 
-Currently, TNT performs the compatibility check once at the beginning of each
-`ModelIterator.run()` invocation, before entering that method's internal
-iteration loop. It is therefore not repeated for every model-search iteration
-within one invocation. The check uses `RunConfigLog` to identify the earliest
-run that contributed an iteration, then loads that run's archived
-`resolved_config.yaml` and compares its compatibility-critical fields directly
-with the current resolved configuration. An incompatible change raises
+TNT performs the compatibility check once at the beginning of each `run()`
+invocation, before allocating that call's new run identity or entering the
+internal iteration loop. The check uses `RunConfigLog` to identify the
+earliest run that contributed an iteration, then loads that run's archived
+`resolved_config.yaml` and compares its compatibility-critical fields
+directly with the current resolved configuration. An incompatible change raises
 `ConfigurationCompatibilityError` before models or the log are modified. The
 error lists the differing field paths. Runs that produced no iteration do not
 define the model set's compatibility baseline.
 
-One TNT run may invoke `ModelIterator.run()` more than once, so the current
-location can still repeat the check. The future coordinating execution layer
-should instead perform it exactly once per TNT run: after reading the current
-configuration and loading `AllModels` and `RunConfigLog`, but before building
-MGEs, observational-data objects, or the `ModelIterator`. That layer will then
-pass already-validated state into any subsequent `ModelIterator.run()` calls,
-and the check can be removed from `ModelIterator.run()` itself. Moving it
-directly into `Configuration.read()` would be too early because the selected
-chi-square and model-table schema checks require the previous search state.
+The one-call-one-run contract means repeated calls on one iterator represent
+distinct runs and intentionally repeat the check. Moving it into
+`Configuration.read()` would be too early because the selected chi-square and
+model-table schema checks require the previous search state, and runtime-object
+construction must succeed before TNT can archive the configuration as a run.
 
 The current compatibility contract allows changes that control future search,
 execution, presentation, or post-processing without changing existing model
