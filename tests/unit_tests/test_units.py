@@ -100,7 +100,7 @@ def test_normalize_unitful_value_rejects_sequence_shorthand() -> None:
 def test_normalize_supported_configuration_quantities() -> None:
     systems = build_unit_systems(_unit_settings())
     config = {
-        "cosmological_parameters": {"H0": {"value": 70.0, "unit": "km / (s Mpc)"}},
+        "cosmological_parameters": {"H": {"value": 70.0, "unit": "km / (s Mpc)"}},
         "system_attributes": {
             "distance": {"value": 2.0, "unit": "Mpc"},
         },
@@ -163,7 +163,7 @@ def test_normalize_supported_configuration_quantities() -> None:
     mass_factor = float(u.unit("kg").to(u.unit("Msun"), 1.0))
 
     assert normalized["system_attributes"]["distance"] == pytest.approx(2000.0)
-    assert normalized["cosmological_parameters"]["H0"] == pytest.approx(
+    assert normalized["cosmological_parameters"]["H"] == pytest.approx(
         7.158985155319864e-05
     )
     bh_parameters = normalized["potential"]["bh"]["parameters"]
@@ -193,7 +193,7 @@ def test_normalize_supported_configuration_quantities() -> None:
 def test_configuration_quantity_validation_does_not_modify_declarations() -> None:
     config = {
         "cosmological_parameters": {
-            "H0": {"value": 70.0, "unit": "km / (s Mpc)"}
+            "H": {"value": 70.0, "unit": "km / (s Mpc)"}
         },
         "system_attributes": {
             "distance": {"value": 2.0, "unit": "Mpc"},

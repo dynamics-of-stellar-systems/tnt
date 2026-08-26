@@ -34,7 +34,7 @@ def _config(input_directory: Path) -> dict[str, object]:
             "display": {"angle": "arcsec"},
         },
         "cosmological_parameters": {
-            "H0": {"value": 0.1, "unit": "1 / Myr"}
+            "H": {"value": 0.1, "unit": "1 / Myr"}
         },
         "system_attributes": {
             "name": "galaxy",
@@ -236,8 +236,8 @@ def test_equivalent_declared_units_are_compatible(tmp_path: Path) -> None:
     [
         (
             "cosmological_parameters",
-            lambda value: value["H0"].update(value=0.2),
-            "critical_configuration.cosmological_parameters.H0",
+            lambda value: value["H"].update(value=0.2),
+            "critical_configuration.cosmological_parameters.H",
         ),
         (
             "system_attributes",

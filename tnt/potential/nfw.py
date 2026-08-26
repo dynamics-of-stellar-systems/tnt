@@ -25,19 +25,21 @@ def _nfw_concentration_m200(
 
     `M_200` uses the critical-density convention (M_200c): the mass
     enclosed within the radius `r_200` at which the mean density equals
-    `200 * rho_crit`, where `rho_crit = 3 H0^2 / (8 pi G)`. Concentration is
-    `c = r_200 / r_s`. Both `r_s` and the native characteristic mass `m`
-    follow from `galax.potential.NFWPotential`'s own enclosed-mass formula,
-    `M(<r) = m * (ln(1 + r/r_s) - (r/r_s)/(1 + r/r_s))`, evaluated at
-    `r = r_200` -- verified directly against galax's own `mass_enclosed` to
-    float32 precision, and that the resulting `r_200` truly encloses a mean
-    density of exactly `200 * rho_crit`.
+    `200 * rho_crit`, where `rho_crit = 3 H^2 / (8 pi G)` and `H` is the
+    Hubble parameter at the halo's own epoch (not necessarily today's H0 --
+    `cosmological_parameters.H` is whatever value the run declares).
+    Concentration is `c = r_200 / r_s`. Both `r_s` and the native
+    characteristic mass `m` follow from `galax.potential.NFWPotential`'s own
+    enclosed-mass formula, `M(<r) = m * (ln(1 + r/r_s) - (r/r_s)/(1 + r/r_s))`,
+    evaluated at `r = r_200` -- verified directly against galax's own
+    `mass_enclosed` to float32 precision, and that the resulting `r_200`
+    truly encloses a mean density of exactly `200 * rho_crit`.
     """
     c = raw["c"]
     m200 = raw["M_200"]
-    h0 = cosmological_parameters["H0"]
+    h = cosmological_parameters["H"]
 
-    rho_crit = 3 * h0**2 / (8 * jnp.pi * _G)
+    rho_crit = 3 * h**2 / (8 * jnp.pi * _G)
     r200 = (3 * m200 / (4 * jnp.pi * 200 * rho_crit)) ** (1 / 3)
     r_s = r200 / c
     m = m200 / _nfw_g(c.ustrip(""))
@@ -101,9 +103,9 @@ def _nfw_concentration_m200_inverse(
     """
     m = native["m"]
     r_s = native["r_s"]
-    h0 = cosmological_parameters["H0"]
+    h = cosmological_parameters["H"]
 
-    rho_crit = 3 * h0**2 / (8 * jnp.pi * _G)
+    rho_crit = 3 * h**2 / (8 * jnp.pi * _G)
     target = (m / (4 * jnp.pi * 200 * rho_crit / 3 * r_s**3)).ustrip("")
     c = _solve_nfw_concentration(target)
     m200 = m * _nfw_g(c)

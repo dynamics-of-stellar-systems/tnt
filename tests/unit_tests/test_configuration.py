@@ -101,7 +101,7 @@ def test_read_resolves_defaults_and_writes_run_bundle(tmp_path: Path) -> None:
     assert config.workspace_root == tmp_path
     assert "dynamic_object_defaults" not in written
     assert "kinematics_type_defaults" not in written
-    assert written["cosmological_parameters"]["H0"] == {
+    assert written["cosmological_parameters"]["H"] == {
         "value": 70.0,
         "unit": "km / (s Mpc)",
     }
@@ -402,14 +402,14 @@ def test_quantity_override_cannot_inherit_default_unit(tmp_path: Path) -> None:
         user_path,
         output_directory,
         body="""cosmological_parameters:
-  H0:
+  H:
     value: 75.0
 """,
     )
 
     with pytest.raises(
         ValueError,
-        match=r"cosmological_parameters\.H0.*missing required field.*unit",
+        match=r"cosmological_parameters\.H.*missing required field.*unit",
     ):
         Configuration().read(user_path, workspace_root=tmp_path)
 

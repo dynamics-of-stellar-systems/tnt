@@ -359,7 +359,7 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
 
     unit_system = _internal_unit_system()
     c, m200 = 8.0, 1.0e12
-    h0 = Quantity(
+    h = Quantity(
         7.158985155319864e-05, "1 / Myr"
     )  # 70 km/s/Mpc, in this unit system's 1/Myr
 
@@ -376,7 +376,7 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
     component = resolved.build(
         {"c": Quantity(c, ""), "M_200": Quantity(m200, "Msun")},
         unit_system,
-        {"H0": h0},
+        {"H": h},
     )
     m = component.parameters["m"].ustrip("Msun")
     r_s = component.parameters["r_s"].ustrip("kpc")
@@ -386,9 +386,9 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
     assert recovered_m200 == pytest.approx(m200, rel=1e-6)
 
     # And r_200 itself must enclose a mean density of exactly 200 * rho_crit.
-    h0_bare = h0.ustrip("1 / Myr")
+    h_bare = h.ustrip("1 / Myr")
     g = float(Quantity(6.6743e-11, "m3 / (kg s2)").ustrip("kpc3 / (Msun Myr2)"))
-    rho_crit = 3 * h0_bare**2 / (8 * jnp.pi * g)
+    rho_crit = 3 * h_bare**2 / (8 * jnp.pi * g)
     mean_density = m200 / (4 / 3 * jnp.pi * r200**3)
     assert float(mean_density / rho_crit) == pytest.approx(200.0, rel=1e-5)
 
@@ -406,12 +406,12 @@ def test_nfw_parameterization_is_invariant_to_declared_units() -> None:
         path="potential.dh",
     )
     m200 = Quantity(1.0e12, "Msun")
-    h0 = Quantity(70.0, "km / (s Mpc)")
+    h = Quantity(70.0, "km / (s Mpc)")
 
     internal = resolved.build(
         {"c": Quantity(8.0, ""), "M_200": m200.to("Msun")},
         unit_system,
-        {"H0": h0.to("1 / Myr")},
+        {"H": h.to("1 / Myr")},
     )
     differently_declared = resolved.build(
         {
@@ -419,7 +419,7 @@ def test_nfw_parameterization_is_invariant_to_declared_units() -> None:
             "M_200": Quantity(100.0, "1e10 Msun"),
         },
         unit_system,
-        {"H0": h0},
+        {"H": h},
     )
 
     assert differently_declared.parameters["m"].ustrip("Msun") == pytest.approx(
@@ -458,13 +458,13 @@ def test_solve_nfw_concentration_recovers_a_known_c() -> None:
 
 def test_nfw_concentration_m200_inverse_round_trips_the_forward_conversion() -> None:
     unit_system = _internal_unit_system()
-    h0 = Quantity(
+    h = Quantity(
         7.158985155319864e-05, "1 / Myr"
     )  # 70 km/s/Mpc, in this unit system's 1/Myr
     for c, m200 in ((3.0, 1.0e11), (8.0, 1.0e12), (20.0, 5.0e13)):
         raw = {"c": Quantity(c, ""), "M_200": Quantity(m200, "Msun")}
-        native = _nfw_concentration_m200(raw, unit_system, {"H0": h0})
-        recovered = _nfw_concentration_m200_inverse(native, unit_system, {"H0": h0})
+        native = _nfw_concentration_m200(raw, unit_system, {"H": h})
+        recovered = _nfw_concentration_m200_inverse(native, unit_system, {"H": h})
         assert float(recovered["c"].ustrip("")) == pytest.approx(c, rel=1e-5)
         assert float(recovered["M_200"].ustrip("Msun")) == pytest.approx(m200, rel=1e-5)
 
@@ -475,16 +475,16 @@ def test_nfw_concentration_m200_inverse_is_self_consistent_after_rescale() -> No
     # and scaling M_200), so the only checkable invariant is that inverting
     # and then re-converting forward reproduces the same rescaled (m, r_s).
     unit_system = _internal_unit_system()
-    h0 = Quantity(7.158985155319864e-05, "1 / Myr")
+    h = Quantity(7.158985155319864e-05, "1 / Myr")
     raw = {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")}
-    native = _nfw_concentration_m200(raw, unit_system, {"H0": h0})
+    native = _nfw_concentration_m200(raw, unit_system, {"H": h})
 
     mass_scale = 2.5
     rescaled_native = {"m": native["m"] * mass_scale, "r_s": native["r_s"]}
     recovered_raw = _nfw_concentration_m200_inverse(
-        rescaled_native, unit_system, {"H0": h0}
+        rescaled_native, unit_system, {"H": h}
     )
-    reconverted_native = _nfw_concentration_m200(recovered_raw, unit_system, {"H0": h0})
+    reconverted_native = _nfw_concentration_m200(recovered_raw, unit_system, {"H": h})
 
     assert reconverted_native["m"].ustrip("Msun") == pytest.approx(
         rescaled_native["m"].ustrip("Msun"), rel=1e-5
@@ -505,7 +505,7 @@ def test_nfw_concentration_m200_inverse_is_self_consistent_after_rescale() -> No
 
 def test_raw_potential_parameters_uses_each_component_own_parameterization() -> None:
     unit_system = _internal_unit_system()
-    h0 = Quantity(7.158985155319864e-05, "1 / Myr")
+    h = Quantity(7.158985155319864e-05, "1 / Myr")
     settings = {
         "bh": {"type": "PlummerPotential", "include": True, "parameters": {}},
         "dh": {
@@ -520,17 +520,17 @@ def test_raw_potential_parameters_uses_each_component_own_parameterization() -> 
         "dh": {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")},
     }
     potential = Potential.from_settings(
-        settings, parameter_values, {}, unit_system, {"H0": h0}
+        settings, parameter_values, {}, unit_system, {"H": h}
     )
 
-    raw = raw_potential_parameters(settings, potential, unit_system, {"H0": h0})
+    raw = raw_potential_parameters(settings, potential, unit_system, {"H": h})
     assert set(raw["bh"]) == {"m_tot", "r_s"}
     assert set(raw["dh"]) == {"c", "M_200"}
     assert raw["dh"]["c"].ustrip("") == pytest.approx(8.0, rel=1e-5)
     assert raw["dh"]["M_200"].ustrip("Msun") == pytest.approx(1.0e12, rel=1e-5)
 
     rescaled = potential.rescale(2.0)
-    raw_rescaled = raw_potential_parameters(settings, rescaled, unit_system, {"H0": h0})
+    raw_rescaled = raw_potential_parameters(settings, rescaled, unit_system, {"H": h})
     assert set(raw_rescaled["dh"]) == {"c", "M_200"}
     assert raw_rescaled["dh"]["M_200"].ustrip("Msun") != pytest.approx(
         raw["dh"]["M_200"].ustrip("Msun"), rel=1e-3
