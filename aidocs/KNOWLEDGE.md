@@ -94,8 +94,8 @@
 - Runtime kinematics construction converts configured histogram quantities and
   Gauss-Hermite velocity systematics. Potential parameters instead keep their
   own declared unit all the way through `AbstractParameterGenerator` and
-  `Potential` construction -- `ModelIterator.from_configuration()` no longer
-  pre-converts them into a shared internal-unit copy; `galax`'s own
+  `Potential` construction -- `ModelIterator.from_configuration()` does not
+  pre-convert them into a shared internal-unit copy; `galax`'s own
   potential classes already convert generically at evaluation time, so
   nothing needs them pre-normalized (see `tnt.potential`'s module
   docstring). `ModelIterator.from_configuration()` also converts
@@ -103,12 +103,11 @@
   runtime consumers such as NFW's `concentration_m200` parameterization.
   System distance remains a declared quantity until a runtime consumer needs
   it.
-- `tnt.configuration.compatibility._critical_configuration` still calls
+- `tnt.configuration.compatibility._critical_configuration` calls
   `normalize_configuration_quantities` for canonical comparison. Whether that
   eager traversal can be narrowed or removed is tracked separately in issue
-  #36. The former normal-workflow failure path is closed by the run boundary:
-  `Configuration.read()` does not archive, and
-  `ModelIterator.from_configuration()` must successfully construct every
+  #36. At the run boundary, `Configuration.read()` does not archive, and
+  `ModelIterator.from_configuration()` successfully constructs every
   runtime object before `run()` can publish the configuration. Malformed
   runtime-owned fields such as `spatial_binnings.*.min_x` therefore fail before
   any run bundle exists.
@@ -160,10 +159,13 @@
   `resolved_config.yaml`. One invocation of `ModelIterator.run()` is exactly
   one run; it allocates and publishes the bundle only after
   `ModelIterator.from_configuration()` has successfully constructed all
-  runtime objects and its state/resume preflight checks pass. A second call on
-  the same iterator raises `RuntimeError`. Identical configurations are
-  archived again for separate iterator runs; TNT performs no cross-run
-  deduplication and stores no configuration or scientific-input hashes. The
+  runtime objects and its state/resume preflight checks pass. Sequential calls
+  on the same iterator are allowed, and each receives a fresh run ID and
+  archive. `ModelIterator.run_id` and `run_manifest` identify the latest call;
+  earlier provenance remains in `RunConfigLog` and the repository. Identical
+  configurations are therefore archived again for separate calls; TNT
+  performs no cross-run deduplication and stores no configuration or
+  scientific-input hashes. The
   submitted user profile and source path remain transient. Each manifest
   records software versions, Git state, Python/platform/host context,
   scheduler identifiers, logfile location, and orbit random-seed state.
@@ -179,14 +181,13 @@
   the authoritative links to per-run resolved configurations and execution
   provenance. ECSV metadata derives `total_runs` and
   `run_ids_without_iterations` from all manifests and the iteration rows on
-  every read or write. `ModelIterator.run()` still returns rather than writes
-  both `AllModels` and this log, so the execution layer must load and save them
+  every read or write. `ModelIterator.run()` returns both `AllModels` and this
+  log without writing them, so the execution layer must load and save them
   together, including after a zero-iteration run. The log records provenance
   only; it does not implement the configuration-compatibility decision itself.
 - `RunConfigLog` metadata refresh deliberately performs one O(M) scan of the
-  M per-run manifests on every log read or write. The former duplicate
-  validation pass and configuration hashing have been removed. Keep the
-  remaining scan unless profiling shows that it materially affects checkpoint
+  M per-run manifests on every log read or write. Keep this scan unless
+  profiling shows that it materially affects checkpoint
   time; run counts are expected to be small relative to model-calculation
   costs. If optimization becomes necessary, first make metadata refresh use a
   lightweight numeric run-directory scan instead of introducing a persistent
@@ -212,9 +213,9 @@
   incompatible. Unit-bearing compatibility fields are canonicalized into the
   configured internal units first, so physically equivalent declarations such
   as `1 kpc` and `1000 pc` compare equal.
-- The compatibility check runs once at the start of the iterator's single
-  `run()` invocation, after runtime construction but before allocating the new
-  run identity or modifying model-search state. It cannot run in
+- The compatibility check runs once at the start of each `run()` invocation,
+  after runtime construction but before allocating that call's new run
+  identity or modifying model-search state. It cannot run in
   `Configuration.read()` because the selected chi-square and model-table
   schema checks require the previous search state.
 - A negative seed is recorded as `pending_generation` in the run manifest;

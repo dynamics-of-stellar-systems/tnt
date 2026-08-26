@@ -22,7 +22,7 @@ from __future__ import annotations
 import functools
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NamedTuple, Self
 
@@ -106,7 +106,6 @@ class ModelIterator:
     critical_configuration: Mapping[str, Any]
     run_id: int | None = None
     run_manifest: RunManifestReference | None = None
-    _run_started: bool = field(default=False, init=False, repr=False)
 
     @classmethod
     def from_configuration(
@@ -223,9 +222,9 @@ class ModelIterator:
         produces only failures does not terminate the search or participate in
         the delta-chi2 check; the previous best remains the generator's base.
 
-        One invocation is exactly one TNT run. Calling `run` again on the same
-        iterator raises `RuntimeError`; extending a search requires constructing
-        a new iterator, normally in a new process or resume attempt.
+        One invocation is exactly one TNT run. Sequential calls on the same
+        iterator are allowed; each performs a new preflight, receives a new run
+        ID, and archives the resolved configuration again.
 
         `n_new_iter` is a per-run allowance: resuming a previously written
         `AllModels` can run up to that many additional iterations. Iteration
@@ -250,14 +249,7 @@ class ModelIterator:
             The final `AllModels` and `RunConfigLog`, covering every
             model and round recorded so far.
 
-        Raises:
-            RuntimeError: If this iterator has already started a run.
         """
-        if self._run_started:
-            raise RuntimeError(
-                "ModelIterator.run() may be called only once per iterator; "
-                "construct a new iterator for another TNT run."
-            )
         _require_supported_model_processing_order(self.execution_settings)
         models = AllModels() if all_models is None else all_models
         run_config_log = RunConfigLog() if run_config_log is None else run_config_log
@@ -275,7 +267,6 @@ class ModelIterator:
             models,
             self.which_chi2,
         )
-        self._run_started = True
         run_manifest = self._archive_run()
         self.run_manifest = run_manifest
         self.run_id = run_manifest.run_id

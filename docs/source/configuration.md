@@ -439,8 +439,9 @@ when the caller owns logging.
 ## Configuration repository
 
 After `ModelIterator.from_configuration()` has successfully constructed every
-runtime object, its subsequent one permitted `run()` invocation publishes
-immutable artifacts under `<output_directory>/config_repository/`:
+runtime object, each subsequent `run()` invocation that passes its state and
+resume preflight publishes immutable artifacts under
+`<output_directory>/config_repository/`:
 
 ```text
 config_repository/
@@ -467,9 +468,11 @@ config_repository/
 
 Numeric directory names provide stable human-readable run IDs. After `run()`
 starts, `ModelIterator.run_manifest` identifies the immutable bundle and
-`ModelIterator.run_id` contains its numeric run ID. Both are `None` before
-that first invocation. `Configuration.source_path` remains available only in
-memory for the active process.
+`ModelIterator.run_id` contains its numeric run ID. Both are `None` before the
+first invocation and identify the latest invocation after sequential calls.
+Earlier provenance remains accessible through `RunConfigLog` and the
+repository. `Configuration.source_path` remains available only in memory for
+the active process.
 
 TNT supports exactly one coordinating process writing a given output directory
 at a time. Model calculations may use multiple workers, but workers must return
@@ -484,11 +487,11 @@ One invocation of `ModelIterator.run()` is exactly one TNT run. A run identity
 is allocated only after `ModelIterator.from_configuration()` has successfully
 constructed every configured MGE, spatial binning, observational data set,
 population, potential component, and model-search service. A configuration
-that fails runtime construction is therefore never archived. Calling `run()`
-again on the same iterator raises `RuntimeError`; extending or resuming a
-search requires a newly constructed iterator and receives a new run ID.
-Repeated identical configurations are archived independently when their
-separate iterators run.
+that fails runtime construction is therefore never archived. Sequential
+`run()` calls on the same iterator are supported; every call repeats the
+state/resume preflight, receives a fresh run ID, and archives the resolved
+configuration again. This intentional duplication distinguishes execution
+attempts even when they share one configuration and process.
 
 `run_config_log.ecsv` is created when the model-search caller explicitly
 persists `AllModels` and `RunConfigLog` through the coordinated
@@ -500,7 +503,7 @@ records `total_runs` and `run_ids_without_iterations`; callers must persist the
 state even when a run produces no iteration so that these summaries are
 updated.
 
-A negative configured orbit-library seed still means that execution must
+A negative configured orbit-library seed means that execution must
 generate a seed. Until that happens, the run manifest records the effective
 seed as `null` with status `pending_generation`; the future execution stage
 must update it once the actual seed is known.

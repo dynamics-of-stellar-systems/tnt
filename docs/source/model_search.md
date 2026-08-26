@@ -120,7 +120,7 @@ without adding a nullable iteration row.
 This applies to both initial and resumed runs. A resumed run may add no
 iteration because its stopping criteria are already satisfied, its parameter
 generator proposes nothing, or it cannot continue from the existing models.
-The `run()` invocation still creates that run's manifest and run ID, and
+The `run()` invocation creates that run's manifest and run ID, and
 persisting the unchanged search state records the ID in
 `run_ids_without_iterations`. The initial zero-model case is special only
 because no `AllModels` table schema exists yet.
@@ -145,9 +145,9 @@ separate model-resume policy.
 
 ## Configuration compatibility on resume
 
-TNT performs the compatibility check once at the beginning of the iterator's
-single `run()` invocation, before allocating the new run identity or entering
-the internal iteration loop. The check uses `RunConfigLog` to identify the
+TNT performs the compatibility check once at the beginning of each `run()`
+invocation, before allocating that call's new run identity or entering the
+internal iteration loop. The check uses `RunConfigLog` to identify the
 earliest run that contributed an iteration, then loads that run's archived
 `resolved_config.yaml` and compares its compatibility-critical fields
 directly with the current resolved configuration. An incompatible change raises
@@ -155,11 +155,11 @@ directly with the current resolved configuration. An incompatible change raises
 error lists the differing field paths. Runs that produced no iteration do not
 define the model set's compatibility baseline.
 
-The one-call-one-run contract means this location cannot repeat the check for
-the same run. Moving it into `Configuration.read()` would be too early because
-the selected chi-square and model-table schema checks require the previous
-search state, and runtime-object construction must succeed before TNT can
-archive the configuration as a run.
+The one-call-one-run contract means repeated calls on one iterator represent
+distinct runs and intentionally repeat the check. Moving it into
+`Configuration.read()` would be too early because the selected chi-square and
+model-table schema checks require the previous search state, and runtime-object
+construction must succeed before TNT can archive the configuration as a run.
 
 The current compatibility contract allows changes that control future search,
 execution, presentation, or post-processing without changing existing model

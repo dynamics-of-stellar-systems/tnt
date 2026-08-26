@@ -193,6 +193,18 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     stars_ml_value = captured_parameter_values[0]["stars"]["ml"]
     assert stars_ml_value.ustrip("Msun / Lsun") == pytest.approx(5.0)
 
+    # The same iterator may start another run. This configuration has already
+    # exceeded its soft model target, so the second call adds no iteration but
+    # still passes resume compatibility and receives its own archive.
+    resumed_models, resumed_log = iterator.run(models, config_log)
+    assert resumed_models is models
+    assert resumed_log is config_log
+    assert iterator.run_id == 1
+    assert sorted(path.name for path in (repository / "runs").iterdir()) == [
+        "0000",
+        "0001",
+    ]
+
 
 def test_model_iterator_reports_real_potential_in_its_own_parameterization(
     example_configuration_path: Path,
@@ -308,7 +320,7 @@ def test_invalid_runtime_owned_configuration_is_not_archived(
     assert not (output / "config_repository").exists()
 
 
-def test_zero_iteration_run_is_archived_and_reported(
+def test_each_zero_iteration_call_is_archived_and_reported_as_a_run(
     example_configuration_path: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -324,12 +336,19 @@ def test_zero_iteration_run_is_archived_and_reported(
     assert len(config_log) == 0
     assert iterator.run_manifest is not None
     assert iterator.run_manifest.run_id == 0
+
+    models, config_log = iterator.run(models, config_log)
+
+    assert len(models) == 0
+    assert len(config_log) == 0
+    assert iterator.run_manifest is not None
+    assert iterator.run_manifest.run_id == 1
     output = Path(config.data["io_settings"]["output_directory"])
     models_path = output / config.data["io_settings"]["all_models_file"]
     log_path = RunConfigLog.path_for_repository(iterator.configuration_repository)
     ModelSearchState(models, config_log).write(models_path, log_path)
-    assert config_log.table.meta[TOTAL_RUNS_METADATA_KEY] == 1
-    assert config_log.table.meta[RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY] == [0]
+    assert config_log.table.meta[TOTAL_RUNS_METADATA_KEY] == 2
+    assert config_log.table.meta[RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY] == [0, 1]
 
 
 def test_incompatible_resume_is_rejected_before_allocating_a_run(
@@ -366,4 +385,3 @@ def test_incompatible_resume_is_rejected_before_allocating_a_run(
     runs_directory = first_iterator.configuration_repository / "runs"
     assert [path.name for path in runs_directory.iterdir()] == ["0000"]
     assert resumed_iterator.run_manifest is None
-    assert resumed_iterator._run_started is False

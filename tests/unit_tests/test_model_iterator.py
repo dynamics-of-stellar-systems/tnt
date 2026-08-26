@@ -138,7 +138,6 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
     iterator.critical_configuration = {"potential": {}}
     iterator.run_id = None
     iterator.run_manifest = None
-    iterator._run_started = False
     for name, value in overrides.items():
         setattr(iterator, name, value)
     return iterator
@@ -147,10 +146,16 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
 @pytest.fixture(autouse=True)
 def _isolate_run_archiving(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep control-flow unit tests independent of filesystem provenance."""
+
+    def fake_archive(iterator: ModelIterator) -> RunManifestReference:
+        run_id = getattr(iterator, "_test_run_id", 0)
+        iterator._test_run_id = run_id + 1
+        return _run_reference(run_id)
+
     monkeypatch.setattr(
         ModelIterator,
         "_archive_run",
-        lambda self: _run_reference(getattr(self, "_test_run_id", 0)),
+        fake_archive,
     )
     monkeypatch.setattr(
         RunConfigLog,
@@ -457,18 +462,31 @@ def test_run_does_not_resume_an_all_failed_model_table(
     assert "Resumed AllModels contains no successful model" in caplog.text
 
 
-def test_run_rejects_second_call_on_the_same_iterator(
+def test_each_call_on_the_same_iterator_gets_a_new_run_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    iterator = _make_iterator()
+    iterator = _make_iterator(
+        parameter_generator=FakeParameterGenerator(n_rounds=2),
+        stopping_criteria={
+            "minimum_delta_chi2": {
+                "enabled": False,
+                "mode": "absolute",
+                "value": 0.0,
+            },
+            "n_new_iter": 1,
+            "target_model_count": 10,
+        },
+    )
     _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
-    models, _ = iterator.run()
+    models, config_log = iterator.run()
+    assert iterator.run_id == 0
 
-    with pytest.raises(
-        RuntimeError,
-        match=r"may be called only once per iterator",
-    ):
-        iterator.run(models, RunConfigLog())
+    models, config_log = iterator.run(models, config_log)
+
+    assert iterator.run_id == 1
+    assert iterator.run_manifest == _run_reference(1)
+    assert len(models) == 2
+    assert list(config_log.table["run_id"]) == [0, 1]
 
 
 def test_run_rejects_mismatched_models_and_config_log_before_archiving(
@@ -486,7 +504,6 @@ def test_run_rejects_mismatched_models_and_config_log_before_archiving(
         resumed_iterator.run(models, RunConfigLog())
 
     assert resumed_iterator.run_manifest is None
-    assert resumed_iterator._run_started is False
 
 
 def test_run_continues_after_later_iteration_has_no_success(
