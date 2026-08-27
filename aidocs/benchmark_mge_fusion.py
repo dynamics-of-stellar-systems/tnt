@@ -21,12 +21,25 @@ from a checkout of this repo, on whatever CPU/GPU hardware you want numbers
 for -- JAX picks up whatever backend is installed/visible, nothing else
 about the script changes.
 
-Component parameters and query points are drawn from `numpy.random.default_rng`
-with a fixed seed -- a pure-software PRNG with no dependency on JAX or the
-accelerator, so the exact same numbers are generated on CPU and GPU runs
-alike. Each run also prints a short fingerprint hash per N as a cheap
-sanity check that two runs (e.g. one per machine) really did use identical
-inputs before comparing their timings.
+Component parameters for N in {5, 25, 125} are loaded from the committed
+`benchmark_mge_fusion_components.json` rather than generated live via
+`numpy.random.default_rng` at each run -- empirically, `default_rng`'s
+output for the same seed was NOT reproducible between a laptop and the
+VSC-5 cluster (root cause not identified; `numpy.__version__` matched
+exactly, so it isn't simply a version difference), even though it's
+documented to be a deterministic, platform-independent PRNG. Loading fixed
+values sidesteps that entirely: every machine reads the same floats from
+the same file, so the MGE components being timed are guaranteed identical
+regardless of platform RNG quirks. A `--n` value with no entry in that file
+falls back to live `default_rng` generation (with a warning printed) --
+fine for a quick local check, just not guaranteed reproducible across
+machines. Query points (`xyz`) are still drawn live via `default_rng` --
+their exact values don't need to match across machines, only within one
+run (composite and fused are always timed against the same batch), so
+that's not a concern the same way component parameters are. Each run
+prints a short fingerprint hash per N as a sanity check that different
+runs (e.g. one per machine) really did use identical components before
+comparing their timings.
 
 Results are written to a CSV (default: auto-named from the JAX backend and
 a timestamp) as well as printed to stdout, so runs from different machines
@@ -42,10 +55,12 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import json
 import platform
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 import galax.potential as gp
 import jax
@@ -59,6 +74,7 @@ from tnt.potential.fused_triaxial_gaussian_composite import (
 
 UNITS = "galactic"
 INTEGRATION_ORDER = 50
+COMPONENTS_FILE = Path(__file__).with_name("benchmark_mge_fusion_components.json")
 
 
 # ============================================================================
@@ -70,8 +86,9 @@ def _random_components(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """N triaxial Gaussian components with plausible MGE-like parameters.
 
-    `numpy.random.default_rng` is a deterministic, pure-software PRNG --
-    the same seed produces the same arrays regardless of CPU/GPU backend.
+    Not guaranteed reproducible across machines in practice -- see
+    `_fixed_components`, which is what `main` actually uses for the
+    default `--n` values.
     """
     rng = np.random.default_rng(seed)
     m_tot = rng.uniform(1e6, 1e9, n)
@@ -79,6 +96,27 @@ def _random_components(
     q1 = rng.uniform(0.5, 1.0, n)
     q2 = rng.uniform(0.4, q1)
     return m_tot, r_s, q1, q2
+
+
+def _fixed_components(
+    n: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    """Pre-generated component values for `n`, loaded from `COMPONENTS_FILE`.
+
+    `None` if `n` has no entry -- the caller should fall back to
+    `_random_components` in that case.
+    """
+    if not COMPONENTS_FILE.exists():
+        return None
+    entry = json.loads(COMPONENTS_FILE.read_text()).get(str(n))
+    if entry is None:
+        return None
+    return (
+        np.asarray(entry["m_tot"]),
+        np.asarray(entry["r_s"]),
+        np.asarray(entry["q1"]),
+        np.asarray(entry["q2"]),
+    )
 
 
 def _component_fingerprint(
@@ -205,7 +243,15 @@ def main() -> None:
         )
 
         for n in args.n:
-            m_tot, r_s, q1, q2 = _random_components(n, seed=0)
+            fixed = _fixed_components(n)
+            if fixed is not None:
+                m_tot, r_s, q1, q2 = fixed
+            else:
+                print(
+                    f"# N={n}: no entry in {COMPONENTS_FILE.name}, generating "
+                    "live (not guaranteed reproducible across machines)"
+                )
+                m_tot, r_s, q1, q2 = _random_components(n, seed=0)
             fingerprint = _component_fingerprint(m_tot, r_s, q1, q2)
             print(f"# N={n} component fingerprint: {fingerprint}")
             children = _build_children(m_tot, r_s, q1, q2)
