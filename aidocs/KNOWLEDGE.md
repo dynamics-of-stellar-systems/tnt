@@ -404,8 +404,9 @@
   `_nfw_concentration_m200`/its inverse do their entire calculation in
   `Quantity` arithmetic rather than eagerly stripping every input to a bare
   float in one specific unit -- `unxt` composes/converts units automatically
-  through the whole chain (verified: mixing `H` in `km / (s Mpc)` with `_G`
-  in `m3 / (kg s2)` and `M_200` in `Msun` still gives the correct `r_s`/`m`
+  through the whole chain (verified: mixing `H` in `km / (s Mpc)` with
+  `_newtonian_gravitational_constant()` in `m3 / (kg s2)` and `M_200` in `Msun`
+  still gives the correct `r_s`/`m`
   once converted to `unit_system`'s units at the very end), so `H` works in
   whatever unit it's declared in, not just the internal unit system's.
   Bare-number stripping only remains where a library function isn't
