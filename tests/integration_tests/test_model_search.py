@@ -25,15 +25,21 @@ from typing import Any, NamedTuple
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import yaml
 from unxt import Quantity
 
 import tnt.model_iterator as model_iterator_module
 from tnt import Configuration
 from tnt.all_models import AllModels
+from tnt.configuration.compatibility import ConfigurationCompatibilityError
 from tnt.model_iterator import ModelIterator
 from tnt.model_search_state import ModelSearchState
 from tnt.potential import Potential, _nfw_concentration_m200, build_potential
-from tnt.run_config_log import RunConfigLog
+from tnt.run_config_log import (
+    RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY,
+    TOTAL_RUNS_METADATA_KEY,
+    RunConfigLog,
+)
 from tnt.units import resolve_cosmological_parameters
 
 # ---------------------------------------------------------------------------
@@ -67,6 +73,14 @@ class FakeWeightSolver:
         return _FakeWeightResult(
             weights="weights", chi2={"chi2": value, "kinchi2": value}
         )
+
+
+class EmptyParameterGenerator:
+    """Propose no model so the run completes without an iteration."""
+
+    def generate_parameters(self, all_models: Any) -> list[Any]:
+        del all_models
+        return []
 
 
 def _fake_orbit_integration_and_weight_solving(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -129,10 +143,11 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     )
     _fake_orbit_integration_and_weight_solving(monkeypatch)
 
-    assert config.run_manifest_path is not None
-    iterator = ModelIterator.from_configuration(
-        resolved, config.unit_systems.internal, config.run_manifest_path
-    )
+    output = Path(resolved["io_settings"]["output_directory"])
+    repository = output / "config_repository"
+    assert not repository.exists()
+    iterator = ModelIterator.from_configuration(config)
+    assert not repository.exists()
 
     models, config_log = iterator.run()
 
@@ -145,16 +160,46 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert len(models) == 11
     assert models.n_iterations() == 1
     assert len(config_log) == 1
-    assert config.run_id is not None
-    assert config_log.table["run_id"][0] == config.run_id
-    output = Path(resolved["io_settings"]["output_directory"])
+    assert iterator.run_id == 0
+    assert iterator.run_manifest is not None
+    assert config_log.table["run_id"][0] == iterator.run_id
+    manifest_path = iterator.run_manifest.absolute_run_manifest_path
+    resolved_path = iterator.run_manifest.absolute_resolved_config_path
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    archived = yaml.safe_load(resolved_path.read_text(encoding="utf-8"))
+    assert archived == config.portable_data
+    assert manifest["manifest_version"] == 3
+    assert manifest["run_id"] == 0
+    assert manifest["configuration"]["logfile"] is None
+    assert manifest["configuration"]["resolved"] == "runs/0000/resolved_config.yaml"
+    # Full manifest shape, not just the fields the rest of this test happens to
+    # use -- restores the coverage test_configuration.py had before archiving
+    # moved out of Configuration.read() (see the PR 37 run-boundary audit).
+    assert set(manifest["tnt"]) == {"version", "git_commit", "git_working_tree_dirty"}
+    assert "unxt" in manifest["dependencies"]
+    assert manifest["execution"]["workspace_root"] == str(tmp_path)
+    assert set(manifest["configuration"]) == {
+        "input_directory",
+        "logfile",
+        "output_directory",
+        "resolved",
+    }
+    assert manifest["configuration"]["input_directory"] == (
+        resolved["io_settings"]["input_directory"]
+    )
+    assert manifest["configuration"]["output_directory"] == str(output)
+    assert manifest["randomness"] == {
+        "configured_orbit_library_seed": 4242,
+        "effective_orbit_library_seed": 4242,
+        "status": "fixed",
+    }
     models_path = output / resolved["io_settings"]["all_models_file"]
-    log_path = RunConfigLog.path_for(config.run_manifest_path)
+    log_path = RunConfigLog.path_for(manifest_path)
     ModelSearchState(models, config_log).write(models_path, log_path)
     restored_state = ModelSearchState.read(models_path, log_path)
     assert len(restored_state.all_models) == 11
     assert len(restored_state.run_config_log) == 1
-    assert restored_state.run_config_log.table["run_id"][0] == config.run_id
+    assert restored_state.run_config_log.table["run_id"][0] == iterator.run_id
 
     masses = sorted(10.0 / value for value in models.table["kinchi2"])
     expected_masses = sorted([1.0, *np.geomspace(0.1, 10.0, 10)])
@@ -172,6 +217,18 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert stars_ml_settings["generator_settings"]["upper_bound"] == pytest.approx(9.0)
     stars_ml_value = captured_parameter_values[0]["stars"]["ml"]
     assert stars_ml_value.ustrip("Msun / Lsun") == pytest.approx(5.0)
+
+    # The same iterator may start another run. This configuration has already
+    # exceeded its soft model target, so the second call adds no iteration but
+    # still passes resume compatibility and receives its own archive.
+    resumed_models, resumed_log = iterator.run(models, config_log)
+    assert resumed_models is models
+    assert resumed_log is config_log
+    assert iterator.run_id == 1
+    assert sorted(path.name for path in (repository / "runs").iterdir()) == [
+        "0000",
+        "0001",
+    ]
 
 
 def test_model_iterator_reports_real_potential_in_its_own_parameterization(
@@ -192,16 +249,14 @@ def test_model_iterator_reports_real_potential_in_its_own_parameterization(
     resolved = config.as_dict()
     _fake_orbit_integration_and_weight_solving(monkeypatch)
 
-    assert config.run_manifest_path is not None
-    iterator = ModelIterator.from_configuration(
-        resolved, config.unit_systems.internal, config.run_manifest_path
-    )
+    iterator = ModelIterator.from_configuration(config)
     models, config_log = iterator.run()
 
     assert len(models) == 11
+    assert iterator.run_manifest is not None
     output = Path(resolved["io_settings"]["output_directory"])
     models_path = output / resolved["io_settings"]["all_models_file"]
-    log_path = RunConfigLog.path_for(config.run_manifest_path)
+    log_path = RunConfigLog.path_for(iterator.run_manifest.absolute_run_manifest_path)
     ModelSearchState(models, config_log).write(models_path, log_path)
 
     table = models.table
@@ -271,14 +326,10 @@ def test_potential_to_galax_succeeds_against_the_resolved_example_configuration(
     each work in isolation.
     """
     config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
-    resolved = config.as_dict()
     unit_system = config.unit_systems.internal
     _fake_orbit_integration_and_weight_solving(monkeypatch)
 
-    assert config.run_manifest_path is not None
-    iterator = ModelIterator.from_configuration(
-        resolved, unit_system, config.run_manifest_path
-    )
+    iterator = ModelIterator.from_configuration(config)
     (parameters,) = iterator.parameter_generator.generate_parameters(AllModels())
     potential = build_potential(
         iterator.resolved_potential,
@@ -302,14 +353,107 @@ def test_model_iterator_rejects_stage_by_stage_before_runtime_construction(
     tmp_path: Path,
 ) -> None:
     config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
-    resolved = config.as_dict()
-    resolved["execution_settings"]["model_processing_order"] = "stage_by_stage"
-    assert config.run_manifest_path is not None
+    config.data["execution_settings"]["model_processing_order"] = "stage_by_stage"
 
     with pytest.raises(
         NotImplementedError,
         match=r"model_processing_order='stage_by_stage' is not implemented",
     ):
-        ModelIterator.from_configuration(
-            resolved, config.unit_systems.internal, config.run_manifest_path
-        )
+        ModelIterator.from_configuration(config)
+
+    output = Path(config.data["io_settings"]["output_directory"])
+    assert not (output / "config_repository").exists()
+
+
+def test_from_configuration_rejects_an_unread_configuration() -> None:
+    with pytest.raises(
+        RuntimeError,
+        match="Configuration must be read before construction",
+    ):
+        ModelIterator.from_configuration(Configuration())
+
+
+def test_invalid_runtime_owned_configuration_is_not_archived(
+    example_configuration_path: Path,
+    tmp_path: Path,
+) -> None:
+    raw = yaml.safe_load(example_configuration_path.read_text(encoding="utf-8"))
+    raw["spatial_binnings"]["kinset1_binning"]["min_x"] = 5.0
+    example_configuration_path.write_text(
+        yaml.safe_dump(raw, sort_keys=False),
+        encoding="utf-8",
+    )
+    config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
+    output = Path(config.data["io_settings"]["output_directory"])
+
+    with pytest.raises(ValueError, match=r"spatial_binnings.*min_x"):
+        ModelIterator.from_configuration(config)
+
+    assert not (output / "config_repository").exists()
+
+
+def test_each_zero_iteration_call_is_archived_and_reported_as_a_run(
+    example_configuration_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
+    _fake_orbit_integration_and_weight_solving(monkeypatch)
+    iterator = ModelIterator.from_configuration(config)
+    iterator.parameter_generator = EmptyParameterGenerator()
+
+    models, config_log = iterator.run()
+
+    assert len(models) == 0
+    assert len(config_log) == 0
+    assert iterator.run_manifest is not None
+    assert iterator.run_manifest.run_id == 0
+
+    models, config_log = iterator.run(models, config_log)
+
+    assert len(models) == 0
+    assert len(config_log) == 0
+    assert iterator.run_manifest is not None
+    assert iterator.run_manifest.run_id == 1
+    output = Path(config.data["io_settings"]["output_directory"])
+    models_path = output / config.data["io_settings"]["all_models_file"]
+    log_path = RunConfigLog.path_for_repository(iterator.configuration_repository)
+    ModelSearchState(models, config_log).write(models_path, log_path)
+    assert config_log.table.meta[TOTAL_RUNS_METADATA_KEY] == 2
+    assert config_log.table.meta[RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY] == [0, 1]
+
+
+def test_incompatible_resume_is_rejected_before_allocating_a_run(
+    example_configuration_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_orbit_integration_and_weight_solving(monkeypatch)
+    first_config = Configuration().read(
+        example_configuration_path,
+        workspace_root=tmp_path,
+    )
+    first_iterator = ModelIterator.from_configuration(first_config)
+    models, config_log = first_iterator.run()
+
+    raw = yaml.safe_load(example_configuration_path.read_text(encoding="utf-8"))
+    raw["system_attributes"]["distance"]["value"] = 40.0
+    example_configuration_path.write_text(
+        yaml.safe_dump(raw, sort_keys=False),
+        encoding="utf-8",
+    )
+    changed_config = Configuration().read(
+        example_configuration_path,
+        workspace_root=tmp_path,
+    )
+    resumed_iterator = ModelIterator.from_configuration(changed_config)
+
+    with pytest.raises(
+        ConfigurationCompatibilityError,
+        match=r"system_attributes\.distance",
+    ):
+        resumed_iterator.run(models, config_log)
+
+    runs_directory = first_iterator.configuration_repository / "runs"
+    assert [path.name for path in runs_directory.iterdir()] == ["0000"]
+    assert resumed_iterator.run_manifest is None

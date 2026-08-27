@@ -88,7 +88,7 @@ class ResolvedPotentialComponent(NamedTuple):
                 own construction.
             cosmological_parameters: Passed through to a registered
                 `parameterization` converter that needs it, e.g. NFW's
-                `concentration_m200` via `H0`.
+                `concentration_m200` via `H`.
         """
         raw = dict(parameter_values)
         canonical = (

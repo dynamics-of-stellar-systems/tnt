@@ -72,7 +72,7 @@ io_settings:
     )
 
 
-def test_read_resolves_defaults_and_writes_run_bundle(tmp_path: Path) -> None:
+def test_read_resolves_defaults_without_allocating_a_run(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"
     _write_user_config(
@@ -97,20 +97,13 @@ def test_read_resolves_defaults_and_writes_run_bundle(tmp_path: Path) -> None:
     assert package_logger.propagate is logger_state[2]
 
     repository = output_directory / "config_repository"
-    assert config.resolved_path is not None
-    expected_path = config.resolved_path
-    assert expected_path.parent.parent == repository / "runs"
-    assert expected_path.parent.name == "0000"
-    assert expected_path.name == "resolved_config.yaml"
-    assert config.resolved_path == expected_path
-    assert expected_path.is_file()
-
-    written = yaml.safe_load(expected_path.read_text(encoding="utf-8"))
+    assert not repository.exists()
+    written = config.as_portable_dict()
     assert written == config.portable_data
     assert config.workspace_root == tmp_path
     assert "dynamic_object_defaults" not in written
     assert "kinematics_type_defaults" not in written
-    assert written["cosmological_parameters"]["H0"] == {
+    assert written["cosmological_parameters"]["H"] == {
         "value": 70.0,
         "unit": "km / (s Mpc)",
     }
@@ -159,43 +152,8 @@ def test_read_resolves_defaults_and_writes_run_bundle(tmp_path: Path) -> None:
 
     assert config.source_path == user_path
 
-    assert config.run_manifest_path is not None
-    manifest_path = config.run_manifest_path
-    assert manifest_path == repository / "runs" / "0000" / "run_manifest.yaml"
-    assert config.run_manifest_path == manifest_path
-    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["manifest_version"] == 3
-    assert manifest["run_id"] == 0
-    assert config.run_id == 0
-    assert set(manifest["tnt"]) == {
-        "version",
-        "git_commit",
-        "git_working_tree_dirty",
-    }
-    assert "unxt" in manifest["dependencies"]
-    assert manifest["execution"]["workspace_root"] == str(tmp_path)
-    assert set(manifest["configuration"]) == {
-        "input_directory",
-        "logfile",
-        "output_directory",
-        "resolved",
-    }
-    assert manifest["configuration"]["resolved"] == str(
-        expected_path.relative_to(repository)
-    )
-    assert manifest["configuration"]["input_directory"] == str(tmp_path / "input")
-    assert manifest["configuration"]["output_directory"] == str(output_directory)
-    assert manifest["configuration"]["logfile"] is None
-    assert manifest["randomness"] == {
-        "configured_orbit_library_seed": -1,
-        "effective_orbit_library_seed": None,
-        "status": "pending_generation",
-    }
 
-
-def test_repository_archives_resolved_configuration_for_every_run(
-    tmp_path: Path,
-) -> None:
+def test_repeated_reads_do_not_allocate_runs(tmp_path: Path) -> None:
     first_user_path = tmp_path / "first.yaml"
     second_user_path = tmp_path / "second.yaml"
     output_directory = tmp_path / "output"
@@ -210,32 +168,13 @@ def test_repository_archives_resolved_configuration_for_every_run(
     repeated = Configuration().read(first_user_path, workspace_root=tmp_path)
     reformatted = Configuration().read(second_user_path, workspace_root=tmp_path)
 
-    resolved_paths = {
-        first.resolved_path,
-        repeated.resolved_path,
-        reformatted.resolved_path,
-    }
-    assert len(resolved_paths) == 3
     repository = output_directory / "config_repository"
-    run_directories = sorted((repository / "runs").iterdir())
-    assert [path.name for path in run_directories] == [
-        "0000",
-        "0001",
-        "0002",
-    ]
-    manifests = [path / "run_manifest.yaml" for path in run_directories]
-    manifest_data = [
-        yaml.safe_load(path.read_text(encoding="utf-8")) for path in manifests
-    ]
-    assert [manifest["run_id"] for manifest in manifest_data] == [0, 1, 2]
-    resolved_data = [
-        yaml.safe_load((path / "resolved_config.yaml").read_text(encoding="utf-8"))
-        for path in run_directories
-    ]
-    assert resolved_data == [first.portable_data] * 3
+    assert not repository.exists()
+    assert repeated.portable_data == first.portable_data
+    assert reformatted.portable_data == first.portable_data
 
 
-def test_repository_preserves_resolved_configuration_for_each_run(
+def test_separate_reads_retain_independent_resolved_configurations(
     tmp_path: Path,
 ) -> None:
     user_path = tmp_path / "user.yaml"
@@ -252,47 +191,9 @@ def test_repository_preserves_resolved_configuration_for_each_run(
     )
     second = Configuration().read(user_path, workspace_root=tmp_path)
 
-    assert first.resolved_path != second.resolved_path
-    assert first.resolved_path is not None
-    assert second.resolved_path is not None
-    assert first.resolved_path.parent.name == "0000"
-    assert second.resolved_path.parent.name == "0001"
-    first_archived = yaml.safe_load(first.resolved_path.read_text(encoding="utf-8"))
-    second_archived = yaml.safe_load(second.resolved_path.read_text(encoding="utf-8"))
-    assert first_archived["system_attributes"]["name"] == "test_system"
-    assert second_archived["system_attributes"]["name"] == "changed_system"
-
-
-def test_repository_preserves_equivalent_unit_declarations_per_run(
-    tmp_path: Path,
-) -> None:
-    user_path = tmp_path / "user.yaml"
-    output_directory = tmp_path / "output"
-    _write_user_config(user_path, output_directory)
-    first = Configuration().read(user_path, workspace_root=tmp_path)
-    user_path.write_text(
-        user_path.read_text(encoding="utf-8").replace(
-            'distance: {value: 10.0, unit: "kpc"}',
-            'distance: {value: 10000.0, unit: "pc"}',
-        ),
-        encoding="utf-8",
-    )
-
-    second = Configuration().read(user_path, workspace_root=tmp_path)
-
-    assert first.resolved_path != second.resolved_path
-    assert first.resolved_path is not None
-    assert second.resolved_path is not None
-    first_archived = yaml.safe_load(first.resolved_path.read_text(encoding="utf-8"))
-    second_archived = yaml.safe_load(second.resolved_path.read_text(encoding="utf-8"))
-    assert first_archived["system_attributes"]["distance"] == {
-        "value": 10.0,
-        "unit": "kpc",
-    }
-    assert second_archived["system_attributes"]["distance"] == {
-        "value": 10000.0,
-        "unit": "pc",
-    }
+    assert first.portable_data["system_attributes"]["name"] == "test_system"
+    assert second.portable_data["system_attributes"]["name"] == "changed_system"
+    assert not (output_directory / "config_repository").exists()
 
 
 def test_default_workspace_root_is_invoking_script_directory(
@@ -359,9 +260,7 @@ def test_read_preserves_explicit_quantity(tmp_path: Path) -> None:
         "value": 10.0,
         "unit": "Mpc",
     }
-    assert config.resolved_path is not None
-    resolved = yaml.safe_load(config.resolved_path.read_text(encoding="utf-8"))
-    assert resolved["system_attributes"]["distance"] == {
+    assert config.portable_data["system_attributes"]["distance"] == {
         "value": 10.0,
         "unit": "Mpc",
     }
@@ -411,14 +310,14 @@ def test_quantity_override_cannot_inherit_default_unit(tmp_path: Path) -> None:
         user_path,
         output_directory,
         body="""cosmological_parameters:
-  H0:
+  H:
     value: 75.0
 """,
     )
 
     with pytest.raises(
         ValueError,
-        match=r"cosmological_parameters\.H0.*missing required field.*unit",
+        match=r"cosmological_parameters\.H.*missing required field.*unit",
     ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
@@ -988,23 +887,22 @@ def test_configuration_session_logs_preparation(
 
     with configuration_session(user_path, workspace_root=tmp_path) as config:
         logging.getLogger("tnt.test").debug("execution debug detail")
-        assert config.resolved_path is not None
+        assert config.logfile_path is not None
 
     logfiles = list((output_directory / "logs").glob("tnt-*.log"))
     assert len(logfiles) == 1
     logfile = logfiles[0].read_text(encoding="utf-8")
-    assert config.run_manifest_path is not None
-    manifest = yaml.safe_load(config.run_manifest_path.read_text(encoding="utf-8"))
     terminal = capsys.readouterr().err
 
     assert f"User configuration loaded from {user_path}" in logfile
     assert f"Resolving configuration loaded from {user_path}" in logfile
-    assert "Resolved configuration preserved at" in logfile
+    assert "Resolved configuration preserved at" not in logfile
     assert "execution debug detail" in logfile
     assert "TNT configuration session completed" in logfile
     assert "User configuration loaded from" in terminal
     assert "execution debug detail" not in terminal
-    assert manifest["configuration"]["logfile"] == str(logfiles[0])
+    assert config.logfile_path == logfiles[0]
+    assert not (output_directory / "config_repository").exists()
 
 
 def test_configuration_session_logs_validation_failure(tmp_path: Path) -> None:

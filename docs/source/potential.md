@@ -47,8 +47,9 @@ field can be used to specify alternatives:
   enclosed within the radius where the mean density is 200 times the
   critical density) into native `(m, r_s)`. Some parameterizations need more
   than a component's own `parameters` to convert -- `concentration_m200`
-  also needs `H0` from the resolved configuration's
-  `cosmological_parameters` section to compute the critical density.
+  also needs `H` from the resolved configuration's
+  `cosmological_parameters` section (the Hubble parameter at the halo's own
+  epoch, not necessarily today's H0) to compute the critical density.
 
   A parameterization converts only within one component's own raw
   parameters; it can't depend on another component's resolved state (e.g. a

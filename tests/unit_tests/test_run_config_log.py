@@ -95,10 +95,8 @@ def test_write_and_read_round_trip_atomically(tmp_path: Path) -> None:
     assert restored.table.meta[TOTAL_RUNS_METADATA_KEY] == 2
     assert restored.table.meta[RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY] == []
     assert RunConfigLog.path_for(second.absolute_run_manifest_path) == path
-    baseline = restored.baseline_run_reference(
-        first.repository,
-        current_run_id=second.run_id,
-    )
+    assert RunConfigLog.path_for_repository(first.repository) == path
+    baseline = restored.baseline_run_reference(first.repository)
     assert baseline == first
 
 

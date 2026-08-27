@@ -95,7 +95,7 @@ def normalize_configuration_quantities(
     cosmology = _optional_mapping(resolved, "cosmological_parameters", "configuration")
     _normalize_field(
         cosmology,
-        "H0",
+        "H",
         "inverse_time",
         unit_systems.internal,
         "cosmological_parameters",
@@ -142,7 +142,7 @@ def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
     config = _mapping(config, "configuration")
 
     cosmology = _optional_mapping(config, "cosmological_parameters", "configuration")
-    _validate_field(cosmology, "H0", "inverse_time", "cosmological_parameters")
+    _validate_field(cosmology, "H", "inverse_time", "cosmological_parameters")
 
     attributes = _optional_mapping(config, "system_attributes", "configuration")
     _validate_field(attributes, "distance", "length", "system_attributes")
@@ -231,7 +231,7 @@ def resolve_cosmological_parameters(
 
     Preserved as `{value, unit}` by configuration preparation (see this
     module's docstring); consumers that need cosmological context (e.g.
-    `tnt.potential`'s NFW `concentration_m200` parameterization, via `H0`)
+    `tnt.potential`'s NFW `concentration_m200` parameterization, via `H`)
     use the resulting `Quantity`s directly and let `unxt` handle unit
     conversion, rather than assuming a specific declared unit.
     """

@@ -98,7 +98,7 @@ class AllModels:
         0 if empty, otherwise one more than the largest `Model.iteration`
         among the models held here. Lets `ModelIterator.run` assign cumulative
         iteration labels after resuming a previously written `AllModels`, and
-        measure its per-call `stopping_criteria.n_new_iter` allowance from the
+        measure its per-run `stopping_criteria.n_new_iter` allowance from the
         resumed starting point, without a separately persisted counter.
         """
         if not len(self.table):
