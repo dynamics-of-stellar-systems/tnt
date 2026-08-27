@@ -10,6 +10,7 @@ paths, and the two MGE composite types' `to_galax`.
 from __future__ import annotations
 
 import dataclasses
+from typing import ClassVar
 
 import galax.potential as gp
 import jax
@@ -35,6 +36,8 @@ from tnt.potential import (
     raw_parameter_dimensions,
     raw_potential_parameters,
 )
+from tnt.potential.components import _discover_subclasses
+from tnt.potential.registry import MGE_POTENTIAL_TYPES
 
 
 def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
@@ -707,6 +710,65 @@ _VIEWING_ANGLES = {
     "phi": Quantity(0.6, "rad"),
     "psi": Quantity(-0.4, "rad"),
 }
+
+
+def test_discover_subclasses_recurses_below_direct_subclasses() -> None:
+    # A throwaway hierarchy unrelated to AbstractPotentialComponent -- class
+    # objects aren't reliably garbage-collected by the time later tests run
+    # (confirmed: eqx.Module subclasses of the real base leaked into
+    # test_mge_potential_types_agrees_with_runtime_discovery when tried),
+    # so this only ever walks classes nothing else can observe.
+    class _Base:
+        pass
+
+    class _Intermediate(_Base):
+        pass
+
+    class _Nested(_Intermediate):
+        _type: ClassVar[str] = "_test_nested_potential_type"
+
+    registry = _discover_subclasses(_Base)
+    assert registry["_test_nested_potential_type"] is _Nested
+
+
+def test_discover_subclasses_rejects_duplicate_type() -> None:
+    class _Base:
+        pass
+
+    class _First(_Base):
+        _type: ClassVar[str] = "_test_duplicate_potential_type"
+
+    class _Second(_Base):
+        _type: ClassVar[str] = "_test_duplicate_potential_type"
+
+    with pytest.raises(ValueError, match="Duplicate potential type"):
+        _discover_subclasses(_Base)
+
+
+def test_discover_subclasses_rejects_non_string_type() -> None:
+    class _Base:
+        pass
+
+    class _BadType(_Base):
+        _type: ClassVar[int] = 1
+
+    with pytest.raises(TypeError, match="_type must be a non-empty string"):
+        _discover_subclasses(_Base)
+
+
+def test_mge_potential_types_agrees_with_runtime_discovery() -> None:
+    """`registry.MGE_POTENTIAL_TYPES` and `resolve()`'s own discovery must agree.
+
+    `configuration.validation` and `AbstractPotentialComponent.resolve` read
+    two independently-computed sources -- this is what actually enforces
+    that they stay in sync, rather than hoping they do.
+    """
+    discovered = {
+        kind
+        for kind, cls in _discover_subclasses(AbstractPotentialComponent).items()
+        if cls is not GalaxPotentialComponent
+    }
+    assert discovered == set(MGE_POTENTIAL_TYPES)
 
 
 def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:

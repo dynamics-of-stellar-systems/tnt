@@ -159,14 +159,22 @@ _SUPPORTED_GALAX_TYPES: dict[str, dict[str, NativeParameter]] = {
 # stray declared `unit` on it with a specific message. `ml` has no entry
 # under `TriaxialMassMGEPotential` -- it's invalid there, not just dimensionless;
 # rejected directly by `tnt.configuration.validation`'s `_validate_potential`,
-# which runs before this module's dimension check specifically so a config
-# mistakenly declaring `ml` there gets that specific "ml is invalid for a
-# mass MGE potential" error rather than a generic dimension one.
+# which runs before this module's dimension check and derives its own
+# required/forbidden-parameter check from these same keys, so a config
+# mistakenly declaring `ml` there gets that specific "invalid field for
+# TriaxialMassMGEPotential" error rather than a generic dimension one.
 _VIEWING_ANGLES: dict[str, str] = {"theta": "angle", "phi": "angle", "psi": "angle"}
 _MGE_RAW_DIMENSIONS: dict[str, dict[str, str]] = {
     "TriaxialLightMGEPotential": {"ml": "mass_to_light", **_VIEWING_ANGLES},
     "TriaxialMassMGEPotential": {"mge_mass_scale": "dimensionless", **_VIEWING_ANGLES},
 }
+
+# The set of TNT-specific (non-native-galax) potential-component type names,
+# derived from the same dict above rather than hand-maintained separately --
+# `tnt.configuration.validation` imports this directly instead of keeping its
+# own copy, since this module has no `galax`/`equinox` imports and stays safe
+# for that "no scientific object construction" module to depend on.
+MGE_POTENTIAL_TYPES: frozenset[str] = frozenset(_MGE_RAW_DIMENSIONS)
 
 # Raw parameter dimensions for registered non-native parameterizations,
 # keyed by (type, parameterization). Populated alongside

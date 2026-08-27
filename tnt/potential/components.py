@@ -5,15 +5,18 @@ subclasses -- `GalaxPotentialComponent` (also here, built directly from a
 curated `galax.potential` class) and the MGE-backed composite types
 (`tnt.potential.triaxial_mge`, with more planned as separate modules
 alongside it). `resolve` dispatches to whichever subclass matches a
-config entry's `type` by walking `cls.__subclasses__()` -- a new *direct*
-subclass with a `_type` participates automatically, without needing to be
-registered here, but this walk isn't recursive and doesn't check for a
-duplicate `_type` across two subclasses (unlike, e.g.,
-`tnt.kinematics`'s equivalent registry) -- narrower than it sounds; a
-metadata-on-class redesign that closes both gaps is tracked separately
-rather than fixed here. `ResolvedPotentialComponent` is a component's static
-structure (`type`/`parameterization`/`mge`), resolved once from its config
-entry and reused across every proposed point in parameter space; see
+config entry's `type` by recursively walking every subclass of
+`AbstractPotentialComponent` (`_discover_subclasses`) -- a new subclass at
+any depth with a `_type` participates automatically, the moment it's
+imported, without needing to be registered here; a duplicate `_type` across
+two subclasses raises rather than silently picking one (mirroring
+`tnt.kinematics`'s equivalent registry). `tnt/potential/__init__.py`'s own
+explicit imports of every concrete implementation module (`triaxial_mge`,
+and others alongside it) are what make a subclass visible to this walk in
+the first place -- a module that's never imported never participates.
+`ResolvedPotentialComponent` is a component's static structure
+(`type`/`parameterization`/`mge`), resolved once from its config entry and
+reused across every proposed point in parameter space; see
 `AbstractPotentialComponent.resolve`.
 """
 
@@ -101,6 +104,40 @@ class ResolvedPotentialComponent(NamedTuple):
         )
 
 
+def _discover_subclasses(
+    cls: type[AbstractPotentialComponent],
+) -> dict[str, type[AbstractPotentialComponent]]:
+    """Recursively find every concrete subclass declaring a non-empty `_type`.
+
+    Mirrors `tnt.kinematics`'s `_kinematics_class_registry()`, with one
+    difference: `AbstractPotentialComponent` has a fallback concrete subclass
+    (`GalaxPotentialComponent`) that deliberately has no `_type` at all, so a
+    missing `_type` is skipped here rather than rejected.
+
+    Raises:
+        TypeError: If a subclass declares a `_type` that isn't a non-empty
+            string.
+        ValueError: If two subclasses declare the same `_type`.
+    """
+    registry: dict[str, type[AbstractPotentialComponent]] = {}
+    stack = list(cls.__subclasses__())
+    while stack:
+        subclass = stack.pop()
+        stack.extend(subclass.__subclasses__())
+        kind = getattr(subclass, "_type", None)
+        if kind is None:
+            continue
+        if not isinstance(kind, str) or not kind:
+            raise TypeError(f"{subclass.__name__}._type must be a non-empty string.")
+        if kind in registry:
+            raise ValueError(
+                f"Duplicate potential type {kind!r} on "
+                f"{registry[kind].__name__} and {subclass.__name__}."
+            )
+        registry[kind] = subclass
+    return registry
+
+
 class AbstractPotentialComponent(eqx.Module):
     """One named term of the total potential (e.g. a halo, a light MGE).
 
@@ -160,17 +197,11 @@ class AbstractPotentialComponent(eqx.Module):
         kind = _required_string(settings, "type", path)
         # Every non-native concrete subclass (e.g. the MGE composite types
         # in tnt.potential.triaxial_mge) declares its own `_type`;
-        # GalaxPotentialComponent doesn't, and stays the default -- walking
-        # __subclasses__() here, rather than a hand-maintained registry,
-        # means a new *direct* subclass participates the moment it's
-        # imported. Doesn't recurse into further subclasses, and a
-        # duplicate `_type` across two subclasses silently overwrites
-        # rather than raising (see this module's own docstring).
-        registered = {
-            subclass._type: subclass
-            for subclass in cls.__subclasses__()
-            if hasattr(subclass, "_type")
-        }
+        # GalaxPotentialComponent doesn't, and stays the default. Recomputed
+        # fresh on every call, rather than cached at import time, so a newly
+        # imported subclass participates immediately (see this module's own
+        # docstring and `_discover_subclasses`).
+        registered = _discover_subclasses(cls)
         component_cls = registered.get(kind, GalaxPotentialComponent)
         unsupported = (
             component_cls is GalaxPotentialComponent
