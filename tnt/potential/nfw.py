@@ -9,11 +9,16 @@ import jax.numpy as jnp
 import unxt as u
 from unxt import AbstractUnitSystem, Quantity
 
-# Newton's gravitational constant, for parameterizations that need it (e.g.
-# critical density). Not from galax's own `default_constants`, to keep this
-# module's physics self-contained and independently verifiable rather than
-# reaching into galax's private `_src` internals.
-_G = Quantity(6.6743e-11, "m3 / (kg s2)")
+
+def _newtonian_gravitational_constant() -> Quantity:
+    """Construct Newton's gravitational constant under the active JAX policy.
+
+    Construct this at calculation time rather than module-import time so its
+    dtype follows the process's configured JAX precision. The value is kept
+    here instead of using galax's private ``default_constants`` internals so
+    this module's physics remains self-contained and independently verifiable.
+    """
+    return Quantity(6.6743e-11, "m3 / (kg s2)")
 
 
 def _nfw_concentration_m200(
@@ -39,7 +44,7 @@ def _nfw_concentration_m200(
     m200 = raw["M_200"]
     h = cosmological_parameters["H"]
 
-    rho_crit = 3 * h**2 / (8 * jnp.pi * _G)
+    rho_crit = 3 * h**2 / (8 * jnp.pi * _newtonian_gravitational_constant())
     r200 = (3 * m200 / (4 * jnp.pi * 200 * rho_crit)) ** (1 / 3)
     r_s = r200 / c
     m = m200 / _nfw_g(c.ustrip(""))
@@ -105,7 +110,7 @@ def _nfw_concentration_m200_inverse(
     r_s = native["r_s"]
     h = cosmological_parameters["H"]
 
-    rho_crit = 3 * h**2 / (8 * jnp.pi * _G)
+    rho_crit = 3 * h**2 / (8 * jnp.pi * _newtonian_gravitational_constant())
     target = (m / (4 * jnp.pi * 200 * rho_crit / 3 * r_s**3)).ustrip("")
     c = _solve_nfw_concentration(target)
     m200 = m * _nfw_g(c)

@@ -35,6 +35,7 @@ from tnt.potential import (
     raw_parameter_dimensions,
     raw_potential_parameters,
 )
+from tnt.potential.nfw import _newtonian_gravitational_constant
 
 
 def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
@@ -395,6 +396,20 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
     rho_crit = 3 * h_bare**2 / (8 * jnp.pi * g)
     mean_density = m200 / (4 / 3 * jnp.pi * r200**3)
     assert float(mean_density / rho_crit) == pytest.approx(200.0, rel=1e-5)
+
+
+@pytest.mark.parametrize(
+    ("x64_enabled", "expected_dtype"),
+    [(False, jnp.dtype("float32")), (True, jnp.dtype("float64"))],
+)
+def test_nfw_gravitational_constant_follows_active_jax_precision(
+    x64_enabled: bool,
+    expected_dtype: jnp.dtype,
+) -> None:
+    with jax.enable_x64(x64_enabled):
+        gravitational_constant = _newtonian_gravitational_constant()
+
+    assert gravitational_constant.value.dtype == expected_dtype
 
 
 def test_nfw_parameterization_is_invariant_to_declared_units() -> None:
