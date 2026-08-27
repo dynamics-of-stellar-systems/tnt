@@ -408,8 +408,8 @@ wheels = [
 
 [[package]]
 name = "galax"
-version = "0.0.3.dev403+g247a33556"
-source = { git = "https://github.com/GalacticDynamics/galax?branch=main#247a33556809398f2f7c34c1c3fee74f4e46ba45" }
+version = "0.0.4.dev2+g84d4730bb"
+source = { git = "https://github.com/GalacticDynamics/galax?branch=main#84d4730bb5dd1d82ea649bfc1d47e028d6eaa694" }
 dependencies = [
     { name = "astropy" },
     { name = "beartype" },
@@ -1052,7 +1052,7 @@ wheels = [
 
 [[package]]
 name = "quax"
-version = "0.4.2"
+version = "0.4.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "equinox" },
@@ -1061,9 +1061,9 @@ dependencies = [
     { name = "packaging" },
     { name = "plum-dispatch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8e/88/af0d77ee4a7b8c29e6486d6684b5aa59251ae4e37c2b3a029df623e8a818/quax-0.4.2.tar.gz", hash = "sha256:80047bb81db74e330e988eb41a06265d982c20c27fe51c0ade8e3a0266998a15", size = 203720, upload-time = "2026-07-27T15:56:21.739Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/7c/b43f62a8246364704ba9335c94ad278c784879017076d5e04572e7eb91fc/quax-0.4.3.tar.gz", hash = "sha256:962f907f9aa8d41a09330e060897af6e6f10d47fc9ff15de163ccfa550f6eed3", size = 203771, upload-time = "2026-08-04T21:14:00.316Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/23/fd/978ecf09a54a861cedcce949a2f2ff52b059ba14ab41ce7cb31b5da55784/quax-0.4.2-py3-none-any.whl", hash = "sha256:47f6da78b77222b8c849174969f1935433d0842e412e43dce92d96d587f49248", size = 59368, upload-time = "2026-07-27T15:56:20.243Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/80/e64007939af7c63575966fc5b4d5dedd93b60c16b675cc313854d3bd42c9/quax-0.4.3-py3-none-any.whl", hash = "sha256:09de449d07ddfc8b20c2f942efa3b406e64554aea4801a48decdaef268db57d4", size = 59424, upload-time = "2026-08-04T21:13:58.915Z" },
 ]
 
 [[package]]

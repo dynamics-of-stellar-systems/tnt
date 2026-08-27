@@ -9,9 +9,12 @@ components and non-native parameterizations) is real end to end. Only
 `Potential.generate_orbit_library`, `build_weight_solver`,
 `build_orbit_sampler`, and `build_orbit_dithering` are faked, since orbit
 integration and weight solving are still unimplemented (see
-tnt.model_iterator's module docstring). `generate_orbit_library` never
-calls `to_galax()`, so the MGE composite types' still-`NotImplementedError`
-`to_galax()` is never reached here either.
+tnt.model_iterator's module docstring). `Potential.to_galax` (including the
+MGE composite types') is real and implemented; the faked
+`generate_orbit_library` never calls it during a `ModelIterator.run()`, so
+most tests here never reach it either --
+`test_potential_to_galax_succeeds_against_the_resolved_example_configuration`
+is the exception, calling it directly.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 import yaml
@@ -26,10 +30,11 @@ from unxt import Quantity
 
 import tnt.model_iterator as model_iterator_module
 from tnt import Configuration
+from tnt.all_models import AllModels
 from tnt.configuration.compatibility import ConfigurationCompatibilityError
 from tnt.model_iterator import ModelIterator
 from tnt.model_search_state import ModelSearchState
-from tnt.potential import Potential, _nfw_concentration_m200
+from tnt.potential import Potential, _nfw_concentration_m200, build_potential
 from tnt.run_config_log import (
     RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY,
     TOTAL_RUNS_METADATA_KEY,
@@ -82,8 +87,7 @@ def _fake_orbit_integration_and_weight_solving(monkeypatch: pytest.MonkeyPatch) 
     """Fake only what's still unimplemented: orbit integration and weight solving.
 
     `build_potential`/`Potential` stay real -- see this module's docstring
-    for why the MGE composite types' unimplemented `to_galax()` is never
-    reached even so.
+    for why `to_galax()` is never reached even so.
     """
 
     def fake_generate_orbit_library(
@@ -168,6 +172,27 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert manifest["run_id"] == 0
     assert manifest["configuration"]["logfile"] is None
     assert manifest["configuration"]["resolved"] == "runs/0000/resolved_config.yaml"
+    # Full manifest shape, not just the fields the rest of this test happens to
+    # use -- restores the coverage test_configuration.py had before archiving
+    # moved out of Configuration.read() (see the PR 37 run-boundary audit).
+    assert set(manifest["tnt"]) == {"version", "git_commit", "git_working_tree_dirty"}
+    assert "unxt" in manifest["dependencies"]
+    assert manifest["execution"]["workspace_root"] == str(tmp_path)
+    assert set(manifest["configuration"]) == {
+        "input_directory",
+        "logfile",
+        "output_directory",
+        "resolved",
+    }
+    assert manifest["configuration"]["input_directory"] == (
+        resolved["io_settings"]["input_directory"]
+    )
+    assert manifest["configuration"]["output_directory"] == str(output)
+    assert manifest["randomness"] == {
+        "configured_orbit_library_seed": 4242,
+        "effective_orbit_library_seed": 4242,
+        "status": "fixed",
+    }
     models_path = output / resolved["io_settings"]["all_models_file"]
     log_path = RunConfigLog.path_for(manifest_path)
     ModelSearchState(models, config_log).write(models_path, log_path)
@@ -284,6 +309,45 @@ def test_model_iterator_reports_real_potential_in_its_own_parameterization(
     assert len({round(c, 6) for c in c_values}) > 1
 
 
+def test_potential_to_galax_succeeds_against_the_resolved_example_configuration(
+    example_configuration_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`Potential.to_galax()` real end to end, against the realistic config.
+
+    Every other test in this module fakes `generate_orbit_library` (per this
+    module's docstring), so `to_galax()` -- including the MGE composite
+    types' deprojection-to-`galax` assembly -- is otherwise never actually
+    called here, even though potential construction up to that point is
+    real. This calls it directly on a `Potential` built from the real
+    resolved configuration's own proposed point, confirming it produces a
+    working `galax` potential rather than just that its unit-tested pieces
+    each work in isolation.
+    """
+    config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
+    unit_system = config.unit_systems.internal
+    _fake_orbit_integration_and_weight_solving(monkeypatch)
+
+    iterator = ModelIterator.from_configuration(config)
+    (parameters,) = iterator.parameter_generator.generate_parameters(AllModels())
+    potential = build_potential(
+        iterator.resolved_potential,
+        parameters,
+        unit_system,
+        iterator.cosmological_parameters,
+    )
+
+    galax_potential = potential.to_galax(unit_system)
+
+    xyz = Quantity(jnp.array([5.0, -3.0, 2.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    value = galax_potential.potential(xyz, t).ustrip(speed2)
+    assert np.isfinite(value)
+    assert value < 0.0  # bound system: potential is negative everywhere
+
+
 def test_model_iterator_rejects_stage_by_stage_before_runtime_construction(
     example_configuration_path: Path,
     tmp_path: Path,
@@ -299,6 +363,14 @@ def test_model_iterator_rejects_stage_by_stage_before_runtime_construction(
 
     output = Path(config.data["io_settings"]["output_directory"])
     assert not (output / "config_repository").exists()
+
+
+def test_from_configuration_rejects_an_unread_configuration() -> None:
+    with pytest.raises(
+        RuntimeError,
+        match="Configuration must be read before construction",
+    ):
+        ModelIterator.from_configuration(Configuration())
 
 
 def test_invalid_runtime_owned_configuration_is_not_archived(
