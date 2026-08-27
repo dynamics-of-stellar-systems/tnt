@@ -21,13 +21,18 @@ anything else currently in the critical-configuration projection (checked
 `kinematic_data.*.histogram`/`systematic_uncertainties`, `units.internal`
 by hand).
 
-One real finding: the new pairwise comparison itself doesn't go far enough.
-It still manually reimplements unit conversion (`left_unit.to(right_unit,
-left_values)`) instead of using `unxt.Quantity`'s own equality operator,
-which already does exactly this. That's not just a style nit -- it's the
-same category of unnecessary-conversion-machinery the PR's own rationale
-(quoting issue #36) argues against, just relocated to a smaller scope rather
-than eliminated.
+One finding, resolved into a scoped-out follow-up rather than a fix for
+this PR: the new pairwise comparison still manually reimplements unit
+conversion instead of using `unxt.Quantity`'s own equality operator. That
+initially read like an obvious simplification -- but applying it breaks two
+of this PR's own tests, because `unxt.Quantity` is JAX-backed and silently
+downcasts to `float32` by default, and this PR deliberately tests for
+precision well below what `float32` can represent ("exact comparison
+semantics" is named explicitly in the commit message). The manual
+`astropy`/`float64` conversion currently in `tnt/configuration/compatibility.py`
+is therefore *necessary*, not leftover complexity -- see the finding below
+for the full story and the proposed resolution (a project-wide
+`jax_enable_x64` config default, tracked as separate follow-up work).
 
 ## Architectural summary
 
@@ -65,7 +70,7 @@ than eliminated.
 
 ## Findings
 
-### Low: `_quantity_declarations_equal` reimplements what `unxt.Quantity` already does
+### Info: `_quantity_declarations_equal` could use `unxt.Quantity` directly -- blocked on a real precision gap, not just style
 
 ```python
 def _quantity_declarations_equal(left: Any, right: Any, path: str) -> bool:
@@ -79,53 +84,78 @@ def _quantity_declarations_equal(left: Any, right: Any, path: str) -> bool:
     return bool(np.array_equal(converted, right_values))
 ```
 
-`left_unit`/`right_unit` here are plain `astropy.units` objects (from
-`unxt.unit(...)`), and the comparison manually converts one side via
-`Unit.to(...)` before comparing raw arrays. But `unxt.Quantity` already
-compares across compatible units directly -- confirmed empirically:
+`left_unit`/`right_unit` are plain `astropy.units` objects, and the
+comparison manually converts one side via `Unit.to(...)` before comparing
+raw arrays. `unxt.Quantity` already compares across compatible units
+directly (`Q(1,"kpc") == Q(1000,"pc")` is `True`), which reads like an
+obvious simplification -- and initially I proposed exactly that, with the
+existing `is_equivalent` guard kept (since `Quantity.__eq__` raises for
+incompatible dimensions rather than returning `False`, and broadcasting can
+mask a genuine shape mismatch -- e.g. `[5.0] kpc` vs `[5000.0, 5000.0] pc`
+broadcasts to `[True, True]` even though the declarations are different
+shapes; both guards are load-bearing, not incidental).
 
-```python
->>> u.Quantity(1.0, "kpc") == u.Quantity(1000.0, "pc")
-True  # (elementwise for arrays)
-```
+**Applying it broke two existing tests.** `unxt.Quantity` is JAX-backed and
+silently downcasts to `float32` by default (confirmed:
+`u.Quantity(np.array([2000.0000000001]), "pc").value` prints `[2000.]`,
+`dtype=float32`). That's exactly what
+`test_quantity_comparison_handles_nested_arrays_and_exact_values` checks
+for -- it perturbs a value by `1e-10` (roughly six orders of magnitude below
+float32's ~7-digit precision) and asserts that still registers as a
+difference, and the commit message names "exact comparison semantics" as a
+deliberate goal. So this isn't an oversight in PR #38; the manual
+`astropy`/`float64` conversion is currently *necessary* to deliver what the
+PR itself already tests for, not just historical leftover. Applied the
+`unxt.Quantity` change locally, confirmed it broke
+`test_quantity_comparison_handles_nested_arrays_and_exact_values` and
+`test_equivalent_declared_units_are_compatible`, and reverted it before
+committing -- `_quantity_declarations_equal` in the current code is
+unchanged from what PR #38 shipped.
 
-The only behavior `unxt.Quantity.__eq__` doesn't give you directly: it
-*raises* for incompatible dimensions rather than returning `False`
-(confirmed: `Q(1,"kpc") == Q(1,"Myr")` raises `EquinoxTracetimeError`, not a
-`False`/`array([False])`). The existing `left_unit.is_equivalent(right_unit)`
-guard is exactly what's needed to preserve today's "return False, don't
-raise" behavior for a dimension mismatch, so it stays. With that kept, the
-fix is a one-line replacement of the manual conversion:
+**Proposed resolution (Prash's, discussed 2026-08-27), out of scope for
+PR #38 itself:** add a config-level `jax_enable_x64` switch, defaulting to
+`True`, applied once at process start (before any JAX arrays exist -- almost
+certainly in `configuration_session()`/`Configuration.read()`, needs its own
+design pass on exactly where). With `x64` on by default, `unxt.Quantity`
+carries full `float64` precision, so the direct-comparison simplification
+above becomes correct as originally proposed, with no special-casing needed
+-- `_quantity_declarations_equal` reduces to shape check + `is_equivalent`
+guard + `bool(np.all(Quantity(...) == Quantity(...)))`. This also gives
+TNT a project-wide precision policy it currently doesn't have at all (grepped
+the whole codebase: nothing sets `jax_enable_x64` anywhere today, so
+`float32` is the live default everywhere, silently), which matters well
+beyond this one comparison -- e.g. it's plausibly relevant to the deferred
+GPU-migration work, where `float32` vs `float64` is a real throughput
+tradeoff worth making an explicit, visible choice about rather than
+inheriting JAX's default.
 
-```python
-if not left_unit.is_equivalent(right_unit):
-    return False
-return bool(np.all(u.Quantity(left_values, left_unit) == u.Quantity(right_values, right_unit)))
-```
+This is a genuinely separate follow-up, not a PR #38 fix -- it needs: (a) a
+new config setting and where it plugs into process startup, (b) confirming
+nothing already implicitly depends on today's silent `float32` default
+elsewhere in the codebase, (c) placing it under `numerics_settings`, whose
+own comment already describes exactly this category ("Shared numerical
+policies. Keeping these values explicit makes model identity checks...
+reproducible across implementations") and which is already part of
+`_critical_configuration`'s compared fields (the code already comments "the
+current compatibility contract rejects every numerics change") -- so
+putting `jax_enable_x64` there gets resume-compatibility enforcement for
+free, with no further schema or manifest work needed. And (d) then the
+one-line simplification here. Recommend opening a new issue for it
+(matching how #36 was itself split out of #27) rather than folding it into
+this PR.
 
-(`u` here would need to resolve to `unxt`, already imported as `import unxt
-as u` in this module -- name collision with the existing `u.unit(...)` calls
-elsewhere in the file is not an issue since both live under the same `unxt`
-namespace.)
-
-This doesn't change behavior -- the existing tests
-(`test_quantity_comparison_handles_nested_arrays_and_exact_values`,
-`_reports_shape_and_dimension_changes`, `_rejects_malformed_declarations`)
-already pin the exact comparison semantics (shape must match, dimensions
-must match, exact value equality, no epsilon) and would catch a regression
-from this refactor without needing new tests. It's purely: stop hand-rolling
-unit conversion when the type already reached for does it, which is the
-more complete version of the PR's own stated principle.
-
-Actionable location: `tnt/configuration/compatibility.py`,
+Actionable location, once the above lands: `tnt/configuration/compatibility.py`,
 `_quantity_declarations_equal`.
 
 ## Missing or weak tests
 
-None found beyond what the finding above already covers -- the malformed/
-shape/dimension test matrix is thorough and would double as regression
-coverage for the suggested fix. No new tests are strictly required to make
-that change safely.
+None for PR #38 as shipped -- the malformed/shape/dimension test matrix is
+thorough, and (usefully) is exactly what caught the precision regression
+above during review. The `jax_enable_x64` follow-up, once scoped, will need
+its own coverage: the config default itself, that it's applied before any
+JAX array is created, and that a resumed run with a different
+`jax_enable_x64` than its baseline is actually rejected by
+`ensure_resume_compatible`.
 
 ## Checks run
 
@@ -149,11 +179,15 @@ All run directly on this branch, locally:
 
 ## Recommended review and correction sequence
 
-1. Apply the one-line simplification in `_quantity_declarations_equal`
-   above.
-2. Optional: a short comment on the `is_equivalent` guard noting *why* it's
-   still needed (Quantity equality raises rather than returning `False` for
-   incompatible dimensions) so a future reader doesn't mistake it for dead
-   code once the manual conversion is gone.
-3. Rerun the existing test suite -- no new tests needed, per "Missing or
-   weak tests" above.
+Nothing to change in PR #38 itself -- it's correct and consistent with its
+own tests as shipped. For the `jax_enable_x64` follow-up:
+
+1. Open a new issue capturing it (matching how #36 was split out of #27),
+   covering: the new config setting and default under `numerics_settings`,
+   where it applies during process startup, and its relevance to the
+   deferred GPU-migration work.
+2. Once landed, apply the one-line simplification in
+   `_quantity_declarations_equal` (shape check + `is_equivalent` guard +
+   `bool(np.all(Quantity(...) == Quantity(...)))`), and confirm the existing
+   test matrix (in particular the `1e-10`-perturbation exact-comparison
+   test) still passes under the new default.
