@@ -6,6 +6,7 @@ from tnt import Configuration
 from tnt.kinematics import GaussHermite, build_kinematics
 from tnt.mge import build_mges
 from tnt.spatial_binnings import build_spatial_binnings
+from tnt.units import resolve_system_distance
 
 
 def test_build_kinematics_from_resolved_configuration(
@@ -16,12 +17,14 @@ def test_build_kinematics_from_resolved_configuration(
     resolved = config.as_dict()
     input_directory = resolved["io_settings"]["input_directory"]
     unit_system = config.unit_systems.internal
-    mges = build_mges(resolved["MGEs"], input_directory, unit_system)
+    distance = resolve_system_distance(resolved["system_attributes"])
+    mges = build_mges(resolved["MGEs"], input_directory, unit_system, distance)
     binnings = build_spatial_binnings(
         resolved["spatial_binnings"],
         input_directory,
         unit_system,
         resolved["mge_settings"]["projected_mass_quad_order"],
+        distance,
     )
 
     kinematics = build_kinematics(

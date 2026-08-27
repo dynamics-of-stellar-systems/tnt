@@ -12,6 +12,7 @@ from tnt.mge import (
     Deprojected3DMGE,
     LightMGE,
     MassMGE,
+    MGEDeprojectionError,
     build_mges,
     read_mge,
 )
@@ -163,14 +164,20 @@ def test_build_mges_reads_each_named_file(tmp_path):
         {"light": "light.ecsv", "mass": "mass.ecsv"},
         tmp_path,
         _internal_unit_system(),
+        u.Quantity(30.5, "Mpc"),
     )
 
     assert isinstance(mges["light"], LightMGE)
     assert isinstance(mges["mass"], MassMGE)
+    # angular_to_physical already applied -- sigma is length-like, not angular.
+    mges["light"].sigma.ustrip("Mpc")
+    mges["mass"].sigma.ustrip("Mpc")
 
 
 def test_build_mges_without_entries_returns_empty_dict(tmp_path):
-    assert build_mges({}, tmp_path, _internal_unit_system()) == {}
+    assert (
+        build_mges({}, tmp_path, _internal_unit_system(), u.Quantity(30.5, "Mpc")) == {}
+    )
 
 
 @pytest.mark.parametrize("bad_q", [0.0, -0.5, 1.5])
@@ -228,6 +235,21 @@ def test_to_mass_with_per_component_ratio():
     assert jnp.allclose(
         mass.I.ustrip("Msun / rad2"), light.I.ustrip("Lsun / rad2") * ratios
     )
+
+
+def test_rescaled_multiplies_intensity_and_keeps_everything_else():
+    light = _multi_component_light_mge()
+    factor = u.Quantity(2.0, "")
+
+    rescaled = light.rescaled(factor)
+
+    assert isinstance(rescaled, LightMGE)
+    assert jnp.allclose(
+        rescaled.I.ustrip("Lsun / rad2"), light.I.ustrip("Lsun / rad2") * 2.0
+    )
+    assert jnp.allclose(rescaled.sigma.ustrip("rad"), light.sigma.ustrip("rad"))
+    assert jnp.allclose(rescaled.q.ustrip(""), light.q.ustrip(""))
+    assert jnp.allclose(rescaled.PA_twist.ustrip("rad"), light.PA_twist.ustrip("rad"))
 
 
 def test_to_mass_rejects_mismatched_component_count():
@@ -293,16 +315,15 @@ def test_deproject_axisymmetric_requires_zero_pa_twist():
         twisted.deproject_axisymmetric(u.Quantity(90.0, "deg"))
 
 
-def test_deproject_axisymmetric_invalid_inclination_gives_nan():
+def test_deproject_axisymmetric_invalid_inclination_raises():
     distance = u.Quantity(30.5, "Mpc")
     mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
 
     # Smallest q in the fixture is ~0.55, so an inclination close to face-on
     # (cos(i) close to 1) makes deprojection impossible for that component.
-    deprojected = physical.deproject_axisymmetric(u.Quantity(5.0, "deg"))
-
-    assert jnp.any(jnp.isnan(deprojected.q.ustrip("")))
+    with pytest.raises(MGEDeprojectionError):
+        physical.deproject_axisymmetric(u.Quantity(5.0, "deg"))
 
 
 def _single_component_light_mge(q_obs: float, psi: float) -> LightMGE:
@@ -386,6 +407,22 @@ def test_deproject_triaxial_requires_physical_units():
         )
 
 
+def test_deproject_triaxial_convention_violating_geometry_raises():
+    # Same theta/phi/q_obs as test_deproject_triaxial_gives_valid_axial_ratios
+    # (which uses psi=0), but psi=0.1 gives a finite p=1.026, q=1.871 --
+    # q > p > 1, violating TNT's 0 < q <= p <= 1 convention without being
+    # unsolvable (complementing test_deproject_axisymmetric_invalid_inclination_raises'
+    # nan case, since both go through the same validity check).
+    mge = _single_component_light_mge(q_obs=0.9, psi=0.0)
+
+    with pytest.raises(MGEDeprojectionError):
+        mge.deproject_triaxial(
+            theta=u.Quantity(0.3, "rad"),
+            phi=u.Quantity(0.96, "rad"),
+            psi=u.Quantity(0.1, "rad"),
+        )
+
+
 def _forward_project_triaxial(
     sigma: float, p: float, q: float, theta: float, phi: float
 ):
@@ -462,10 +499,10 @@ def test_deproject_triaxial_global_psi_and_pa_twist_are_additive():
     theta, phi = u.Quantity(0.3, "rad"), u.Quantity(0.96, "rad")
 
     shifted_psi = _single_component_light_mge(q_obs=0.9, psi=-1.0).deproject_triaxial(
-        theta=theta, phi=phi, psi=u.Quantity(0.4, "rad")
+        theta=theta, phi=phi, psi=u.Quantity(-0.06, "rad")
     )
     shifted_twist = _single_component_light_mge(
-        q_obs=0.9, psi=-1.0 + 0.4
+        q_obs=0.9, psi=-1.0 + -0.06
     ).deproject_triaxial(theta=theta, phi=phi, psi=u.Quantity(0.0, "rad"))
 
     assert jnp.allclose(shifted_psi.p.ustrip(""), shifted_twist.p.ustrip(""))

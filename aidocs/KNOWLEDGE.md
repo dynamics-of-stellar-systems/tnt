@@ -131,6 +131,19 @@
 - `tnt.mge.build_mges()` is the explicit runtime boundary that loads the
   resolved `MGEs` registry into named `LightMGE` and `MassMGE` objects.
   `Configuration` continues to contain no instantiated scientific objects.
+- MGE deprojection enforces TNT's intrinsic-axis convention
+  `0 < q <= p <= 1` eagerly. `_check_axial_ratios()` converts JAX results to
+  Python control flow (`bool(...)` and `.nonzero()`) and raises
+  `MGEDeprojectionError`, so `deproject_triaxial()` and
+  `deproject_axisymmetric()` are deliberately not `jax.jit`/`jax.vmap`
+  traceable. This is acceptable while model evaluation itself remains eager:
+  `ModelIterator._evaluate()` catches Python exceptions and returns a
+  variable-length `list[Model]`, while orbit integration and weight solving
+  are still scaffolding. Revisit deprojection validity and `_evaluate()`
+  failure handling together when orbit integration is implemented and TNT
+  chooses whether models are individually jitted or evaluated as a masked,
+  vectorized batch. Do not design a separate JAX validity mechanism before
+  that execution strategy is known.
 - Intel macOS is not a native TNT target because current JAX releases do not
   provide `jaxlib` wheels for that platform. Use the Linux `x86_64`
   development container there instead.
@@ -287,7 +300,7 @@
 - `potential.<name>.type` names one of a curated set of `galax.potential`
   classes (`tnt.potential._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
   `PlummerPotential` -- 25 classes total), or one of two TNT-specific MGE
-  composite types, `triaxial_light_mge`/`triaxial_mass_mge`, provided
+  composite types, `TriaxialLightMGEPotential`/`TriaxialMassMGEPotential`, provided
   directly by TNT since `galax` has no native class for a
   sum-of-triaxial-Gaussians potential. A light-MGE potential requires an
   `ml` parameter; a mass-MGE potential requires `mge_mass_scale` instead

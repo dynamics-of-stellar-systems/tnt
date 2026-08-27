@@ -112,12 +112,15 @@ spatial_binnings:
 
 potential:
   stars:
-    type: "triaxial_light_mge"
+    type: "TriaxialLightMGEPotential"
     mge: "stellar_light"
     parameters:
       ml:
         value: 5.0
         unit: "Msun / Lsun"
+      theta: {value: 1.0, unit: "rad"}
+      phi: {value: 0.5, unit: "rad"}
+      psi: {value: 0.0, unit: "rad"}
 
 kinematic_data:
   central_spectroscopy:
@@ -152,12 +155,14 @@ Population observations must always be supplied through their own
 embedded in a kinematics data file, even when both data sets use the same
 `spatial_binnings` entry.
 
-The supported potential types are `triaxial_light_mge`, `triaxial_mass_mge`,
+The supported potential types are `TriaxialLightMGEPotential`, `TriaxialMassMGEPotential`,
 and a curated set of `galax.potential` class names (see
 [Potential](potential.md)). A light-MGE potential requires an `ml`
 mass-to-light parameter. A mass-MGE potential must not declare `ml`,
-because its input MGE already represents mass. MGE contents and their physical
-units are inspected only in the later object-construction phase.
+because its input MGE already represents mass. Both MGE types also require
+`theta`/`phi`/`psi`, the global viewing angles the named MGE is deprojected
+under. MGE contents and their physical units are inspected only in the
+later object-construction phase.
 
 ## Loading configured MGEs
 
@@ -168,6 +173,7 @@ configuration, load the registered MGEs explicitly:
 ```python
 from tnt import Configuration
 from tnt.mge import build_mges
+from tnt.units import resolve_system_distance
 
 config = Configuration().read("configuration.yaml")
 resolved = config.as_dict()
@@ -176,13 +182,16 @@ mges = build_mges(
     resolved["MGEs"],
     resolved["io_settings"]["input_directory"],
     config.unit_systems.internal,
+    resolve_system_distance(resolved["system_attributes"]),
 )
 ```
 
 The returned dictionary uses the configured MGE names as keys. Each value is
 a `LightMGE` or `MassMGE`, inferred from the physical unit of the ECSV `I`
-column. File contents and units are validated during this runtime-loading
-step, so loading can fail even after configuration preparation succeeded.
+column, and already converted from angular to physical units via
+`angular_to_physical(distance)`. File contents and units are validated
+during this runtime-loading step, so loading can fail even after
+configuration preparation succeeded.
 
 ## Loading configured spatial binnings
 
@@ -192,6 +201,7 @@ preparation. Build the named registry explicitly from the resolved settings:
 ```python
 from tnt import Configuration
 from tnt.spatial_binnings import build_spatial_binnings
+from tnt.units import resolve_system_distance
 
 config = Configuration().read("configuration.yaml")
 resolved = config.as_dict()
@@ -201,6 +211,7 @@ binnings = build_spatial_binnings(
     resolved["io_settings"]["input_directory"],
     config.unit_systems.internal,
     resolved["mge_settings"]["projected_mass_quad_order"],
+    resolve_system_distance(resolved["system_attributes"]),
 )
 ```
 
@@ -208,12 +219,13 @@ The returned dictionary uses the configured binning names as keys and contains
 `ProjectedBinning` values. This loading step opens each `.npy` file, validates
 the exact entry schema and inline geometry, and rejects empty, negative, or
 non-contiguous pixel-to-bin arrays. It converts the geometry to the internal
-angle unit and precomputes pixel edges and quadrature nodes.
+angle unit, then to physical units via `angular_to_physical(distance)` --
+matching `build_mges` above, so that MGEs and spatial binnings loaded this way
+are always dimensionally consistent -- and precomputes pixel edges and
+quadrature nodes.
 
 `AbstractMGE.get_projected_mass()` integrates an MGE over a
-`ProjectedBinning` and returns the total in each positive bin ID. Convert both
-objects with their `angular_to_physical()` methods before integration when
-working in physical rather than angular coordinates.
+`ProjectedBinning`; both must be angular or both physical.
 
 The fixed Gauss-Legendre quadrature orders are configured under
 `mge_settings`. `intrinsic_mass_quad_order` applies to intrinsic
@@ -266,15 +278,18 @@ the resolved registries:
 from tnt.kinematics import build_kinematics
 from tnt.mge import build_mges
 from tnt.spatial_binnings import build_spatial_binnings
+from tnt.units import resolve_system_distance
 
 input_directory = config.data["io_settings"]["input_directory"]
 unit_system = config.unit_systems.internal
-mges = build_mges(config.data["MGEs"], input_directory, unit_system)
+distance = resolve_system_distance(config.data["system_attributes"])
+mges = build_mges(config.data["MGEs"], input_directory, unit_system, distance)
 spatial_binnings = build_spatial_binnings(
     config.data["spatial_binnings"],
     input_directory,
     unit_system,
     config.data["mge_settings"]["projected_mass_quad_order"],
+    distance,
 )
 
 kinematics = build_kinematics(
