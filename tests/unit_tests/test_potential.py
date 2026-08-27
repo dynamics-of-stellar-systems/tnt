@@ -464,15 +464,14 @@ def test_nfw_concentration_m200_raw_dimensions() -> None:
 
 
 def test_solve_nfw_concentration_recovers_a_known_c() -> None:
-    # rel=1e-5, not tighter: this module runs in float32. _nfw_g uses
-    # log1p(c), not log(1 + c), which matters down to c ~ 1e-2 -- below
-    # that, ln(1+c) - c/(1+c) is a subtraction of two quantities that are
-    # themselves both ~ c, so cancellation remains even with log1p (that
-    # regime is far below any physically realistic halo concentration
-    # anyway, so not worth a cancellation-safe series expansion here).
+    # _nfw_g uses log1p(c), not log(1 + c), which matters down to c ~ 1e-2.
+    # Below that, ln(1+c) - c/(1+c) subtracts two quantities that are both
+    # ~ c, so cancellation remains even with log1p. That regime is far below
+    # any physically realistic halo concentration and does not warrant a
+    # cancellation-safe series expansion here.
     for c in (0.01, 0.1, 1.0, 5.0, 8.0, 20.0, 100.0):
         target = c**3 / _nfw_g(c)
-        assert float(_solve_nfw_concentration(target)) == pytest.approx(c, rel=1e-5)
+        assert float(_solve_nfw_concentration(target)) == pytest.approx(c, rel=1e-12)
 
 
 def test_nfw_concentration_m200_inverse_round_trips_the_forward_conversion() -> None:

@@ -37,7 +37,7 @@ def _nfw_concentration_m200(
     characteristic mass `m` follow from `galax.potential.NFWPotential`'s own
     enclosed-mass formula, `M(<r) = m * (ln(1 + r/r_s) - (r/r_s)/(1 + r/r_s))`,
     evaluated at `r = r_200` -- verified directly against galax's own
-    `mass_enclosed` to float32 precision, and that the resulting `r_200`
+    `mass_enclosed` at the configured precision, and that the resulting `r_200`
     truly encloses a mean density of exactly `200 * rho_crit`.
     """
     c = raw["c"]
