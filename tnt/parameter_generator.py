@@ -40,8 +40,8 @@ def _declared_parameter_quantity(
     conversion here, matching `tnt.spatial_binnings`' `_declared_angle_quantity`.
     `dimension=None` (not a recognized parameter) and `dimension="dimensionless"`
     both mean no unit -- `unit` must be absent then, treated identically
-    (matching `tnt.units._validate_parameter_units`/`_normalize_parameters`'s
-    own handling of the same distinction). The declared unit's *physical*
+    (matching `tnt.units._validate_parameter_units`'s own handling of the
+    same distinction). The declared unit's *physical*
     correctness is already guaranteed by `tnt.units.validate_configuration_quantities`,
     which runs during configuration resolution, well before any
     `AbstractParameterGenerator` exists -- this only checks `unit`'s

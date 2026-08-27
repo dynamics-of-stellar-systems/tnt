@@ -167,7 +167,8 @@ meaning:
 
 - worker and processing-order settings;
 - stopping criteria, generator settings, and potential-rescaling ranges;
-- values, ranges, fixed flags, and labels of existing potential parameters;
+- values, declared units, ranges, fixed flags, and labels of existing
+  potential parameters;
 - display units, logging, and analysis settings; and
 - input/output directory paths, provided the configured scientific file
   references themselves do not change.
@@ -186,10 +187,14 @@ It rejects changes to:
 
 This comparison distinguishes declaration identity from physical identity.
 Per-run resolved configurations preserve declared units, while compatibility
-comparison canonicalizes unitful fields into the configured internal unit
-system. It therefore treats declarations such as `1 kpc` and `1000 pc` as
-physically equivalent. Changing the internal unit system itself remains
-incompatible under the current contract.
+comparison recognizes atomic `{value, unit}` mappings and converts only the
+two values being compared. It therefore treats declarations such as `1 kpc`
+and `1000 pc` as physically equivalent without normalizing the complete
+configuration. Incompatible dimensions compare unequal, while malformed
+quantity declarations raise `ConfigurationCompatibilityError`. Numerical
+values must match exactly after unit conversion; compatibility does not add a
+tolerance that could hide a small scientific change. Changing the internal
+unit system itself remains incompatible under the current contract.
 
 Changing `parameter_space_settings.which_chi2` is allowed only when the chosen
 metric exists and is finite for every successful historical model. A nonempty
