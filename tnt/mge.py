@@ -23,9 +23,9 @@ class MGEDeprojectionError(ValueError):
     """A deprojection has no solution, or violates TNT's ``0 < q <= p <= 1`` convention.
 
     Raised eagerly, in plain Python -- not `jax.jit`/`jax.vmap`-traceable.
-    Fine today since nothing calls this under a trace; see the PR #32 audit
-    response (`aidocs/pr-32-mge-to-galax-audit.md`) for why and when that
-    might need to change.
+    Fine today since nothing calls this under a trace; see
+    `aidocs/KNOWLEDGE.md` for the durable limitation and the trigger for
+    revisiting it.
     """
 
 

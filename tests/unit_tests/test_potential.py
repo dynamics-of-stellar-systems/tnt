@@ -681,19 +681,15 @@ def test_nfw_component_plumbing_works_without_from_settings() -> None:
 # ---------------------------------------------------------------------------
 # MGE composite types: from_settings resolution and to_galax.
 #
-# to_galax's viewing-angle tests below deliberately use q=1 (circular)
-# components: tnt.mge.AbstractMGE.deproject_triaxial has no real solution
-# for arbitrary (q_obs, theta, phi, psi) combinations (it returns nan rather
-# than raising, since viewing angles may be fit parameters under jax.jit --
-# see its own docstring). A circular projection is the one case that's
-# valid for *any* viewing angle -- it deprojects to an exactly spherical
-# Deprojected3DMGE (p = q = 1) regardless of theta/phi/psi -- which lets
-# these tests check to_galax's actual wiring (mass-to-light/mass-scale
-# conversion, deprojection, per-component TriaxialGaussianPotential
-# construction, CompositePotential summation) against galax's own
-# independent, dedicated GaussianPotential, without also needing to
-# reimplement/verify the deprojection formula itself (already covered by
-# tests/unit_tests/test_mge.py's own forward-projection round-trip tests).
+# The basic to_galax viewing-angle tests below deliberately use q=1
+# (circular) components with a known nonsingular viewing geometry. They
+# deproject to an exactly spherical Deprojected3DMGE (p = q = 1), which lets
+# these tests isolate to_galax's wiring (mass-to-light/mass-scale conversion,
+# deprojection, per-component TriaxialGaussianPotential construction, and
+# CompositePotential summation) against galax's independent GaussianPotential.
+# Invalid geometries now raise MGEDeprojectionError during component build;
+# genuinely triaxial validity and axis mapping are covered separately below
+# and by test_mge.py's forward-projection round-trip tests.
 # ---------------------------------------------------------------------------
 
 
