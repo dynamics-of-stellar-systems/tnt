@@ -581,3 +581,29 @@
   example profile (`configuration.yaml`, alongside it), covering every
   top-level configuration section at once, unlike the synthetic per-feature
   configurations in `tests/unit_tests/test_configuration.py`.
+
+## Human Workflow
+
+Thomas and Prash review each other's pull requests before merging to `main`:
+
+- A PR author requests review from the other.
+- A reviewer whose feedback is limited to tests or documentation makes those
+  changes directly and completes the merge.
+- A reviewer whose feedback touches code records it in a PR-specific audit
+  doc (`aidocs/pr-<N>-<topic>-audit.md`) and pings the author (`@<username>`
+  in the PR) to respond. They iterate until the PR is ready to merge. The
+  audit doc is removed from the branch once its findings are addressed,
+  before merging.
+- Follow-up work identified during review but out of scope for the current
+  PR is filed as a new GitHub issue rather than folded into the PR.
+- Claim an issue by assigning yourself to it, either up front or as soon as
+  work on it starts. An unassigned issue is open to either of them.
+- GitHub's merge strategy (squash vs. a real merge commit) is chosen per PR
+  at merge time, not fixed for the repo -- don't assume a branch's
+  individual commits will, or won't, survive into `main`'s history without
+  checking.
+- Always prefer merging `main` into a PR branch rather than rebasing on
+  `main` -- rebasing can silently break the other person's copy of a
+  shared branch.
+
+Above all: communicate whenever something is unclear.
