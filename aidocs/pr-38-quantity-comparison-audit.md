@@ -34,6 +34,10 @@ is therefore *necessary*, not leftover complexity -- see the finding below
 for the full story and the proposed resolution (a project-wide
 `jax_enable_x64` config default, tracked as separate follow-up work).
 
+The PR description's open review decision -- exact comparison vs. a
+documented tolerance -- is resolved: exact is correct, no change needed.
+See "Resolved: exact comparison is the right contract" below.
+
 ## Architectural summary
 
 - `tnt/units.py` loses `normalize_configuration_quantities`,
@@ -146,6 +150,33 @@ this PR.
 
 Actionable location, once the above lands: `tnt/configuration/compatibility.py`,
 `_quantity_declarations_equal`.
+
+### Resolved: exact comparison is the right contract, not tolerance-based
+
+The PR description raises this as an open review decision: whether
+`_quantity_declarations_equal` should require exact numerical equality
+after unit conversion, or use a documented relative/absolute tolerance.
+Exact comparison is correct, and PR #38 doesn't need a change here.
+
+The question this check answers is "did the human change anything." A
+config field that changes declared unit between runs almost always changes
+value too -- exactness correctly flags that as a real edit rather than
+hiding it, and a false "incompatible" (requiring a fresh run) is a far
+safer failure mode than a false "compatible" (silently mixing results from
+different declared conditions into one `AllModels` table).
+
+Floating-point unit-conversion arithmetic is not bit-exact for factors
+involving irrational constants (angle units via `pi`, composite units like
+`km/(s*Mpc)` for `H`) -- confirmed empirically, round-tripping random
+values through such conversions fails to reproduce the original in roughly
+15-23% of cases, with residuals at the ~1-ULP noise floor. But this doesn't
+threaten the exactness contract in practice: it only bites two
+independently-declared expressions of the identical physical value in
+different units, which isn't how config files actually get edited between
+runs (an untouched field keeps its exact unit and value string; an edited
+field's value almost always changes along with, or instead of, its unit).
+The scenario where it would matter -- TNT itself generating or round-tripping
+configuration files through unit conversion -- doesn't exist yet.
 
 ## Missing or weak tests
 

@@ -217,6 +217,15 @@
   incompatible. Complete unit-bearing compatibility fields are compared by
   physical value on demand, so equivalent declarations such as `1 kpc` and
   `1000 pc` compare equal without an eager configuration-wide traversal.
+  Comparison is exact, not tolerance-based, by design: the question this
+  check answers is "did the human change anything," and a config field that
+  changes unit between runs almost always changes value too, so exactness
+  correctly flags real edits rather than hiding them. Floating-point
+  unit-conversion noise (e.g. through angle units or composite units
+  involving irrational factors) is a real property of the conversion
+  arithmetic but not a practical risk here, since it would only bite two
+  independently-authored declarations of the identical physical value in
+  different units -- not how config files are actually edited between runs.
 - The compatibility check runs once at the start of each `run()` invocation,
   after runtime construction but before allocating that call's new run
   identity or modifying model-search state. It cannot run in
