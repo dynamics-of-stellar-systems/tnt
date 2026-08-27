@@ -239,6 +239,12 @@
   arithmetic but not a practical risk here, since it would only bite two
   independently-authored declarations of the identical physical value in
   different units -- not how config files are actually edited between runs.
+  The comparator intentionally keeps this conversion in host-side
+  NumPy/Astropy `float64` arithmetic rather than constructing JAX-backed
+  `unxt.Quantity` objects. Do not replace it with direct `Quantity` equality:
+  `numerics_settings.jax_enable_x64: false` would then make compatibility
+  comparison lose small declared differences to 32-bit rounding. Preserved
+  configuration identity must remain independent of runtime precision.
 - The compatibility check runs once at the start of each `run()` invocation,
   after runtime construction but before allocating that call's new run
   identity or modifying model-search state. It cannot run in
@@ -473,10 +479,20 @@
   integration, respectively. The packaged defaults are both 10.
 - `SphericalGrid` is defined in `tnt.spatial_binnings`. Runtime coordinate
   conversion uses the angular-to-physical direction.
-- Shared comparison tolerances and constraint-error floors belong under
-  `numerics_settings`. Model comparison uses a relative tolerance of `1e-10`,
-  while parameter-grid comparisons use `1e-6`. Total-mass and intrinsic-mass
-  constraint errors have floors of `1e-8` and `1e-16`, respectively.
+- Process-wide JAX precision, shared comparison tolerances, and
+  constraint-error floors belong under `numerics_settings`.
+  `jax_enable_x64` defaults to `true`. Importing `tnt` establishes that
+  default before other TNT modules create JAX-backed values; a successfully
+  validated configuration applies its resolved value before runtime-object
+  construction. The first resolved configuration fixes the policy for the
+  process. Further configuration reads and `ModelIterator.run()` calls are
+  valid with the same value, while a conflicting configuration requires a new
+  Python process. Existing arrays are not converted when the policy changes,
+  so callers must prepare configuration before constructing TNT runtime
+  objects. The entire `numerics_settings` mapping is resume-critical. Model
+  comparison uses a relative tolerance of `1e-10`, while parameter-grid
+  comparisons use `1e-6`. Total-mass and intrinsic-mass constraint errors have
+  floors of `1e-8` and `1e-16`, respectively.
 - Orbit-library radial limits are galaxy-specific and therefore have no
   package-wide defaults; the user configuration must provide them.
 - A negative `orbit_library_settings.random_seed` requests a generated seed.

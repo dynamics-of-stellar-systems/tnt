@@ -194,7 +194,10 @@ configuration. Incompatible dimensions compare unequal, while malformed
 quantity declarations raise `ConfigurationCompatibilityError`. Numerical
 values must match exactly after unit conversion; compatibility does not add a
 tolerance that could hide a small scientific change. Changing the internal
-unit system itself remains incompatible under the current contract.
+unit system itself remains incompatible under the current contract. This
+comparison is intentionally host-side and independent of
+`numerics_settings.jax_enable_x64`; choosing 32-bit runtime calculations must
+not reduce the precision used to decide whether a declaration changed.
 
 Changing `parameter_space_settings.which_chi2` is allowed only when the chosen
 metric exists and is finite for every successful historical model. A nonempty

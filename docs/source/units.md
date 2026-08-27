@@ -122,7 +122,11 @@ declarations and converts one value to the other's unit only while comparing
 that field. It does not normalize the complete configuration. Consequently,
 declarations such as `1 kpc` and `1000 pc` compare equal, incompatible
 dimensions compare unequal, and malformed declarations raise a compatibility
-error.
+error. This exact comparison uses host-side numerical conversion rather than
+JAX-backed `unxt.Quantity` equality, so its result is independent of the
+configured JAX runtime precision. In particular, selecting 32-bit JAX
+calculations cannot round away a small change in a preserved configuration
+declaration.
 
 MGE (multi-Gaussian expansion) contents and quantities read from observational
 data files are intentionally not converted during configuration preparation.
