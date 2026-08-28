@@ -4,21 +4,19 @@ Dimension validation and conversion into orbit-integration units are
 deliberately separate concerns. Declared units are validated for
 dimensional correctness against `_REFERENCE_UNITS`, a fixed
 per-physical-dimension reference that is independent of any run's chosen
-unit system. Values keep their declared/source unit through construction; the only place
-a shared, explicit unit system is genuinely needed is `Potential.to_galax`
-and its callers (see `tnt.potential`), which pass it straight to `galax`'s
-potential constructors.
+unit system. Values keep their declared/source unit through construction; the
+only place a shared, explicit unit system is genuinely needed is
+`Potential.to_galax` and its callers (see `tnt.potential`), which pass it
+straight to `galax`'s potential constructors.
 
 `units.internal` requires exactly `length`, `time`, `mass`, and `angle` --
 the dimensions `galax`'s potential types use that `unxt` cannot derive for
 you. `unxt` builds `power`, `speed`, `frequency`, ... automatically from
-mass/length/time, so declaring them is redundant; `angle` is dimensionally
-independent (`unxt` can't decompose `rad` into the mechanical bases) and is
-a real native parameter dimension for some `galax` types (e.g.
-`LongMuraliBarPotential.alpha`), so it must be stated. `power` used to be
-required too and was dropped: it is derivable, and requiring it let a
-config declare a `power` unit inconsistent with the others that `galax`
-silently ignores.
+mass/length/time, so derived dimensions must not be declared in
+`units.internal`. `angle` is dimensionally independent (`unxt` can't
+decompose `rad` into the mechanical bases) and is a real native parameter
+dimension for some `galax` types (e.g. `LongMuraliBarPotential.alpha`), so it
+must be stated.
 """
 
 from __future__ import annotations
@@ -40,10 +38,9 @@ from tnt.validation import (
 )
 
 _INTERNAL_DIMENSIONS = ("length", "time", "mass", "angle")
-# `power` stays an accepted *display* override -- a user may still want
-# luminosity presented in a specific unit -- even though it's no longer part
-# of the required internal set (a unit system auto-derives it from its base
-# units; see this module's docstring and `docs/source/units.md`).
+# `power` is an accepted display override because a user may want luminosity
+# presented in a specific unit; the internal system derives it from its base
+# units (see this module's docstring and `docs/source/units.md`).
 _DISPLAY_DIMENSIONS = frozenset((*_INTERNAL_DIMENSIONS, "speed", "power"))
 _REFERENCE_UNITS = {
     "length": "m",

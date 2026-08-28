@@ -29,16 +29,12 @@ units:
 `units.internal` requires exactly four keys -- `length`, `time`, `mass`, and
 `angle` -- the dimensions `galax`'s potential types use that `unxt` cannot
 derive on its own. `unxt` builds `power`, `speed`, `frequency`, ...
-automatically from mass/length/time, so declaring them is redundant and now
-rejected; `angle` is dimensionally independent (`unxt` cannot decompose
-`rad` into the mechanical bases) and is a real native parameter dimension
-for some `galax` types, so it must be stated. `power` used to be required
-and has been dropped -- a breaking change from the earlier five-key schema,
-handled like other config renames with no back-compat shim; besides being
-redundant, requiring it let a config declare a `power` unit inconsistent
-with the others that `galax` silently ignores. `units.display` still accepts
-`power` as an optional presentation override, alongside `speed` and the four
-base dimensions.
+automatically from mass/length/time, so derived dimensions must not be
+declared in `units.internal`. `angle` is dimensionally independent (`unxt`
+cannot decompose `rad` into the mechanical bases) and is a real native
+parameter dimension for some `galax` types, so it must be stated.
+`units.display` accepts `power` and `speed` as optional presentation overrides,
+alongside the four base dimensions.
 
 TNT checks that every unit describes the dimension named by its key. For
 example, using `Myr` as the internal length unit is an error. The resolved

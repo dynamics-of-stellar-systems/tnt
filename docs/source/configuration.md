@@ -218,7 +218,6 @@ resolved = config.as_dict()
 mges = build_mges(
     resolved["MGEs"],
     resolved["io_settings"]["input_directory"],
-    config.unit_systems.internal,
     resolve_system_distance(resolved["system_attributes"]),
 )
 ```
@@ -246,7 +245,6 @@ resolved = config.as_dict()
 binnings = build_spatial_binnings(
     resolved["spatial_binnings"],
     resolved["io_settings"]["input_directory"],
-    config.unit_systems.internal,
     resolved["mge_settings"]["projected_mass_quad_order"],
     resolve_system_distance(resolved["system_attributes"]),
 )
@@ -255,11 +253,12 @@ binnings = build_spatial_binnings(
 The returned dictionary uses the configured binning names as keys and contains
 `ProjectedBinning` values. This loading step opens each `.npy` file, validates
 the exact entry schema and inline geometry, and rejects empty, negative, or
-non-contiguous pixel-to-bin arrays. It converts the geometry to the internal
-angle unit, then to physical units via `angular_to_physical(distance)` --
-matching `build_mges` above, so that MGEs and spatial binnings loaded this way
-are always dimensionally consistent -- and precomputes pixel edges and
-quadrature nodes.
+non-contiguous pixel-to-bin arrays. Each angular quantity is validated and
+keeps its declared unit while the grid geometry is constructed. The result is
+then projected to physical units via `angular_to_physical(distance)` -- matching
+`build_mges` above, so that MGEs and spatial binnings loaded this way are always
+dimensionally consistent -- and pixel edges and quadrature nodes are
+precomputed.
 
 `AbstractMGE.get_projected_mass()` integrates an MGE over a
 `ProjectedBinning`; both must be angular or both physical.
@@ -318,13 +317,11 @@ from tnt.spatial_binnings import build_spatial_binnings
 from tnt.units import resolve_system_distance
 
 input_directory = config.data["io_settings"]["input_directory"]
-unit_system = config.unit_systems.internal
 distance = resolve_system_distance(config.data["system_attributes"])
-mges = build_mges(config.data["MGEs"], input_directory, unit_system, distance)
+mges = build_mges(config.data["MGEs"], input_directory, distance)
 spatial_binnings = build_spatial_binnings(
     config.data["spatial_binnings"],
     input_directory,
-    unit_system,
     config.data["mge_settings"]["projected_mass_quad_order"],
     distance,
 )
@@ -332,7 +329,6 @@ spatial_binnings = build_spatial_binnings(
 kinematics = build_kinematics(
     config.data["kinematic_data"],
     input_directory,
-    unit_system,
     spatial_binnings,
     mges,
 )
@@ -373,7 +369,6 @@ from tnt.populations import build_populations
 populations = build_populations(
     config.data["population_data"],
     input_directory,
-    unit_system,
     spatial_binnings,
 )
 ```
@@ -385,9 +380,10 @@ column whose positive, unique integer values cover every positive ID in the
 referenced binning exactly once. It also requires at least one paired
 population property and uncertainty, for example `age`/`dage` or
 `metallicity`/`dmetallicity`. Property names are otherwise unrestricted.
-Declared units on each pair must be equivalent and are converted into the
-internal unit system; columns without declared units are dimensionless. All
-values must be finite and all uncertainties must be strictly positive.
+Declared units on each pair must be equivalent. The value column keeps its
+declared unit and the uncertainty is converted into that same local unit;
+columns without declared units are dimensionless. All values must be finite
+and all uncertainties must be strictly positive.
 
 Population objects do not contain an MGE. A population file must also be
 different from every configured kinematics file; sharing only the
