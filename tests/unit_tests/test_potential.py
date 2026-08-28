@@ -10,6 +10,7 @@ paths, and the two MGE composite types' `to_galax`.
 from __future__ import annotations
 
 import dataclasses
+from typing import ClassVar
 
 import galax.potential as gp
 import jax
@@ -35,7 +36,9 @@ from tnt.potential import (
     raw_parameter_dimensions,
     raw_potential_parameters,
 )
+from tnt.potential import registry as _registry_module
 from tnt.potential.nfw import _newtonian_gravitational_constant
+from tnt.potential.registry import _COMPONENT_REGISTRY, register_component
 
 
 def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
@@ -706,6 +709,79 @@ _VIEWING_ANGLES = {
     "phi": Quantity(0.6, "rad"),
     "psi": Quantity(-0.4, "rad"),
 }
+
+
+def test_register_component_reads_type_and_raw_dimensions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An isolated fake registry, swapped in for the module-level real one --
+    # _COMPONENT_REGISTRY is shared, mutable, global state, so a test that
+    # registers into it directly must not leak into the real registry other
+    # tests (and application code) read from.
+    fake_registry: dict[str, type] = {}
+    monkeypatch.setattr(_registry_module, "_COMPONENT_REGISTRY", fake_registry)
+
+    class _Test:
+        _type: ClassVar[str] = "_test_potential_type"
+        _raw_dimensions: ClassVar[dict[str, str]] = {"m": "mass"}
+
+    result = register_component(_Test)
+
+    assert result is _Test
+    assert fake_registry == {"_test_potential_type": _Test}
+
+
+def test_register_component_rejects_duplicate_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_registry_module, "_COMPONENT_REGISTRY", {})
+
+    class _First:
+        _type: ClassVar[str] = "_test_duplicate_potential_type"
+        _raw_dimensions: ClassVar[dict[str, str]] = {}
+
+    class _Second:
+        _type: ClassVar[str] = "_test_duplicate_potential_type"
+        _raw_dimensions: ClassVar[dict[str, str]] = {}
+
+    register_component(_First)
+    with pytest.raises(ValueError, match="Duplicate potential type"):
+        register_component(_Second)
+
+
+def test_inherited_type_does_not_register_or_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A subclass that inherits `_type` without its own `@register_component`
+    call must not participate in dispatch under that name -- and, since
+    registration is now explicit rather than reflection-discovered, there's
+    no ambiguous "is this a real second registration" question for it to get
+    wrong (see PR #45's audit, the inherited-`_type` false-duplicate finding
+    this replaces).
+    """
+    monkeypatch.setattr(_registry_module, "_COMPONENT_REGISTRY", {})
+
+    class _Parent:
+        _type: ClassVar[str] = "_test_inherited_potential_type"
+        _raw_dimensions: ClassVar[dict[str, str]] = {}
+
+    class _Child(_Parent):
+        pass  # inherits _type, never itself passed to register_component
+
+    register_component(_Parent)
+
+    assert _registry_module._COMPONENT_REGISTRY == {
+        "_test_inherited_potential_type": _Parent
+    }
+
+
+def test_component_registry_contains_the_two_mge_types() -> None:
+    assert set(_COMPONENT_REGISTRY) == {
+        "TriaxialLightMGEPotential",
+        "TriaxialMassMGEPotential",
+    }
+    assert _COMPONENT_REGISTRY["TriaxialLightMGEPotential"] is TriaxialLightMGEPotential
+    assert _COMPONENT_REGISTRY["TriaxialMassMGEPotential"] is TriaxialMassMGEPotential
 
 
 def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:

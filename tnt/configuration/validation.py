@@ -1,10 +1,18 @@
-"""Validate resolved TNT configuration data without constructing objects."""
+"""Validate resolved TNT configuration data without constructing objects.
+
+Configuration validation may import component modules to read their static
+registration metadata (`_type`, `_raw_dimensions`, and
+`tnt.potential.registry._COMPONENT_REGISTRY`). Import-time registration is
+allowed; validation must not instantiate scientific objects, load scientific
+input data, or begin scientific execution.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
+from tnt.potential.registry import _COMPONENT_REGISTRY, raw_parameter_dimensions
 from tnt.units import declared_quantity_value, validate_configuration_quantities
 from tnt.validation import (
     _integer,
@@ -39,12 +47,6 @@ _TOP_LEVEL_KEYS = {
     "units",
     "weight_solver_settings",
 }
-# `potential.<name>.type` names either one of these two TNT-specific MGE
-# composite potentials, or -- for every other value -- a `galax.potential`
-# class name, resolved dynamically by `tnt.potential` at runtime rather than
-# validated against a closed set here (this module deliberately avoids
-# constructing scientific objects; see module docstring).
-_MGE_POTENTIAL_TYPES = {"TriaxialLightMGEPotential", "TriaxialMassMGEPotential"}
 _KINEMATICS_TYPES = {"bayes_losvd", "gauss_hermite", "proper_motions"}
 
 
@@ -285,10 +287,12 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
             component_path,
         )
         _require_keys(component, {"include", "type"}, component_path)
-        # `type` names either a TNT MGE composite (checked against
-        # _MGE_POTENTIAL_TYPES below) or a galax.potential class name, which
-        # this module deliberately doesn't validate -- resolving it requires
-        # constructing/importing galax, deferred to tnt.potential at runtime.
+        # `type` names either a registered TNT component (checked against
+        # _COMPONENT_REGISTRY below) or a galax.potential class name; this
+        # module doesn't check the latter against
+        # tnt.potential.registry._SUPPORTED_GALAX_TYPES yet -- extending
+        # exact-name/completeness validation to native galax types the same
+        # way is tracked separately (issue #44), not a galax-import concern.
         component_type = _string(component["type"], f"{component_path}.type")
         if "parameterization" in component:
             _string(component["parameterization"], f"{component_path}.parameterization")
@@ -303,7 +307,7 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         elif include:
             raise ValueError(f"{component_path} is missing required field: parameters.")
 
-        is_mge_potential = component_type in _MGE_POTENTIAL_TYPES
+        is_mge_potential = component_type in _COMPONENT_REGISTRY
         if is_mge_potential:
             if include:
                 _require_keys(component, {"mge"}, component_path)
@@ -319,53 +323,34 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
                 f"{component_path}.mge is only valid for MGE potential types."
             )
 
+        # Each registered TNT component type's exact parameter schema (ml
+        # required for light and forbidden for mass, mge_mass_scale vice
+        # versa, theta/phi/psi required for both) comes directly from that
+        # type's own registered `_raw_dimensions` (see
+        # tnt.potential.registry.register_component) rather than
+        # hand-written here. Extra/forbidden parameters are rejected regardless of
+        # `include` (a disabled component still can't declare a nonsensical
+        # one); missing/required parameters are only enforced when `include`,
+        # matching the same reasoning as the `parameters` presence check above.
         parameters = component.get("parameters")
         parameter_names = set(parameters) if isinstance(parameters, dict) else set()
-        if (
-            include
-            and component_type == "TriaxialLightMGEPotential"
-            and "ml" not in parameter_names
-        ):
-            raise ValueError(
-                f"{component_path}.parameters is missing required field: ml."
-            )
-        if component_type == "TriaxialMassMGEPotential" and "ml" in parameter_names:
-            raise ValueError(
-                f"{component_path}.parameters.ml is invalid for a mass MGE potential."
-            )
-        # mge_mass_scale is a mass MGE's analogue of a light MGE's ml -- a
-        # mass-normalization parameter on top of an otherwise-fixed shape.
-        # It's typically `fixed`, but nothing requires that: see
-        # tnt.potential.components.AbstractPotentialComponent.rescale explains
-        # why a fixed mass parameter can still move under potential_rescalings.
-        if (
-            include
-            and component_type == "TriaxialMassMGEPotential"
-            and "mge_mass_scale" not in parameter_names
-        ):
-            raise ValueError(
-                f"{component_path}.parameters is missing required field: "
-                "mge_mass_scale."
-            )
-        if (
-            component_type == "TriaxialLightMGEPotential"
-            and "mge_mass_scale" in parameter_names
-        ):
-            raise ValueError(
-                f"{component_path}.parameters.mge_mass_scale is invalid for a "
-                "light MGE potential."
-            )
-        # theta/phi/psi are the global viewing angles both MGE composite
-        # types deproject against (tnt.mge.AbstractMGE.deproject_triaxial) --
-        # required regardless of light vs. mass.
-        if include and is_mge_potential:
-            missing_angles = {"theta", "phi", "psi"} - parameter_names
-            if missing_angles:
-                names = ", ".join(sorted(missing_angles))
+        if is_mge_potential:
+            required = set(raw_parameter_dimensions(component_type, None))
+            extra = parameter_names - required
+            if extra:
+                names = ", ".join(sorted(extra))
                 raise ValueError(
-                    f"{component_path}.parameters is missing required field(s): "
-                    f"{names}."
+                    f"{component_path}.parameters has invalid field(s) for "
+                    f"{component_type}: {names}."
                 )
+            if include:
+                missing = required - parameter_names
+                if missing:
+                    names = ", ".join(sorted(missing))
+                    raise ValueError(
+                        f"{component_path}.parameters is missing required "
+                        f"field(s): {names}."
+                    )
 
 
 def _validate_parameters(

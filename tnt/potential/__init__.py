@@ -26,9 +26,10 @@ This module is filled in incrementally, one object at a time -- the same
 approach already used for `ProjectedBinning`. `Potential.generate_orbit_library`
 remains `NotImplementedError`.
 
-Split across submodules by concern: `registry` (curated `galax` types and
-their native parameters' dimensions/mass-rescale exponents), `nfw` (the
-`concentration_m200` parameterization's self-contained numerics),
+Split across submodules by concern: `registry` (curated `galax` types, their
+native parameters' dimensions/mass-rescale exponents, and TNT component
+registration), `nfw` (the `concentration_m200` parameterization's
+self-contained numerics),
 `components` (the abstract base and the native-`galax` component,
 resolution/dispatch included), `triaxial_mge` (the triaxial MGE-backed
 composite types -- other MGE-backed types, e.g. axisymmetric, get their own

@@ -31,6 +31,22 @@
   (`components.py`), and whole-potential orchestration (`core.py`). Its
   `__init__.py` defines the intended package-level API; implementation-specific
   names remain in their owning submodules.
+- TNT's own potential-component types (as opposed to curated native `galax`
+  types) register themselves with `tnt.potential.registry.register_component`,
+  applied directly to each concrete `AbstractPotentialComponent` subclass's
+  definition (e.g. `tnt.potential.triaxial_mge`). The decorator reads the
+  class's own `_type`/`_raw_dimensions` class attributes into
+  `registry._COMPONENT_REGISTRY`, a single dict both
+  `AbstractPotentialComponent.resolve` (runtime dispatch) and
+  `tnt.configuration.validation` (config-prep exact-parameter-name schema
+  checks) read from directly. A class participates only when it is explicitly
+  decorated. `tnt/potential/__init__.py` must import every concrete component
+  module so its decorators run during normal package initialization.
+- `tnt.configuration`'s "does not construct scientific objects" boundary
+  permits imports needed to read static registration metadata. Import-time
+  registration is allowed; configuration preparation must not instantiate
+  scientific objects, load scientific input data, or begin scientific
+  execution.
 
 ## Linux development container
 

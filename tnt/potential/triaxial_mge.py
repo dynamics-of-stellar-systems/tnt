@@ -25,9 +25,11 @@ from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE
 from tnt.potential.components import AbstractPotentialComponent
+from tnt.potential.registry import _VIEWING_ANGLES, register_component
 from tnt.validation import _required_string, _resolve_typed_reference
 
 
+@register_component
 class TriaxialLightMGEPotential(AbstractPotentialComponent):
     """A triaxial potential from a light MGE, via its `ml` parameter.
 
@@ -45,6 +47,10 @@ class TriaxialLightMGEPotential(AbstractPotentialComponent):
     """
 
     _type: ClassVar[str] = "TriaxialLightMGEPotential"
+    _raw_dimensions: ClassVar[dict[str, str]] = {
+        "ml": "mass_to_light",
+        **_VIEWING_ANGLES,
+    }
     mge: LightMGE
     deprojected: Deprojected3DMGE
 
@@ -98,6 +104,7 @@ class TriaxialLightMGEPotential(AbstractPotentialComponent):
         )
 
 
+@register_component
 class TriaxialMassMGEPotential(AbstractPotentialComponent):
     """A triaxial potential from an already-mass-calibrated MGE.
 
@@ -110,6 +117,10 @@ class TriaxialMassMGEPotential(AbstractPotentialComponent):
     """
 
     _type: ClassVar[str] = "TriaxialMassMGEPotential"
+    _raw_dimensions: ClassVar[dict[str, str]] = {
+        "mge_mass_scale": "dimensionless",
+        **_VIEWING_ANGLES,
+    }
     mge: MassMGE
     deprojected: Deprojected3DMGE
 
