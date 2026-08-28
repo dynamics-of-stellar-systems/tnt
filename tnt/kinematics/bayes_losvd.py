@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any, ClassVar, Self
+from typing import ClassVar, Self
 
 import astropy.units as au
 import jax.numpy as jnp
 import numpy as np
-import unxt as u
 from astropy.table import QTable
-from unxt import AbstractUnitSystem, Quantity
+from unxt import Quantity
 
 from tnt.kinematics.base import (
     AbstractKinematics,
@@ -24,7 +23,7 @@ from tnt.kinematics.base import (
 )
 from tnt.mge import LightMGE, MassMGE
 from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
-from tnt.units import normalize_unitful_value
+from tnt.units import declared_quantity, validate_dimension
 from tnt.validation import (
     ConfigMapping,
     _finite,
@@ -66,19 +65,19 @@ class BayesLOSVD(AbstractKinematics):
         data_file: Path,
         binning: ProjectedBinning,
         mge: LightMGE | MassMGE | None,
-        unit_system: AbstractUnitSystem,
     ) -> Self:
-        """Read and construct one configured Bayesian LOSVD data set."""
+        """Read and construct one configured Bayesian LOSVD data set.
+
+        The velocity grid keeps the unit declared in the ECSV metadata; no
+        unit-system conversion happens here (see `tnt.units`' module docstring).
+        """
         path = f"kinematic_data.{name}"
         _reject_unknown_keys(settings, cls._allowed_settings, path)
         table = QTable.read(data_file, format="ascii.ecsv")
         bin_ids = _read_bin_ids(table, data_file)
         _validate_bin_ids_cover_binning(bin_ids, binning, data_file)
         _same_length(table, bin_ids.shape[0], data_file)
-        speed_unit = unit_system[u.dimension("speed")]
-        centers, data_bin_width = _read_losvd_velocity_grid(
-            table, speed_unit, data_file
-        )
+        centers, data_bin_width = _read_losvd_velocity_grid(table, data_file)
         losvd, uncertainty = _read_losvd_columns(table, centers.shape[0], data_file)
         flux = _read_dimensionless_column(table, "bin_flux", data_file)
         _nonnegative_finite(losvd, f"{data_file}: LOSVD values")
@@ -92,7 +91,7 @@ class BayesLOSVD(AbstractKinematics):
             _required(settings, "histogram", path), f"{path}.histogram"
         )
         if set(histogram_settings) == {"width", "center", "bins"}:
-            histogram = _explicit_histogram(histogram_settings, unit_system, path)
+            histogram = _explicit_histogram(histogram_settings, path)
         else:
             centers, mean_velocity, histogram = _build_losvd_histogram(
                 histogram_settings,
@@ -100,7 +99,6 @@ class BayesLOSVD(AbstractKinematics):
                 data_bin_width,
                 mean_velocity,
                 flux,
-                unit_system,
                 f"{path}.histogram",
             )
         return cls(
@@ -127,15 +125,16 @@ class BayesLOSVD(AbstractKinematics):
 
 
 def _read_losvd_velocity_grid(
-    table: QTable, speed_unit: Any, data_file: Path
+    table: QTable, data_file: Path
 ) -> tuple[Quantity, Quantity]:
     missing = {"vcent", "dv", "velocity_unit"} - set(table.meta)
     if missing:
         names = ", ".join(sorted(missing))
         raise ValueError(f"{data_file} metadata is missing required field(s): {names}.")
     source_unit = au.Unit(table.meta["velocity_unit"])
-    centers = source_unit.to(speed_unit, np.asarray(table.meta["vcent"], dtype=float))
-    data_bin_width = float(source_unit.to(speed_unit, table.meta["dv"]))
+    validate_dimension(source_unit, "speed", f"{data_file}: metadata velocity_unit")
+    centers = np.asarray(table.meta["vcent"], dtype=float)
+    data_bin_width = float(table.meta["dv"])
     if centers.ndim != 1 or centers.size == 0:
         raise ValueError(f"{data_file}: metadata vcent must be a non-empty vector.")
     _finite(centers, f"{data_file}: metadata vcent")
@@ -144,8 +143,8 @@ def _read_losvd_velocity_grid(
     if centers.size > 1 and not np.allclose(np.diff(centers), data_bin_width):
         raise ValueError(f"{data_file}: vcent must be uniformly spaced by metadata dv.")
     return (
-        Quantity(jnp.asarray(centers), speed_unit),
-        Quantity(data_bin_width, speed_unit),
+        Quantity(jnp.asarray(centers), source_unit),
+        Quantity(data_bin_width, source_unit),
     )
 
 
@@ -178,10 +177,9 @@ def _build_losvd_histogram(
     data_bin_width: Quantity,
     mean_velocity: Quantity,
     flux: jnp.ndarray,
-    unit_system: AbstractUnitSystem,
     path: str,
 ) -> tuple[Quantity, Quantity, Histogram]:
-    speed_unit = unit_system[u.dimension("speed")]
+    speed_unit = centers.unit
     allowed = {"center", "oversampling_factor", "systemic_velocity", "width_scale"}
     _reject_unknown_keys(settings, allowed, path)
     missing = allowed - set(settings)
@@ -194,9 +192,7 @@ def _build_losvd_histogram(
     oversampling = _positive_number(
         settings["oversampling_factor"], f"{path}.oversampling_factor"
     )
-    center = normalize_unitful_value(
-        settings["center"], "speed", unit_system, f"{path}.center"
-    )
+    center = declared_quantity(settings["center"], "speed", f"{path}.center")
     systemic = jnp.sum(flux * mean_velocity.ustrip(speed_unit)) / jnp.sum(flux)
     shifted_centers = centers - Quantity(systemic, speed_unit)
     shifted_mean = mean_velocity - Quantity(systemic, speed_unit)
@@ -207,7 +203,7 @@ def _build_losvd_histogram(
     bins = _odd_ceiling(width / approximate_bin_width)
     histogram = Histogram(
         width=Quantity(width, speed_unit),
-        center=Quantity(center, speed_unit),
+        center=center,
         bins=bins,
     )
     return shifted_centers, shifted_mean, histogram

@@ -1,4 +1,23 @@
-"""Unit systems and unit-aware configuration validation/conversion."""
+"""Unit systems and unit-aware configuration validation.
+
+Dimension validation and conversion into orbit-integration units are
+deliberately separate concerns. Declared units are validated for
+dimensional correctness against `_REFERENCE_UNITS`, a fixed
+per-physical-dimension reference that is independent of any run's chosen
+unit system. Values keep their declared/source unit through construction; the
+only place a shared, explicit unit system is genuinely needed is
+`Potential.to_galax` and its callers (see `tnt.potential`), which pass it
+straight to `galax`'s potential constructors.
+
+`units.internal` requires exactly `length`, `time`, `mass`, and `angle` --
+the dimensions `galax`'s potential types use that `unxt` cannot derive for
+you. `unxt` builds `power`, `speed`, `frequency`, ... automatically from
+mass/length/time, so derived dimensions must not be declared in
+`units.internal`. `angle` is dimensionally independent (`unxt` can't
+decompose `rad` into the mechanical bases) and is a real native parameter
+dimension for some `galax` types (e.g. `LongMuraliBarPotential.alpha`), so it
+must be stated.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +30,6 @@ from typing import Any
 import unxt as u
 from unxt import Quantity
 
-from tnt.potential import raw_parameter_dimensions
 from tnt.validation import (
     _mapping,
     _optional_mapping,
@@ -19,8 +37,11 @@ from tnt.validation import (
     _require_keys,
 )
 
-_INTERNAL_DIMENSIONS = ("length", "time", "mass", "angle", "power")
-_DISPLAY_DIMENSIONS = frozenset((*_INTERNAL_DIMENSIONS, "speed"))
+_INTERNAL_DIMENSIONS = ("length", "time", "mass", "angle")
+# `power` is an accepted display override because a user may want luminosity
+# presented in a specific unit; the internal system derives it from its base
+# units (see this module's docstring and `docs/source/units.md`).
+_DISPLAY_DIMENSIONS = frozenset((*_INTERNAL_DIMENSIONS, "speed", "power"))
 _REFERENCE_UNITS = {
     "length": "m",
     "time": "s",
@@ -30,6 +51,8 @@ _REFERENCE_UNITS = {
     "speed": "m / s",
     "inverse_time": "1 / s",
     "mass_to_light": "kg / W",
+    "light_surface_brightness": "W / rad2",
+    "mass_surface_density": "kg / rad2",
 }
 
 
@@ -133,6 +156,13 @@ def _potential_parameter_dimensions(settings: Mapping[str, Any]) -> Mapping[str,
     (nothing scaled) for a malformed value here anyway, rather than depending
     on that ordering or duplicating its validation.
     """
+    # Imported lazily: `tnt.mge`/`tnt.kinematics`/`tnt.spatial_binnings` import
+    # this module for `validate_dimension`/`declared_quantity`, and
+    # `tnt.potential` imports those -- a module-level import here would close
+    # that cycle. Config validation, this function's only caller, always runs
+    # well after every module is loaded.
+    from tnt.potential import raw_parameter_dimensions
+
     potential_type = settings.get("type")
     parameterization = settings.get("parameterization")
     if not (
@@ -170,16 +200,41 @@ def resolve_system_distance(system_attributes: Mapping[str, Any]) -> Quantity:
     return Quantity(declared["value"], declared["unit"])
 
 
-def normalize_unitful_value(
-    value: Any,
-    dimension: str,
-    unit_system: u.AbstractUnitSystem,
-    path: str,
-) -> float:
-    """Normalize an explicit ``{value, unit}`` mapping."""
+def reference_unit(dimension: str) -> Any:
+    """The fixed reference unit for `dimension`, from `_REFERENCE_UNITS`.
+
+    A single per-physical-dimension reference, independent of any run's
+    chosen unit system (see this module's docstring). Callers that only need
+    a pass/fail check should use `validate_dimension` instead; this is for
+    the few that need the unit object itself (e.g. `tnt.mge.read_mge`
+    inferring an MGE's kind from its `I` column).
+    """
+    return u.unit(_REFERENCE_UNITS[dimension])
+
+
+def validate_dimension(unit: Any, dimension: str, path: str) -> None:
+    """Raise if `unit` isn't dimensionally consistent with `dimension`.
+
+    Checked against `_REFERENCE_UNITS`, a fixed physical-dimension
+    reference -- independent of any run's chosen unit system, since
+    dimension validation and conversion into orbit-integration units are
+    deliberately separate concerns (see this module's docstring).
+    """
+    if unit is None:
+        raise ValueError(f"{path} must declare a unit.")
+    if not unit.is_equivalent(reference_unit(dimension)):
+        raise ValueError(f"{path} must describe {dimension.replace('_', ' ')}.")
+
+
+def declared_quantity(value: Any, dimension: str, path: str) -> Quantity:
+    """Validate an explicit ``{value, unit}`` mapping, keeping its declared unit.
+
+    The unconverted counterpart of the old eager normalization: returns a
+    `Quantity` in the unit the configuration declares, leaving any
+    conversion to whatever consumer later needs one.
+    """
     numeric, source = _declared_quantity(value, dimension, path)
-    target = _internal_unit(unit_system, dimension)
-    return float(source.to(target, numeric))
+    return Quantity(numeric, source)
 
 
 def declared_quantity_value(value: Any, dimension: str, path: str) -> float:
@@ -233,17 +288,6 @@ def _validate_parameter_units(
         if "unit" not in parameter:
             raise ValueError(f"{parameter_path} is missing required field: unit.")
         _validated_declared_unit(parameter["unit"], dimension, f"{parameter_path}.unit")
-
-
-def _internal_unit(
-    unit_system: u.AbstractUnitSystem,
-    dimension: str,
-) -> Any:
-    if dimension == "inverse_time":
-        return 1 / unit_system[u.dimension("time")]
-    if dimension == "mass_to_light":
-        return unit_system[u.dimension("mass")] / unit_system[u.dimension("power")]
-    return unit_system[u.dimension(dimension)]
 
 
 def _validated_declared_unit(value: Any, dimension: str, path: str) -> Any:

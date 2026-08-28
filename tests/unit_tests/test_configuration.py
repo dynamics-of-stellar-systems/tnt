@@ -112,7 +112,6 @@ def test_read_resolves_defaults_without_allocating_a_run(tmp_path: Path) -> None
             "time": "Myr",
             "mass": "Msun",
             "angle": "rad",
-            "power": "Lsun",
         },
         "display": {"angle": "arcsec", "speed": "km / s"},
     }

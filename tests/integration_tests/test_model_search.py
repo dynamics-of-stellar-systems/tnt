@@ -130,12 +130,11 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     def spying_build_potential(
         resolved: Any,
         parameter_values: Any,
-        unit_system: Any,
         cosmological_parameters: Any,
     ) -> Potential:
         captured_parameter_values.append(parameter_values)
         return real_build_potential(
-            resolved, parameter_values, unit_system, cosmological_parameters
+            resolved, parameter_values, cosmological_parameters
         )
 
     monkeypatch.setattr(
@@ -266,7 +265,6 @@ def test_model_iterator_reports_real_potential_in_its_own_parameterization(
     assert "dh.m" not in table.colnames
     assert "dh.r_s" not in table.colnames
 
-    unit_system = config.unit_systems.internal
     cosmological_parameters = resolve_cosmological_parameters(
         resolved["cosmological_parameters"]
     )
@@ -290,7 +288,6 @@ def test_model_iterator_reports_real_potential_in_its_own_parameterization(
                 "c": Quantity(float(row["dh.c"].value), ""),
                 "M_200": Quantity(row["dh.M_200"].to_value("Msun"), "Msun"),
             },
-            unit_system,
             cosmological_parameters,
         )
         r_s_values.append(float(native["r_s"].ustrip("kpc")))
@@ -334,7 +331,6 @@ def test_potential_to_galax_succeeds_against_the_resolved_example_configuration(
     potential = build_potential(
         iterator.resolved_potential,
         parameters,
-        unit_system,
         iterator.cosmological_parameters,
     )
 
@@ -386,7 +382,7 @@ def test_invalid_runtime_owned_configuration_is_not_archived(
     config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
     output = Path(config.data["io_settings"]["output_directory"])
 
-    with pytest.raises(ValueError, match=r"spatial_binnings.*min_x"):
+    with pytest.raises(TypeError, match=r"spatial_binnings.*min_x"):
         ModelIterator.from_configuration(config)
 
     assert not (output / "config_repository").exists()

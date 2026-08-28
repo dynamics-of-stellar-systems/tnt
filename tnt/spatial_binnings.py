@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -10,9 +9,10 @@ from typing import Any
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from unxt import AbstractUnitSystem, Quantity
+from unxt import Quantity
 
 from tnt import quantity_conversions
+from tnt.units import declared_quantity
 
 
 def _gauss_legendre(quad_order: int) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -231,10 +231,13 @@ class ProjectedBinning(eqx.Module):
         cls,
         settings: Mapping[str, Any],
         bins: jnp.ndarray,
-        unit_system: AbstractUnitSystem,
         quad_order: int,
     ) -> ProjectedBinning:
-        """Build a `ProjectedBinning`, validating and converting its raw fields.
+        """Build a `ProjectedBinning`, validating its raw fields.
+
+        Each declared quantity keeps its own unit; `__init__` does the grid
+        geometry on demand in `min_x`'s unit, so no unit-system conversion
+        happens here (see `tnt.units`' module docstring).
 
         Args:
             settings: A resolved ``spatial_binnings`` entry: `min_x`, `min_y`,
@@ -242,29 +245,25 @@ class ProjectedBinning(eqx.Module):
                 ``{value, unit}`` mapping.
             bins: The entry's already-loaded 2D ``(npix_x, npix_y)`` array of
                 integer bin IDs.
-            unit_system: The unit system to convert the quantities into.
             quad_order: Order of the fixed Gauss-Legendre quadrature used for
                 the x integral within each pixel (see
                 `AbstractMGE.get_projected_mass`).
 
         Returns:
-            A `ProjectedBinning` with its quantities converted to
-            `unit_system`'s angle unit.
+            A `ProjectedBinning` with each declared quantity in its own unit.
 
         Raises:
-            TypeError: If the settings aren't a mapping, a declared value
-                isn't a number, `bins_file` is present but not a non-empty
-                string, or `bins` isn't integer-valued.
-            ValueError: If a required field is missing, an unknown field is
-                present, a declared value is malformed, non-finite, or (for
-                `x_extent`/`y_extent`) not positive, a declared unit string
-                doesn't parse, or `bins` is not a non-empty 2D array of
-                non-negative, contiguous IDs.
-            astropy.units.UnitConversionError: If a declared unit isn't
-                dimensionally an angle.
+            TypeError: If a declared value isn't a number, or `bins_file` is
+                present but not a non-empty string.
+            ValueError: If the settings aren't a mapping, a required field is
+                missing, an unknown field is present, a declared value is
+                malformed, non-finite, or (for `x_extent`/`y_extent`) not
+                positive, a declared unit string doesn't parse or isn't
+                dimensionally an angle, or `bins` is not a non-empty 2D array
+                of non-negative, contiguous IDs.
         """
         settings = _validated_settings(settings, require_bins_file=False)
-        quantities = _declared_quantities(settings, unit_system.angle)
+        quantities = _declared_quantities(settings)
         return cls(
             bins=_validated_bins(bins), quad_order=quad_order, **quantities
         )
@@ -339,13 +338,11 @@ def _validated_settings(
 
 
 def _declared_quantities(
-    settings: Mapping[str, Any], angle: Any, *, path: str = "ProjectedBinning"
+    settings: Mapping[str, Any], *, path: str = "ProjectedBinning"
 ) -> dict[str, Quantity]:
-    """Validate and convert all declared spatial-binning quantities."""
+    """Validate all declared spatial-binning quantities, keeping their units."""
     return {
-        key: _declared_angle_quantity(
-            settings, key, angle, positive=positive, path=path
-        )
+        key: _declared_angle_quantity(settings, key, positive=positive, path=path)
         for key, positive in _QUANTITY_FIELDS.items()
     }
 
@@ -353,27 +350,20 @@ def _declared_quantities(
 def _declared_angle_quantity(
     settings: Mapping[str, Any],
     key: str,
-    angle: Any,
     *,
     positive: bool,
     path: str,
 ) -> Quantity:
-    """Parse, validate, and convert one declared ``{value, unit}`` field."""
-    field = settings[key]
-    if not isinstance(field, Mapping) or set(field) != {"value", "unit"}:
-        raise ValueError(
-            f"{path}.{key} must be a mapping with exactly 'value' "
-            "and 'unit' keys."
-        )
-    value = field["value"]
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise TypeError(f"{path}.{key}.value must be a number.")
-    if not math.isfinite(value):
-        raise ValueError(f"{path}.{key}.value must be finite.")
-    if positive and value <= 0:
-        raise ValueError(f"{path}.{key} must be greater than zero.")
+    """Validate one declared ``{value, unit}`` angle field, keeping its unit.
 
-    return Quantity(float(value), field["unit"]).uconvert(angle)
+    Dimension (angle) and structure are checked against a fixed reference,
+    not any run's unit system; `ProjectedBinning.__init__` does its geometry
+    on demand in `min_x`'s unit, so no conversion happens here.
+    """
+    quantity = declared_quantity(settings[key], "angle", f"{path}.{key}")
+    if positive and float(quantity.ustrip(quantity.unit)) <= 0:
+        raise ValueError(f"{path}.{key} must be greater than zero.")
+    return quantity
 
 
 def _validated_bins(
@@ -437,7 +427,6 @@ def _validate_bin_ids_cover_binning(
 def build_spatial_binnings(
     spatial_binnings: Mapping[str, Mapping[str, Any]],
     input_directory: str | Path,
-    unit_system: AbstractUnitSystem,
     quad_order: int,
     distance: Quantity,
 ) -> dict[str, ProjectedBinning]:
@@ -459,8 +448,6 @@ def build_spatial_binnings(
         input_directory: Directory that each ``bins_file`` is resolved
             against, e.g. a resolved configuration's
             ``io_settings.input_directory``.
-        unit_system: The unit system to convert each binning's quantities
-            into.
         quad_order: Order of the fixed Gauss-Legendre quadrature used for the
             x integral within each pixel, e.g. a resolved configuration's
             ``mge_settings.projected_mass_quad_order``.
@@ -477,9 +464,7 @@ def build_spatial_binnings(
         settings = _validated_settings(
             raw_settings, require_bins_file=True, path=path
         )
-        quantities = _declared_quantities(
-            settings, unit_system.angle, path=path
-        )
+        quantities = _declared_quantities(settings, path=path)
         bins = _validated_bins(
             np.load(directory / settings["bins_file"]), path=f"{path}.bins"
         )

@@ -107,7 +107,7 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
     iterator = ModelIterator.__new__(ModelIterator)
     iterator.potential_settings = {}
     iterator.resolved_potential = {}
-    iterator.unit_system = u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
+    iterator.unit_system = u.unitsystem("kpc", "Myr", "Msun", "rad")
     iterator.cosmological_parameters = {}
     iterator.kinematic_data = {}
     iterator.weight_solver = FakeWeightSolver()
@@ -171,9 +171,7 @@ def _patch_build_potential(
     monkeypatch.setattr(
         model_iterator_module,
         "build_potential",
-        lambda resolved, parameter_values, unit_system, cosmological_parameters: (
-            potential
-        ),
+        lambda resolved, parameter_values, cosmological_parameters: potential,
     )
 
 
@@ -221,7 +219,7 @@ def test_evaluate_logs_and_flags_invalid_potential_build(
     iterator = _make_iterator()
 
     def _raise_invalid(
-        resolved, parameter_values, unit_system, cosmological_parameters
+        resolved, parameter_values, cosmological_parameters
     ):
         raise MGEDeprojectionError("bad viewing geometry")
 
@@ -551,7 +549,7 @@ def test_run_continues_after_later_iteration_has_no_success(
     monkeypatch.setattr(
         model_iterator_module,
         "build_potential",
-        lambda settings, mges, unit_system, cosmological_parameters: next(potentials),
+        lambda resolved, parameter_values, cosmological_parameters: next(potentials),
     )
 
     with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):

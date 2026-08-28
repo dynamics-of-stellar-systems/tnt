@@ -16,7 +16,6 @@ units:
     time: "Myr"
     mass: "Msun"
     angle: "rad"
-    power: "Lsun"
   display:
     angle: "arcsec"
     speed: "km / s"

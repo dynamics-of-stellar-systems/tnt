@@ -149,11 +149,11 @@ def _validate_units(settings: ConfigDict) -> None:
     _reject_unknown_keys(settings, {"display", "internal"}, path)
     _require_keys(settings, {"display", "internal"}, path)
     internal = _required_mapping(settings, "internal", path)
-    internal_keys = {"angle", "length", "mass", "power", "time"}
+    internal_keys = {"angle", "length", "mass", "time"}
     _reject_unknown_keys(internal, internal_keys, f"{path}.internal")
     _require_keys(internal, internal_keys, f"{path}.internal")
     display = _required_mapping(settings, "display", path)
-    _reject_unknown_keys(display, internal_keys | {"speed"}, f"{path}.display")
+    _reject_unknown_keys(display, internal_keys | {"power", "speed"}, f"{path}.display")
     for section_name, section in (("internal", internal), ("display", display)):
         for key, value in section.items():
             _string(value, f"{path}.{section_name}.{key}")

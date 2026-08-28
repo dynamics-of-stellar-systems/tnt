@@ -17,12 +17,10 @@ def test_build_populations_from_resolved_configuration(
     config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
     resolved = config.as_dict()
     input_directory = resolved["io_settings"]["input_directory"]
-    unit_system = config.unit_systems.internal
     distance = resolve_system_distance(resolved["system_attributes"])
     binnings = build_spatial_binnings(
         resolved["spatial_binnings"],
         input_directory,
-        unit_system,
         resolved["mge_settings"]["projected_mass_quad_order"],
         distance,
     )
@@ -30,7 +28,6 @@ def test_build_populations_from_resolved_configuration(
     populations = build_populations(
         resolved["population_data"],
         input_directory,
-        unit_system,
         binnings,
     )
 

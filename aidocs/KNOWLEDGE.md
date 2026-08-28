@@ -86,11 +86,18 @@
   runtime-object, MGE-content, and optional-dependency checks remain the
   responsibility of the execution phase.
   Unknown fields raise validation errors rather than being ignored.
-- TNT uses `unxt` for configuration units. The required
-  `units.internal` block defines length, time, mass, angle, and power;
-  `units.display` selectively overrides presentation units and otherwise
-  inherits from the internal system. `Configuration.unit_systems` exposes the
-  two constructed systems.
+- TNT uses `unxt` for configuration units. `units.internal` is *only* the
+  unit system handed to `galax` in `Potential.to_galax()` -- not a
+  normalization applied to declared values or file data, which keep their
+  own units. It requires exactly `length`, `time`, `mass`, and `angle`:
+  the dimensions `galax`'s potential types need that `unxt` can't derive
+  for you. `unxt` builds `power`/`speed`/`frequency`/... from
+  mass/length/time automatically, so derived dimensions must not be declared
+  in `units.internal`. `angle` is dimensionally independent (`unxt` can't
+  decompose `rad`) and a real native parameter dimension for some `galax`
+  types, so it is required. `units.display` may override `power` and `speed`
+  for presentation. `Configuration.unit_systems` exposes both constructed
+  systems.
 - Every known unitful configuration value must state its unit explicitly;
   internal units and zero values are not implicit exceptions. Standalone
   quantities use `{value: ..., unit: ...}`. Unitful parameter definitions use
@@ -107,14 +114,16 @@
   Their runtime handling is consumer-specific rather than one blanket
   normalization step; in particular, potential parameter values, bounds, and
   steps remain expressed in their declared unit.
-- Runtime kinematics construction converts configured histogram quantities and
-  Gauss-Hermite velocity systematics. Potential parameters instead keep their
-  own declared unit all the way through `AbstractParameterGenerator` and
-  `Potential` construction -- `ModelIterator.from_configuration()` does not
-  pre-convert them into a shared internal-unit copy; `galax`'s own
-  potential classes already convert generically at evaluation time, so
-  nothing needs them pre-normalized (see `tnt.potential`'s module
-  docstring). `ModelIterator.from_configuration()` also converts
+- Runtime kinematics construction validates configured histogram quantities
+  and Gauss-Hermite velocity systematics and keeps their declared units.
+  Computations that combine equivalent quantities convert them on demand into
+  the data set's local reference unit. Potential parameters likewise keep
+  their declared unit through `AbstractParameterGenerator` and `Potential`
+  construction -- `ModelIterator.from_configuration()` does not create a
+  shared internal-unit copy. `galax` converts potential parameters when
+  `Potential.to_galax()` constructs its runtime potential, so they do not need
+  pre-normalization (see `tnt.potential`'s module docstring).
+  `ModelIterator.from_configuration()` also converts
   `cosmological_parameters`, including `H`, into `Quantity` objects for
   runtime consumers such as NFW's `concentration_m200` parameterization.
   System distance remains a declared quantity until a runtime consumer needs
@@ -130,21 +139,20 @@
   runtime object before `run()` can publish the configuration. Malformed
   runtime-owned fields such as `spatial_binnings.*.min_x` therefore fail before
   any run bundle exists.
-- Prep-time validation and construction-time conversion don't cover the same
-  fields consistently, and this isn't one shared policy: `spatial_binnings`
-  has no prep-time check at all (construction owns it exclusively);
-  kinematics histogram and systematic-uncertainty fields are checked at both
-  prep time and construction time, independently. Potential parameters now
-  follow the same pattern as `spatial_binnings`: checked at prep time
-  (`validate_configuration_quantities`) and converted -- or, for potential
-  parameters specifically, just kept in their declared unit -- at
-  construction time (`AbstractParameterGenerator`/`Potential.resolve`/
-  `Potential.build`), not eagerly at prep time.
+- Validation ownership depends on the field rather than one blanket unit
+  policy. `spatial_binnings` has no prep-time quantity check because runtime
+  construction owns its complete entry schema. Kinematics histogram and
+  systematic-uncertainty fields are checked independently at preparation and
+  construction time. Potential-parameter dimensions are checked during
+  preparation by `validate_configuration_quantities`; parameter generation and
+  potential construction then preserve the declared unit. No one of these
+  construction paths normalizes values into `units.internal`.
 - MGE contents and quantities inside observational files are deliberately
   deferred to the object-construction/data-loading phase. Configuration
   preparation does not open those files. `tnt.kinematics.build_kinematics`
   constructs named `GaussHermite`, `BayesLOSVD`, and `ProperMotions` objects;
-  it converts unitful observations into the internal unit system and retains
+  it validates each column's/metadata's declared unit for the right dimension
+  (against a fixed reference, not any unit system) and keeps it, retaining
   JAX arrays in immutable Equinox modules. Population observations are loaded
   separately by `tnt.populations.build_populations()`.
 - `tnt.mge.build_mges()` is the explicit runtime boundary that loads the
@@ -288,15 +296,17 @@
 - `tnt.populations.build_populations()` loads each configured population ECSV
   into an immutable JAX/Equinox `Populations` object. It resolves a strictly
   typed `ProjectedBinning` but no MGE. Files require a `bin_id` column and one
-  or more `property`/`dproperty` column pairs. Paired units must be equivalent;
-  declared quantities are converted to the internal unit system, unitless
-  columns remain dimensionless, and uncertainties must be positive. The
-  shared observational bin-ID rule below applies.
+  or more `property`/`dproperty` column pairs. Paired units must be
+  dimensionally equivalent (any dimension); the uncertainty is converted into
+  the value column's declared unit and that unit is kept, unitless columns
+  remain dimensionless, and uncertainties must be positive. The shared
+  observational bin-ID rule below applies.
 - `tnt.spatial_binnings.build_spatial_binnings()` is the explicit runtime
   boundary that loads the resolved `spatial_binnings` registry into named
   `ProjectedBinning` objects. It validates the complete entry before file
-  access, validates the loaded non-empty bin array, converts coordinates to
-  the internal angle unit, and precomputes pixel quadrature.
+  access, validates the loaded non-empty bin array, validates that each
+  coordinate's declared unit is an angle and keeps it (the grid geometry is
+  done on demand in `min_x`'s unit), and precomputes pixel quadrature.
 - `AbstractMGE.get_projected_mass()` integrates projected MGE totals into the
   positive bin IDs of a `ProjectedBinning`; bin ID 0 is excluded. The MGE and
   binning coordinate units must be dimensionally consistent.
@@ -404,42 +414,49 @@
   and $M_{200c}$ (mass enclosed within the radius where mean density is
   200x the critical density) into native `(m, r_s)` via
   `rho_crit = 3*H**2 / (8*pi*G)`, `r200 = (3*M200 / (4*pi*200*rho_crit))**(1/3)`,
-  `r_s = r200 / c`, `m = M200 / (ln(1+c) - c/(1+c))`. Converters receive the
-  resolved configuration's `cosmological_parameters` as a third argument
-  (`tnt.potential.registry.ParameterizationConverter`'s signature) so
-  parameterizations like this one that need `H` can use it.
+  `r_s = r200 / c`, `m = M200 / (ln(1+c) - c/(1+c))`. A registered
+  `ForwardConverter` receives the component's raw parameters and the resolved
+  configuration's `cosmological_parameters`; an `InverseConverter` additionally
+  receives the raw parameters' declared units so reported values can be
+  restored to the configured representation. Parameterizations like this one
+  can therefore use `H` without depending on `units.internal`.
   `cosmological_parameters` is
   threaded from `Configuration` through `ModelIterator` (a stored field, set
-  in `from_configuration`) into `build_potential`, mirroring how
-  `unit_system` is already threaded. Since configuration preparation now
+  in `from_configuration`) into `build_potential`. The internal unit system
+  follows a separate path and is retained for `Potential.to_galax()`. Since
+  configuration preparation
   preserves declared quantities as `{value, unit}` rather than stripping
   them (see the units-handling entries above), `ModelIterator.from_configuration`
   converts `cosmological_parameters` into `Quantity`s once via
   `tnt.units.resolve_cosmological_parameters` -- in `tnt.units`, not
   `tnt.potential`, since it's generic declared-quantity conversion with no
-  potential-specific knowledge, matching `normalize_unitful_value`'s existing
-  home rather than the opposite direction (`tnt.units` importing
-  `raw_parameter_dimensions` from
-  `tnt.potential`, which *does* need `tnt.potential`'s own domain
-  knowledge -- galax `ParameterField` metadata, the parameterization
-  registry -- and couldn't move the other way).
+  potential-specific knowledge, matching the other declared-quantity helpers'
+  home in `tnt.units` (`declared_quantity`, `validate_dimension`). `tnt.units`
+  still needs `raw_parameter_dimensions` from `tnt.potential` for config
+  validation, but imports it lazily inside the one function that uses it:
+  `tnt.mge`/`tnt.kinematics`/`tnt.spatial_binnings` now import `tnt.units` for
+  `validate_dimension`/`declared_quantity`, and `tnt.potential` imports those,
+  so a module-level import would close the cycle.
   `_nfw_concentration_m200`/its inverse do their entire calculation in
   `Quantity` arithmetic rather than eagerly stripping every input to a bare
   float in one specific unit -- `unxt` composes/converts units automatically
   through the whole chain (verified: mixing `H` in `km / (s Mpc)` with
   `_newtonian_gravitational_constant()` in `m3 / (kg s2)` and `M_200` in `Msun`
-  still gives the correct `r_s`/`m`
-  once converted to `unit_system`'s units at the very end), so `H` works in
-  whatever unit it's declared in, not just the internal unit system's.
+  still gives the correct `r_s`/`m`), so `H` works in whatever unit it is
+  declared in. The forward conversion leaves the native quantities in the
+  units produced by that arithmetic; `Potential.to_galax()` later supplies
+  the shared unit system to `galax`. The inverse returns dimensioned raw
+  parameters in their configured units.
   Bare-number stripping only remains where a library function isn't
   `Quantity`-aware (`_nfw_g`'s `jnp.log`) or where `_solve_nfw_concentration`'s
   bisection needs a plain number to compare against. Hand-maintained
-  dimension tables now cover only non-native parameterizations
-  (`tnt.potential.registry.PARAMETERIZATION_RAW_DIMENSIONS`) and each TNT
-  MGE composite type's own `_raw_dimensions` class attribute (read via
-  `register_component`), not native-galax types. A parameterization is deliberately scoped to one
-  component's own raw parameters (plus `unit_system`/`cosmological_parameters`)
-  -- it can't depend on another component's resolved state. NFW's
+  dimension tables cover registered non-native parameterizations in
+  `tnt.potential.registry.PARAMETERIZATION_RAW_DIMENSIONS`; each registered TNT
+  composite type declares its own `_raw_dimensions`, while curated native
+  `galax` types use `_SUPPORTED_GALAX_TYPES`. A parameterization is deliberately
+  scoped to one component's own raw parameters and, where needed,
+  `cosmological_parameters` -- it cannot depend on another component's
+  resolved state. NFW's
   `(c, f) -> (m, r_s)` "concentration + mass fraction" parameterization
   (`f = M_200 / M*_TOT`, `M*_TOT` derived from the stellar MGE component)
   was removed for exactly this reason: `Potential.from_settings` resolves
