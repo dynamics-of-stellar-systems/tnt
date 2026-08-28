@@ -970,6 +970,69 @@ def test_mass_mge_potential_rejects_ml_parameter(tmp_path: Path) -> None:
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
+def _axisymmetric_stars(user_data: dict) -> dict:
+    """Retarget the default `stars` component at an axisymmetric MGE type."""
+    stars = user_data["potential"]["stars"]
+    stars["type"] = "AxisymmetricLightMGEPotential"
+    return stars
+
+
+def test_axisymmetric_mge_potential_rejects_triaxial_viewing_angles(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    _axisymmetric_stars(user_data)  # keeps the default theta/phi/psi/ml
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"parameters has invalid field\(s\) for "
+            r"AxisymmetricLightMGEPotential: phi, psi, theta"
+        ),
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_axisymmetric_mge_potential_requires_inclination_parameter(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    parameters = _axisymmetric_stars(user_data)["parameters"]
+    for angle in ("theta", "phi", "psi"):
+        del parameters[angle]
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError, match=r"parameters is missing required field\(s\): inclination"
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_axisymmetric_mge_potential_resolves_with_inclination(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    parameters = _axisymmetric_stars(user_data)["parameters"]
+    for angle in ("theta", "phi", "psi"):
+        del parameters[angle]
+    parameters["inclination"] = {"unit": "deg", "value": 90.0}
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    stars = config.data["potential"]["stars"]
+    assert stars["type"] == "AxisymmetricLightMGEPotential"
+    assert stars["parameters"]["inclination"]["value"] == 90.0
+
+
 def test_read_rejects_invalid_potential_rescaling_range(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"

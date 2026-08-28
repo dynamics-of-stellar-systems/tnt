@@ -334,12 +334,18 @@
   and emits configured sampling warnings.
 - `potential.<name>.type` names one of a curated set of `galax.potential`
   classes (`tnt.potential._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
-  `PlummerPotential` -- 25 classes total), or one of two TNT-specific MGE
-  composite types, `TriaxialLightMGEPotential`/`TriaxialMassMGEPotential`, provided
-  directly by TNT since `galax` has no native class for a
-  sum-of-triaxial-Gaussians potential. A light-MGE potential requires an
-  `ml` parameter; a mass-MGE potential requires `mge_mass_scale` instead
-  and validation rejects `ml` on it, since its MGE already contains mass.
+  `PlummerPotential` -- 25 classes total), or one of four TNT-specific MGE
+  composite types -- triaxial (`TriaxialLightMGEPotential`/
+  `TriaxialMassMGEPotential`, `tnt/potential/triaxial_mge.py`) or
+  axisymmetric (`AxisymmetricLightMGEPotential`/`AxisymmetricMassMGEPotential`,
+  `tnt/potential/axisym_mge.py`) -- provided directly by TNT since `galax`
+  has no native class for the MGE-specific deprojection/composition wiring.
+  A light type requires an `ml` parameter; a mass type requires
+  `mge_mass_scale` instead (validation rejects `ml` on it, since its MGE
+  already contains mass). Triaxial types also require `theta`/`phi`/`psi`;
+  axisymmetric types require a single `inclination`. Each type's exact
+  parameter schema comes straight from its own registered `_raw_dimensions`
+  (see `register_component`), not a second hand-written list.
   Deliberately curated rather than "any `AbstractPotential` subclass":
   `galax` also exports abstract/base classes (which passed the old
   `issubclass` check and only failed later, confusingly, at `to_galax()`),
@@ -428,12 +434,10 @@
   Bare-number stripping only remains where a library function isn't
   `Quantity`-aware (`_nfw_g`'s `jnp.log`) or where `_solve_nfw_concentration`'s
   bisection needs a plain number to compare against. Hand-maintained
-  dimension tables now
-  cover only non-native parameterizations and the two MGE composite types'
-  own parameters
-  (`tnt.potential.registry.PARAMETERIZATION_RAW_DIMENSIONS` and
-  `tnt.potential.registry._MGE_RAW_DIMENSIONS`),
-  not native-galax types. A parameterization is deliberately scoped to one
+  dimension tables now cover only non-native parameterizations
+  (`tnt.potential.registry.PARAMETERIZATION_RAW_DIMENSIONS`) and each TNT
+  MGE composite type's own `_raw_dimensions` class attribute (read via
+  `register_component`), not native-galax types. A parameterization is deliberately scoped to one
   component's own raw parameters (plus `unit_system`/`cosmological_parameters`)
   -- it can't depend on another component's resolved state. NFW's
   `(c, f) -> (m, r_s)` "concentration + mass fraction" parameterization
