@@ -1,11 +1,21 @@
-"""Validate resolved TNT configuration data without constructing objects."""
+"""Validate resolved TNT configuration data without constructing objects.
+
+"Without constructing objects" is about instantiation, not imports: this
+module (and what it imports, `tnt.potential.registry` included) may freely
+import `galax`/`jax`/`equinox` to read a component's own declared metadata
+(its `_type`/`_raw_dimensions`, `tnt.potential.registry._COMPONENT_REGISTRY`)
+-- reading a class's own attributes doesn't construct an instance of it.
+What this module must not do is build a real scientific object (a
+`galax.potential.AbstractPotential`, an `MGE`, ...) as a side effect of
+validating a configuration.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
-from tnt.potential.registry import MGE_POTENTIAL_TYPES, raw_parameter_dimensions
+from tnt.potential.registry import _COMPONENT_REGISTRY, raw_parameter_dimensions
 from tnt.units import declared_quantity_value, validate_configuration_quantities
 from tnt.validation import (
     _integer,
@@ -277,10 +287,12 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
             component_path,
         )
         _require_keys(component, {"include", "type"}, component_path)
-        # `type` names either a TNT MGE composite (checked against
-        # MGE_POTENTIAL_TYPES below) or a galax.potential class name, which
-        # this module deliberately doesn't validate -- resolving it requires
-        # constructing/importing galax, deferred to tnt.potential at runtime.
+        # `type` names either a registered TNT component (checked against
+        # _COMPONENT_REGISTRY below) or a galax.potential class name; this
+        # module doesn't check the latter against
+        # tnt.potential.registry._SUPPORTED_GALAX_TYPES yet -- extending
+        # exact-name/completeness validation to native galax types the same
+        # way is tracked separately (issue #44), not a galax-import concern.
         component_type = _string(component["type"], f"{component_path}.type")
         if "parameterization" in component:
             _string(component["parameterization"], f"{component_path}.parameterization")
@@ -295,7 +307,7 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         elif include:
             raise ValueError(f"{component_path} is missing required field: parameters.")
 
-        is_mge_potential = component_type in MGE_POTENTIAL_TYPES
+        is_mge_potential = component_type in _COMPONENT_REGISTRY
         if is_mge_potential:
             if include:
                 _require_keys(component, {"mge"}, component_path)
@@ -311,12 +323,12 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
                 f"{component_path}.mge is only valid for MGE potential types."
             )
 
-        # Each TNT MGE composite type's exact parameter schema (ml required
-        # for light and forbidden for mass, mge_mass_scale vice versa,
-        # theta/phi/psi required for both) is derived directly from
-        # tnt.potential.registry's own raw-dimensions dict rather than
-        # hand-written here -- see that module for why its keys already are
-        # this schema. Extra/forbidden parameters are rejected regardless of
+        # Each registered TNT component type's exact parameter schema (ml
+        # required for light and forbidden for mass, mge_mass_scale vice
+        # versa, theta/phi/psi required for both) comes directly from that
+        # type's own registered `_raw_dimensions` (see
+        # tnt.potential.registry.register_component) rather than
+        # hand-written here. Extra/forbidden parameters are rejected regardless of
         # `include` (a disabled component still can't declare a nonsensical
         # one); missing/required parameters are only enforced when `include`,
         # matching the same reasoning as the `parameters` presence check above.

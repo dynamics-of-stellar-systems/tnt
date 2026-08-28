@@ -36,8 +36,8 @@ from tnt.potential import (
     raw_parameter_dimensions,
     raw_potential_parameters,
 )
-from tnt.potential.components import _discover_subclasses
-from tnt.potential.registry import MGE_POTENTIAL_TYPES
+from tnt.potential import registry as _registry_module
+from tnt.potential.registry import _COMPONENT_REGISTRY, register_component
 
 
 def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
@@ -712,63 +712,77 @@ _VIEWING_ANGLES = {
 }
 
 
-def test_discover_subclasses_recurses_below_direct_subclasses() -> None:
-    # A throwaway hierarchy unrelated to AbstractPotentialComponent -- class
-    # objects aren't reliably garbage-collected by the time later tests run
-    # (confirmed: eqx.Module subclasses of the real base leaked into
-    # test_mge_potential_types_agrees_with_runtime_discovery when tried),
-    # so this only ever walks classes nothing else can observe.
-    class _Base:
-        pass
+def test_register_component_reads_type_and_raw_dimensions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An isolated fake registry, swapped in for the module-level real one --
+    # _COMPONENT_REGISTRY is shared, mutable, global state, so a test that
+    # registers into it directly must not leak into the real registry other
+    # tests (and application code) read from.
+    fake_registry: dict[str, type] = {}
+    monkeypatch.setattr(_registry_module, "_COMPONENT_REGISTRY", fake_registry)
 
-    class _Intermediate(_Base):
-        pass
+    class _Test:
+        _type: ClassVar[str] = "_test_potential_type"
+        _raw_dimensions: ClassVar[dict[str, str]] = {"m": "mass"}
 
-    class _Nested(_Intermediate):
-        _type: ClassVar[str] = "_test_nested_potential_type"
+    result = register_component(_Test)
 
-    registry = _discover_subclasses(_Base)
-    assert registry["_test_nested_potential_type"] is _Nested
+    assert result is _Test
+    assert fake_registry == {"_test_potential_type": _Test}
 
 
-def test_discover_subclasses_rejects_duplicate_type() -> None:
-    class _Base:
-        pass
+def test_register_component_rejects_duplicate_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_registry_module, "_COMPONENT_REGISTRY", {})
 
-    class _First(_Base):
+    class _First:
         _type: ClassVar[str] = "_test_duplicate_potential_type"
+        _raw_dimensions: ClassVar[dict[str, str]] = {}
 
-    class _Second(_Base):
+    class _Second:
         _type: ClassVar[str] = "_test_duplicate_potential_type"
+        _raw_dimensions: ClassVar[dict[str, str]] = {}
 
+    register_component(_First)
     with pytest.raises(ValueError, match="Duplicate potential type"):
-        _discover_subclasses(_Base)
+        register_component(_Second)
 
 
-def test_discover_subclasses_rejects_non_string_type() -> None:
-    class _Base:
-        pass
-
-    class _BadType(_Base):
-        _type: ClassVar[int] = 1
-
-    with pytest.raises(TypeError, match="_type must be a non-empty string"):
-        _discover_subclasses(_Base)
-
-
-def test_mge_potential_types_agrees_with_runtime_discovery() -> None:
-    """`registry.MGE_POTENTIAL_TYPES` and `resolve()`'s own discovery must agree.
-
-    `configuration.validation` and `AbstractPotentialComponent.resolve` read
-    two independently-computed sources -- this is what actually enforces
-    that they stay in sync, rather than hoping they do.
+def test_inherited_type_does_not_register_or_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A subclass that inherits `_type` without its own `@register_component`
+    call must not participate in dispatch under that name -- and, since
+    registration is now explicit rather than reflection-discovered, there's
+    no ambiguous "is this a real second registration" question for it to get
+    wrong (see PR #45's audit, the inherited-`_type` false-duplicate finding
+    this replaces).
     """
-    discovered = {
-        kind
-        for kind, cls in _discover_subclasses(AbstractPotentialComponent).items()
-        if cls is not GalaxPotentialComponent
+    monkeypatch.setattr(_registry_module, "_COMPONENT_REGISTRY", {})
+
+    class _Parent:
+        _type: ClassVar[str] = "_test_inherited_potential_type"
+        _raw_dimensions: ClassVar[dict[str, str]] = {}
+
+    class _Child(_Parent):
+        pass  # inherits _type, never itself passed to register_component
+
+    register_component(_Parent)
+
+    assert _registry_module._COMPONENT_REGISTRY == {
+        "_test_inherited_potential_type": _Parent
     }
-    assert discovered == set(MGE_POTENTIAL_TYPES)
+
+
+def test_component_registry_contains_the_two_mge_types() -> None:
+    assert set(_COMPONENT_REGISTRY) == {
+        "TriaxialLightMGEPotential",
+        "TriaxialMassMGEPotential",
+    }
+    assert _COMPONENT_REGISTRY["TriaxialLightMGEPotential"] is TriaxialLightMGEPotential
+    assert _COMPONENT_REGISTRY["TriaxialMassMGEPotential"] is TriaxialMassMGEPotential
 
 
 def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:

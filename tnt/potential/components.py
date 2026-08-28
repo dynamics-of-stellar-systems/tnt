@@ -5,15 +5,13 @@ subclasses -- `GalaxPotentialComponent` (also here, built directly from a
 curated `galax.potential` class) and the MGE-backed composite types
 (`tnt.potential.triaxial_mge`, with more planned as separate modules
 alongside it). `resolve` dispatches to whichever subclass matches a
-config entry's `type` by recursively walking every subclass of
-`AbstractPotentialComponent` (`_discover_subclasses`) -- a new subclass at
-any depth with a `_type` participates automatically, the moment it's
-imported, without needing to be registered here; a duplicate `_type` across
-two subclasses raises rather than silently picking one (mirroring
-`tnt.kinematics`'s equivalent registry). `tnt/potential/__init__.py`'s own
+config entry's `type` via `tnt.potential.registry._COMPONENT_REGISTRY` -- a
+concrete subclass participates by applying
+`tnt.potential.registry.register_component` directly to its own definition,
+the moment its module is imported; `tnt/potential/__init__.py`'s own
 explicit imports of every concrete implementation module (`triaxial_mge`,
-and others alongside it) are what make a subclass visible to this walk in
-the first place -- a module that's never imported never participates.
+and others alongside it) are what make that happen in the first place -- a
+module that's never imported never participates.
 `ResolvedPotentialComponent` is a component's static structure
 (`type`/`parameterization`/`mge`), resolved once from its config entry and
 reused across every proposed point in parameter space; see
@@ -32,6 +30,7 @@ from unxt import AbstractUnitSystem, Quantity
 from tnt.mge import LightMGE, MassMGE
 from tnt.potential.nfw import _nfw_concentration_m200, _nfw_concentration_m200_inverse
 from tnt.potential.registry import (
+    _COMPONENT_REGISTRY,
     _SUPPORTED_GALAX_TYPES,
     Parameterization,
     ParameterizationConverter,
@@ -78,9 +77,13 @@ class ResolvedPotentialComponent(NamedTuple):
         parameter surfaces at construction (a native `galax` constructor
         error, or `AbstractMGE.deproject_triaxial` for the two MGE composite
         types, via `AbstractPotentialComponent._build`) or a registered
-        `parameterization` converter, not here -- parameter-schema
-        validation (exact expected names, positivity, ...) is a separate,
-        not-yet-implemented concern.
+        `parameterization` converter, not here. Exact-name parameter-schema
+        validation for TNT's own registered component types already happens
+        earlier, at configuration-prep time
+        (`tnt.configuration.validation._validate_potential`); native `galax`
+        types aren't yet covered the same way (tracked separately). Value/
+        domain validation (positivity, physical bounds, ...) isn't
+        implemented anywhere yet (tracked separately).
 
         Args:
             parameter_values: This component's current values, e.g. one
@@ -102,40 +105,6 @@ class ResolvedPotentialComponent(NamedTuple):
         return self.component_cls._build(
             canonical, unit_system, cosmological_parameters, self.extra_fields
         )
-
-
-def _discover_subclasses(
-    cls: type[AbstractPotentialComponent],
-) -> dict[str, type[AbstractPotentialComponent]]:
-    """Recursively find every concrete subclass declaring a non-empty `_type`.
-
-    Mirrors `tnt.kinematics`'s `_kinematics_class_registry()`, with one
-    difference: `AbstractPotentialComponent` has a fallback concrete subclass
-    (`GalaxPotentialComponent`) that deliberately has no `_type` at all, so a
-    missing `_type` is skipped here rather than rejected.
-
-    Raises:
-        TypeError: If a subclass declares a `_type` that isn't a non-empty
-            string.
-        ValueError: If two subclasses declare the same `_type`.
-    """
-    registry: dict[str, type[AbstractPotentialComponent]] = {}
-    stack = list(cls.__subclasses__())
-    while stack:
-        subclass = stack.pop()
-        stack.extend(subclass.__subclasses__())
-        kind = getattr(subclass, "_type", None)
-        if kind is None:
-            continue
-        if not isinstance(kind, str) or not kind:
-            raise TypeError(f"{subclass.__name__}._type must be a non-empty string.")
-        if kind in registry:
-            raise ValueError(
-                f"Duplicate potential type {kind!r} on "
-                f"{registry[kind].__name__} and {subclass.__name__}."
-            )
-        registry[kind] = subclass
-    return registry
 
 
 class AbstractPotentialComponent(eqx.Module):
@@ -196,19 +165,16 @@ class AbstractPotentialComponent(eqx.Module):
         """
         kind = _required_string(settings, "type", path)
         # Every non-native concrete subclass (e.g. the MGE composite types
-        # in tnt.potential.triaxial_mge) declares its own `_type`;
-        # GalaxPotentialComponent doesn't, and stays the default. Recomputed
-        # fresh on every call, rather than cached at import time, so a newly
-        # imported subclass participates immediately (see this module's own
-        # docstring and `_discover_subclasses`).
-        registered = _discover_subclasses(cls)
-        component_cls = registered.get(kind, GalaxPotentialComponent)
+        # in tnt.potential.triaxial_mge) registers itself via
+        # tnt.potential.registry.register_component; GalaxPotentialComponent
+        # doesn't, and stays the default.
+        component_cls = _COMPONENT_REGISTRY.get(kind, GalaxPotentialComponent)
         unsupported = (
             component_cls is GalaxPotentialComponent
             and kind not in _SUPPORTED_GALAX_TYPES
         )
         if unsupported:
-            allowed = ", ".join(sorted(registered))
+            allowed = ", ".join(sorted(_COMPONENT_REGISTRY))
             raise ValueError(
                 f"Unsupported {path}.type {kind!r}; expected a supported "
                 "galax.potential class name (see "

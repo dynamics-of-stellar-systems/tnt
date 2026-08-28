@@ -31,6 +31,34 @@
   (`components.py`), and whole-potential orchestration (`core.py`). Its
   `__init__.py` defines the intended package-level API; implementation-specific
   names remain in their owning submodules.
+- TNT's own potential-component types (as opposed to curated native `galax`
+  types) register themselves with `tnt.potential.registry.register_component`,
+  applied directly to each concrete `AbstractPotentialComponent` subclass's
+  definition (e.g. `tnt.potential.triaxial_mge`). The decorator reads the
+  class's own `_type`/`_raw_dimensions` class attributes into
+  `registry._COMPONENT_REGISTRY`, a single dict both
+  `AbstractPotentialComponent.resolve` (runtime dispatch) and
+  `tnt.configuration.validation` (config-prep exact-parameter-name schema
+  checks) read from directly -- there is exactly one place a new TNT
+  component's `type`/dimensions/dispatch target is declared, not two
+  independently-maintained structures kept in sync by a test. Replaced an
+  earlier design (`__subclasses__()` reflection walking for dispatch,
+  a hand-maintained dimensions dict for validation) that had that
+  duplication, plus a real bug: reflection couldn't distinguish a class's
+  own `_type` from one merely inherited from a registered parent, so an
+  unrelated subclass of a registered type (e.g. a test fixture) could
+  falsely trigger a "duplicate type" error and break all potential
+  resolution. Explicit registration has no such ambiguity -- a class
+  participates only if it's actually decorated.
+- `tnt.configuration`'s "does not construct scientific objects" boundary
+  (see `tnt.configuration.validation`'s module docstring) is about
+  instantiation, not imports: this package may freely import
+  `galax`/`jax`/`equinox` (and already does, transitively, via
+  `tnt.units` -> `tnt.potential`) to read a class's own declared metadata,
+  e.g. `_COMPONENT_REGISTRY`. Reading a class's attributes isn't
+  constructing an instance of it. What must not happen is building a real
+  scientific object (a `galax.potential.AbstractPotential`, an `MGE`, ...)
+  as a side effect of validating a configuration.
 
 ## Linux development container
 
