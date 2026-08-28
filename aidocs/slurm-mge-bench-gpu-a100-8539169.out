@@ -1,0 +1,120 @@
+   Building tnt @ file:///gpfs/data/fs71474/prashin/tnt
+      Built tnt @ file:///gpfs/data/fs71474/prashin/tnt
+Uninstalled 1 package in 26ms
+warning: Failed to hardlink files; falling back to full copy. This may lead to degraded performance.
+         If the cache and target directories are on different filesystems, hardlinking may not be supported.
+         If this is intentional, set `export UV_LINK_MODE=copy` or use `--link-mode=copy` to suppress this warning.
+Installed 1 package in 11ms
+E0828 14:11:31.666296 2172737 slow_operation_alarm.cc:73] 
+********************************
+[Compiling module input_reduce_fusion.1 for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+E0828 14:21:05.415000 2172548 slow_operation_alarm.cc:140] The operation took 11m33.748785893s
+
+********************************
+[Compiling module input_reduce_fusion.1 for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+W0828 14:24:26.527548 2171840 hlo_rematerialization.cc:3231] Can't reduce memory use below 28.04GiB (30107136870 bytes) by rematerialization; only reduced to 46.79GiB (50240015876 bytes), down from 46.79GiB (50240015876 bytes) originally
+W0828 14:24:36.799743 2171840 bfc_allocator.cc:514] Allocator (GPU_0_bfc) ran out of memory trying to allocate 46.68GiB (rounded to 50120018176)requested by op 
+If the cause is memory fragmentation maybe the environment variable 'TF_GPU_ALLOCATOR=cuda_malloc_async' will improve the situation. 
+Current allocation summary follows.
+Current allocation summary follows.
+W0828 14:24:36.800321 2171840 bfc_allocator.cc:525] *___________________________________________________________________________________________________
+E0828 14:42:17.575593 2172737 slow_operation_alarm.cc:73] 
+********************************
+[Compiling module input_reduce_fusion for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+E0828 14:42:46.341835 2172696 slow_operation_alarm.cc:140] The operation took 2m28.766314059s
+
+********************************
+[Compiling module input_reduce_fusion for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+W0828 14:42:48.815962 2171840 hlo_rematerialization.cc:3231] Can't reduce memory use below 28.04GiB (30107136870 bytes) by rematerialization; only reduced to 233.17GiB (250360077304 bytes), down from 233.17GiB (250360077304 bytes) originally
+W0828 14:42:58.897199 2171840 bfc_allocator.cc:514] Allocator (GPU_0_bfc) ran out of memory trying to allocate 233.02GiB (rounded to 250200079104)requested by op 
+If the cause is memory fragmentation maybe the environment variable 'TF_GPU_ALLOCATOR=cuda_malloc_async' will improve the situation. 
+Current allocation summary follows.
+Current allocation summary follows.
+W0828 14:42:58.898951 2171840 bfc_allocator.cc:525] **__________________________________________________________________________________________________
+jax.devices(): [CudaDevice(id=0), CudaDevice(id=1)]
+jax default backend: gpu
+
+  N        B impl          potential (ms)   gradient (ms)
+---------------------------------------------------------
+# N=5 component fingerprint: 67726b44409b
+  5        1 composite              0.093           0.118
+  5        1 array-fused            0.077           0.096
+  5        1 scan-fused             0.547           1.393
+  5       10 composite              0.105           0.121
+  5       10 array-fused            0.083           0.103
+  5       10 scan-fused             0.544           1.457
+  5      100 composite              0.098           0.121
+  5      100 array-fused            0.085           0.099
+  5      100 scan-fused             0.540           1.693
+  5     1000 composite              0.101           0.136
+  5     1000 array-fused            0.085           0.101
+  5     1000 scan-fused             0.794           1.721
+  5    10000 composite              0.085           0.121
+  5    10000 array-fused            0.092           0.109
+  5    10000 scan-fused             0.583           1.767
+  5   100000 composite              0.215           0.404
+  5   100000 array-fused            0.261           0.263
+  5   100000 scan-fused             0.778           2.342
+  5  1000000 composite              1.652           3.538
+  5  1000000 array-fused            2.059           2.217
+  5  1000000 scan-fused             2.364           7.144
+  5 10000000 composite             16.016          28.968
+  5 10000000 array-fused           11.449          12.080
+  5 10000000 scan-fused            13.077          48.452
+# N=25 component fingerprint: bb17e11dcdbe
+ 25        1 composite              0.104           0.130
+ 25        1 array-fused            0.085           0.099
+ 25        1 scan-fused             0.744           1.729
+ 25       10 composite              0.118           0.145
+ 25       10 array-fused            0.097           0.090
+ 25       10 scan-fused             0.756           1.793
+ 25      100 composite              0.112           0.148
+ 25      100 array-fused            0.103           0.093
+ 25      100 scan-fused             0.840           1.865
+ 25     1000 composite              0.137           0.147
+ 25     1000 array-fused            0.122           0.116
+ 25     1000 scan-fused             0.871           1.910
+ 25    10000 composite              0.168           0.313
+ 25    10000 array-fused            0.164           0.217
+ 25    10000 scan-fused             1.063           2.159
+ 25   100000 composite              0.878           2.151
+ 25   100000 array-fused            1.183           1.453
+ 25   100000 scan-fused             2.144           4.622
+ 25  1000000 composite              8.253          20.321
+ 25  1000000 array-fused           11.572          13.954
+ 25  1000000 scan-fused            10.438          27.212
+ 25 10000000 composite             45.995         119.146
+ 25 10000000 array-fused           70.299          79.423
+ 25 10000000 scan-fused            52.864             OOM
+# N=125 component fingerprint: a4066787d288
+125        1 composite              0.340           0.430
+125        1 array-fused            0.090           0.090
+125        1 scan-fused             0.773           1.680
+125       10 composite              0.164           0.421
+125       10 array-fused            0.088           0.080
+125       10 scan-fused             1.012           1.835
+125      100 composite              0.374           0.476
+125      100 array-fused            0.095           0.085
+125      100 scan-fused             1.061           1.883
+125     1000 composite              0.429           0.526
+125     1000 array-fused            0.094           0.113
+125     1000 scan-fused             1.154           2.150
+125    10000 composite              0.798           1.357
+125    10000 array-fused            0.458           0.598
+125    10000 scan-fused             1.361           3.325
+125   100000 composite              4.145          10.983
+125   100000 array-fused            4.495           5.449
+125   100000 scan-fused             4.952          14.713
+125  1000000 composite             37.821          70.345
+125  1000000 array-fused           48.008          35.625
+125  1000000 scan-fused            26.908          81.445
+125 10000000 composite            227.708         626.150
+125 10000000 array-fused          289.579         363.629
+125 10000000 scan-fused           275.250             OOM
+
+Results written to aidocs/benchmark_mge_fusion_gpu_a100_n3073-012_20260828T120813Z.csv
+Wrote aidocs/benchmark_mge_fusion_gpu_a100_n3073-012_20260828T120813Z.csv

@@ -1,0 +1,128 @@
+W0828 14:11:19.362210 3549013 hlo_rematerialization.cc:3231] Can't reduce memory use below 31.55GiB (33878550169 bytes) by rematerialization; only reduced to 43.06GiB (46240009608 bytes), down from 43.06GiB (46240009608 bytes) originally
+W0828 14:11:30.021728 3549013 bfc_allocator.cc:514] Allocator (GPU_0_bfc) ran out of memory trying to allocate 42.95GiB (rounded to 46120006912)requested by op 
+If the cause is memory fragmentation maybe the environment variable 'TF_GPU_ALLOCATOR=cuda_malloc_async' will improve the situation. 
+Current allocation summary follows.
+Current allocation summary follows.
+W0828 14:11:30.022279 3549013 bfc_allocator.cc:525] *___________________________________________________________________________________________________
+E0828 14:13:30.095190 3549189 slow_operation_alarm.cc:73] 
+********************************
+[Compiling module loop_multiply_fusion for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+E0828 14:15:12.030606 3549157 slow_operation_alarm.cc:140] The operation took 3m41.935476909s
+
+********************************
+[Compiling module loop_multiply_fusion for GPU] Very slow compile? If you want to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+********************************
+W0828 14:15:19.606403 3549013 hlo_rematerialization.cc:3231] Can't reduce memory use below 31.55GiB (33878550169 bytes) by rematerialization; only reduced to 46.79GiB (50240010024 bytes), down from 46.79GiB (50240010024 bytes) originally
+W0828 14:15:29.708692 3549013 bfc_allocator.cc:514] Allocator (GPU_0_bfc) ran out of memory trying to allocate 46.68GiB (rounded to 50120010752)requested by op 
+If the cause is memory fragmentation maybe the environment variable 'TF_GPU_ALLOCATOR=cuda_malloc_async' will improve the situation. 
+Current allocation summary follows.
+Current allocation summary follows.
+W0828 14:15:29.709304 3549013 bfc_allocator.cc:525] **__________________________________________________________________________________________________
+W0828 14:15:37.008798 3549013 hlo_rematerialization.cc:3231] Can't reduce memory use below 31.55GiB (33878550169 bytes) by rematerialization; only reduced to 46.79GiB (50240015876 bytes), down from 46.79GiB (50240015876 bytes) originally
+W0828 14:15:47.382485 3549013 bfc_allocator.cc:514] Allocator (GPU_0_bfc) ran out of memory trying to allocate 46.68GiB (rounded to 50120018176)requested by op 
+If the cause is memory fragmentation maybe the environment variable 'TF_GPU_ALLOCATOR=cuda_malloc_async' will improve the situation. 
+Current allocation summary follows.
+Current allocation summary follows.
+W0828 14:15:47.383154 3549013 bfc_allocator.cc:525] **__________________________________________________________________________________________________
+W0828 14:17:20.252333 3549013 hlo_rematerialization.cc:3231] Can't reduce memory use below 31.55GiB (33878550169 bytes) by rematerialization; only reduced to 52.71GiB (56600013112 bytes), down from 52.82GiB (56720013576 bytes) originally
+W0828 14:17:31.722870 3549013 bfc_allocator.cc:514] Allocator (GPU_0_bfc) ran out of memory trying to allocate 54.31GiB (rounded to 58320035840)requested by op 
+If the cause is memory fragmentation maybe the environment variable 'TF_GPU_ALLOCATOR=cuda_malloc_async' will improve the situation. 
+Current allocation summary follows.
+Current allocation summary follows.
+W0828 14:17:31.723917 3549013 bfc_allocator.cc:525] ***_________________________________________________________________________________________________
+W0828 14:45:01.249205 3549013 hlo_rematerialization.cc:3231] Can't reduce memory use below 31.55GiB (33878550169 bytes) by rematerialization; only reduced to 233.05GiB (250240075700 bytes), down from 233.05GiB (250240075700 bytes) originally
+W0828 14:45:11.354604 3549013 bfc_allocator.cc:514] Allocator (GPU_0_bfc) ran out of memory trying to allocate 232.94GiB (rounded to 250120050944)requested by op 
+If the cause is memory fragmentation maybe the environment variable 'TF_GPU_ALLOCATOR=cuda_malloc_async' will improve the situation. 
+Current allocation summary follows.
+Current allocation summary follows.
+W0828 14:45:11.358739 3549013 bfc_allocator.cc:525] ***_________________________________________________________________________________________________
+W0828 14:51:34.147098 3549013 hlo_rematerialization.cc:3231] Can't reduce memory use below 31.55GiB (33878550169 bytes) by rematerialization; only reduced to 233.17GiB (250360077304 bytes), down from 233.17GiB (250360077304 bytes) originally
+W0828 14:51:44.244058 3549013 bfc_allocator.cc:514] Allocator (GPU_0_bfc) ran out of memory trying to allocate 233.02GiB (rounded to 250200079104)requested by op 
+If the cause is memory fragmentation maybe the environment variable 'TF_GPU_ALLOCATOR=cuda_malloc_async' will improve the situation. 
+Current allocation summary follows.
+Current allocation summary follows.
+W0828 14:51:44.245250 3549013 bfc_allocator.cc:525] ***_________________________________________________________________________________________________
+jax.devices(): [CudaDevice(id=0), CudaDevice(id=1)]
+jax default backend: gpu
+
+  N        B impl          potential (ms)   gradient (ms)
+---------------------------------------------------------
+# N=5 component fingerprint: 67726b44409b
+  5        1 composite              0.081           0.117
+  5        1 array-fused            0.071           0.094
+  5        1 scan-fused             0.568           0.739
+  5       10 composite              0.094           0.116
+  5       10 array-fused            0.089           0.091
+  5       10 scan-fused             0.565           0.731
+  5      100 composite              0.089           0.113
+  5      100 array-fused            0.089           0.087
+  5      100 scan-fused             0.553           0.967
+  5     1000 composite              0.106           0.111
+  5     1000 array-fused            0.080           0.088
+  5     1000 scan-fused             0.563           0.966
+  5    10000 composite              0.098           0.112
+  5    10000 array-fused            0.096           0.111
+  5    10000 scan-fused             0.563           0.729
+  5   100000 composite              0.148           0.299
+  5   100000 array-fused            0.141           0.154
+  5   100000 scan-fused             0.583           1.204
+  5  1000000 composite              1.159           2.806
+  5  1000000 array-fused            1.077           1.263
+  5  1000000 scan-fused             2.200           9.818
+  5 10000000 composite             10.810          63.463
+  5 10000000 array-fused            9.927          37.022
+  5 10000000 scan-fused            17.725          87.964
+# N=25 component fingerprint: bb17e11dcdbe
+ 25        1 composite              0.104           0.125
+ 25        1 array-fused            0.086           0.089
+ 25        1 scan-fused             0.749           0.770
+ 25       10 composite              0.096           0.111
+ 25       10 array-fused            0.089           0.094
+ 25       10 scan-fused             0.754           0.760
+ 25      100 composite              0.107           0.112
+ 25      100 array-fused            0.094           0.088
+ 25      100 scan-fused             0.763           0.957
+ 25     1000 composite              0.106           0.140
+ 25     1000 array-fused            0.075           0.101
+ 25     1000 scan-fused             0.750           0.968
+ 25    10000 composite              0.145           0.192
+ 25    10000 array-fused            0.108           0.128
+ 25    10000 scan-fused             0.939           1.211
+ 25   100000 composite              0.567           1.582
+ 25   100000 array-fused            0.731           0.851
+ 25   100000 scan-fused             0.955           4.313
+ 25  1000000 composite              5.307          15.314
+ 25  1000000 array-fused            6.920           8.178
+ 25  1000000 scan-fused             9.578          36.959
+ 25 10000000 composite             52.809             OOM
+ 25 10000000 array-fused           75.228             OOM
+ 25 10000000 scan-fused            92.104             OOM
+# N=125 component fingerprint: a4066787d288
+125        1 composite              0.199           0.319
+125        1 array-fused            0.086           0.076
+125        1 scan-fused             0.770           0.744
+125       10 composite              0.140           0.297
+125       10 array-fused            0.085           0.098
+125       10 scan-fused             0.766           0.756
+125      100 composite              0.194           0.339
+125      100 array-fused            0.103           0.105
+125      100 scan-fused             0.984           0.888
+125     1000 composite              0.284           0.417
+125     1000 array-fused            0.119           0.118
+125     1000 scan-fused             0.788           0.983
+125    10000 composite              0.332           0.874
+125    10000 array-fused            0.301           0.327
+125    10000 scan-fused             1.010           2.397
+125   100000 composite              2.782           9.185
+125   100000 array-fused            2.598           2.638
+125   100000 scan-fused             2.833          15.040
+125  1000000 composite             25.748          78.188
+125  1000000 array-fused           26.281          35.405
+125  1000000 scan-fused            27.186         139.274
+125 10000000 composite            274.211             OOM
+125 10000000 array-fused          278.825             OOM
+125 10000000 scan-fused           273.304             OOM
+
+Results written to aidocs/benchmark_mge_fusion_gpu_a40_n3066-011_20260828T120819Z.csv
+Wrote aidocs/benchmark_mge_fusion_gpu_a40_n3066-011_20260828T120819Z.csv
