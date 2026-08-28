@@ -283,7 +283,15 @@ import numpyro.distributions as dist
 
 def mass_fraction(mges, candidate):
     stars = mges["stars"]
-    total_light = jnp.sum(2 * jnp.pi * stars.I * stars.sigma**2 * stars.q)
+    # `candidate`'s values are bare (unit-stripped) numbers, so `total_light`
+    # is stripped to match -- here to Lsun, paired with `ml`'s Msun / Lsun.
+    # Stripping the per-component term before summing (rather than summing
+    # the `Quantity` and stripping after) also sidesteps a `jax.numpy.sum`
+    # incompatibility with `unxt.Quantity`'s multi-alias physical types
+    # (Lsun's `PhysicalType` has two names, `{'power', 'radiant flux'}`).
+    total_light = jnp.sum(
+        (2 * jnp.pi * stars.I * stars.sigma**2 * stars.q).ustrip("Lsun")
+    )
     f = candidate["dh"]["M_200"] / (total_light * candidate["stars"]["ml"])
     # A smooth distribution here (Normal, TruncatedNormal, ...), not a hard
     # Uniform: MCMC/NUTS needs real gradient signal to respect a factor.
