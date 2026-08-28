@@ -9,14 +9,14 @@ from typing import ClassVar, Self
 import astropy.units as au
 import equinox as eqx
 import jax.numpy as jnp
-import unxt as u
 from astropy.table import QTable
 from jax.ops import segment_sum
 from jax.scipy.special import erf
-from unxt import AbstractUnitSystem, Quantity
+from unxt import Quantity
 
 from tnt import quantity_conversions
 from tnt.spatial_binnings import ProjectedBinning, SphericalGrid
+from tnt.units import reference_unit, validate_dimension
 
 
 class MGEDeprojectionError(ValueError):
@@ -27,6 +27,21 @@ class MGEDeprojectionError(ValueError):
     `aidocs/KNOWLEDGE.md` for the durable limitation and the trigger for
     revisiting it.
     """
+
+
+def _per_steradian_unit(intensity_unit: au.UnitBase) -> au.UnitBase:
+    """`intensity_unit` (some ``X`` per solid angle) re-expressed as ``X`` per rad**2.
+
+    Every angular base is swapped for `rad` at its existing power, so e.g.
+    ``Lsun / arcsec2`` becomes ``Lsun / rad2``. `uconvert`ing an intensity to
+    this makes `angular_to_physical`'s projection a plain division by
+    ``distance**2`` regardless of the unit it was declared in.
+    """
+    result = au.dimensionless_unscaled
+    for base, power in zip(intensity_unit.bases, intensity_unit.powers, strict=True):
+        replacement = au.rad if base.physical_type == "angle" else base
+        result = result * replacement**power
+    return result
 
 
 def _check_axial_ratios(p: jnp.ndarray, q: jnp.ndarray) -> None:
@@ -53,14 +68,14 @@ class AbstractMGE(eqx.Module):
     """Shared structure and behaviour for MGE models.
 
     Each Gaussian component is described by its peak intensity ``I``, width ``sigma``,
-    axial ratio ``q``, and position-angle twist ``PA_twist``, stored as arrays converted
-    to a unit system's units. Subclasses fix which physical dimension ``I`` represents
-    (e.g. light or mass) by setting `_intensity_attr` to the corresponding
-    `unxt.AbstractUnitSystem` attribute name. Not meant to be instantiated directly --
-    use `LightMGE` or `MassMGE`.
+    axial ratio ``q``, and position-angle twist ``PA_twist``, each stored in its own
+    declared unit. Subclasses fix which physical dimension ``I`` represents by setting
+    `_intensity_dimension` to the corresponding `tnt.units._REFERENCE_UNITS` key
+    (`light_surface_brightness` or `mass_surface_density`). Not meant to be
+    instantiated directly -- use `LightMGE` or `MassMGE`.
     """
 
-    _intensity_attr: ClassVar[str]
+    _intensity_dimension: ClassVar[str]
 
     I: Quantity
     sigma: Quantity
@@ -68,41 +83,32 @@ class AbstractMGE(eqx.Module):
     PA_twist: Quantity
 
     @classmethod
-    def _surface_intensity_unit(cls, unit_system: AbstractUnitSystem) -> au.UnitBase:
-        """Return this MGE kind's surface-intensity unit."""
-        return (
-            unit_system[u.dimension(cls._intensity_attr)]
-            / unit_system[u.dimension("angle")] ** 2
-        )
+    def from_qtable(cls, table: QTable) -> Self:
+        """Build an MGE from a table, validating its columns and keeping their units.
 
-    @classmethod
-    def from_qtable(cls, table: QTable, unit_system: AbstractUnitSystem) -> Self:
-        """Build an MGE from a table, validating and converting its columns.
+        Each column's declared unit is checked for dimensional correctness
+        against a fixed reference and then kept as-is -- no unit-system
+        conversion happens here (see `tnt.units`' module docstring).
 
         Args:
             table: A table with columns ``I``, ``sigma``, ``q``, and ``PA_twist``, each
                 carrying an astropy unit.
-            unit_system: The unit system to convert the columns into.
 
         Returns:
-            An MGE with columns converted to `unit_system`'s units.
+            An MGE with each column in its own declared unit.
 
         Raises:
-            astropy.units.UnitConversionError: If a column's unit is not
-                dimensionally consistent with the expected physical type.
-            ValueError: If any ``q`` value is outside ``(0, 1]``.
+            ValueError: If the ``I`` column's unit isn't this MGE kind's
+                surface-intensity dimension, a ``sigma``/``PA_twist`` unit
+                isn't an angle, or any ``q`` value is outside ``(0, 1]``.
         """
-        intensity_unit = cls._surface_intensity_unit(unit_system)
-        target_units = {
-            "I": intensity_unit,
-            "sigma": unit_system.angle,
-            "q": "",
-            "PA_twist": unit_system.angle,
-        }
+        validate_dimension(table["I"].unit, cls._intensity_dimension, "MGE I column")
+        validate_dimension(table["sigma"].unit, "angle", "MGE sigma column")
+        validate_dimension(table["PA_twist"].unit, "angle", "MGE PA_twist column")
 
         columns = {
-            name: Quantity.from_(table[name].to(unit))
-            for name, unit in target_units.items()
+            name: Quantity.from_(table[name])
+            for name in ("I", "sigma", "q", "PA_twist")
         }
 
         q = columns["q"].ustrip("")
@@ -112,18 +118,17 @@ class AbstractMGE(eqx.Module):
         return cls(**columns)
 
     @classmethod
-    def read(cls, path: str | Path, unit_system: AbstractUnitSystem) -> Self:
-        """Read an MGE from an ECSV file, converting into a unit system's units.
+    def read(cls, path: str | Path) -> Self:
+        """Read an MGE from an ECSV file, keeping each column's declared unit.
 
         Args:
             path: Path to the ECSV file.
-            unit_system: The unit system to convert the columns into.
 
         Returns:
-            An MGE with columns converted to `unit_system`'s units.
+            An MGE with each column in its own declared unit.
         """
         table = QTable.read(path, format="ascii.ecsv")
-        return cls.from_qtable(table, unit_system)
+        return cls.from_qtable(table)
 
     def rescaled(self, factor: Quantity) -> Self:
         """Multiply `I` by a dimensionless factor, keeping every other field.
@@ -150,6 +155,11 @@ class AbstractMGE(eqx.Module):
         `q` (dimensionless) and `PA_twist` (an orientation angle, not a spatial size)
         are unaffected and carried over unchanged.
 
+        Works for any angular unit `sigma`/`I` were declared in: `sigma` goes
+        through the radian small-angle factor, and `I` (a density per solid
+        angle) is re-expressed per steradian before the plain division by
+        `distance**2`, so neither depends on `sigma` already being in radians.
+
         Args:
             distance: The distance to the object.
 
@@ -157,8 +167,8 @@ class AbstractMGE(eqx.Module):
             A new MGE with `sigma` in `distance`'s unit and `I` converted to match.
         """
         sigma_physical = quantity_conversions.angular_to_physical(self.sigma, distance)
-        solid_angle = Quantity(1.0, f"{self.sigma.unit}2")
-        I_physical = self.I * solid_angle / distance**2
+        I_per_steradian = self.I.uconvert(_per_steradian_unit(self.I.unit))
+        I_physical = I_per_steradian * Quantity(1.0, "rad2") / distance**2
 
         return type(self)(
             I=I_physical, sigma=sigma_physical, q=self.q, PA_twist=self.PA_twist
@@ -403,7 +413,7 @@ class AbstractMGE(eqx.Module):
 class LightMGE(AbstractMGE):
     """An MGE of a surface-brightness distribution (``I`` in e.g. Lsun/arcsec2)."""
 
-    _intensity_attr: ClassVar[str] = "power"
+    _intensity_dimension: ClassVar[str] = "light_surface_brightness"
 
     def to_mass(self, m_over_l: Quantity) -> MassMGE:
         """Convert to a MassMGE given a mass-to-light ratio.
@@ -437,7 +447,7 @@ class LightMGE(AbstractMGE):
 class MassMGE(AbstractMGE):
     """An MGE of a mass surface-density distribution (``I`` in e.g. Msun/arcsec2)."""
 
-    _intensity_attr: ClassVar[str] = "mass"
+    _intensity_dimension: ClassVar[str] = "mass_surface_density"
 
 
 def _gaussian_radial_antiderivative(a: jnp.ndarray, r: jnp.ndarray) -> jnp.ndarray:
@@ -539,16 +549,15 @@ class Deprojected3DMGE(eqx.Module):
 _MGE_CLASSES: tuple[type[AbstractMGE], ...] = (LightMGE, MassMGE)
 
 
-def read_mge(path: str | Path, unit_system: AbstractUnitSystem) -> AbstractMGE:
+def read_mge(path: str | Path) -> AbstractMGE:
     """Read an MGE from an ECSV file, inferring whether it's light or mass.
 
     The kind is inferred from the declared unit of the file's ``I`` column: whichever of
     `LightMGE` (power/angle**2) or `MassMGE` (mass/angle**2) it is dimensionally
-    consistent with.
+    consistent with. Columns keep their declared units (see `from_qtable`).
 
     Args:
         path: Path to the ECSV file.
-        unit_system: The unit system to convert the columns into.
 
     Returns:
         A `LightMGE` or `MassMGE`, whichever matches the file's ``I`` column.
@@ -560,11 +569,11 @@ def read_mge(path: str | Path, unit_system: AbstractUnitSystem) -> AbstractMGE:
     intensity_unit = table["I"].unit
 
     for cls in _MGE_CLASSES:
-        target_unit = cls._surface_intensity_unit(unit_system)
-        if intensity_unit.is_equivalent(target_unit):
-            return cls.from_qtable(table, unit_system)
+        target_unit = reference_unit(cls._intensity_dimension)
+        if intensity_unit is not None and intensity_unit.is_equivalent(target_unit):
+            return cls.from_qtable(table)
 
-    expected = [cls._surface_intensity_unit(unit_system) for cls in _MGE_CLASSES]
+    expected = [reference_unit(cls._intensity_dimension) for cls in _MGE_CLASSES]
     raise ValueError(
         f"Could not infer MGE kind for {path}: its I column has unit "
         f"{intensity_unit!r}, which is not equivalent to any of {expected!r}."
@@ -574,7 +583,6 @@ def read_mge(path: str | Path, unit_system: AbstractUnitSystem) -> AbstractMGE:
 def build_mges(
     mges: Mapping[str, str],
     input_directory: str | Path,
-    unit_system: AbstractUnitSystem,
     distance: Quantity,
 ) -> dict[str, AbstractMGE]:
     """Build the named MGEs from a resolved configuration's ``MGEs`` mapping.
@@ -596,7 +604,6 @@ def build_mges(
             resolved configuration's ``MGEs`` section.
         input_directory: Directory that each filename is resolved against,
             e.g. a resolved configuration's ``io_settings.input_directory``.
-        unit_system: The unit system to convert each MGE's columns into.
         distance: The distance to the object, e.g. a resolved
             configuration's ``system_attributes.distance``.
 
@@ -606,6 +613,6 @@ def build_mges(
     """
     directory = Path(input_directory)
     return {
-        name: read_mge(directory / filename, unit_system).angular_to_physical(distance)
+        name: read_mge(directory / filename).angular_to_physical(distance)
         for name, filename in mges.items()
     }

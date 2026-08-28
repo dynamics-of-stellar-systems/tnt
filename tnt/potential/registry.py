@@ -12,12 +12,29 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import NamedTuple
 
-from unxt import AbstractUnitSystem, Quantity
+from unxt import Quantity
 
-ParameterizationConverter = Callable[
-    [dict[str, Quantity], AbstractUnitSystem, Mapping[str, Quantity]],
+ForwardConverter = Callable[
+    [dict[str, Quantity], Mapping[str, Quantity]],
     dict[str, Quantity],
 ]
+"""`(raw, cosmological_parameters) -> native galax constructor kwargs`.
+
+No unit system: each result keeps whatever unit its arithmetic produces --
+`to_galax()`'s native constructor converts again regardless (see
+`tnt.potential`'s module docstring).
+"""
+
+InverseConverter = Callable[
+    [dict[str, Quantity], Mapping[str, str], Mapping[str, Quantity]],
+    dict[str, Quantity],
+]
+"""`(native, declared_units, cosmological_parameters) -> raw config parameters`.
+
+`declared_units` maps each raw parameter name to the unit string its
+configuration declares, so a reported value comes back in the parameterization
+*and* the unit the config actually specifies.
+"""
 
 
 class Parameterization(NamedTuple):
@@ -28,9 +45,9 @@ class Parameterization(NamedTuple):
     config can actually specify (see `tnt.potential.raw_potential_parameters`).
     """
 
-    convert: ParameterizationConverter
+    convert: ForwardConverter
     """Raw config parameters -> the type's native `galax` constructor kwargs."""
-    invert: ParameterizationConverter
+    invert: InverseConverter
     """Native `galax` constructor kwargs -> raw config parameters."""
 
 

@@ -9,9 +9,8 @@ from typing import Self
 import astropy.units as au
 import equinox as eqx
 import jax.numpy as jnp
-import unxt as u
 from astropy.table import QTable
-from unxt import AbstractUnitSystem, Quantity
+from unxt import Quantity
 
 from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
 from tnt.validation import (
@@ -73,7 +72,6 @@ class Populations(eqx.Module):
         settings: ConfigMapping,
         data_file: Path,
         binning: ProjectedBinning,
-        unit_system: AbstractUnitSystem,
     ) -> Self:
         """Read and construct one configured population data set."""
         path = f"population_data.{name}"
@@ -89,7 +87,6 @@ class Populations(eqx.Module):
             value, uncertainty = _read_property_pair(
                 table,
                 property_name,
-                unit_system,
                 data_file,
             )
             values.append(value)
@@ -109,15 +106,16 @@ class Populations(eqx.Module):
 def build_populations(
     population_data: Mapping[str, ConfigMapping],
     input_directory: str | Path,
-    unit_system: AbstractUnitSystem,
     spatial_binnings: Mapping[str, ProjectedBinning],
 ) -> dict[str, Populations]:
     """Build named population objects from resolved configuration data.
 
+    Each property pair keeps the unit its value column declares (see
+    `_read_property_pair`); nothing is coerced into a shared unit system.
+
     Args:
         population_data: Resolved ``population_data`` registry.
         input_directory: Directory against which data filenames are resolved.
-        unit_system: Internal unit system used by runtime quantities.
         spatial_binnings: Already-built named spatial-binning objects.
 
     Returns:
@@ -148,7 +146,6 @@ def build_populations(
             settings=settings,
             data_file=data_file,
             binning=binning,
-            unit_system=unit_system,
         )
     return built
 
@@ -181,9 +178,16 @@ def _population_property_names(table: QTable, data_file: Path) -> tuple[str, ...
 def _read_property_pair(
     table: QTable,
     name: str,
-    unit_system: AbstractUnitSystem,
     data_file: Path,
 ) -> tuple[Quantity, Quantity]:
+    """One property's values and uncertainties, both in the value column's unit.
+
+    The only unit requirement is that a pair's two columns are dimensionally
+    equivalent (any dimension is allowed -- population properties are open-
+    ended); the uncertainty is converted into the value column's declared
+    unit, and that unit is kept. A pair with no declared units is treated as
+    dimensionless.
+    """
     uncertainty_name = f"d{name}"
     value_column = table[name]
     uncertainty_column = table[uncertainty_name]
@@ -194,17 +198,12 @@ def _read_property_pair(
             f"{data_file}: columns {name} and {uncertainty_name} must have "
             "equivalent units."
         )
-    try:
-        target_unit = unit_system[u.dimension(value_unit.physical_type)]
-        values = Quantity.from_(value_column.to(target_unit))
-        uncertainties = Quantity.from_(uncertainty_column.to(target_unit))
-    except (TypeError, ValueError, au.UnitConversionError) as error:
-        raise au.UnitConversionError(
-            f"{data_file}: population property {name} has unsupported unit "
-            f"{value_unit}."
-        ) from error
-    _finite(values.ustrip(target_unit), f"{data_file}: {name}")
-    _positive_finite(
-        uncertainties.ustrip(target_unit), f"{data_file}: {uncertainty_name}"
+    value_array = jnp.asarray(au.Quantity(value_column).value, dtype=float)
+    uncertainty_array = jnp.asarray(
+        au.Quantity(uncertainty_column).to(value_unit).value, dtype=float
     )
+    values = Quantity(value_array, value_unit)
+    uncertainties = Quantity(uncertainty_array, value_unit)
+    _finite(value_array, f"{data_file}: {name}")
+    _positive_finite(uncertainty_array, f"{data_file}: {uncertainty_name}")
     return values, uncertainties
