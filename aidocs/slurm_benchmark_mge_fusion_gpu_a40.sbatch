@@ -32,7 +32,7 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$SLURM_SUBMIT_DIR"
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUTPUT="aidocs/benchmark_mge_fusion_gpu_a40_${SLURM_JOB_NODELIST}_${TIMESTAMP}.csv"
