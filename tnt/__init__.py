@@ -2,9 +2,12 @@
 
 import logging as _logging
 
+import tnt.numerics as _numerics  # Apply TNT's JAX defaults before other imports.
 from tnt.configuration import Configuration, configuration_session
 from tnt.logging import LoggingSession, configure_logging, configure_worker_logging
 from tnt.units import UnitSystems
+
+del _numerics
 
 __all__ = [
     "Configuration",

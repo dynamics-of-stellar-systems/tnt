@@ -1,4 +1,5 @@
 import logging
+import subprocess
 import sys
 from pathlib import Path
 
@@ -122,6 +123,7 @@ def test_read_resolves_defaults_without_allocating_a_run(tmp_path: Path) -> None
         "file": {"enabled": True, "level": "DEBUG", "directory": "logs"},
         "console": {"enabled": True, "level": "INFO"},
     }
+    assert written["numerics_settings"]["jax_enable_x64"] is True
     assert written["io_settings"]["input_directory"] == "input"
     assert written["io_settings"]["output_directory"] == "output"
     assert config.data["io_settings"]["input_directory"] == str(tmp_path / "input")
@@ -151,6 +153,108 @@ def test_read_resolves_defaults_without_allocating_a_run(tmp_path: Path) -> None
     assert written["weight_solver_settings"]["maxiter_factor"] == 3
 
     assert config.source_path == user_path
+
+
+def test_read_rejects_non_boolean_jax_precision_policy(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(
+        user_path,
+        tmp_path / "output",
+        body="""numerics_settings:
+  jax_enable_x64: 1
+""",
+    )
+
+    with pytest.raises(
+        TypeError, match=r"numerics_settings\.jax_enable_x64 must be a boolean"
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+@pytest.mark.parametrize("enable_x64", [False, True])
+def test_read_applies_jax_precision_policy_in_isolated_process(
+    tmp_path: Path,
+    enable_x64: bool,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(
+        user_path,
+        tmp_path / "output",
+        body=f"""numerics_settings:
+  jax_enable_x64: {str(enable_x64).lower()}
+""",
+    )
+    probe = """
+import sys
+
+import jax
+import tnt
+
+from tnt.potential.nfw import _newtonian_gravitational_constant
+
+assert jax.config.jax_enable_x64 is True
+expected = sys.argv[3] == "true"
+config = tnt.Configuration().read(sys.argv[1], workspace_root=sys.argv[2])
+assert jax.config.jax_enable_x64 is expected
+assert config.portable_data["numerics_settings"]["jax_enable_x64"] is expected
+expected_dtype = "float64" if expected else "float32"
+assert str(_newtonian_gravitational_constant().value.dtype) == expected_dtype
+"""
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            probe,
+            str(user_path),
+            str(tmp_path),
+            str(enable_x64).lower(),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_read_rejects_conflicting_jax_precision_policies_in_one_process(
+    tmp_path: Path,
+) -> None:
+    first_path = tmp_path / "first.yaml"
+    second_path = tmp_path / "second.yaml"
+    _write_user_config(first_path, tmp_path / "first-output")
+    _write_user_config(
+        second_path,
+        tmp_path / "second-output",
+        body="""numerics_settings:
+  jax_enable_x64: false
+""",
+    )
+    probe = """
+import sys
+
+from tnt import Configuration
+
+Configuration().read(sys.argv[1], workspace_root=sys.argv[3])
+try:
+    Configuration().read(sys.argv[2], workspace_root=sys.argv[3])
+except RuntimeError as error:
+    assert "cannot be changed to False in the same process" in str(error)
+else:
+    raise AssertionError("Conflicting JAX precision policies were accepted")
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", probe, str(first_path), str(second_path), str(tmp_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_repeated_reads_do_not_allocate_runs(tmp_path: Path) -> None:

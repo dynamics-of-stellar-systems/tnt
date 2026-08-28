@@ -35,6 +35,7 @@ mge_settings:
 # Shared numerical policies. Keeping these values explicit makes model
 # identity checks and solver constraints reproducible across implementations.
 numerics_settings:
+  jax_enable_x64: true
   model_comparison_relative_tolerance: 1.0e-10
   parameter_grid_relative_tolerance: 1.0e-6
   constraint_error_floors:
