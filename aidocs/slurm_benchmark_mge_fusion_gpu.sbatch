@@ -22,6 +22,7 @@
 #SBATCH --partition=zen2_0256_a40x2
 #SBATCH --qos=p71867_a40dual
 #SBATCH --nodes=1
+#SBATCH --exclusive
 #SBATCH --gres=gpu:2
 #SBATCH --time=3:00:00
 #SBATCH --output=aidocs/slurm-mge-bench-gpu-%j.out

@@ -1,10 +1,18 @@
 #!/bin/bash
 # Submits the MGE quadrature-fusion benchmark as a non-interactive SLURM
 # batch job on a VSC-5 CPU node -- see aidocs/benchmark_mge_fusion.py's own
-# module docstring for what's being measured. Uses the same
-# partition/QOS as the interactive `vsc5-attach-compute-cpu` profile
-# (~/bin/vsc5-attach-compute-cpu on the login node): zen3_0512, 8 cores,
-# 32GB, one node.
+# module docstring for what's being measured. Same partition/QOS as the
+# interactive `vsc5-attach-compute-cpu` profile
+# (~/bin/vsc5-attach-compute-cpu on the login node), zen3_0512 -- but
+# --exclusive for the whole node's 256 cores/500GB (`sinfo -p zen3_0512`),
+# not that profile's 8 cores/32GB. That profile is sized for a lightweight
+# interactive dev session; this benchmark's whole point is measuring how
+# each implementation's runtime scales with available parallelism (the
+# original investigation found composite's per-component dispatch overhead
+# specifically gets worse as core count rises), so it deliberately wants
+# everything the node has, not a capped slice of it. JAX's CPU backend
+# picks up however many cores the OS reports as available on its own --
+# nothing here needs to tell it to use more.
 #
 # Usage (from the login node, in a checkout of this repo):
 #   sbatch aidocs/slurm_benchmark_mge_fusion_cpu.sbatch
@@ -18,8 +26,7 @@
 #SBATCH --qos=p71867_0512
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --exclusive
 #SBATCH --time=3:00:00
 #SBATCH --output=aidocs/slurm-mge-bench-cpu-%j.out
 
