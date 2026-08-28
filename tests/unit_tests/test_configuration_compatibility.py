@@ -46,6 +46,7 @@ def _config(input_directory: Path) -> dict[str, object]:
             "projected_mass_quad_order": 10,
         },
         "numerics_settings": {
+            "jax_enable_x64": True,
             "model_comparison_relative_tolerance": 1.0e-10,
             "parameter_grid_relative_tolerance": 1.0e-6,
             "constraint_error_floors": {
@@ -327,6 +328,11 @@ def test_critical_projection_preserves_declarations_but_excludes_parameter_units
             "MGEs",
             lambda value: value.update(light="different-light.ecsv"),
             "critical_configuration.MGEs.light",
+        ),
+        (
+            "numerics_settings",
+            lambda value: value.update(jax_enable_x64=False),
+            "critical_configuration.numerics_settings.jax_enable_x64",
         ),
         (
             "numerics_settings",

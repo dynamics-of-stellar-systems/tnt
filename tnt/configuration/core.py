@@ -23,6 +23,7 @@ import yaml
 
 from tnt.configuration.validation import validate_resolved_configuration
 from tnt.logging import configure_logging
+from tnt.numerics import configure_jax_precision
 from tnt.units import (
     UnitSystems,
     build_unit_systems,
@@ -103,6 +104,7 @@ class Configuration:
             workspace_root,
         )
         validate_resolved_configuration(portable_config)
+        configure_jax_precision(portable_config["numerics_settings"]["jax_enable_x64"])
 
         self.data = runtime_config
         self.portable_data = portable_config

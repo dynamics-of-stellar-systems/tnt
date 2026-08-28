@@ -267,6 +267,12 @@
   arithmetic but not a practical risk here, since it would only bite two
   independently-authored declarations of the identical physical value in
   different units -- not how config files are actually edited between runs.
+  The comparator intentionally keeps this conversion in host-side
+  NumPy/Astropy `float64` arithmetic rather than constructing JAX-backed
+  `unxt.Quantity` objects. Do not replace it with direct `Quantity` equality:
+  `numerics_settings.jax_enable_x64: false` would then make compatibility
+  comparison lose small declared differences to 32-bit rounding. Preserved
+  configuration identity must remain independent of runtime precision.
 - The compatibility check runs once at the start of each `run()` invocation,
   after runtime construction but before allocating that call's new run
   identity or modifying model-search state. It cannot run in
@@ -426,8 +432,9 @@
   `_nfw_concentration_m200`/its inverse do their entire calculation in
   `Quantity` arithmetic rather than eagerly stripping every input to a bare
   float in one specific unit -- `unxt` composes/converts units automatically
-  through the whole chain (verified: mixing `H` in `km / (s Mpc)` with `_G`
-  in `m3 / (kg s2)` and `M_200` in `Msun` still gives the correct `r_s`/`m`
+  through the whole chain (verified: mixing `H` in `km / (s Mpc)` with
+  `_newtonian_gravitational_constant()` in `m3 / (kg s2)` and `M_200` in `Msun`
+  still gives the correct `r_s`/`m`
   once converted to `unit_system`'s units at the very end), so `H` works in
   whatever unit it's declared in, not just the internal unit system's.
   Bare-number stripping only remains where a library function isn't
@@ -501,10 +508,20 @@
   integration, respectively. The packaged defaults are both 10.
 - `SphericalGrid` is defined in `tnt.spatial_binnings`. Runtime coordinate
   conversion uses the angular-to-physical direction.
-- Shared comparison tolerances and constraint-error floors belong under
-  `numerics_settings`. Model comparison uses a relative tolerance of `1e-10`,
-  while parameter-grid comparisons use `1e-6`. Total-mass and intrinsic-mass
-  constraint errors have floors of `1e-8` and `1e-16`, respectively.
+- Process-wide JAX precision, shared comparison tolerances, and
+  constraint-error floors belong under `numerics_settings`.
+  `jax_enable_x64` defaults to `true`. Importing `tnt` establishes that
+  default before other TNT modules create JAX-backed values; a successfully
+  validated configuration applies its resolved value before runtime-object
+  construction. The first resolved configuration fixes the policy for the
+  process. Further configuration reads and `ModelIterator.run()` calls are
+  valid with the same value, while a conflicting configuration requires a new
+  Python process. Existing arrays are not converted when the policy changes,
+  so callers must prepare configuration before constructing TNT runtime
+  objects. The entire `numerics_settings` mapping is resume-critical. Model
+  comparison uses a relative tolerance of `1e-10`, while parameter-grid
+  comparisons use `1e-6`. Total-mass and intrinsic-mass constraint errors have
+  floors of `1e-8` and `1e-16`, respectively.
 - Orbit-library radial limits are galaxy-specific and therefore have no
   package-wide defaults; the user configuration must provide them.
 - A negative `orbit_library_settings.random_seed` requests a generated seed.
@@ -609,3 +626,29 @@
   example profile (`configuration.yaml`, alongside it), covering every
   top-level configuration section at once, unlike the synthetic per-feature
   configurations in `tests/unit_tests/test_configuration.py`.
+
+## Human Workflow
+
+Thomas and Prash review each other's pull requests before merging to `main`:
+
+- A PR author requests review from the other.
+- A reviewer whose feedback is limited to tests or documentation makes those
+  changes directly and completes the merge.
+- A reviewer whose feedback touches code records it in a PR-specific audit
+  doc (`aidocs/pr-<N>-<topic>-audit.md`) and pings the author (`@<username>`
+  in the PR) to respond. They iterate until the PR is ready to merge. The
+  audit doc is removed from the branch once its findings are addressed,
+  before merging.
+- Follow-up work identified during review but out of scope for the current
+  PR is filed as a new GitHub issue rather than folded into the PR.
+- Claim an issue by assigning yourself to it, either up front or as soon as
+  work on it starts. An unassigned issue is open to either of them.
+- GitHub's merge strategy (squash vs. a real merge commit) is chosen per PR
+  at merge time, not fixed for the repo -- don't assume a branch's
+  individual commits will, or won't, survive into `main`'s history without
+  checking.
+- Always prefer merging `main` into a PR branch rather than rebasing on
+  `main` -- rebasing can silently break the other person's copy of a
+  shared branch.
+
+Above all: communicate whenever something is unclear.

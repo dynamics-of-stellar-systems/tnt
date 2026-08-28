@@ -73,7 +73,9 @@ block.
 6. Validates the generic resolved schema and registry references without
    constructing runtime objects. Type-specific kinematics and population-file
    validation is deferred to runtime construction.
-7. Retains runtime and portable forms in memory for later runtime construction
+7. Applies the resolved process-wide JAX precision policy before later runtime
+   construction.
+8. Retains runtime and portable forms in memory for later runtime construction
    and run archiving.
 
 Mapping values are merged recursively. A user value replaces a default scalar
@@ -91,6 +93,41 @@ derivation policy. Supplying only part of this explicit metadata is an error.
 
 See [Units](units.md) for the internal and display unit systems, accepted
 quantity syntax, and the runtime conversion boundaries.
+
+## JAX numerical precision
+
+TNT makes its JAX precision policy explicit under `numerics_settings`:
+
+```yaml
+numerics_settings:
+  jax_enable_x64: true
+```
+
+The packaged default is `true`, enabling 64-bit JAX values for TNT's
+scientific calculations. Setting it to `false` selects JAX's 32-bit mode,
+which can reduce memory use and improve throughput on some accelerators at the
+cost of numerical precision.
+
+JAX precision is process-wide rather than local to one model or
+`Configuration` object. Importing `tnt` establishes the packaged default
+before importing TNT's JAX-backed modules. A successful `Configuration.read()`
+or `configuration_session()` then applies the resolved setting after complete
+configuration validation and before runtime-object construction. Construct
+TNT runtime objects only after preparing their configuration. JAX arrays that
+another library created earlier in the process retain their original dtype;
+changing the policy cannot convert existing arrays.
+
+Repeated configuration reads and multiple `ModelIterator.run()` calls may
+share one process when they use the same precision policy. Once one resolved
+TNT configuration has established the process policy, reading a configuration
+with the opposite value raises an error; start a new Python process for that
+configuration instead. The setting is also resume-critical, so a model set
+created under one precision policy cannot be resumed under the other.
+
+This runtime policy does not control comparison of preserved configuration
+quantity declarations. Resume compatibility deliberately performs that exact,
+host-side comparison independently of JAX precision, so selecting 32-bit
+runtime calculations cannot hide a small configuration edit.
 
 ## Scientific input registries
 
