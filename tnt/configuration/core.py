@@ -1,4 +1,4 @@
-"""Read, resolve, and preserve TNT configuration files."""
+"""Read and resolve TNT configuration files and preserve executed runs."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ import yaml
 
 from tnt.configuration.validation import validate_resolved_configuration
 from tnt.logging import configure_logging
+from tnt.numerics import configure_jax_precision
 from tnt.units import (
     UnitSystems,
     build_unit_systems,
@@ -42,9 +43,9 @@ class Configuration:
     """A resolved TNT configuration without instantiated runtime objects.
 
     Reading a user configuration merges it over the packaged defaults, applies
-    defaults for dynamically named objects, materializes runtime paths, and
-    writes portable configuration-repository artifacts to the output directory.
-    It does not construct the physical system or execute modelling code.
+    defaults for dynamically named objects, and materializes runtime paths. It
+    does not construct the physical system, allocate a run identity, archive
+    configuration artifacts, or execute modelling code.
     """
 
     def __init__(self) -> None:
@@ -53,9 +54,7 @@ class Configuration:
         self.portable_data: ConfigDict = {}
         self.source_path: Path | None = None
         self.workspace_root: Path | None = None
-        self.run_id: int | None = None
-        self.resolved_path: Path | None = None
-        self.run_manifest_path: Path | None = None
+        self.logfile_path: Path | None = None
         self.unit_systems: UnitSystems | None = None
 
     def read(
@@ -63,7 +62,7 @@ class Configuration:
         filename: str | Path,
         workspace_root: str | Path | None = None,
     ) -> Configuration:
-        """Read, resolve, and preserve a user configuration.
+        """Read and resolve a user configuration without allocating a run.
 
         Args:
             filename: YAML user-configuration path.
@@ -81,50 +80,37 @@ class Configuration:
         """
         root = _resolve_workspace_root(workspace_root)
         source_path, merged_config = _load_merged_configuration(filename)
-        return self._resolve_and_write(
+        return self._resolve(
             source_path,
             merged_config,
             root,
         )
 
-    def _resolve_and_write(
+    def _resolve(
         self,
         source_path: Path,
         merged_config: ConfigDict,
         workspace_root: Path,
         logfile_path: Path | None = None,
     ) -> Configuration:
-        """Resolve, validate, and preserve an already-loaded configuration."""
+        """Resolve and validate an already-loaded configuration."""
         _LOGGER.debug("Resolving configuration loaded from %s.", source_path)
         schema_resolved_config = _apply_schema_defaults(merged_config)
         unit_systems = build_unit_systems(
             _optional_mapping(schema_resolved_config, "units", "configuration")
         )
-        runtime_config, portable_config, output_directory = _resolve_io_directories(
+        runtime_config, portable_config, _ = _resolve_io_directories(
             schema_resolved_config,
             workspace_root,
         )
         validate_resolved_configuration(portable_config)
-
-        repository = output_directory / CONFIG_REPOSITORY_DIRECTORY
-        run_manifest_path, resolved_path, run_id = _preserve_run(
-            repository=repository,
-            workspace_root=workspace_root,
-            runtime_config=runtime_config,
-            portable_config=portable_config,
-            logfile_path=logfile_path,
-        )
-
-        _LOGGER.info("Resolved configuration preserved at %s.", resolved_path)
-        _LOGGER.info("Run manifest written to %s.", run_manifest_path)
+        configure_jax_precision(portable_config["numerics_settings"]["jax_enable_x64"])
 
         self.data = runtime_config
         self.portable_data = portable_config
         self.source_path = source_path.resolve()
         self.workspace_root = workspace_root
-        self.run_id = run_id
-        self.resolved_path = resolved_path.resolve()
-        self.run_manifest_path = run_manifest_path.resolve()
+        self.logfile_path = logfile_path.resolve() if logfile_path else None
         self.unit_systems = unit_systems
         return self
 
@@ -179,7 +165,7 @@ def configuration_session(
 
         config = Configuration()
         try:
-            config._resolve_and_write(
+            config._resolve(
                 source_path,
                 merged_config,
                 root,
@@ -508,7 +494,7 @@ def _workspace_relative_path(path: Path, workspace_root: Path) -> str:
     return Path(relative).as_posix()
 
 
-def _preserve_run(
+def preserve_run(
     *,
     repository: Path,
     workspace_root: Path,

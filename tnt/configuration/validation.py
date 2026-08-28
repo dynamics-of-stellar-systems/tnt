@@ -44,7 +44,7 @@ _TOP_LEVEL_KEYS = {
 # class name, resolved dynamically by `tnt.potential` at runtime rather than
 # validated against a closed set here (this module deliberately avoids
 # constructing scientific objects; see module docstring).
-_MGE_POTENTIAL_TYPES = {"triaxial_light_mge", "triaxial_mass_mge"}
+_MGE_POTENTIAL_TYPES = {"TriaxialLightMGEPotential", "TriaxialMassMGEPotential"}
 _KINEMATICS_TYPES = {"bayes_losvd", "gauss_hermite", "proper_motions"}
 
 
@@ -136,10 +136,10 @@ def validate_resolved_configuration(config: ConfigDict) -> None:
 
 def _validate_cosmological_parameters(settings: ConfigDict) -> None:
     path = "cosmological_parameters"
-    _reject_unknown_keys(settings, {"H0"}, path)
-    _require_keys(settings, {"H0"}, path)
-    value = declared_quantity_value(settings["H0"], "inverse_time", f"{path}.H0")
-    _positive_number(value, f"{path}.H0.value")
+    _reject_unknown_keys(settings, {"H"}, path)
+    _require_keys(settings, {"H"}, path)
+    value = declared_quantity_value(settings["H"], "inverse_time", f"{path}.H")
+    _positive_number(value, f"{path}.H.value")
 
 
 def _validate_units(settings: ConfigDict) -> None:
@@ -174,6 +174,7 @@ def _validate_numerics_settings(settings: ConfigDict) -> None:
         settings,
         {
             "constraint_error_floors",
+            "jax_enable_x64",
             "model_comparison_relative_tolerance",
             "parameter_grid_relative_tolerance",
         },
@@ -183,6 +184,7 @@ def _validate_numerics_settings(settings: ConfigDict) -> None:
         settings,
         {
             "constraint_error_floors",
+            "jax_enable_x64",
             "model_comparison_relative_tolerance",
             "parameter_grid_relative_tolerance",
         },
@@ -193,6 +195,7 @@ def _validate_numerics_settings(settings: ConfigDict) -> None:
         "parameter_grid_relative_tolerance",
     ):
         _positive_number(settings.get(key), f"{path}.{key}")
+    _boolean(settings["jax_enable_x64"], f"{path}.jax_enable_x64")
     floors = _required_mapping(settings, "constraint_error_floors", path)
     _reject_unknown_keys(
         floors, {"intrinsic_mass", "total_mass"}, f"{path}.constraint_error_floors"
@@ -320,13 +323,13 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         parameter_names = set(parameters) if isinstance(parameters, dict) else set()
         if (
             include
-            and component_type == "triaxial_light_mge"
+            and component_type == "TriaxialLightMGEPotential"
             and "ml" not in parameter_names
         ):
             raise ValueError(
                 f"{component_path}.parameters is missing required field: ml."
             )
-        if component_type == "triaxial_mass_mge" and "ml" in parameter_names:
+        if component_type == "TriaxialMassMGEPotential" and "ml" in parameter_names:
             raise ValueError(
                 f"{component_path}.parameters.ml is invalid for a mass MGE potential."
             )
@@ -337,7 +340,7 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         # why a fixed mass parameter can still move under potential_rescalings.
         if (
             include
-            and component_type == "triaxial_mass_mge"
+            and component_type == "TriaxialMassMGEPotential"
             and "mge_mass_scale" not in parameter_names
         ):
             raise ValueError(
@@ -345,13 +348,24 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
                 "mge_mass_scale."
             )
         if (
-            component_type == "triaxial_light_mge"
+            component_type == "TriaxialLightMGEPotential"
             and "mge_mass_scale" in parameter_names
         ):
             raise ValueError(
                 f"{component_path}.parameters.mge_mass_scale is invalid for a "
                 "light MGE potential."
             )
+        # theta/phi/psi are the global viewing angles both MGE composite
+        # types deproject against (tnt.mge.AbstractMGE.deproject_triaxial) --
+        # required regardless of light vs. mass.
+        if include and is_mge_potential:
+            missing_angles = {"theta", "phi", "psi"} - parameter_names
+            if missing_angles:
+                names = ", ".join(sorted(missing_angles))
+                raise ValueError(
+                    f"{component_path}.parameters is missing required field(s): "
+                    f"{names}."
+                )
 
 
 def _validate_parameters(

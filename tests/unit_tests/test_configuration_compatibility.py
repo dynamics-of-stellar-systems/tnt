@@ -1,6 +1,7 @@
 from copy import deepcopy
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 from astropy.table import QTable
@@ -33,7 +34,7 @@ def _config(input_directory: Path) -> dict[str, object]:
             },
             "display": {"angle": "arcsec"},
         },
-        "cosmological_parameters": {"H0": {"value": 0.1, "unit": "1 / Myr"}},
+        "cosmological_parameters": {"H": {"value": 0.1, "unit": "1 / Myr"}},
         "system_attributes": {
             "name": "galaxy",
             "distance": {"value": 10.0, "unit": "kpc"},
@@ -43,6 +44,7 @@ def _config(input_directory: Path) -> dict[str, object]:
             "projected_mass_quad_order": 10,
         },
         "numerics_settings": {
+            "jax_enable_x64": True,
             "model_comparison_relative_tolerance": 1.0e-10,
             "parameter_grid_relative_tolerance": 1.0e-6,
             "constraint_error_floors": {
@@ -64,7 +66,7 @@ def _config(input_directory: Path) -> dict[str, object]:
         "potential": {
             "stars": {
                 "include": True,
-                "type": "triaxial_light_mge",
+                "type": "TriaxialLightMGEPotential",
                 "mge": "light",
                 "parameters": {
                     "q": {
@@ -258,13 +260,81 @@ def test_equivalent_declared_units_are_compatible(tmp_path: Path) -> None:
     )
 
 
+def test_quantity_comparison_handles_nested_arrays_and_exact_values() -> None:
+    baseline = {
+        "nested": [{"value": [1.0, 2.0], "unit": "kpc"}],
+        "array": np.array([1.0, 2.0]),
+    }
+    equivalent = {
+        "nested": [{"value": [1000.0, 2000.0], "unit": "pc"}],
+        "array": np.array([1.0, 2.0]),
+    }
+
+    assert _different_paths(baseline, equivalent, "critical_configuration") == []
+
+    equivalent["nested"][0]["value"][1] = 2000.0000000001
+    assert _different_paths(baseline, equivalent, "critical_configuration") == [
+        "critical_configuration.nested[0]"
+    ]
+
+
+def test_quantity_comparison_reports_shape_and_dimension_changes() -> None:
+    baseline = {"value": [1.0, 2.0], "unit": "kpc"}
+
+    assert _different_paths(
+        baseline,
+        {"value": [1000.0], "unit": "pc"},
+        "distance",
+    ) == ["distance"]
+    assert _different_paths(
+        baseline,
+        {"value": [1.0, 2.0], "unit": "Myr"},
+        "distance",
+    ) == ["distance"]
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        {"value": 1.0},
+        {"value": 1.0, "unit": "kpc", "extra": True},
+        {"value": "one", "unit": "kpc"},
+        {"value": float("nan"), "unit": "kpc"},
+        {"value": 1.0, "unit": "not-a-unit"},
+    ],
+)
+def test_quantity_comparison_rejects_malformed_declarations(
+    declaration: dict[str, object],
+) -> None:
+    with pytest.raises(ConfigurationCompatibilityError, match="distance"):
+        _different_paths(
+            {"value": 1.0, "unit": "kpc"},
+            declaration,
+            "distance",
+        )
+
+
+def test_critical_projection_preserves_declarations_but_excludes_parameter_units(
+    tmp_path: Path,
+) -> None:
+    input_directory = tmp_path / "input"
+    _write_inputs(input_directory)
+    critical = _critical_configuration(_config(input_directory))
+
+    assert critical["system_attributes"]["distance"] == {
+        "value": 10.0,
+        "unit": "kpc",
+    }
+    assert critical["potential"]["stars"]["parameters"]["ml"] == {}
+
+
 @pytest.mark.parametrize(
     ("section", "mutate", "expected_path"),
     [
         (
             "cosmological_parameters",
-            lambda value: value["H0"].update(value=0.2),
-            "critical_configuration.cosmological_parameters.H0",
+            lambda value: value["H"].update(value=0.2),
+            "critical_configuration.cosmological_parameters.H",
         ),
         (
             "system_attributes",
@@ -285,6 +355,11 @@ def test_equivalent_declared_units_are_compatible(tmp_path: Path) -> None:
             "MGEs",
             lambda value: value.update(light="different-light.ecsv"),
             "critical_configuration.MGEs.light",
+        ),
+        (
+            "numerics_settings",
+            lambda value: value.update(jax_enable_x64=False),
+            "critical_configuration.numerics_settings.jax_enable_x64",
         ),
         (
             "numerics_settings",

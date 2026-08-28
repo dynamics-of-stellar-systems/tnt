@@ -39,14 +39,16 @@ output and logging settings, and then performs the same complete preparation.
 
 ### `Configuration.read()` versus `configuration_session()`
 
-Both interfaces apply the same defaults and validation, return the same kind
-of resolved `Configuration` object, and write the same configuration-repository
-artifacts. Their difference is ownership of the logging lifecycle:
+Both interfaces apply the same defaults and validation and return the same kind
+of resolved `Configuration` object. Neither allocates a run or writes the
+configuration repository; that happens only when a successfully constructed
+`ModelIterator` starts `run()`. Their difference is ownership of the logging
+lifecycle:
 
 | Behavior | `Configuration.read()` | `configuration_session()` |
 | --- | --- | --- |
 | Resolves and validates configuration | Yes | Yes |
-| Writes the configuration repository | Yes | Yes |
+| Writes the configuration repository | No | No |
 | Starts TNT logfile and terminal handlers | No | Yes |
 | Logs configuration preparation | Only through logging already configured by the caller | Yes |
 | Logs exceptions from subsequent model execution | No | Yes, while execution remains inside the `with` block |
@@ -71,9 +73,10 @@ block.
 6. Validates the generic resolved schema and registry references without
    constructing runtime objects. Type-specific kinematics and population-file
    validation is deferred to runtime construction.
-7. Preserves the portable resolved configuration and a run-specific manifest
-   below
-   `<output_directory>/config_repository/`.
+7. Applies the resolved process-wide JAX precision policy before later runtime
+   construction.
+8. Retains runtime and portable forms in memory for later runtime construction
+   and run archiving.
 
 Mapping values are merged recursively. A user value replaces a default scalar
 or list. User values always take precedence over applicable defaults.
@@ -90,6 +93,41 @@ derivation policy. Supplying only part of this explicit metadata is an error.
 
 See [Units](units.md) for the internal and display unit systems, accepted
 quantity syntax, and the runtime conversion boundaries.
+
+## JAX numerical precision
+
+TNT makes its JAX precision policy explicit under `numerics_settings`:
+
+```yaml
+numerics_settings:
+  jax_enable_x64: true
+```
+
+The packaged default is `true`, enabling 64-bit JAX values for TNT's
+scientific calculations. Setting it to `false` selects JAX's 32-bit mode,
+which can reduce memory use and improve throughput on some accelerators at the
+cost of numerical precision.
+
+JAX precision is process-wide rather than local to one model or
+`Configuration` object. Importing `tnt` establishes the packaged default
+before importing TNT's JAX-backed modules. A successful `Configuration.read()`
+or `configuration_session()` then applies the resolved setting after complete
+configuration validation and before runtime-object construction. Construct
+TNT runtime objects only after preparing their configuration. JAX arrays that
+another library created earlier in the process retain their original dtype;
+changing the policy cannot convert existing arrays.
+
+Repeated configuration reads and multiple `ModelIterator.run()` calls may
+share one process when they use the same precision policy. Once one resolved
+TNT configuration has established the process policy, reading a configuration
+with the opposite value raises an error; start a new Python process for that
+configuration instead. The setting is also resume-critical, so a model set
+created under one precision policy cannot be resumed under the other.
+
+This runtime policy does not control comparison of preserved configuration
+quantity declarations. Resume compatibility deliberately performs that exact,
+host-side comparison independently of JAX precision, so selecting 32-bit
+runtime calculations cannot hide a small configuration edit.
 
 ## Scientific input registries
 
@@ -111,12 +149,15 @@ spatial_binnings:
 
 potential:
   stars:
-    type: "triaxial_light_mge"
+    type: "TriaxialLightMGEPotential"
     mge: "stellar_light"
     parameters:
       ml:
         value: 5.0
         unit: "Msun / Lsun"
+      theta: {value: 1.0, unit: "rad"}
+      phi: {value: 0.5, unit: "rad"}
+      psi: {value: 0.0, unit: "rad"}
 
 kinematic_data:
   central_spectroscopy:
@@ -151,12 +192,14 @@ Population observations must always be supplied through their own
 embedded in a kinematics data file, even when both data sets use the same
 `spatial_binnings` entry.
 
-The supported potential types are `triaxial_light_mge`, `triaxial_mass_mge`,
+The supported potential types are `TriaxialLightMGEPotential`, `TriaxialMassMGEPotential`,
 and a curated set of `galax.potential` class names (see
 [Potential](potential.md)). A light-MGE potential requires an `ml`
 mass-to-light parameter. A mass-MGE potential must not declare `ml`,
-because its input MGE already represents mass. MGE contents and their physical
-units are inspected only in the later object-construction phase.
+because its input MGE already represents mass. Both MGE types also require
+`theta`/`phi`/`psi`, the global viewing angles the named MGE is deprojected
+under. MGE contents and their physical units are inspected only in the
+later object-construction phase.
 
 ## Loading configured MGEs
 
@@ -167,6 +210,7 @@ configuration, load the registered MGEs explicitly:
 ```python
 from tnt import Configuration
 from tnt.mge import build_mges
+from tnt.units import resolve_system_distance
 
 config = Configuration().read("configuration.yaml")
 resolved = config.as_dict()
@@ -175,13 +219,16 @@ mges = build_mges(
     resolved["MGEs"],
     resolved["io_settings"]["input_directory"],
     config.unit_systems.internal,
+    resolve_system_distance(resolved["system_attributes"]),
 )
 ```
 
 The returned dictionary uses the configured MGE names as keys. Each value is
 a `LightMGE` or `MassMGE`, inferred from the physical unit of the ECSV `I`
-column. File contents and units are validated during this runtime-loading
-step, so loading can fail even after configuration preparation succeeded.
+column, and already converted from angular to physical units via
+`angular_to_physical(distance)`. File contents and units are validated
+during this runtime-loading step, so loading can fail even after
+configuration preparation succeeded.
 
 ## Loading configured spatial binnings
 
@@ -191,6 +238,7 @@ preparation. Build the named registry explicitly from the resolved settings:
 ```python
 from tnt import Configuration
 from tnt.spatial_binnings import build_spatial_binnings
+from tnt.units import resolve_system_distance
 
 config = Configuration().read("configuration.yaml")
 resolved = config.as_dict()
@@ -200,6 +248,7 @@ binnings = build_spatial_binnings(
     resolved["io_settings"]["input_directory"],
     config.unit_systems.internal,
     resolved["mge_settings"]["projected_mass_quad_order"],
+    resolve_system_distance(resolved["system_attributes"]),
 )
 ```
 
@@ -207,12 +256,13 @@ The returned dictionary uses the configured binning names as keys and contains
 `ProjectedBinning` values. This loading step opens each `.npy` file, validates
 the exact entry schema and inline geometry, and rejects empty, negative, or
 non-contiguous pixel-to-bin arrays. It converts the geometry to the internal
-angle unit and precomputes pixel edges and quadrature nodes.
+angle unit, then to physical units via `angular_to_physical(distance)` --
+matching `build_mges` above, so that MGEs and spatial binnings loaded this way
+are always dimensionally consistent -- and precomputes pixel edges and
+quadrature nodes.
 
 `AbstractMGE.get_projected_mass()` integrates an MGE over a
-`ProjectedBinning` and returns the total in each positive bin ID. Convert both
-objects with their `angular_to_physical()` methods before integration when
-working in physical rather than angular coordinates.
+`ProjectedBinning`; both must be angular or both physical.
 
 The fixed Gauss-Legendre quadrature orders are configured under
 `mge_settings`. `intrinsic_mass_quad_order` applies to intrinsic
@@ -265,15 +315,18 @@ the resolved registries:
 from tnt.kinematics import build_kinematics
 from tnt.mge import build_mges
 from tnt.spatial_binnings import build_spatial_binnings
+from tnt.units import resolve_system_distance
 
 input_directory = config.data["io_settings"]["input_directory"]
 unit_system = config.unit_systems.internal
-mges = build_mges(config.data["MGEs"], input_directory, unit_system)
+distance = resolve_system_distance(config.data["system_attributes"])
+mges = build_mges(config.data["MGEs"], input_directory, unit_system, distance)
 spatial_binnings = build_spatial_binnings(
     config.data["spatial_binnings"],
     input_directory,
     unit_system,
     config.data["mge_settings"]["projected_mass_quad_order"],
+    distance,
 )
 
 kinematics = build_kinematics(
@@ -396,8 +449,8 @@ the later execution phase produces only the unscaled model. See
 [Model search](model_search.md) for how rescaled potentials are evaluated and
 recorded at runtime.
 
-Errors identify the configuration path containing the invalid value. The
-resolved file is written only after every preparation-stage check succeeds.
+Errors identify the configuration path containing the invalid value. No
+resolved file or run manifest is written during preparation.
 
 Preparation does not instantiate system components, inspect observational data
 or MGE files, or verify optional runtime dependencies. Those checks belong to
@@ -455,11 +508,15 @@ workspace root therefore gives the most useful archived configuration.
 `Configuration.data` and `Configuration.as_dict()` contain materialized
 absolute input and output paths for runtime consumers. The corresponding
 portable values are available through `Configuration.portable_data` and
-`Configuration.as_portable_dict()`.
+`Configuration.as_portable_dict()`. `Configuration.logfile_path` records the
+active session logfile for later inclusion in a run manifest, or is `None`
+when the caller owns logging.
 
 ## Configuration repository
 
-After successful validation, TNT publishes immutable artifacts under
+After `ModelIterator.from_configuration()` has successfully constructed every
+runtime object, each subsequent `run()` invocation that passes its state and
+resume preflight publishes immutable artifacts under
 `<output_directory>/config_repository/`:
 
 ```text
@@ -485,11 +542,13 @@ config_repository/
 - The submitted user profile, its source path, and its bytes are not archived.
   TNT also does not create configuration-content or scientific-input hashes.
 
-Numeric directory names provide stable human-readable run IDs.
-`Configuration.resolved_path` and `Configuration.run_manifest_path` identify
-the artifacts created by the current run. `Configuration.run_id` records the
-numeric run ID. `Configuration.source_path` remains available only in memory
-for the active process.
+Numeric directory names provide stable human-readable run IDs. After `run()`
+starts, `ModelIterator.run_manifest` identifies the immutable bundle and
+`ModelIterator.run_id` contains its numeric run ID. Both are `None` before the
+first invocation and identify the latest invocation after sequential calls.
+Earlier provenance remains accessible through `RunConfigLog` and the
+repository. `Configuration.source_path` remains available only in memory for
+the active process.
 
 TNT supports exactly one coordinating process writing a given output directory
 at a time. Model calculations may use multiple workers, but workers must return
@@ -500,15 +559,15 @@ unsupported.
 (run-identity)=
 ### Run identity
 
-A successful `Configuration.read()` defines the start of a TNT run for
-provenance purposes: it creates a new immutable run manifest and assigns the
-next run ID. Reusing that prepared `Configuration` and its `ModelIterator`
-across multiple `ModelIterator.run()` calls retains the same run ID. Reading a
-configuration again creates another run manifest and assigns another run ID,
-and archives another resolved configuration even when it is identical to an
-earlier one. The future top-level execution layer should read the configuration
-once at the beginning of each invocation and use the resulting run ID for every
-model-search iteration in that invocation.
+One invocation of `ModelIterator.run()` is exactly one TNT run. A run identity
+is allocated only after `ModelIterator.from_configuration()` has successfully
+constructed every configured MGE, spatial binning, observational data set,
+population, potential component, and model-search service. A configuration
+that fails runtime construction is therefore never archived. Sequential
+`run()` calls on the same iterator are supported; every call repeats the
+state/resume preflight, receives a fresh run ID, and archives the resolved
+configuration again. This intentional duplication distinguishes execution
+attempts even when they share one configuration and process.
 
 `run_config_log.ecsv` is created when the model-search caller explicitly
 persists `AllModels` and `RunConfigLog` through the coordinated
@@ -520,13 +579,14 @@ records `total_runs` and `run_ids_without_iterations`; callers must persist the
 state even when a run produces no iteration so that these summaries are
 updated.
 
-A negative configured orbit-library seed still means that execution must
-generate a seed. Until that happens, the preparation manifest records the
-effective seed as `null` with status `pending_generation`; the future execution
-stage must update it once the actual seed is known.
+A negative configured orbit-library seed means that execution must
+generate a seed. Until that happens, the run manifest records the effective
+seed as `null` with status `pending_generation`; the future execution stage
+must update it once the actual seed is known.
 
-Configuration preparation creates the output directory and its
-`config_repository` subdirectories when necessary. Existing artifacts are
-never replaced. It atomically publishes each manifest and resolved
-configuration as one run directory. It does not instantiate components, load
-observational data, checksum observational inputs, or execute modelling code.
+`Configuration.read()` does not create the output directory or
+`config_repository`; `configuration_session()` may create the output and log
+directories for its logging lifecycle. `ModelIterator.run()` creates the
+repository when needed and atomically publishes its manifest and resolved
+configuration as one run directory after preflight state and
+resume-compatibility checks succeed. Existing artifacts are never replaced.

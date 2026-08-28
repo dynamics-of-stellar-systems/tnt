@@ -439,6 +439,7 @@ def build_spatial_binnings(
     input_directory: str | Path,
     unit_system: AbstractUnitSystem,
     quad_order: int,
+    distance: Quantity,
 ) -> dict[str, ProjectedBinning]:
     """Build the named `ProjectedBinning`s from a resolved configuration.
 
@@ -446,6 +447,10 @@ def build_spatial_binnings(
     `y_extent`, `PA`) comes from the configuration itself rather than a data
     file. The same schema and quantity validators as
     `ProjectedBinning.from_settings` run before its ``bins_file`` is read.
+    Every binning is converted to physical units via `angular_to_physical`
+    before being returned, matching `tnt.mge.build_mges` -- so that MGEs and
+    spatial binnings are always dimensionally consistent for a consumer
+    that needs both (e.g. `AbstractMGE.get_projected_mass`).
 
     Args:
         spatial_binnings: Mapping of unique identifiers to each binning's
@@ -459,9 +464,11 @@ def build_spatial_binnings(
         quad_order: Order of the fixed Gauss-Legendre quadrature used for the
             x integral within each pixel, e.g. a resolved configuration's
             ``mge_settings.projected_mass_quad_order``.
+        distance: The distance to the object, e.g. a resolved
+            configuration's ``system_attributes.distance``.
 
     Returns:
-        A dict mapping each identifier to its `ProjectedBinning`.
+        A dict mapping each identifier to its physical-unit `ProjectedBinning`.
     """
     directory = Path(input_directory)
     binnings: dict[str, ProjectedBinning] = {}
@@ -478,5 +485,5 @@ def build_spatial_binnings(
         )
         binnings[name] = ProjectedBinning(
             bins=bins, quad_order=quad_order, **quantities
-        )
+        ).angular_to_physical(distance)
     return binnings

@@ -3,10 +3,10 @@
 TNT uses [`unxt`](https://unxt.readthedocs.io/) to validate units and define
 two related unit systems:
 
-- `units.internal` defines the canonical units used by runtime converters,
-  compatibility checks, and later numerical calculations. Potential parameter
-  proposals are an explicit exception: they retain each parameter's declared
-  unit until potential construction consumes them, as described below.
+- `units.internal` defines the canonical units used by runtime converters and
+  later numerical calculations. Potential parameter proposals are an explicit
+  exception: they retain each parameter's declared unit until potential
+  construction consumes them, as described below.
 - `units.display` controls presentation preferences. Any dimension not
   overridden there inherits its internal unit.
 
@@ -46,7 +46,7 @@ kinematic_data:
       center: {value: 0.0, unit: "km / s"}
 
 cosmological_parameters:
-  H0:
+  H:
     value: 70.0
     unit: "km / (s Mpc)"
 ```
@@ -83,7 +83,7 @@ unitless warning thresholds.
 
 Configuration preparation dimensionally validates:
 
-- `cosmological_parameters.H0` as inverse time;
+- `cosmological_parameters.H` as inverse time;
 - `system_attributes.distance` as length;
 - explicit kinematics histogram `width` and `center` as speed;
 - Gauss-Hermite systematic uncertainties `v` and `sigma` as speed;
@@ -109,15 +109,22 @@ unit's *dimension* is correct (as listed above), but that check is against
 each dimension's own fixed reference unit, not the configured internal unit
 system (see [Potential](potential.md)). The resolved configuration itself
 remains unchanged. `ModelIterator.from_configuration()` converts
-`cosmological_parameters`, including `H0`, into `Quantity` objects for runtime
+`cosmological_parameters`, including `H`, into `Quantity` objects for runtime
 consumers such as NFW's `concentration_m200` parameterization. System distance
 remains a declared quantity until a runtime consumer needs it; compatibility
-checks can still compare its canonical physical value.
+checks compare its physical value directly from the preserved declaration.
 
 Every run receives its own immutable resolved configuration, while resume
-compatibility compares physical meaning. It converts unit-bearing contract
-fields to the configured internal units, so declarations such as `1 kpc` and
-`1000 pc` compare equal.
+compatibility compares physical meaning. It recognizes atomic `{value, unit}`
+declarations and converts one value to the other's unit only while comparing
+that field. It does not normalize the complete configuration. Consequently,
+declarations such as `1 kpc` and `1000 pc` compare equal, incompatible
+dimensions compare unequal, and malformed declarations raise a compatibility
+error. This exact comparison uses host-side numerical conversion rather than
+JAX-backed `unxt.Quantity` equality, so its result is independent of the
+configured JAX runtime precision. In particular, selecting 32-bit JAX
+calculations cannot round away a small change in a preserved configuration
+declaration.
 
 MGE (multi-Gaussian expansion) contents and quantities read from observational
 data files are intentionally not converted during configuration preparation.

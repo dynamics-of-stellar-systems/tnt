@@ -35,8 +35,7 @@ def test_configuration_session_resolves_full_example_configuration(
         portable = config.as_portable_dict()
         assert portable["io_settings"]["output_directory"] == "NGC6278_output"
 
-    assert config.resolved_path is not None
-    assert config.resolved_path.is_file()
-    assert config.run_id == 0
-    assert config.run_manifest_path is not None
-    assert config.run_manifest_path.is_file()
+    output = tmp_path / "NGC6278_output"
+    assert not (output / "config_repository").exists()
+    assert config.logfile_path is not None
+    assert config.logfile_path.is_file()

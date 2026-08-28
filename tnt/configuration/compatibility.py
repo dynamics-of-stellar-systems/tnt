@@ -8,20 +8,22 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import unxt as u
 
 from tnt.all_models import AllModels
 from tnt.configuration.core import ConfigDict, _read_yaml_bytes_mapping
 from tnt.run_config_log import RunManifestReference
-from tnt.units import build_unit_systems, normalize_configuration_quantities
 from tnt.validation import _mapping as _parse_mapping
 from tnt.validation import _required_mapping as _parse_required_mapping
 
-_SEARCH_PARAMETER_KEYS = {
+_NON_SCHEMA_PARAMETER_KEYS = {
     "fixed",
     "latex_label",
     "prior",
+    "unit",
     "value",
 }
+_QUANTITY_DECLARATION_KEYS = frozenset({"value", "unit"})
 
 
 class ConfigurationCompatibilityError(ValueError):
@@ -60,9 +62,7 @@ def ensure_resume_compatible(
 
 
 def _critical_configuration(config: Mapping[str, Any]) -> ConfigDict:
-    """Project physically canonical configuration onto scientifically fixed fields."""
-    unit_systems = build_unit_systems(_mapping(config, "units"))
-    config = normalize_configuration_quantities(config, unit_systems)
+    """Project the resolved configuration onto scientifically fixed fields."""
     system_attributes = {
         key: deepcopy(value)
         for key, value in _mapping(config, "system_attributes").items()
@@ -108,7 +108,7 @@ def _potential_schema(potential: Mapping[str, Any]) -> ConfigDict:
                     raw_parameter,
                     Path(f"potential.{component_name}.parameters.{parameter_name}"),
                 ).items()
-                if key not in _SEARCH_PARAMETER_KEYS
+                if key not in _NON_SCHEMA_PARAMETER_KEYS
             }
             for parameter_name, raw_parameter in parameters.items()
         }
@@ -160,7 +160,11 @@ def _validate_parameter_columns(
 
 
 def _different_paths(left: Any, right: Any, prefix: str = "") -> list[str]:
-    """Recursively report differing mapping/list/scalar paths."""
+    """Recursively report differing mappings, sequences, arrays, and scalars."""
+    if _looks_like_quantity_declaration(left) or _looks_like_quantity_declaration(
+        right
+    ):
+        return [] if _quantity_declarations_equal(left, right, prefix) else [prefix]
     if isinstance(left, Mapping) and isinstance(right, Mapping):
         differences: list[str] = []
         for key in sorted(set(left) | set(right)):
@@ -180,7 +184,78 @@ def _different_paths(left: Any, right: Any, prefix: str = "") -> list[str]:
                 _different_paths(left_value, right_value, f"{prefix}[{index}]")
             )
         return differences
+    if isinstance(left, np.ndarray) or isinstance(right, np.ndarray):
+        equal = (
+            isinstance(left, np.ndarray)
+            and isinstance(right, np.ndarray)
+            and np.array_equal(left, right)
+        )
+        return [] if equal else [prefix]
     return [] if left == right else [prefix]
+
+
+def _looks_like_quantity_declaration(value: Any) -> bool:
+    """Return whether a mapping is intended as an atomic quantity declaration."""
+    if not isinstance(value, Mapping):
+        return False
+    keys = set(value)
+    return "unit" in keys or (bool(keys) and keys <= _QUANTITY_DECLARATION_KEYS)
+
+
+def _quantity_declarations_equal(left: Any, right: Any, path: str) -> bool:
+    """Compare two atomic ``{value, unit}`` declarations by physical value."""
+    left_values, left_unit = _parse_quantity_declaration(left, path)
+    right_values, right_unit = _parse_quantity_declaration(right, path)
+    if left_values.shape != right_values.shape:
+        return False
+    if not left_unit.is_equivalent(right_unit):
+        return False
+    converted = np.asarray(left_unit.to(right_unit, left_values), dtype=float)
+    return bool(np.array_equal(converted, right_values))
+
+
+def _parse_quantity_declaration(value: Any, path: str) -> tuple[np.ndarray, Any]:
+    """Validate one scalar or array quantity declaration for comparison."""
+    if not isinstance(value, Mapping):
+        raise ConfigurationCompatibilityError(
+            f"{path} must be a mapping containing exactly value and unit."
+        )
+    keys = set(value)
+    if keys != _QUANTITY_DECLARATION_KEYS:
+        missing = sorted(_QUANTITY_DECLARATION_KEYS - keys)
+        unknown = sorted(keys - _QUANTITY_DECLARATION_KEYS)
+        details = []
+        if missing:
+            details.append(f"missing {missing!r}")
+        if unknown:
+            details.append(f"unknown {unknown!r}")
+        raise ConfigurationCompatibilityError(
+            f"{path} must contain exactly value and unit ({', '.join(details)})."
+        )
+
+    raw_values = np.asarray(value["value"])
+    if not np.issubdtype(raw_values.dtype, np.number) or np.issubdtype(
+        raw_values.dtype, np.bool_
+    ):
+        raise ConfigurationCompatibilityError(
+            f"{path}.value must be a number or a regular array of numbers."
+        )
+    values = np.asarray(raw_values, dtype=float)
+    if not np.all(np.isfinite(values)):
+        raise ConfigurationCompatibilityError(f"{path}.value must be finite.")
+
+    unit_name = value["unit"]
+    if not isinstance(unit_name, str) or not unit_name.strip():
+        raise ConfigurationCompatibilityError(
+            f"{path}.unit must be a non-empty unit string."
+        )
+    try:
+        unit = u.unit(unit_name)
+    except (TypeError, ValueError) as error:
+        raise ConfigurationCompatibilityError(
+            f"{path}.unit contains invalid unit {unit_name!r}."
+        ) from error
+    return values, unit
 
 
 def _mapping(config: Mapping[str, Any], key: str) -> Mapping[str, Any]:

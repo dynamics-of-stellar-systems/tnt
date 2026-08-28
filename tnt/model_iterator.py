@@ -31,12 +31,14 @@ import numpy as np
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.all_models import AllModels
+from tnt.configuration import Configuration
 from tnt.configuration.compatibility import (
     _critical_configuration,
     ensure_resume_compatible,
 )
+from tnt.configuration.core import CONFIG_REPOSITORY_DIRECTORY, preserve_run
 from tnt.kinematics import AbstractKinematics, build_kinematics
-from tnt.mge import build_mges
+from tnt.mge import MGEDeprojectionError, build_mges
 from tnt.model import Model
 from tnt.orbit_library import (
     AbstractOrbitDithering,
@@ -63,7 +65,7 @@ from tnt.run_config_log import (
     RunManifestReference,
 )
 from tnt.spatial_binnings import build_spatial_binnings
-from tnt.units import resolve_cosmological_parameters
+from tnt.units import resolve_cosmological_parameters, resolve_system_distance
 from tnt.weight_solver import AbstractWeightSolver, OrbitWeights, build_weight_solver
 
 _LOGGER = logging.getLogger(__name__)
@@ -97,50 +99,61 @@ class ModelIterator:
     which_chi2: str
     stopping_criteria: Mapping[str, Any]
     execution_settings: Mapping[str, Any]
-    run_id: int
-    run_manifest: RunManifestReference
+    runtime_configuration: Mapping[str, Any]
+    portable_configuration: Mapping[str, Any]
+    workspace_root: Path
+    logfile_path: Path | None
+    configuration_repository: Path
     critical_configuration: Mapping[str, Any]
+    run_id: int | None = None
+    run_manifest: RunManifestReference | None = None
 
     @classmethod
     def from_configuration(
         cls,
-        config: Mapping[str, Any],
-        unit_system: AbstractUnitSystem,
-        run_manifest_path: Path,
+        configuration: Configuration,
     ) -> Self:
         """Build a `ModelIterator` from a fully resolved configuration.
-
-        Deliberately takes already-resolved, plain-data inputs rather than
-        a `tnt.configuration.Configuration` -- matching `tnt.mge.build_mges`
-        and the other `build_*` functions this calls; see that docstring
-        for why.
 
         Runtime construction is ordered by dependency: build named MGEs,
         build named spatial binnings, then call `build_kinematics` and
         `build_populations` with their shared registries and
         `io_settings.input_directory`, before constructing the iterator's
-        remaining model-search services.
+        remaining model-search services. No run identity or archive is created
+        until the resulting iterator's `run` method is called.
 
         Args:
-            config: A resolved configuration, e.g. `Configuration.as_dict()`.
-            unit_system: The unit system to convert MGE/kinematics/
-                population quantities into, e.g.
-                `Configuration.unit_systems.internal`.
-            run_manifest_path: The immutable run manifest associated with this
-                configuration, e.g. `Configuration.run_manifest_path`. Its run
-                ID is recorded for every round in `run`'s `RunConfigLog`.
+            configuration: A successfully read configuration. Its runtime and
+                portable forms are retained so `run` can archive exactly the
+                configuration whose runtime objects were constructed.
+
+        Raises:
+            RuntimeError: If no configuration has been read into
+                `configuration`.
         """
+        if (
+            not configuration.data
+            or configuration.unit_systems is None
+            or configuration.workspace_root is None
+        ):
+            raise RuntimeError("Configuration must be read before construction.")
+
+        config = configuration.as_dict()
+        portable_config = configuration.as_portable_dict()
+        unit_system = configuration.unit_systems.internal
         _require_supported_model_processing_order(config["execution_settings"])
-        run_manifest = RunManifestReference.from_run_manifest(run_manifest_path)
         input_directory = config["io_settings"]["input_directory"]
+        output_directory = Path(config["io_settings"]["output_directory"])
         parameter_space_settings = config["parameter_space_settings"]
 
-        mges = build_mges(config["MGEs"], input_directory, unit_system)
+        distance = resolve_system_distance(config["system_attributes"])
+        mges = build_mges(config["MGEs"], input_directory, unit_system, distance)
         spatial_binnings = build_spatial_binnings(
             config["spatial_binnings"],
             input_directory,
             unit_system,
             config["mge_settings"]["projected_mass_quad_order"],
+            distance,
         )
         kinematic_data = build_kinematics(
             config["kinematic_data"],
@@ -180,8 +193,11 @@ class ModelIterator:
             which_chi2=parameter_space_settings["which_chi2"],
             stopping_criteria=parameter_space_settings["stopping_criteria"],
             execution_settings=config["execution_settings"],
-            run_id=run_manifest.run_id,
-            run_manifest=run_manifest,
+            runtime_configuration=config,
+            portable_configuration=portable_config,
+            workspace_root=configuration.workspace_root,
+            logfile_path=configuration.logfile_path,
+            configuration_repository=(output_directory / CONFIG_REPOSITORY_DIRECTORY),
             critical_configuration=_critical_configuration(config),
         )
 
@@ -198,7 +214,7 @@ class ModelIterator:
         models -- and appends every resulting `Model` to the running
         `AllModels`. Stops when `parameter_generator` proposes nothing
         more, or once `stopping_criteria` is met: `n_new_iter` rounds have run
-        during the current call, `target_model_count` cumulative models have
+        during the current run, `target_model_count` cumulative models have
         been evaluated before a new round starts, or the best `which_chi2`
         chi2 has stopped improving by at least `minimum_delta_chi2` between
         successful rounds. The model count is a soft target: every model in a
@@ -213,7 +229,11 @@ class ModelIterator:
         produces only failures does not terminate the search or participate in
         the delta-chi2 check; the previous best remains the generator's base.
 
-        `n_new_iter` is a per-call allowance: resuming a previously written
+        One invocation is exactly one TNT run. Sequential calls on the same
+        iterator are allowed; each performs a new preflight, receives a new run
+        ID, and archives the resolved configuration again.
+
+        `n_new_iter` is a per-run allowance: resuming a previously written
         `AllModels` can run up to that many additional iterations. Iteration
         labels remain cumulative, starting at `all_models.n_iterations()`.
         `target_model_count`, in contrast, is judged cumulatively via
@@ -235,6 +255,7 @@ class ModelIterator:
         Returns:
             The final `AllModels` and `RunConfigLog`, covering every
             model and round recorded so far.
+
         """
         _require_supported_model_processing_order(self.execution_settings)
         models = AllModels() if all_models is None else all_models
@@ -248,12 +269,14 @@ class ModelIterator:
         ensure_resume_compatible(
             self.critical_configuration,
             run_config_log.baseline_run_reference(
-                self.run_manifest.repository,
-                current_run_id=self.run_id,
+                self.configuration_repository,
             ),
             models,
             self.which_chi2,
         )
+        run_manifest = self._archive_run()
+        self.run_manifest = run_manifest
+        self.run_id = run_manifest.run_id
         n_new_iter = self.stopping_criteria["n_new_iter"]
         target_model_count = self.stopping_criteria["target_model_count"]
         initial_iteration_count = models.n_iterations()
@@ -286,7 +309,7 @@ class ModelIterator:
                 break
 
             iteration = models.n_iterations()
-            run_config_log = run_config_log.append(iteration, self.run_id)
+            run_config_log = run_config_log.append(iteration, run_manifest.run_id)
             n_before = len(models)
             n_successful = 0
             for parameters in proposed:
@@ -336,6 +359,24 @@ class ModelIterator:
             len(models),
         )
         return models, run_config_log
+
+    def _archive_run(self) -> RunManifestReference:
+        """Publish this proven-constructible configuration as one TNT run."""
+        manifest_path, resolved_path, run_id = preserve_run(
+            repository=self.configuration_repository,
+            workspace_root=self.workspace_root,
+            runtime_config=dict(self.runtime_configuration),
+            portable_config=dict(self.portable_configuration),
+            logfile_path=self.logfile_path,
+        )
+        run_manifest = RunManifestReference.from_run_manifest(manifest_path)
+        if run_manifest.run_id != run_id:
+            raise RuntimeError(
+                "Published run manifest does not match its allocated run ID."
+            )
+        _LOGGER.info("Resolved configuration preserved at %s.", resolved_path)
+        _LOGGER.info("Run manifest written to %s.", manifest_path)
+        return run_manifest
 
     def _chi2_stopped_improving(
         self, previous_best_chi2: float, best_chi2: float
@@ -390,13 +431,16 @@ class ModelIterator:
         Each returned `Model.iteration` is a placeholder -- `run` stamps the
         real one on afterward (see module docstring).
 
-        Sets `Model.orblib_done`/`weights_done` (and `weights`/`chi2`) to
-        reflect what actually happened, per `Model`'s own docstring, rather
-        than assuming success. A failed orbit integration or weight solve is
-        caught as a bare `Exception` -- there's no narrower exception type
-        established anywhere else in the codebase yet for either failure, so
-        this is a placeholder pending one. Deliberately makes only one attempt
-        at each; configuration requires
+        Sets `Model.valid_potential`/`orblib_done`/`weights_done` (and
+        `weights`/`chi2`) to reflect what actually happened, per `Model`'s own
+        docstring, rather than assuming success. `build_potential` failing
+        with `MGEDeprojectionError` (an invalid MGE viewing geometry) is
+        caught specifically, since it's the one currently-possible way a
+        `Potential` itself can fail to build. A failed orbit integration or
+        weight solve, distinct from that, is caught as a bare `Exception` --
+        there's no narrower exception type established anywhere else in the
+        codebase yet for either failure, so this is a placeholder pending one.
+        Deliberately makes only one attempt at each; configuration requires
         `weight_solver_settings.reattempt_failures: false` until retry behavior
         is implemented.
 
@@ -406,12 +450,16 @@ class ModelIterator:
         which proposed point a given `OrbitLibrary` belongs to (see module
         docstring).
         """
-        potential = build_potential(
-            self.resolved_potential,
-            parameters,
-            self.unit_system,
-            self.cosmological_parameters,
-        )
+        try:
+            potential = build_potential(
+                self.resolved_potential,
+                parameters,
+                self.unit_system,
+                self.cosmological_parameters,
+            )
+        except MGEDeprojectionError as error:
+            _LOGGER.warning("Invalid potential for %s: %s", parameters, error)
+            return [_invalid_potential_model(parameters)]
 
         try:
             orbit_library = potential.generate_orbit_library(
@@ -550,6 +598,7 @@ def _model(
     """A `Model` for `potential`, given its `OrbitLibrary`'s already-solved weights."""
     return Model(
         potential=potential,
+        valid_potential=True,
         raw_parameters=raw_parameters,
         orblib_done=True,
         weights_done=solved.weights_done,
@@ -565,7 +614,22 @@ def _unsolved_model(
     """A `Model` for `potential`, whose orbit integration itself didn't succeed."""
     return Model(
         potential=potential,
+        valid_potential=True,
         raw_parameters=raw_parameters,
+        orblib_done=False,
+        weights_done=False,
+        weights=None,
+        chi2=None,
+        iteration=0,
+    )
+
+
+def _invalid_potential_model(parameters: ParameterSet) -> Model:
+    """A `Model` for a proposed point whose `Potential` itself couldn't be built."""
+    return Model(
+        potential=None,
+        valid_potential=False,
+        raw_parameters=parameters,
         orblib_done=False,
         weights_done=False,
         weights=None,

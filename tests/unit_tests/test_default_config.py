@@ -1,5 +1,9 @@
 from importlib.resources import files
 
+import yaml
+
+from tnt.numerics import DEFAULT_JAX_ENABLE_X64
+
 
 def test_default_config_is_packaged() -> None:
     default_config = files("tnt.defaults").joinpath("default_config.yaml")
@@ -7,13 +11,18 @@ def test_default_config_is_packaged() -> None:
 
     assert default_config.is_file()
     assert "orbit_library_settings:" in config_text
-    assert '  H0: {value: 70.0, unit: "km / (s Mpc)"}' in config_text
+    assert '  H: {value: 70.0, unit: "km / (s Mpc)"}' in config_text
     assert "units:" in config_text
     assert (
         "mge_settings:\n  intrinsic_mass_quad_order: 10\n"
         "  projected_mass_quad_order: 10"
     ) in config_text
     assert "numerics_settings:" in config_text
+    assert "  jax_enable_x64: true" in config_text
+    assert (
+        yaml.safe_load(config_text)["numerics_settings"]["jax_enable_x64"]
+        is DEFAULT_JAX_ENABLE_X64
+    )
     assert "  model_comparison_relative_tolerance: 1.0e-10" in config_text
     assert "  parameter_grid_relative_tolerance: 1.0e-6" in config_text
     assert "    total_mass: 1.0e-8" in config_text

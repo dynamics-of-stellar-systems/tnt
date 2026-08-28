@@ -5,8 +5,9 @@ column per potential-component parameter (value + unit, named after the
 resolved configuration's own parameterization, e.g. `"bh.m"`, `"stars.ml"`,
 or NFW's `"dh.c"`/`"dh.M_200"` under `concentration_m200` -- see
 `Model.raw_parameters` -- always present, since a proposed point's
-parameters are known before evaluation), boolean `orblib_done`/`weights_done` flags (see
-`Model`'s docstring), and one column per `Model.chi2` key (e.g. `"chi2"`,
+parameters are known before evaluation), boolean `valid_potential`/
+`orblib_done`/`weights_done` flags (see `Model`'s docstring), and one column
+per `Model.chi2` key (e.g. `"chi2"`,
 `"kinchi2"`) once at least one appended model has `weights_done`. A model
 appended without `chi2` (evaluation didn't succeed) gets `nan` in every
 existing chi2 column; a model appended with `chi2` before any chi2 column
@@ -42,6 +43,7 @@ def _model_row(model: Model) -> dict[str, Any]:
         for parameter_name, value in parameters.items()
     }
     row["iteration"] = model.iteration
+    row["valid_potential"] = model.valid_potential
     row["orblib_done"] = model.orblib_done
     row["weights_done"] = model.weights_done
     if model.chi2 is not None:
@@ -96,7 +98,7 @@ class AllModels:
         0 if empty, otherwise one more than the largest `Model.iteration`
         among the models held here. Lets `ModelIterator.run` assign cumulative
         iteration labels after resuming a previously written `AllModels`, and
-        measure its per-call `stopping_criteria.n_new_iter` allowance from the
+        measure its per-run `stopping_criteria.n_new_iter` allowance from the
         resumed starting point, without a separately persisted counter.
         """
         if not len(self.table):

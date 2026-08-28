@@ -7,6 +7,7 @@ import jax.numpy as jnp
 from tnt import Configuration
 from tnt.populations import Populations, build_populations
 from tnt.spatial_binnings import build_spatial_binnings
+from tnt.units import resolve_system_distance
 
 
 def test_build_populations_from_resolved_configuration(
@@ -17,11 +18,13 @@ def test_build_populations_from_resolved_configuration(
     resolved = config.as_dict()
     input_directory = resolved["io_settings"]["input_directory"]
     unit_system = config.unit_systems.internal
+    distance = resolve_system_distance(resolved["system_attributes"])
     binnings = build_spatial_binnings(
         resolved["spatial_binnings"],
         input_directory,
         unit_system,
         resolved["mge_settings"]["projected_mass_quad_order"],
+        distance,
     )
 
     populations = build_populations(

@@ -19,6 +19,36 @@ from tnt import quantity_conversions
 from tnt.spatial_binnings import ProjectedBinning, SphericalGrid
 
 
+class MGEDeprojectionError(ValueError):
+    """A deprojection has no solution, or violates TNT's ``0 < q <= p <= 1`` convention.
+
+    Raised eagerly, in plain Python -- not `jax.jit`/`jax.vmap`-traceable.
+    Fine today since nothing calls this under a trace; see
+    `aidocs/KNOWLEDGE.md` for the durable limitation and the trigger for
+    revisiting it.
+    """
+
+
+def _check_axial_ratios(p: jnp.ndarray, q: jnp.ndarray) -> None:
+    """Raise `MGEDeprojectionError` unless every component has ``0 < q <= p <= 1``.
+
+    Catches both an unsolvable deprojection (`p`/`q` containing `nan`, which
+    fails every comparison below) and a solution that's finite but violates
+    TNT's intrinsic-axis convention.
+    """
+    valid = (q > 0) & (q <= p) & (p <= 1)
+    if bool(jnp.all(valid)):
+        return
+    bad = jnp.asarray(~valid).nonzero()[0]
+    details = ", ".join(
+        f"component {i}: p={float(p[i])!r}, q={float(q[i])!r}" for i in bad
+    )
+    raise MGEDeprojectionError(
+        "Deprojection violates TNT's 0 < q <= p <= 1 intrinsic-axis convention "
+        f"(or has no real solution) for: {details}."
+    )
+
+
 class AbstractMGE(eqx.Module):
     """Shared structure and behaviour for MGE models.
 
@@ -94,6 +124,25 @@ class AbstractMGE(eqx.Module):
         """
         table = QTable.read(path, format="ascii.ecsv")
         return cls.from_qtable(table, unit_system)
+
+    def rescaled(self, factor: Quantity) -> Self:
+        """Multiply `I` by a dimensionless factor, keeping every other field.
+
+        Used for `TriaxialMassMGEPotential`'s `mge_mass_scale`, a normalization on
+        top of an otherwise-fixed mass map (see
+        `tnt.potential.triaxial_mge.TriaxialMassMGEPotential`).
+
+        Args:
+            factor: The multiplicative factor, either a single value applied
+                to every component, or an array with one value per Gaussian
+                component.
+
+        Returns:
+            An MGE of the same kind with ``I = self.I * factor``.
+        """
+        return type(self)(
+            I=self.I * factor, sigma=self.sigma, q=self.q, PA_twist=self.PA_twist
+        )
 
     def angular_to_physical(self, distance: Quantity) -> Self:
         """Convert `sigma` and `I` from angular to physical (length) units.
@@ -213,15 +262,15 @@ class AbstractMGE(eqx.Module):
 
         Returns:
             A `Deprojected3DMGE` with intrinsic axial ratio `q` and `p = 1` for every
-            component. If ``q' < cos(i)`` for a component (no real solution at this
-            inclination), that component's `q` is `nan` rather than raising --
-            `inclination` may be a fit parameter under `jax.jit`, so this can't be a
-            hard Python check; validate eagerly outside `jit` if you need one.
+            component.
 
         Raises:
             ValueError: If `sigma` isn't in physical (length) units -- call
                 `angular_to_physical` first -- or if any component has nonzero
                 `PA_twist` (an axisymmetric system can't have isophote twist).
+            MGEDeprojectionError: If any component has no real solution at this
+                inclination (``q' < cos(i)``), or an intrinsic `q` outside
+                TNT's ``0 < q <= 1`` convention (``p`` is always 1 here).
         """
         if not self.sigma.unit.is_equivalent(au.m):
             raise ValueError(
@@ -238,6 +287,8 @@ class AbstractMGE(eqx.Module):
         sin_i = jnp.sin(inclination.ustrip("rad"))
         q_obs = self.q.ustrip("")
         q_intr = jnp.sqrt(q_obs**2 - cos_i**2) / sin_i
+
+        _check_axial_ratios(p=jnp.ones_like(q_intr), q=q_intr)
 
         I_3d = self.I * (q_obs / (jnp.sqrt(2 * jnp.pi) * q_intr)) / self.sigma
 
@@ -269,8 +320,11 @@ class AbstractMGE(eqx.Module):
         component).
 
         A solution isn't guaranteed to exist for arbitrary viewing angles (Cappellari
-        2002 sec. 2.2.1); an unsolvable component produces `nan` rather than raising,
-        since the viewing angles may be fit parameters under `jax.jit`.
+        2002 sec. 2.2.1), and a solution that exists isn't guaranteed to respect TNT's
+        ``0 < q <= p <= 1`` intrinsic-axis convention (``p = B/A``, ``q = C/A``) --
+        both cases raise `MGEDeprojectionError` (this is an eager Python check, not
+        JAX-traceable; see that exception's own note if `theta`/`phi`/`psi` are ever
+        evaluated under `jax.jit`/`jax.vmap`).
 
         Args:
             theta: Global polar viewing angle, relative to the principal axes.
@@ -284,6 +338,9 @@ class AbstractMGE(eqx.Module):
         Raises:
             ValueError: If `sigma` isn't in physical (length) units -- call
                 `angular_to_physical` first.
+            MGEDeprojectionError: If any component has no real solution at this
+                viewing geometry, or intrinsic axial ratios outside TNT's
+                ``0 < q <= p <= 1`` convention.
         """
         if not self.sigma.unit.is_equivalent(au.m):
             raise ValueError(
@@ -319,6 +376,7 @@ class AbstractMGE(eqx.Module):
 
         q_intr = jnp.sqrt(1 - one_minus_q2)
         p_intr = jnp.sqrt(q_intr**2 + p2_minus_q2)
+        _check_axial_ratios(p=p_intr, q=q_intr)
 
         q_obs = self.q.ustrip("")
         cos_phi, sin_phi = jnp.cos(phi_r), jnp.sin(phi_r)
@@ -517,13 +575,21 @@ def build_mges(
     mges: Mapping[str, str],
     input_directory: str | Path,
     unit_system: AbstractUnitSystem,
+    distance: Quantity,
 ) -> dict[str, AbstractMGE]:
     """Build the named MGEs from a resolved configuration's ``MGEs`` mapping.
 
     Each MGE's kind (light or mass) is inferred from its file's declared
-    units -- see `read_mge`. This deliberately takes already-resolved,
-    plain-data inputs rather than a `tnt.configuration.Configuration`, since
-    that class explicitly holds no instantiated runtime objects.
+    units -- see `read_mge`. Every MGE is converted to physical units via
+    `angular_to_physical` before being returned, since every consumer (e.g.
+    `tnt.potential`'s MGE composite components) needs physical `sigma` to
+    build a 3D potential. `tnt.spatial_binnings.build_spatial_binnings` is
+    converted to physical units the same way, so a consumer needing both
+    (e.g. a future `AbstractMGE.get_projected_mass` call) can assume
+    dimensional consistency without converting either itself. This
+    deliberately takes already-resolved, plain-data inputs rather than a
+    `tnt.configuration.Configuration`, since that class explicitly holds no
+    instantiated runtime objects.
 
     Args:
         mges: Mapping of unique identifiers to ECSV filenames, e.g. a
@@ -531,12 +597,15 @@ def build_mges(
         input_directory: Directory that each filename is resolved against,
             e.g. a resolved configuration's ``io_settings.input_directory``.
         unit_system: The unit system to convert each MGE's columns into.
+        distance: The distance to the object, e.g. a resolved
+            configuration's ``system_attributes.distance``.
 
     Returns:
-        A dict mapping each identifier to its `LightMGE` or `MassMGE`.
+        A dict mapping each identifier to its physical-unit `LightMGE` or
+        `MassMGE`.
     """
     directory = Path(input_directory)
     return {
-        name: read_mge(directory / filename, unit_system)
+        name: read_mge(directory / filename, unit_system).angular_to_physical(distance)
         for name, filename in mges.items()
     }

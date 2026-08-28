@@ -52,22 +52,30 @@ potential:
         latex_label: "$M_{200}/M_\\odot$"
 
   stars:
-    type: "triaxial_light_mge"
+    type: "TriaxialLightMGEPotential"
     include: true
     mge: "mge_lum"
     parameters:
-      q:
+      theta:
+        unit: "rad"
         fixed: true
-        value: 0.54
-        latex_label: "$q$"
-      p:
+        # Verified against the committed mge_lum.ecsv fixture to deproject
+        # to physically valid (0 < q <= p <= 1) intrinsic axial ratios for
+        # every Gaussian component -- unlike this value's predecessor
+        # (theta=1.0, phi=0.5, psi=0.0), which produced q > 1 (see PR #32
+        # audit, aidocs/pr-32-mge-to-galax-audit.md).
+        value: 0.4280191007651427
+        latex_label: "$\\theta$"
+      phi:
+        unit: "rad"
         fixed: true
-        value: 0.99
-        latex_label: "$p$"
-      u:
+        value: 1.0363519257903688
+        latex_label: "$\\phi$"
+      psi:
+        unit: "rad"
         fixed: true
-        value: 0.9999
-        latex_label: "$u_\\mathrm{min}$"
+        value: 2.0332058150420305
+        latex_label: "$\\psi$"
       ml:
         unit: "Msun / Lsun"
         prior: {distribution: "Uniform", args: [1.0, 9.0]}

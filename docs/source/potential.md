@@ -28,7 +28,7 @@ mass-rescale exponent per native parameter (see [What's implemented
 today](#whats-implemented-today)).
 
 In addition to `galax` potential components, TNT provides MGE-based
-component types, `"triaxial_light_mge"` and `"triaxial_mass_mge"` (see
+component types, `"TriaxialLightMGEPotential"` and `"TriaxialMassMGEPotential"` (see
 [MGE composite types](#mge-composite-types)).
 
 ## Parameterizations (optional)
@@ -47,8 +47,9 @@ field can be used to specify alternatives:
   enclosed within the radius where the mean density is 200 times the
   critical density) into native `(m, r_s)`. Some parameterizations need more
   than a component's own `parameters` to convert -- `concentration_m200`
-  also needs `H0` from the resolved configuration's
-  `cosmological_parameters` section to compute the critical density.
+  also needs `H` from the resolved configuration's
+  `cosmological_parameters` section (the Hubble parameter at the halo's own
+  epoch, not necessarily today's H0) to compute the critical density.
 
   A parameterization converts only within one component's own raw
   parameters; it can't depend on another component's resolved state (e.g. a
@@ -104,7 +105,7 @@ potential:
 
 ### MGE composite types
 
-`"triaxial_light_mge"` and `"triaxial_mass_mge"` build a potential from a
+`"TriaxialLightMGEPotential"` and `"TriaxialMassMGEPotential"` build a potential from a
 named Multi-Gaussian Expansion (MGE) -- TNT provides these two types
 directly, since `galax.potential` has no "sum of triaxial Gaussians"
 potential of its own to name. Both require an `mge` field naming a
@@ -113,16 +114,21 @@ registered MGE (see [Configuration preparation](configuration.md)):
 ```yaml
 potential:
   stars:
-    type: "triaxial_light_mge"
+    type: "TriaxialLightMGEPotential"
     include: true
     mge: "mge_lum"
     parameters:
-      ml: {value: 5.0, unit: "Msun / Lsun"}   # triaxial_mass_mge uses mge_mass_scale instead
+      ml: {value: 5.0, unit: "Msun / Lsun"}   # TriaxialMassMGEPotential uses mge_mass_scale instead
+      theta: {value: 1.0, unit: "rad"}
+      phi: {value: 0.5, unit: "rad"}
+      psi: {value: 0.0, unit: "rad"}
 ```
 
-`triaxial_light_mge`'s `ml` (mass-to-light ratio) and `triaxial_mass_mge`'s
+`TriaxialLightMGEPotential`'s `ml` (mass-to-light ratio) and `TriaxialMassMGEPotential`'s
 `mge_mass_scale` (a pure multiplicative scale factor on an already
 mass-calibrated MGE) are TNT's own parameter names for these two types.
+`theta`, `phi`, and `psi` are shared by both -- the global viewing angles
+the named MGE is deprojected under (`AbstractMGE.deproject_triaxial`).
 
 ## What's implemented today
 
@@ -155,14 +161,24 @@ mass-calibrated MGE) are TNT's own parameter names for these two types.
   (converting the recovered `(c, M_200)` forward again reproduces the same
   rescaled `(m, r_s)`), since there's no independent closed-form answer to
   check against.
-- **The two MGE composite types**: `resolve()` resolves the component
-  and its named MGE, but `to_galax()` raises `NotImplementedError` -- no
-  native `galax.potential` class exists for a sum-of-triaxial-Gaussians
-  potential, so building one needs a custom `galax.potential.AbstractPotential`
-  subclass, the same difficulty tier as `AbstractMGE.get_projected_mass`'s
-  from-scratch implementation. The MGE `stars` component's own viewing-geometry
-  parameterization (`q`, `p`, `u` -> `theta`, `phi`, `psi`) needs a formula
-  from the triaxial-Schwarzschild-modeling / DYNAMITE-successor literature
-  that hasn't been confirmed yet.
+- **The two MGE composite types**: implemented. The named MGE is deprojected
+  under `theta`/`phi`/`psi` (`AbstractMGE.deproject_triaxial`) once, when the
+  component itself is built from a proposed point in parameter space -- not
+  lazily inside `to_galax()` -- so an invalid viewing geometry
+  (`tnt.mge.MGEDeprojectionError`, for a deprojection with no real solution
+  or intrinsic axial ratios outside TNT's `0 < q <= p <= 1` convention)
+  surfaces there, before anything downstream is attempted. `to_galax()` then
+  sums one `galax.potential.TriaxialGaussianPotential` per Gaussian
+  component -- `galax` gained native axisymmetric/triaxial Gaussian
+  potentials and `CompositePotential` after this was first scoped, so no
+  custom `galax.potential.AbstractPotential` subclass or new potential
+  formula was needed after all; the two densities match term for term
+  (`r_s <-> sigma`, `q1 <-> p`, `q2 <-> q`), giving a direct, verified
+  `m_tot = I * p * q * (2*pi)**1.5 * sigma**3` conversion per component.
+  `(theta, phi, psi)` are native; the alternative `(p, q, u)`
+  shape/compression parameterization closer to the
+  triaxial-Schwarzschild-modeling / DYNAMITE-successor literature isn't
+  registered yet -- converting it to `(theta, phi, psi)` needs a formula
+  that hasn't been confirmed.
 - **`Potential.generate_orbit_library`**: not implemented -- blocked on
   `tnt.orbit_library`, itself still a full scaffold.

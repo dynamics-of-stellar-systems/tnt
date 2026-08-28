@@ -53,10 +53,9 @@
 - Configuration preparation is implemented by `tnt.Configuration`. Its
   `read()` method loads the user YAML, recursively merges package defaults,
   resolves dynamic and kinematics-type defaults, validates the resulting
-  data, and atomically publishes an immutable resolved configuration and run
-  manifest for each run below
-  `<output_directory>/config_repository/`. It does not instantiate scientific
-  runtime objects.
+  data, and retains runtime and portable representations in memory. It does
+  not instantiate scientific runtime objects, allocate a run ID, or write the
+  configuration repository.
 - Preparation-stage validation rejects duplicate keys, unknown or missing
   fields in preparation-owned schemas, invalid types and enumerations,
   malformed tagged thresholds, and basic numerical inconsistencies before the
@@ -85,7 +84,7 @@
   stripping them; per-run resolved configurations preserve the `{value, unit}`
   declarations. The submitted profile is transient input and is not archived
   by TNT.
-- The first unit-aware schema covers `cosmological_parameters.H0`,
+- The first unit-aware schema covers `cosmological_parameters.H`,
   `system_attributes.distance`, explicit kinematics histogram width and center,
   Gauss-Hermite `v` and `sigma` systematic uncertainties,
   `PlummerPotential`'s native `m_tot` and `r_s`, and light-MGE potential `ml`.
@@ -95,28 +94,26 @@
 - Runtime kinematics construction converts configured histogram quantities and
   Gauss-Hermite velocity systematics. Potential parameters instead keep their
   own declared unit all the way through `AbstractParameterGenerator` and
-  `Potential` construction -- `ModelIterator.from_configuration()` no longer
-  pre-converts them into a shared internal-unit copy; `galax`'s own
+  `Potential` construction -- `ModelIterator.from_configuration()` does not
+  pre-convert them into a shared internal-unit copy; `galax`'s own
   potential classes already convert generically at evaluation time, so
   nothing needs them pre-normalized (see `tnt.potential`'s module
   docstring). `ModelIterator.from_configuration()` also converts
-  `cosmological_parameters`, including `H0`, into `Quantity` objects for
+  `cosmological_parameters`, including `H`, into `Quantity` objects for
   runtime consumers such as NFW's `concentration_m200` parameterization.
   System distance remains a declared quantity until a runtime consumer needs
   it.
-- `tnt.configuration.compatibility._critical_configuration` calls
-  `normalize_configuration_quantities`, which raises plain `TypeError`/
-  `ValueError` on malformed unit-bearing fields rather than
-  `ConfigurationCompatibilityError`. A field the write-time validator doesn't
-  cover (e.g. `spatial_binnings`, since `ProjectedBinning.from_settings` owns
-  its validation at construction instead) can pass preparation and later break
-  resume-compatibility checking with an undocumented exception type. Known;
-  not patched locally, since redefining "run" so archiving only happens after
-  a configuration is fully proven constructible (tracked in issue #27) removes
-  the pathway entirely. `normalize_potential_settings`/`_normalize_parameters`
-  (in `tnt/units.py`) are kept, unchanged, purely for this canonicalize-for-
-  comparison use -- no longer used to feed the parameter generator or
-  potential construction.
+- `tnt.configuration.compatibility._critical_configuration` projects the
+  preserved resolved configuration without normalizing it. Its recursive
+  comparator treats complete `{value, unit}` mappings as atomic quantities,
+  converts one value to the other's unit only for that comparison, and requires
+  exact numerical equality after conversion. Incompatible dimensions are
+  differences; malformed declarations raise `ConfigurationCompatibilityError`.
+  At the run boundary, `Configuration.read()` does not archive, and
+  `ModelIterator.from_configuration()` successfully constructs every
+  runtime object before `run()` can publish the configuration. Malformed
+  runtime-owned fields such as `spatial_binnings.*.min_x` therefore fail before
+  any run bundle exists.
 - Prep-time validation and construction-time conversion don't cover the same
   fields consistently, and this isn't one shared policy: `spatial_binnings`
   has no prep-time check at all (construction owns it exclusively);
@@ -137,6 +134,19 @@
 - `tnt.mge.build_mges()` is the explicit runtime boundary that loads the
   resolved `MGEs` registry into named `LightMGE` and `MassMGE` objects.
   `Configuration` continues to contain no instantiated scientific objects.
+- MGE deprojection enforces TNT's intrinsic-axis convention
+  `0 < q <= p <= 1` eagerly. `_check_axial_ratios()` converts JAX results to
+  Python control flow (`bool(...)` and `.nonzero()`) and raises
+  `MGEDeprojectionError`, so `deproject_triaxial()` and
+  `deproject_axisymmetric()` are deliberately not `jax.jit`/`jax.vmap`
+  traceable. This is acceptable while model evaluation itself remains eager:
+  `ModelIterator._evaluate()` catches Python exceptions and returns a
+  variable-length `list[Model]`, while orbit integration and weight solving
+  are still scaffolding. Revisit deprojection validity and `_evaluate()`
+  failure handling together when orbit integration is implemented and TNT
+  chooses whether models are individually jitted or evaluated as a masked,
+  vectorized batch. Do not design a separate JAX validity mechanism before
+  that execution strategy is known.
 - Intel macOS is not a native TNT target because current JAX releases do not
   provide `jaxlib` wheels for that platform. Use the Linux `x86_64`
   development container there instead.
@@ -155,17 +165,26 @@
   configuration data materializes both paths as absolute; the resolved YAML
   stores them relative to the workspace root.
 - `Configuration.data` and `as_dict()` expose runtime paths;
-  `portable_data` and `as_portable_dict()` expose the archived form.
-  Configuration preparation requires both path strings but creates only the
-  output directory and configuration repository.
+  `portable_data` and `as_portable_dict()` expose the portable form retained
+  for later archiving. `Configuration.read()` requires both path strings but
+  does not create the output directory or configuration repository;
+  `configuration_session()` may create the output/log directory to start its
+  logging lifecycle.
 - The configuration repository stores one immutable bundle per TNT run under
   `runs/<run_id>/`, containing `run_manifest.yaml` and
-  `resolved_config.yaml`. Identical configurations are archived again for each
-  run; TNT performs no cross-run deduplication and stores no configuration or
-  scientific-input hashes. The submitted user profile and source path remain
-  transient. Each manifest records software versions, Git state,
-  Python/platform/host context, scheduler identifiers, logfile location, and
-  orbit random-seed state.
+  `resolved_config.yaml`. One invocation of `ModelIterator.run()` is exactly
+  one run; it allocates and publishes the bundle only after
+  `ModelIterator.from_configuration()` has successfully constructed all
+  runtime objects and its state/resume preflight checks pass. Sequential calls
+  on the same iterator are allowed, and each receives a fresh run ID and
+  archive. `ModelIterator.run_id` and `run_manifest` identify the latest call;
+  earlier provenance remains in `RunConfigLog` and the repository. Identical
+  configurations are therefore archived again for separate calls; TNT
+  performs no cross-run deduplication and stores no configuration or
+  scientific-input hashes. The
+  submitted user profile and source path remain transient. Each manifest
+  records software versions, Git state, Python/platform/host context,
+  scheduler identifiers, logfile location, and orbit random-seed state.
 - Exactly one coordinating TNT process may write a given output directory.
   Parallel workers may calculate models, but only the coordinator may update
   shared repository or checkpoint files. Scientific input files must not be
@@ -178,14 +197,13 @@
   the authoritative links to per-run resolved configurations and execution
   provenance. ECSV metadata derives `total_runs` and
   `run_ids_without_iterations` from all manifests and the iteration rows on
-  every read or write. `ModelIterator.run()` still returns rather than writes
-  both `AllModels` and this log, so the execution layer must load and save them
+  every read or write. `ModelIterator.run()` returns both `AllModels` and this
+  log without writing them, so the execution layer must load and save them
   together, including after a zero-iteration run. The log records provenance
   only; it does not implement the configuration-compatibility decision itself.
 - `RunConfigLog` metadata refresh deliberately performs one O(M) scan of the
-  M per-run manifests on every log read or write. The former duplicate
-  validation pass and configuration hashing have been removed. Keep the
-  remaining scan unless profiling shows that it materially affects checkpoint
+  M per-run manifests on every log read or write. Keep this scan unless
+  profiling shows that it materially affects checkpoint
   time; run counts are expected to be small relative to model-calculation
   costs. If optimization becomes necessary, first make metadata refresh use a
   lightweight numeric run-directory scan instead of introducing a persistent
@@ -200,7 +218,8 @@
 - Before resuming, runtime compares the current compatibility-critical
   configuration directly with the archived resolved configuration from the
   earliest run that contributed an iteration. The contract excludes
-  operational/search/presentation fields and potential parameter values/ranges.
+  operational/search/presentation fields and potential parameter
+  values/units/ranges.
   It includes internal units, cosmology, physical system attributes except
   name, potential/parameter schema, MGE and observational settings including
   their configured file references, all `numerics_settings`, orbit-library
@@ -208,19 +227,31 @@
   successful historical model, and the required potential parameter columns
   must exist. Negative configured orbit seeds are valid for fresh and
   continued runs; changing the configured seed between runs remains
-  incompatible. Unit-bearing compatibility fields are canonicalized into the
-  configured internal units first, so physically equivalent declarations such
-  as `1 kpc` and `1000 pc` compare equal.
-- The compatibility check currently runs once at the start of each
-  `ModelIterator.run()` invocation, outside its internal iteration loop. When
-  TNT gains a coordinating execution layer, move the check there and perform
-  it once per TNT run after loading the resolved configuration, `AllModels`,
-  and `RunConfigLog`, but before constructing MGEs, observational objects, or
-  `ModelIterator`. Do not replace this with an iterator-local “already checked”
-  flag, because later calls could supply different model or provenance state.
-- Configuration preparation cannot record a generated seed. A negative seed
-  is recorded as `pending_generation`; the execution phase must update the
-  effective seed.
+  incompatible. Complete unit-bearing compatibility fields are compared by
+  physical value on demand, so equivalent declarations such as `1 kpc` and
+  `1000 pc` compare equal without an eager configuration-wide traversal.
+  Comparison is exact, not tolerance-based, by design: the question this
+  check answers is "did the human change anything," and a config field that
+  changes unit between runs almost always changes value too, so exactness
+  correctly flags real edits rather than hiding them. Floating-point
+  unit-conversion noise (e.g. through angle units or composite units
+  involving irrational factors) is a real property of the conversion
+  arithmetic but not a practical risk here, since it would only bite two
+  independently-authored declarations of the identical physical value in
+  different units -- not how config files are actually edited between runs.
+  The comparator intentionally keeps this conversion in host-side
+  NumPy/Astropy `float64` arithmetic rather than constructing JAX-backed
+  `unxt.Quantity` objects. Do not replace it with direct `Quantity` equality:
+  `numerics_settings.jax_enable_x64: false` would then make compatibility
+  comparison lose small declared differences to 32-bit rounding. Preserved
+  configuration identity must remain independent of runtime precision.
+- The compatibility check runs once at the start of each `run()` invocation,
+  after runtime construction but before allocating that call's new run
+  identity or modifying model-search state. It cannot run in
+  `Configuration.read()` because the selected chi-square and model-table
+  schema checks require the previous search state.
+- A negative seed is recorded as `pending_generation` in the run manifest;
+  the execution phase must update the effective seed.
 - The user profile must define the physical system, dynamically named
   potential components and parameters, input directory, and output directory.
 - TNT user profiles generally use snake-case type identifiers and field names.
@@ -291,7 +322,7 @@
 - `potential.<name>.type` names one of a curated set of `galax.potential`
   classes (`tnt.potential._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
   `PlummerPotential` -- 25 classes total), or one of two TNT-specific MGE
-  composite types, `triaxial_light_mge`/`triaxial_mass_mge`, provided
+  composite types, `TriaxialLightMGEPotential`/`TriaxialMassMGEPotential`, provided
   directly by TNT since `galax` has no native class for a
   sum-of-triaxial-Gaussians potential. A light-MGE potential requires an
   `ml` parameter; a mass-MGE potential requires `mge_mass_scale` instead
@@ -353,11 +384,11 @@
   `galax`'s own NFW enclosed-mass function. It converts a concentration `c`
   and $M_{200c}$ (mass enclosed within the radius where mean density is
   200x the critical density) into native `(m, r_s)` via
-  `rho_crit = 3*H0**2 / (8*pi*G)`, `r200 = (3*M200 / (4*pi*200*rho_crit))**(1/3)`,
+  `rho_crit = 3*H**2 / (8*pi*G)`, `r200 = (3*M200 / (4*pi*200*rho_crit))**(1/3)`,
   `r_s = r200 / c`, `m = M200 / (ln(1+c) - c/(1+c))`. Converters receive the
   resolved configuration's `cosmological_parameters` as a third argument
   (`tnt.potential.registry.ParameterizationConverter`'s signature) so
-  parameterizations like this one that need `H0` can use it.
+  parameterizations like this one that need `H` can use it.
   `cosmological_parameters` is
   threaded from `Configuration` through `ModelIterator` (a stored field, set
   in `from_configuration`) into `build_potential`, mirroring how
@@ -367,18 +398,19 @@
   converts `cosmological_parameters` into `Quantity`s once via
   `tnt.units.resolve_cosmological_parameters` -- in `tnt.units`, not
   `tnt.potential`, since it's generic declared-quantity conversion with no
-  potential-specific knowledge, matching `normalize_unitful_value`/
-  `normalize_potential_settings`'s existing home rather than the opposite
-  direction (`tnt.units` importing `raw_parameter_dimensions` from
+  potential-specific knowledge, matching `normalize_unitful_value`'s existing
+  home rather than the opposite direction (`tnt.units` importing
+  `raw_parameter_dimensions` from
   `tnt.potential`, which *does* need `tnt.potential`'s own domain
   knowledge -- galax `ParameterField` metadata, the parameterization
   registry -- and couldn't move the other way).
   `_nfw_concentration_m200`/its inverse do their entire calculation in
   `Quantity` arithmetic rather than eagerly stripping every input to a bare
   float in one specific unit -- `unxt` composes/converts units automatically
-  through the whole chain (verified: mixing `H0` in `km / (s Mpc)` with `_G`
-  in `m3 / (kg s2)` and `M_200` in `Msun` still gives the correct `r_s`/`m`
-  once converted to `unit_system`'s units at the very end), so `H0` works in
+  through the whole chain (verified: mixing `H` in `km / (s Mpc)` with
+  `_newtonian_gravitational_constant()` in `m3 / (kg s2)` and `M_200` in `Msun`
+  still gives the correct `r_s`/`m`
+  once converted to `unit_system`'s units at the very end), so `H` works in
   whatever unit it's declared in, not just the internal unit system's.
   Bare-number stripping only remains where a library function isn't
   `Quantity`-aware (`_nfw_g`'s `jnp.log`) or where `_solve_nfw_concentration`'s
@@ -459,18 +491,29 @@
   dispersion.
 - Values describing the background cosmology belong under
   `cosmological_parameters`; they are not attributes of the modelled system.
-- The present-day Hubble parameter is named `H0`, distinguishing it from the
-  Hubble parameter at other cosmological times.
+- The Hubble parameter used for the modelled halo's epoch is named `H` under
+  `cosmological_parameters`; it is not restricted to the present-day value
+  `H0`.
 - `mge_settings.intrinsic_mass_quad_order` and
   `mge_settings.projected_mass_quad_order` are positive fixed Gauss-Legendre
   quadrature orders for intrinsic spherical-grid and projected pixel
   integration, respectively. The packaged defaults are both 10.
 - `SphericalGrid` is defined in `tnt.spatial_binnings`. Runtime coordinate
   conversion uses the angular-to-physical direction.
-- Shared comparison tolerances and constraint-error floors belong under
-  `numerics_settings`. Model comparison uses a relative tolerance of `1e-10`,
-  while parameter-grid comparisons use `1e-6`. Total-mass and intrinsic-mass
-  constraint errors have floors of `1e-8` and `1e-16`, respectively.
+- Process-wide JAX precision, shared comparison tolerances, and
+  constraint-error floors belong under `numerics_settings`.
+  `jax_enable_x64` defaults to `true`. Importing `tnt` establishes that
+  default before other TNT modules create JAX-backed values; a successfully
+  validated configuration applies its resolved value before runtime-object
+  construction. The first resolved configuration fixes the policy for the
+  process. Further configuration reads and `ModelIterator.run()` calls are
+  valid with the same value, while a conflicting configuration requires a new
+  Python process. Existing arrays are not converted when the policy changes,
+  so callers must prepare configuration before constructing TNT runtime
+  objects. The entire `numerics_settings` mapping is resume-critical. Model
+  comparison uses a relative tolerance of `1e-10`, while parameter-grid
+  comparisons use `1e-6`. Total-mass and intrinsic-mass constraint errors have
+  floors of `1e-8` and `1e-16`, respectively.
 - Orbit-library radial limits are galaxy-specific and therefore have no
   package-wide defaults; the user configuration must provide them.
 - A negative `orbit_library_settings.random_seed` requests a generated seed.
@@ -575,3 +618,29 @@
   example profile (`configuration.yaml`, alongside it), covering every
   top-level configuration section at once, unlike the synthetic per-feature
   configurations in `tests/unit_tests/test_configuration.py`.
+
+## Human Workflow
+
+Thomas and Prash review each other's pull requests before merging to `main`:
+
+- A PR author requests review from the other.
+- A reviewer whose feedback is limited to tests or documentation makes those
+  changes directly and completes the merge.
+- A reviewer whose feedback touches code records it in a PR-specific audit
+  doc (`aidocs/pr-<N>-<topic>-audit.md`) and pings the author (`@<username>`
+  in the PR) to respond. They iterate until the PR is ready to merge. The
+  audit doc is removed from the branch once its findings are addressed,
+  before merging.
+- Follow-up work identified during review but out of scope for the current
+  PR is filed as a new GitHub issue rather than folded into the PR.
+- Claim an issue by assigning yourself to it, either up front or as soon as
+  work on it starts. An unassigned issue is open to either of them.
+- GitHub's merge strategy (squash vs. a real merge commit) is chosen per PR
+  at merge time, not fixed for the repo -- don't assume a branch's
+  individual commits will, or won't, survive into `main`'s history without
+  checking.
+- Always prefer merging `main` into a PR branch rather than rebasing on
+  `main` -- rebasing can silently break the other person's copy of a
+  shared branch.
+
+Above all: communicate whenever something is unclear.
