@@ -1,18 +1,31 @@
-"""Curated `galax.potential` types and their native parameters' dimensions.
+"""Curated `galax.potential` types and TNT's own potential-component registry.
 
 `_SUPPORTED_GALAX_TYPES` is the source of truth `raw_parameter_dimensions`
-reads from for any `type` without a registered `parameterization`; the two
-TNT MGE composite types and registered non-native parameterizations (e.g.
-NFW's `concentration_m200`, see `tnt.potential.nfw`) each have their own
-hand-declared raw dimensions instead.
+reads from for any `type` without a registered `parameterization`; registered
+non-native parameterizations (e.g. NFW's `concentration_m200`, see
+`tnt.potential.nfw`) have their own hand-declared raw dimensions instead.
+TNT's own composite types (the two MGE potentials, more planned alongside
+them) are neither -- each such class registers itself via `register_component`
+(see that function), reading its raw dimensions directly off the registered
+class rather than a separately hand-maintained dict, so there is exactly one
+place a new TNT component's `type`/parameter-dimensions/dispatch-target has
+to be declared.
+
+Normal `tnt.potential` initialization explicitly imports each concrete
+component module so its decorators populate the registry. Configuration
+preparation may read this static metadata; registration does not construct
+component instances or load scientific input data.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from unxt import AbstractUnitSystem, Quantity
+
+if TYPE_CHECKING:
+    from tnt.potential.components import AbstractPotentialComponent
 
 ParameterizationConverter = Callable[
     [dict[str, Quantity], AbstractUnitSystem, Mapping[str, Quantity]],
@@ -152,21 +165,47 @@ _SUPPORTED_GALAX_TYPES: dict[str, dict[str, NativeParameter]] = {
 }
 
 
-# Hand-declared raw parameter dimensions for the two TNT MGE composite
-# types. `TriaxialMassMGEPotential`'s own mass parameter is `mge_mass_scale`, a
-# pure multiplicative scale factor -- dimensionless, but still given an
-# explicit entry (not omitted) so `_validate_parameter_units` can reject a
-# stray declared `unit` on it with a specific message. `ml` has no entry
-# under `TriaxialMassMGEPotential` -- it's invalid there, not just dimensionless;
-# rejected directly by `tnt.configuration.validation`'s `_validate_potential`,
-# which runs before this module's dimension check specifically so a config
-# mistakenly declaring `ml` there gets that specific "ml is invalid for a
-# mass MGE potential" error rather than a generic dimension one.
+# Shared by both TNT MGE composite types' own `_raw_dimensions` -- the
+# global viewing angles both deproject against
+# (`tnt.mge.AbstractMGE.deproject_triaxial`), required regardless of light
+# vs. mass.
 _VIEWING_ANGLES: dict[str, str] = {"theta": "angle", "phi": "angle", "psi": "angle"}
-_MGE_RAW_DIMENSIONS: dict[str, dict[str, str]] = {
-    "TriaxialLightMGEPotential": {"ml": "mass_to_light", **_VIEWING_ANGLES},
-    "TriaxialMassMGEPotential": {"mge_mass_scale": "dimensionless", **_VIEWING_ANGLES},
-}
+
+# TNT's own potential-component types (as opposed to native `galax` types,
+# `_SUPPORTED_GALAX_TYPES` above), keyed by `_type`. Populated by
+# `register_component`, applied directly to each concrete
+# `AbstractPotentialComponent` subclass in its own defining module -- this
+# dict is the single place both `AbstractPotentialComponent.resolve` (runtime
+# dispatch) and `tnt.configuration.validation` (config-prep schema checks)
+# read from; there is no second, independently-maintained list of TNT type
+# names or dimensions to keep in sync with it.
+_COMPONENT_REGISTRY: dict[str, type[AbstractPotentialComponent]] = {}
+
+
+def register_component(
+    cls: type[AbstractPotentialComponent],
+) -> type[AbstractPotentialComponent]:
+    """Register `cls` -- reading its own `_type`/`_raw_dimensions` -- for dispatch.
+
+    Applied directly to a concrete `AbstractPotentialComponent` subclass's
+    definition, e.g. `@register_component` above `class
+    TriaxialLightMGEPotential(AbstractPotentialComponent): ...`. Only ever
+    reads what the class already declares about itself (`_type`,
+    `_raw_dimensions`) -- this decorator's job is registering that
+    self-description, not being a second place either value gets typed in.
+
+    Raises:
+        ValueError: If another registered class already declared the same
+            `_type`.
+    """
+    type_name = cls._type
+    if type_name in _COMPONENT_REGISTRY:
+        existing = _COMPONENT_REGISTRY[type_name].__name__
+        raise ValueError(
+            f"Duplicate potential type {type_name!r} on {existing} and {cls.__name__}."
+        )
+    _COMPONENT_REGISTRY[type_name] = cls
+    return cls
 
 # Raw parameter dimensions for registered non-native parameterizations,
 # keyed by (type, parameterization). Populated alongside
@@ -182,18 +221,19 @@ PARAMETERIZATION_RAW_DIMENSIONS: dict[tuple[str, str], dict[str, str]] = {
 def raw_parameter_dimensions(kind: str, parameterization: str | None) -> dict[str, str]:
     """Each raw config parameter's physical dimension for one `type`/`parameterization`.
 
-    Covers all three sources of truth in this module: a TNT MGE composite
-    type's own hand-declared dimensions, a registered non-native
-    parameterization's hand-declared raw dimensions, or -- the common case
-    -- a curated galax class's native constructor kwargs, read directly from
-    `_SUPPORTED_GALAX_TYPES`. Returns `{}` (every parameter treated as
-    dimensionless) for anything unrecognized, deferring the "is this
-    actually a valid type" question to `AbstractPotentialComponent.resolve`.
+    Covers all three sources of truth this module knows about: a registered
+    TNT component type's own `_raw_dimensions` (`_COMPONENT_REGISTRY`), a
+    registered non-native parameterization's hand-declared raw dimensions,
+    or -- the common case -- a curated galax class's native constructor
+    kwargs, read directly from `_SUPPORTED_GALAX_TYPES`. Returns `{}` (every
+    parameter treated as dimensionless) for anything unrecognized, deferring
+    the "is this actually a valid type" question to
+    `AbstractPotentialComponent.resolve`.
     """
     if parameterization is not None:
         return PARAMETERIZATION_RAW_DIMENSIONS.get((kind, parameterization), {})
-    if kind in _MGE_RAW_DIMENSIONS:
-        return _MGE_RAW_DIMENSIONS[kind]
+    if kind in _COMPONENT_REGISTRY:
+        return _COMPONENT_REGISTRY[kind]._raw_dimensions
     return {
         name: parameter.dimension
         for name, parameter in _SUPPORTED_GALAX_TYPES.get(kind, {}).items()

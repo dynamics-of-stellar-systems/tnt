@@ -39,8 +39,6 @@ potential:
     type: TriaxialLightMGEPotential
     mge: light
     parameters:
-      q:
-        value: 0.7
       theta:
         unit: "rad"
         value: 1.0
@@ -129,7 +127,7 @@ def test_read_resolves_defaults_without_allocating_a_run(tmp_path: Path) -> None
     assert config.data["io_settings"]["input_directory"] == str(tmp_path / "input")
     assert config.data["io_settings"]["output_directory"] == str(output_directory)
     assert written["potential"]["stars"]["include"] is True
-    parameter = written["potential"]["stars"]["parameters"]["q"]
+    parameter = written["potential"]["stars"]["parameters"]["theta"]
     assert parameter["fixed"] is False
     kinematics = written["kinematic_data"]["observed"]
     assert kinematics["binning"] == "observed"
@@ -947,7 +945,9 @@ def test_light_mge_potential_requires_ml_parameter(tmp_path: Path) -> None:
     del user_data["potential"]["stars"]["parameters"]["ml"]
     user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
 
-    with pytest.raises(ValueError, match=r"parameters is missing required field: ml"):
+    with pytest.raises(
+        ValueError, match=r"parameters is missing required field\(s\): ml"
+    ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
@@ -957,9 +957,16 @@ def test_mass_mge_potential_rejects_ml_parameter(tmp_path: Path) -> None:
     _write_user_config(user_path, output_directory)
     user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
     user_data["potential"]["stars"]["type"] = "TriaxialMassMGEPotential"
+    user_data["potential"]["stars"]["parameters"]["mge_mass_scale"] = {
+        "value": 1.0,
+        "unit": "",
+    }
     user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
 
-    with pytest.raises(ValueError, match=r"parameters\.ml is invalid for a mass MGE"):
+    with pytest.raises(
+        ValueError,
+        match=r"parameters has invalid field\(s\) for TriaxialMassMGEPotential: ml",
+    ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
