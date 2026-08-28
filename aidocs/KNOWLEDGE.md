@@ -39,26 +39,14 @@
   `registry._COMPONENT_REGISTRY`, a single dict both
   `AbstractPotentialComponent.resolve` (runtime dispatch) and
   `tnt.configuration.validation` (config-prep exact-parameter-name schema
-  checks) read from directly -- there is exactly one place a new TNT
-  component's `type`/dimensions/dispatch target is declared, not two
-  independently-maintained structures kept in sync by a test. Replaced an
-  earlier design (`__subclasses__()` reflection walking for dispatch,
-  a hand-maintained dimensions dict for validation) that had that
-  duplication, plus a real bug: reflection couldn't distinguish a class's
-  own `_type` from one merely inherited from a registered parent, so an
-  unrelated subclass of a registered type (e.g. a test fixture) could
-  falsely trigger a "duplicate type" error and break all potential
-  resolution. Explicit registration has no such ambiguity -- a class
-  participates only if it's actually decorated.
+  checks) read from directly. A class participates only when it is explicitly
+  decorated. `tnt/potential/__init__.py` must import every concrete component
+  module so its decorators run during normal package initialization.
 - `tnt.configuration`'s "does not construct scientific objects" boundary
-  (see `tnt.configuration.validation`'s module docstring) is about
-  instantiation, not imports: this package may freely import
-  `galax`/`jax`/`equinox` (and already does, transitively, via
-  `tnt.units` -> `tnt.potential`) to read a class's own declared metadata,
-  e.g. `_COMPONENT_REGISTRY`. Reading a class's attributes isn't
-  constructing an instance of it. What must not happen is building a real
-  scientific object (a `galax.potential.AbstractPotential`, an `MGE`, ...)
-  as a side effect of validating a configuration.
+  permits imports needed to read static registration metadata. Import-time
+  registration is allowed; configuration preparation must not instantiate
+  scientific objects, load scientific input data, or begin scientific
+  execution.
 
 ## Linux development container
 

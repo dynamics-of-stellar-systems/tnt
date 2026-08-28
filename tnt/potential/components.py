@@ -81,9 +81,9 @@ class ResolvedPotentialComponent(NamedTuple):
         validation for TNT's own registered component types already happens
         earlier, at configuration-prep time
         (`tnt.configuration.validation._validate_potential`); native `galax`
-        types aren't yet covered the same way (tracked separately). Value/
-        domain validation (positivity, physical bounds, ...) isn't
-        implemented anywhere yet (tracked separately).
+        types aren't yet covered the same way (GitHub issue #44). Value/domain
+        validation (positivity, physical bounds, ...) isn't implemented
+        anywhere yet (GitHub issue #30).
 
         Args:
             parameter_values: This component's current values, e.g. one

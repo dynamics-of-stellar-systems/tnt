@@ -11,13 +11,10 @@ class rather than a separately hand-maintained dict, so there is exactly one
 place a new TNT component's `type`/parameter-dimensions/dispatch-target has
 to be declared.
 
-Importing this module (or anything that imports it) pulls in whatever the
-registered classes themselves import, `galax`/`equinox` included --
-`tnt.configuration` already does, transitively, via `tnt.units`. That's
-fine: `tnt.configuration`'s own boundary is "does not construct scientific
-objects" (see its module docstring), not "does not import the libraries that
-construct them" -- reading a class's own declared metadata off it is not
-constructing an instance of it.
+Normal `tnt.potential` initialization explicitly imports each concrete
+component module so its decorators populate the registry. Configuration
+preparation may read this static metadata; registration does not construct
+component instances or load scientific input data.
 """
 
 from __future__ import annotations

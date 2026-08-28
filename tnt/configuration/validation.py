@@ -1,13 +1,10 @@
 """Validate resolved TNT configuration data without constructing objects.
 
-"Without constructing objects" is about instantiation, not imports: this
-module (and what it imports, `tnt.potential.registry` included) may freely
-import `galax`/`jax`/`equinox` to read a component's own declared metadata
-(its `_type`/`_raw_dimensions`, `tnt.potential.registry._COMPONENT_REGISTRY`)
--- reading a class's own attributes doesn't construct an instance of it.
-What this module must not do is build a real scientific object (a
-`galax.potential.AbstractPotential`, an `MGE`, ...) as a side effect of
-validating a configuration.
+Configuration validation may import component modules to read their static
+registration metadata (`_type`, `_raw_dimensions`, and
+`tnt.potential.registry._COMPONENT_REGISTRY`). Import-time registration is
+allowed; validation must not instantiate scientific objects, load scientific
+input data, or begin scientific execution.
 """
 
 from __future__ import annotations
