@@ -49,7 +49,7 @@ def _write_gauss_hermite(
     table = QTable()
     table["bin_id"] = bin_ids
     table["v"] = [100.0, -50.0] * au.km / au.s
-    table["dv"] = [3.0, 4.0] * au.km / au.s
+    table["dv"] = [3000.0, 4000.0] * au.m / au.s
     table["sigma"] = [120.0, 80.0] * au.km / au.s
     table["dsigma"] = [5.0, 6.0] * au.km / au.s
     table["h3"] = [0.1, -0.1]
@@ -94,6 +94,7 @@ def test_build_gauss_hermite_keeps_column_units_and_applies_systematics(
     assert isinstance(result, GaussHermite)
     assert result.binning is binning
     assert result.velocity.unit == u.unit("km / s")
+    assert result.velocity_uncertainty.unit == u.unit("m / s")
     assert result.coefficients.shape == (2, 2)
     assert result.histogram.bins % 2 == 1
     expected_dv = np.sqrt(np.array([3.0, 4.0]) ** 2 + 1.0**2)

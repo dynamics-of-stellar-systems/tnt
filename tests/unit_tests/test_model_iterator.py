@@ -107,7 +107,7 @@ def _make_iterator(**overrides: Any) -> ModelIterator:
     iterator = ModelIterator.__new__(ModelIterator)
     iterator.potential_settings = {}
     iterator.resolved_potential = {}
-    iterator.unit_system = u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
+    iterator.unit_system = u.unitsystem("kpc", "Myr", "Msun", "rad")
     iterator.cosmological_parameters = {}
     iterator.kinematic_data = {}
     iterator.weight_solver = FakeWeightSolver()

@@ -69,7 +69,7 @@ def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
 
 
 def _internal_unit_system() -> u.AbstractUnitSystem:
-    return u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
+    return u.unitsystem("kpc", "Myr", "Msun", "rad")
 
 
 # Only the concentration_m200 parameterization uses cosmological_parameters;
