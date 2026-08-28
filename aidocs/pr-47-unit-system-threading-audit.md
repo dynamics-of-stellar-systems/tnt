@@ -7,13 +7,13 @@ Audit date: 2026-08-28.
 
 ## Overall judgment
 
-**Needs focused corrections, not architectural revision.**
+**Ready to merge from this audit's perspective.**
 
 The runtime design and scientific unit transformations appear sound. No
-critical or high-severity code defects were found. Before merging, the stale
-examples and architectural statements in `docs/source/configuration.md` and
-`aidocs/KNOWLEDGE.md` should be corrected. The additional test improvements
-listed below are worthwhile but are not considered merge blockers.
+critical or high-severity code defects were found. The focused documentation
+corrections and selected regression-test improvements identified by this audit
+have now been completed. No architectural revision or further audit-driven
+change remains necessary before merging.
 
 ## Architectural summary
 
@@ -40,7 +40,7 @@ require a shared representation.
 
 ## Findings
 
-### Medium — `configuration.md` still documents removed APIs and old behavior
+### Resolved medium — `configuration.md` documented removed APIs and old behavior
 
 The examples pass `config.unit_systems.internal` to functions whose
 `unit_system` argument has been removed:
@@ -64,7 +64,12 @@ These passages should describe preservation of declared units and the
 separate angular-to-physical projection. This is the only issue considered
 necessary to correct before merging.
 
-### Medium — `aidocs/KNOWLEDGE.md` contradicts the new architecture
+**Resolution:** The obsolete `unit_system` arguments were removed from all
+four examples. The spatial-binning and population descriptions now explain
+preservation of declared units, local pair conversion, and the separate
+angular-to-physical projection. The warning-as-error Sphinx build passes.
+
+### Resolved medium — `aidocs/KNOWLEDGE.md` contradicted the new architecture
 
 Several entries still describe the old conversion model:
 
@@ -83,7 +88,13 @@ Several entries still describe the old conversion model:
 
 These contradictions should be corrected in the same documentation pass.
 
-### Low — current-state documentation contains unnecessary migration history
+**Resolution:** Current project knowledge now records the actual runtime unit
+boundary, on-demand local conversions, the separate `Potential.to_galax()`
+unit-system path, the `ForwardConverter`/`InverseConverter` signatures, NFW's
+unit-aware arithmetic and configured-unit inverse, and the authoritative
+sources of parameter-dimension metadata.
+
+### Resolved low — current-state documentation contained migration history
 
 Because TNT is a new product, durable repository documentation does not need
 to explain that `power` “used to be required” or characterize this as a
@@ -97,23 +108,26 @@ The current-state explanation only needs to say that internal units consist
 of length, time, mass, and angle, and that derived dimensions must not be
 declared there.
 
-## Missing or weak tests
+**Resolution:** `docs/source/units.md`, `aidocs/KNOWLEDGE.md`, and
+`tnt/units.py` now describe only the current four-base schema and its rationale.
+Prior-schema and breaking-change language was removed.
 
-These are recommended improvements, not merge blockers:
+## Test follow-up
 
-1. Add a Gauss-Hermite regression where `v`, `dv`, `sigma`, configured
-   systematics, histogram width, and histogram center use different but
-   equivalent speed units. The existing test at
-   `tests/unit_tests/test_kinematics.py:62` uses `km / s` throughout.
-2. Verify that NFW inverse reporting returns `M_200` in a configured unit
-   other than `Msun`. The current raw-reporting test at
-   `tests/unit_tests/test_potential.py:520` configures `Msun`.
-3. Update direct potential-test helpers to represent the new four-base unit
-   system. They still construct a five-unit system containing `Lsun` at
-   `tests/unit_tests/test_potential.py:71` and
-   `tests/unit_tests/test_model_iterator.py:110`. The realistic integration
-   test already exercises the actual four-key configuration, so this is
-   primarily test clarity.
+The original recommendations were resolved as follows:
+
+1. **Addressed in the existing Gauss-Hermite test:** `v` remains declared in
+   `km / s`, while `dv` is now declared in `m / s`. The test asserts that the
+   resulting uncertainty retains `m / s` and verifies its physical value in
+   `km / s` after quadrature with a `km / s` systematic. This covers the
+   on-demand mixed-unit conversion without duplicating the construction test.
+2. **Intentionally unchanged:** the NFW raw-reporting test continues to use
+   `Msun`. Separate tests already establish NFW unit invariance, and the final
+   return to the configured unit is a direct `Quantity.to(declared_unit)`
+   operation. Another otherwise-duplicate end-to-end test was not considered
+   proportionate.
+3. **Addressed:** the direct potential and model-iterator test fixtures now
+   construct the current four-base internal unit system without `Lsun`.
 
 Manual probes confirmed that mixed equivalent histogram speed units work in
 both eager execution and `jax.jit`, and that the corrected MGE conversion is
@@ -132,6 +146,10 @@ Checks were run through the Linux x86-64 Colima development environment:
 - `ruff format --check .` — reported 14 files requiring formatting. This
   includes existing project-wide formatting drift as well as PR-touched
   files; it is not a functional failure.
+- After the follow-up test changes, the three affected unit-test modules ran
+  successfully: 86 passed.
+- After the documentation follow-up, `ruff check tnt/units.py`,
+  `git diff --check`, and the warning-as-error Sphinx build passed.
 
 No native Apple Silicon run was performed. GitHub reported no CI check
 results or submitted reviews at audit time. The pull request was Git-mergeable,
@@ -142,25 +160,15 @@ review or checks.
 
 PR #47 is based on the current `main`, including PR #45. Recommended order:
 
-1. Correct PR #47's documentation.
-2. Merge PR #47.
-3. Rebase or update PR #48 against it, then audit PR #48.
-4. Implement issue #44 against the resulting settled parameterization and
+1. Merge PR #47.
+2. Rebase or update PR #48 against it, then audit PR #48.
+3. Implement issue #44 against the resulting settled parameterization and
    unit interfaces.
 
 Issue #43 does not materially affect this unit-boundary change.
 
 ## Recommended path to merge
 
-1. Correct the stale examples and behavior descriptions in
-   `docs/source/configuration.md`.
-2. Reconcile `aidocs/KNOWLEDGE.md` with the new runtime boundary and current
-   converter interfaces.
-3. Remove unnecessary prior-schema history from durable current-state
-   documentation.
-4. Add the focused mixed-unit and configured-output-unit regression tests.
-5. Rerun the Linux test, lint, and warning-as-error documentation checks.
-
-After the documentation corrections, the pull request should be suitable for
-approval; the recommended tests provide stronger regression protection but do
-not expose a known runtime defect.
+The documentation corrections, focused regression strengthening, and affected
+Linux checks are complete. Subject to the repository's ordinary required
+review or CI policy, PR #47 is suitable for approval and merge.
