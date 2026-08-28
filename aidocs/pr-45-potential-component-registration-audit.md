@@ -130,3 +130,80 @@ If the team intentionally prefers two registries guarded by a consistency
 test, PR #45 could be merged as an incremental improvement, but it should not
 close issue #39 and would not yet provide the foundation issue #39 requires
 before PR #33.
+
+## Response
+
+Implemented in `10b2c0c`, addressing all three findings.
+
+### High
+
+Resolved by genuine unification, not the two-registries-plus-consistency-test
+compromise this audit flagged as a fallback. `tnt.potential.registry` now
+holds one dict, `_COMPONENT_REGISTRY: dict[str, type[AbstractPotentialComponent]]`,
+populated by a `register_component` decorator applied directly to each
+concrete component class (`tnt.potential.triaxial_mge`). The decorator reads
+the class's own `_type`/`_raw_dimensions` class attributes -- it doesn't
+declare anything new, just registers what the class already says about
+itself. Both `AbstractPotentialComponent.resolve` (runtime dispatch) and
+`tnt.configuration.validation` (`_validate_potential`'s exact-parameter-name
+schema check) read this same dict directly. There is exactly one place a new
+TNT component's `type`/dimensions/dispatch target is declared.
+
+This required revisiting a premise, not just the mechanism: achieving one
+specification meant `tnt.configuration.validation` needed to be able to
+import the actual component classes (indirectly, via `registry.py`), which
+looked blocked by that module's "no scientific object construction"
+boundary. Checked directly: that boundary is about instantiation, not
+imports -- and `tnt.configuration.validation` already transitively imports
+`galax`/`jax`/`equinox` today, via `tnt.units` -> `tnt.potential`, predating
+this PR entirely. Reading a class's own declared attributes doesn't
+construct an instance of it. Documented explicitly in both
+`validation.py`'s module docstring and `KNOWLEDGE.md` so this doesn't need
+rediscovering.
+
+### Medium
+
+Resolved structurally, not patched. `_discover_subclasses` (the
+`__subclasses__()`-reflection walk this bug lived in) is gone entirely --
+replaced by the explicit registration above. A class participates only if
+it's actually decorated with `@register_component`; there's no reflection
+step left to confuse an inherited `_type` for a fresh declaration. Verified:
+a subclass inheriting `_type` from a registered parent without its own
+`@register_component` call neither registers under that name nor raises
+(`test_inherited_type_does_not_register_or_raise`).
+
+### Low
+
+`components.py`'s `build()` docstring no longer says parameter-schema
+validation is unimplemented -- it now says where it happens
+(`tnt.configuration.validation._validate_potential`, TNT registered types
+only) and points at issue #44 for the native-`galax` gap. `KNOWLEDGE.md` has
+a new `## Module layout` entry describing the registration design and a
+note recording the clarified import-vs-construct boundary.
+
+### Also found, tracked separately
+
+Two more instances of the same underlying pattern, discovered while fixing
+this one -- not fixed here, flagged for follow-up issues:
+
+- `tnt.kinematics`'s existing registry (`_kinematics_class_registry()`) has
+  the identical inherited-`_type` vulnerability this PR just fixed for
+  potential (same `getattr(cls, "_type", None)` pattern, non-recursive so
+  narrower blast radius, but real).
+- `tnt.potential.components._PARAMETERIZATIONS` (which parameterizations
+  exist, their convert/invert functions) and
+  `tnt.potential.registry.PARAMETERIZATION_RAW_DIMENSIONS` (their raw
+  dimensions) are two independently hand-maintained dicts keyed by the same
+  `(type, parameterization)` pairs, with no consistency check between them
+  -- the same class of risk `_COMPONENT_REGISTRY` just closed for component
+  types, currently latent only because there's a single parameterization
+  (NFW's `concentration_m200`) in the whole codebase to disagree with itself.
+
+### Verification
+
+- Full suite: **306 passed**.
+- Ruff over the repo: **passed**.
+- Docs build (`sphinx-build -W`): **passed**.
+- Manually re-ran every scenario this audit and its own predecessor covered
+  (missing/extra `ml`, unsupported `type`, inherited-`_type` non-registration)
+  against the actual error messages, not just test pass/fail.
