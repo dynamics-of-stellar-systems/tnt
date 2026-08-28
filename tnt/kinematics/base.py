@@ -9,13 +9,12 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import astropy.units as au
 import equinox as eqx
 import jax.numpy as jnp
-import unxt as u
 from astropy.table import QTable
-from unxt import AbstractUnitSystem, Quantity
+from unxt import Quantity
 
 from tnt.mge import LightMGE, MassMGE
 from tnt.spatial_binnings import ProjectedBinning
-from tnt.units import normalize_unitful_value
+from tnt.units import declared_quantity
 from tnt.validation import (
     ConfigMapping,
     _finite,
@@ -128,7 +127,6 @@ def _nonnegative_finite(values: Any, path: str) -> None:
 
 def _explicit_histogram(
     settings: ConfigMapping,
-    unit_system: AbstractUnitSystem,
     parent_path: str,
 ) -> Histogram:
     path = (
@@ -141,22 +139,13 @@ def _explicit_histogram(
     if missing:
         names = ", ".join(sorted(missing))
         raise ValueError(f"{path} is missing required field(s): {names}.")
-    speed_unit = unit_system[u.dimension("speed")]
-    width = normalize_unitful_value(
-        settings["width"], "speed", unit_system, f"{path}.width"
-    )
-    _positive_number(width, f"{path}.width.value")
-    center = normalize_unitful_value(
-        settings["center"], "speed", unit_system, f"{path}.center"
-    )
+    width = declared_quantity(settings["width"], "speed", f"{path}.width")
+    _positive_number(float(width.ustrip(width.unit)), f"{path}.width.value")
+    center = declared_quantity(settings["center"], "speed", f"{path}.center")
     bins = _integer(settings["bins"], f"{path}.bins")
     if bins <= 0 or bins % 2 == 0:
         raise ValueError(f"{path}.bins must be a positive odd integer.")
-    return Histogram(
-        width=Quantity(width, speed_unit),
-        center=Quantity(center, speed_unit),
-        bins=bins,
-    )
+    return Histogram(width=width, center=center, bins=bins)
 
 
 def _odd_ceiling(value: float) -> int:

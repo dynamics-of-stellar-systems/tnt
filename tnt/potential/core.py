@@ -57,7 +57,6 @@ class Potential(eqx.Module):
         cls,
         resolved: Mapping[str, ResolvedPotentialComponent],
         parameter_values: ParameterSet,
-        unit_system: AbstractUnitSystem,
         cosmological_parameters: Mapping[str, Quantity],
     ) -> Self:
         """Build a `Potential` from resolved static structure and a proposed point.
@@ -67,8 +66,6 @@ class Potential(eqx.Module):
                 from `Potential.resolve`.
             parameter_values: The current point in parameter space, e.g. a
                 `tnt.parameter_generator.ParameterSet`.
-            unit_system: Passed through to each component's construction --
-                see `ResolvedPotentialComponent.build`.
             cosmological_parameters: A resolved configuration's
                 `cosmological_parameters` section -- used only by
                 parameterizations that need it, e.g. NFW's `concentration_m200`.
@@ -76,7 +73,7 @@ class Potential(eqx.Module):
         return cls(
             components={
                 name: component.build(
-                    parameter_values.get(name, {}), unit_system, cosmological_parameters
+                    parameter_values.get(name, {}), cosmological_parameters
                 )
                 for name, component in resolved.items()
             }
@@ -88,7 +85,6 @@ class Potential(eqx.Module):
         settings: Mapping[str, Mapping[str, Any]],
         parameter_values: ParameterSet,
         mges: Mapping[str, LightMGE | MassMGE],
-        unit_system: AbstractUnitSystem,
         cosmological_parameters: Mapping[str, Quantity],
     ) -> Self:
         """Build a `Potential` from a resolved configuration's `potential` section.
@@ -101,7 +97,6 @@ class Potential(eqx.Module):
         return cls.build(
             cls.resolve(settings, mges),
             parameter_values,
-            unit_system,
             cosmological_parameters,
         )
 
@@ -154,7 +149,6 @@ class Potential(eqx.Module):
 def build_potential(
     resolved: Mapping[str, ResolvedPotentialComponent],
     parameter_values: ParameterSet,
-    unit_system: AbstractUnitSystem,
     cosmological_parameters: Mapping[str, Quantity],
 ) -> Potential:
     """Build the `Potential` from pre-resolved static structure and a proposed point.
@@ -165,7 +159,6 @@ def build_potential(
             run.
         parameter_values: The current point in parameter space, e.g. a
             `tnt.parameter_generator.ParameterSet`.
-        unit_system: Passed through to each component's construction.
         cosmological_parameters: A resolved configuration's
             `cosmological_parameters` section -- used only by
             parameterizations that need it, e.g. NFW's `concentration_m200`.
@@ -173,15 +166,31 @@ def build_potential(
     Returns:
         A `Potential` assembled from every included component.
     """
-    return Potential.build(
-        resolved, parameter_values, unit_system, cosmological_parameters
-    )
+    return Potential.build(resolved, parameter_values, cosmological_parameters)
+
+
+def _declared_parameter_units(
+    component_settings: Mapping[str, Any],
+) -> dict[str, str]:
+    """Each raw parameter's declared unit string, from a `potential.<name>` entry.
+
+    Dimensionless parameters (no declared `unit`) are simply absent -- a
+    registered `invert` converter only looks up the dimensioned ones (see
+    `tnt.potential.nfw._nfw_concentration_m200_inverse`).
+    """
+    parameters = component_settings.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return {}
+    return {
+        name: spec["unit"]
+        for name, spec in parameters.items()
+        if isinstance(spec, Mapping) and "unit" in spec
+    }
 
 
 def raw_potential_parameters(
     potential_settings: Mapping[str, Mapping[str, Any]],
     potential: Potential,
-    unit_system: AbstractUnitSystem,
     cosmological_parameters: Mapping[str, Quantity],
 ) -> dict[str, dict[str, Quantity]]:
     """Every included component's parameters, in the config's own parameterization.
@@ -201,13 +210,10 @@ def raw_potential_parameters(
 
     Args:
         potential_settings: A resolved configuration's `potential` section
-            (e.g. `ModelIterator.potential_settings`) -- only each
-            component's `parameterization` is used.
+            (e.g. `ModelIterator.potential_settings`) -- each component's
+            `parameterization` and its parameters' declared units are used.
         potential: The resolved `Potential` to report, e.g. from
             `build_potential`, possibly after `Potential.rescale`.
-        unit_system: Passed through to a registered `parameterization`'s
-            inverse converter, e.g. NFW's `concentration_m200` needs it to
-            compute a critical density.
         cosmological_parameters: A resolved configuration's
             `cosmological_parameters` section -- used only by
             parameterizations that need it, e.g. NFW's `concentration_m200`.
@@ -216,13 +222,12 @@ def raw_potential_parameters(
         A mapping from each included component's name to its raw
         parameters, keyed exactly as its configuration's `parameters` are.
     """
-    return {
-        name: component.raw_parameters(
-            _mapping(potential_settings.get(name, {}), f"potential.{name}").get(
-                "parameterization"
-            ),
-            unit_system,
+    raw: dict[str, dict[str, Quantity]] = {}
+    for name, component in potential.components.items():
+        settings = _mapping(potential_settings.get(name, {}), f"potential.{name}")
+        raw[name] = component.raw_parameters(
+            settings.get("parameterization"),
+            _declared_parameter_units(settings),
             cosmological_parameters,
         )
-        for name, component in potential.components.items()
-    }
+    return raw

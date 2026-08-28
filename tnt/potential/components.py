@@ -32,8 +32,8 @@ from tnt.potential.nfw import _nfw_concentration_m200, _nfw_concentration_m200_i
 from tnt.potential.registry import (
     _COMPONENT_REGISTRY,
     _SUPPORTED_GALAX_TYPES,
+    ForwardConverter,
     Parameterization,
-    ParameterizationConverter,
     raw_parameter_dimensions,
 )
 from tnt.validation import _required_string, _string
@@ -58,13 +58,12 @@ class ResolvedPotentialComponent(NamedTuple):
 
     component_cls: type[AbstractPotentialComponent]
     raw_dimensions: dict[str, str]
-    convert: ParameterizationConverter | None
+    convert: ForwardConverter | None
     extra_fields: dict[str, Any]
 
     def build(
         self,
         parameter_values: Mapping[str, Quantity],
-        unit_system: AbstractUnitSystem,
         cosmological_parameters: Mapping[str, Quantity],
     ) -> AbstractPotentialComponent:
         """Build this component from one proposed point in parameter space.
@@ -88,22 +87,18 @@ class ResolvedPotentialComponent(NamedTuple):
         Args:
             parameter_values: This component's current values, e.g. one
                 entry of a `tnt.parameter_generator.ParameterSet`.
-            unit_system: Passed through to a registered `parameterization`
-                converter (e.g. NFW's `concentration_m200` needs it to
-                compute a critical density) and to the resulting component's
-                own construction.
             cosmological_parameters: Passed through to a registered
                 `parameterization` converter that needs it, e.g. NFW's
                 `concentration_m200` via `H`.
         """
         raw = dict(parameter_values)
         canonical = (
-            self.convert(raw, unit_system, cosmological_parameters)
+            self.convert(raw, cosmological_parameters)
             if self.convert is not None
             else raw
         )
         return self.component_cls._build(
-            canonical, unit_system, cosmological_parameters, self.extra_fields
+            canonical, cosmological_parameters, self.extra_fields
         )
 
 
@@ -183,7 +178,7 @@ class AbstractPotentialComponent(eqx.Module):
             )
 
         parameterization_name = settings.get("parameterization")
-        convert: ParameterizationConverter | None = None
+        convert: ForwardConverter | None = None
         if parameterization_name is not None:
             _string(parameterization_name, f"{path}.parameterization")
             converters = _PARAMETERIZATIONS.get(kind, {})
@@ -219,7 +214,6 @@ class AbstractPotentialComponent(eqx.Module):
     def _build(
         cls,
         parameters: dict[str, Quantity],
-        unit_system: AbstractUnitSystem,
         cosmological_parameters: Mapping[str, Quantity],
         extra_fields: dict[str, Any],
     ) -> Self:
@@ -237,14 +231,12 @@ class AbstractPotentialComponent(eqx.Module):
             parameters: This component's canonical, parameterization-independent
                 parameter values (post-`ResolvedPotentialComponent.build`'s
                 `convert` step).
-            unit_system: Passed through for subclasses that need it; unused by
-                the default implementation.
             cosmological_parameters: Passed through for subclasses that need it;
                 unused by the default implementation.
             extra_fields: This component's resolved static structure beyond
                 `parameters`, e.g. `galax_type` or `mge` -- see `_extra_fields`.
         """
-        del unit_system, cosmological_parameters
+        del cosmological_parameters
         return cls(parameters=parameters, **extra_fields)
 
     def to_galax(
@@ -270,7 +262,7 @@ class AbstractPotentialComponent(eqx.Module):
     def raw_parameters(
         self,
         parameterization: str | None,
-        unit_system: AbstractUnitSystem,
+        declared_units: Mapping[str, str],
         cosmological_parameters: Mapping[str, Quantity],
     ) -> dict[str, Quantity]:
         """This component's parameters in the resolved config's own parameterization.
@@ -283,8 +275,18 @@ class AbstractPotentialComponent(eqx.Module):
         parameterization -- both MGE composite types (which don't support
         one at all) and a native `galax` type with `parameterization`
         omitted.
+
+        Args:
+            parameterization: The registered non-native parameterization
+                the configuration specified, or `None`.
+            declared_units: Each raw parameter's declared unit string, from
+                the component's `potential.<name>.parameters` section --
+                passed to a registered `invert` converter so a reported value
+                comes back in the configured unit.
+            cosmological_parameters: Passed through to an `invert` converter
+                that needs it, e.g. NFW's `concentration_m200` via `H`.
         """
-        del parameterization, unit_system, cosmological_parameters
+        del parameterization, declared_units, cosmological_parameters
         return self.parameters
 
 
@@ -339,10 +341,10 @@ class GalaxPotentialComponent(AbstractPotentialComponent):
     def raw_parameters(
         self,
         parameterization: str | None,
-        unit_system: AbstractUnitSystem,
+        declared_units: Mapping[str, str],
         cosmological_parameters: Mapping[str, Quantity],
     ) -> dict[str, Quantity]:
         if parameterization is None:
             return self.parameters
         invert = _PARAMETERIZATIONS[self.galax_type][parameterization].invert
-        return invert(self.parameters, unit_system, cosmological_parameters)
+        return invert(self.parameters, declared_units, cosmological_parameters)

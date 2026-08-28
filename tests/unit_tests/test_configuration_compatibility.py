@@ -30,7 +30,6 @@ def _config(input_directory: Path) -> dict[str, object]:
                 "time": "Myr",
                 "mass": "Msun",
                 "angle": "rad",
-                "power": "Lsun",
             },
             "display": {"angle": "arcsec"},
         },

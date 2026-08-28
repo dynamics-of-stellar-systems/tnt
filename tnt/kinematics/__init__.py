@@ -5,8 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from unxt import AbstractUnitSystem
-
 from tnt.kinematics.base import AbstractKinematics, Histogram, Histogram2D
 from tnt.kinematics.bayes_losvd import BayesLOSVD
 from tnt.kinematics.gauss_hermite import GaussHermite
@@ -54,16 +52,17 @@ _KINEMATICS_CLASSES = _kinematics_class_registry()
 def build_kinematics(
     kinematic_data: Mapping[str, ConfigMapping],
     input_directory: str | Path,
-    unit_system: AbstractUnitSystem,
     spatial_binnings: Mapping[str, ProjectedBinning],
     mges: Mapping[str, LightMGE | MassMGE] | None = None,
 ) -> dict[str, AbstractKinematics]:
     """Build named kinematics objects from resolved configuration data.
 
+    Each data set keeps the units its file declares; nothing is coerced into
+    a shared unit system (see `tnt.units`' module docstring).
+
     Args:
         kinematic_data: Resolved ``kinematic_data`` registry.
         input_directory: Directory against which data filenames are resolved.
-        unit_system: Internal unit system used by runtime arrays.
         spatial_binnings: Already-built named spatial-binning objects.
         mges: Already-built named MGEs. May be omitted when no data set refers
             to an MGE.
@@ -115,6 +114,5 @@ def build_kinematics(
             data_file=data_file,
             binning=binning,
             mge=mge,
-            unit_system=unit_system,
         )
     return built

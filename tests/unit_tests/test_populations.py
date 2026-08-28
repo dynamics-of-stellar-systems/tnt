@@ -11,10 +11,6 @@ from tnt.populations import Populations, build_populations
 from tnt.spatial_binnings import ProjectedBinning
 
 
-def _unit_system() -> u.AbstractUnitSystem:
-    return u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
-
-
 def _binning() -> ProjectedBinning:
     return ProjectedBinning(
         min_x=u.Quantity(0.0, "rad"),
@@ -41,7 +37,9 @@ def _write_populations(path: Path) -> None:
     table.write(path, format="ascii.ecsv")
 
 
-def test_build_populations_reads_pairs_and_converts_units(tmp_path: Path) -> None:
+def test_build_populations_reads_pairs_and_keeps_value_column_units(
+    tmp_path: Path,
+) -> None:
     data_file = tmp_path / "populations.ecsv"
     _write_populations(data_file)
     binning = _binning()
@@ -49,7 +47,6 @@ def test_build_populations_reads_pairs_and_converts_units(tmp_path: Path) -> Non
     result = build_populations(
         {"stars": _settings(data_file)},
         tmp_path,
-        _unit_system(),
         {"observed": binning},
     )["stars"]
 
@@ -61,8 +58,11 @@ def test_build_populations_reads_pairs_and_converts_units(tmp_path: Path) -> Non
     assert result.n_properties == 2
     assert result.property_names == ("age", "metallicity")
     age, age_uncertainty = result.values_and_uncertainties("age")
-    assert age.unit == u.unit("Myr")
-    assert jnp.allclose(age.ustrip("Myr"), jnp.array([10000.0, 8000.0]))
+    # The value column's declared unit is kept; the uncertainty (declared in
+    # Myr) is converted into it.
+    assert age.unit == u.unit("Gyr")
+    assert jnp.allclose(age.ustrip("Gyr"), jnp.array([10.0, 8.0]))
+    assert age_uncertainty.unit == u.unit("Gyr")
     assert jnp.allclose(age_uncertainty.ustrip("Myr"), jnp.array([500.0, 750.0]))
     metallicity, metallicity_uncertainty = result.values_and_uncertainties(
         "metallicity"
@@ -76,7 +76,7 @@ def test_build_populations_reads_pairs_and_converts_units(tmp_path: Path) -> Non
 def test_build_populations_without_entries_returns_empty_mapping(
     tmp_path: Path,
 ) -> None:
-    assert build_populations({}, tmp_path, _unit_system(), {}) == {}
+    assert build_populations({}, tmp_path, {}) == {}
 
 
 def test_populations_reject_unknown_property_lookup(tmp_path: Path) -> None:
@@ -85,7 +85,6 @@ def test_populations_reject_unknown_property_lookup(tmp_path: Path) -> None:
     result = build_populations(
         {"stars": _settings(data_file)},
         tmp_path,
-        _unit_system(),
         {"observed": _binning()},
     )["stars"]
 
@@ -99,7 +98,7 @@ def test_build_populations_rejects_unknown_binning_before_reading_file(
     settings = _settings(tmp_path / "missing.ecsv")
 
     with pytest.raises(ValueError, match="unknown spatial_binnings entry 'observed'"):
-        build_populations({"stars": settings}, tmp_path, _unit_system(), {})
+        build_populations({"stars": settings}, tmp_path, {})
 
 
 def test_build_populations_rejects_non_projected_binning(tmp_path: Path) -> None:
@@ -109,7 +108,6 @@ def test_build_populations_rejects_non_projected_binning(tmp_path: Path) -> None
         build_populations(
             {"stars": settings},
             tmp_path,
-            _unit_system(),
             {"observed": "not-a-binning"},  # type: ignore[dict-item]
         )
 
@@ -122,7 +120,6 @@ def test_build_populations_rejects_mge_setting(tmp_path: Path) -> None:
         build_populations(
             {"stars": settings},
             tmp_path,
-            _unit_system(),
             {"observed": _binning()},
         )
 
@@ -136,7 +133,6 @@ def test_populations_require_value_uncertainty_pairs(tmp_path: Path) -> None:
         build_populations(
             {"stars": _settings(data_file)},
             tmp_path,
-            _unit_system(),
             {"observed": _binning()},
         )
 
@@ -153,7 +149,6 @@ def test_populations_require_equivalent_pair_units(tmp_path: Path) -> None:
         build_populations(
             {"stars": _settings(data_file)},
             tmp_path,
-            _unit_system(),
             {"observed": _binning()},
         )
 
@@ -169,7 +164,6 @@ def test_populations_require_positive_uncertainties(tmp_path: Path) -> None:
         build_populations(
             {"stars": _settings(data_file)},
             tmp_path,
-            _unit_system(),
             {"observed": _binning()},
         )
 
@@ -185,7 +179,6 @@ def test_populations_reject_duplicate_bin_ids(tmp_path: Path) -> None:
         build_populations(
             {"stars": _settings(data_file)},
             tmp_path,
-            _unit_system(),
             {"observed": _binning()},
         )
 
@@ -201,6 +194,5 @@ def test_populations_reject_bin_ids_absent_from_binning(tmp_path: Path) -> None:
         build_populations(
             {"stars": _settings(data_file)},
             tmp_path,
-            _unit_system(),
             {"observed": _binning()},
         )
