@@ -3,8 +3,8 @@
 `potential.<name>.type` names either a curated `galax.potential` class (see
 `_SUPPORTED_GALAX_TYPES`, e.g. `"NFWPotential"`, `"PlummerPotential"`) or one
 of four TNT-specific MGE composite potentials -- triaxial
-(`"TriaxialLightMGEPotential"`/`"TriaxialMassMGEPotential"`) or axisymmetric
-(`"AxisymmetricLightMGEPotential"`/`"AxisymmetricMassMGEPotential"`) -- each
+(`"TriaxialLightMGEPotential"`/`"TriaxialMassMGEPotential"`) or oblate
+axisymmetric (`"OblateLightMGEPotential"`/`"OblateMassMGEPotential"`) -- each
 built from a named MGE, and pairs every included class with each native
 parameter's mass-rescale exponent.
 `parameterization` is a separate, optional concern: when omitted,
@@ -33,17 +33,13 @@ native parameters' dimensions/mass-rescale exponents, and TNT component
 registration), `nfw` (the `concentration_m200` parameterization's
 self-contained numerics),
 `components` (the abstract base and the native-`galax` component,
-resolution/dispatch included), `triaxial_mge`/`axisym_mge` (the MGE-backed
+resolution/dispatch included), `triaxial_mge`/`oblate_mge` (the MGE-backed
 composite types, one sibling module per deprojection convention), and
 `core` (`Potential` itself and the module-level helpers around it).
 """
 
 from __future__ import annotations
 
-from tnt.potential.axisym_mge import (
-    AxisymmetricLightMGEPotential,
-    AxisymmetricMassMGEPotential,
-)
 from tnt.potential.components import (
     AbstractPotentialComponent,
     GalaxPotentialComponent,
@@ -58,6 +54,10 @@ from tnt.potential.nfw import (
 )
 from tnt.potential.nfw import _nfw_g as _nfw_g
 from tnt.potential.nfw import _solve_nfw_concentration as _solve_nfw_concentration
+from tnt.potential.oblate_mge import (
+    OblateLightMGEPotential,
+    OblateMassMGEPotential,
+)
 from tnt.potential.registry import _SUPPORTED_GALAX_TYPES as _SUPPORTED_GALAX_TYPES
 from tnt.potential.registry import (
     PARAMETERIZATION_RAW_DIMENSIONS,
@@ -73,10 +73,10 @@ from tnt.potential.triaxial_mge import (
 __all__ = [
     "PARAMETERIZATION_RAW_DIMENSIONS",
     "AbstractPotentialComponent",
-    "AxisymmetricLightMGEPotential",
-    "AxisymmetricMassMGEPotential",
     "GalaxPotentialComponent",
     "NativeParameter",
+    "OblateLightMGEPotential",
+    "OblateMassMGEPotential",
     "Parameterization",
     "Potential",
     "ResolvedPotentialComponent",

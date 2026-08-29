@@ -29,8 +29,8 @@ today](#whats-implemented-today)).
 
 In addition to `galax` potential components, TNT provides MGE-based
 component types -- triaxial (`"TriaxialLightMGEPotential"`/
-`"TriaxialMassMGEPotential"`) and axisymmetric
-(`"AxisymmetricLightMGEPotential"`/`"AxisymmetricMassMGEPotential"`) (see
+`"TriaxialMassMGEPotential"`) and oblate axisymmetric
+(`"OblateLightMGEPotential"`/`"OblateMassMGEPotential"`) (see
 [MGE composite types](#mge-composite-types)).
 
 ## Parameterizations (optional)
@@ -119,10 +119,13 @@ split along two independent axes:
   already mass-calibrated MGE) -- TNT's own parameter names, not `galax`'s.
 - **Deprojection convention**: triaxial types (`theta`/`phi`/`psi`, the
   global viewing angles the MGE is deprojected under -- see
-  `AbstractMGE.deproject_triaxial`) vs. axisymmetric types (a single
-  `inclination` -- see `AbstractMGE.deproject_axisymmetric`, which also
-  requires the named MGE's `PA_twist` to be zero for every component, an
-  axisymmetric system having no isophote twist).
+  `AbstractMGE.deproject_triaxial`) vs. oblate axisymmetric types (a single
+  `inclination`, in `(0, 90]` degrees -- see `AbstractMGE.deproject_oblate`,
+  which also requires the named MGE's `PA_twist` to be zero for every
+  component, an axisymmetric system having no isophote twist). The
+  axisymmetric deprojection is the oblate convention only (`p = B/A = 1`,
+  `q = C/A <= 1`); a prolate spheroid needs a different relation and would
+  get its own `Prolate...` types.
 
 ```yaml
 potential:
@@ -137,12 +140,12 @@ potential:
       psi: {value: 0.0, unit: "rad"}
 
   bulge:
-    type: "AxisymmetricLightMGEPotential"
+    type: "OblateLightMGEPotential"
     include: true
     mge: "mge_bulge"
     parameters:
       ml: {value: 3.0, unit: "Msun / Lsun"}
-      inclination: {value: 90.0, unit: "deg"}
+      inclination: {value: 90.0, unit: "deg"}   # edge-on; must be in (0, 90] deg
 ```
 
 ## What's implemented today
@@ -178,8 +181,8 @@ potential:
   check against.
 - **All four MGE composite types**: implemented. The named MGE is
   deprojected -- triaxial types under `theta`/`phi`/`psi`
-  (`AbstractMGE.deproject_triaxial`), axisymmetric types under a single
-  `inclination` (`AbstractMGE.deproject_axisymmetric`) -- once, when the
+  (`AbstractMGE.deproject_triaxial`), oblate axisymmetric types under a
+  single `inclination` (`AbstractMGE.deproject_oblate`) -- once, when the
   component itself is built from a proposed point in parameter space, not
   lazily inside `to_galax()`, so an invalid viewing geometry
   (`tnt.mge.MGEDeprojectionError`, for a deprojection with no real solution
@@ -191,7 +194,7 @@ potential:
   first scoped, so no custom `galax.potential.AbstractPotential` subclass or
   new potential formula was needed after all; each density matches its
   `Deprojected3DMGE` counterpart term for term (`r_s <-> sigma`,
-  `q1 <-> p`, `q2 <-> q`; an axisymmetric deprojection's `p` is always 1),
+  `q1 <-> p`, `q2 <-> q`; an oblate axisymmetric deprojection's `p` is always 1),
   giving a direct, verified `m_tot = I * p * q * (2*pi)**1.5 * sigma**3`
   conversion per component. `(theta, phi, psi)` / `inclination` are native;
   the alternative `(p, q, u)` shape/compression parameterization closer to

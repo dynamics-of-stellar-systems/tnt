@@ -7,10 +7,10 @@ Deprojection happens once, in `_build`, when the component is constructed
 from a proposed point in parameter space -- not lazily inside `to_galax()`
 -- so an invalid viewing geometry (`tnt.mge.MGEDeprojectionError`) surfaces
 right there, before anything downstream (like orbit integration) is
-attempted. Axisymmetric counterparts, built on
-`galax.potential.AxisymmetricGaussianPotential`, are a planned addition --
-kept in their own module rather than this one once they land, so this one
-stays specifically about the triaxial case.
+attempted. The oblate axisymmetric counterparts, built on
+`galax.potential.AxisymmetricGaussianPotential`, live in the sibling
+`tnt.potential.oblate_mge` module, so this one stays specifically about the
+triaxial case.
 """
 
 from __future__ import annotations

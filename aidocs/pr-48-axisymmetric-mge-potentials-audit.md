@@ -259,3 +259,79 @@ was due to required review rather than a merge conflict.
    through squared trigonometric functions?
 3. Should the independent flattened comparison be required in PR 48 (my
    recommendation) or accepted as immediate follow-up work?
+
+## Response
+
+All three points accepted and addressed in this PR.
+
+### Naming: `Oblate...`, not `Axisymmetric...` (Medium 2, question 1)
+
+The generic name over-promised. `AbstractMGE.deproject_axisymmetric` only ever
+implemented the oblate convention (`p = B/A = 1`, `q = C/A <= 1`, i.e.
+`A = B >= C`). A prolate spheroid has its long axis as the symmetry axis and
+obeys a different projection relation
+(`q_intr**2 = q_obs**2 sin(i)**2 / (1 - q_obs**2 cos(i)**2)`), which this code
+path does not produce.
+
+Renamed throughout:
+
+- `AxisymmetricLightMGEPotential` -> `OblateLightMGEPotential`
+- `AxisymmetricMassMGEPotential` -> `OblateMassMGEPotential`
+- `AbstractMGE.deproject_axisymmetric` -> `AbstractMGE.deproject_oblate`
+- module `tnt/potential/axisym_mge.py` -> `tnt/potential/oblate_mge.py`,
+  helper `_galax_potential_from_axisym_deprojected` ->
+  `_galax_potential_from_oblate_deprojected`
+
+`Oblate` parallels the existing `Triaxial` pair and leaves `Prolate...` free
+as a distinct future type. Prolate axisymmetric deprojection is filed as a
+non-urgent follow-up (#49); it is not a capability gap today because
+`deproject_triaxial` already reaches the prolate shape as its `p = q` limit.
+
+### Inclination domain: `(0, 90]` deg, rejected not folded (question 2)
+
+Confirmed canonical. It is the fundamental domain forced by two symmetries,
+not a convention: equatorial mirror symmetry makes `i` and `180 deg - i`
+give an identical projection (upper half-space redundant), and `i = 0`
+(face-on) is singular -- the projection is circular and `sin(i) = 0` in the
+deprojection denominator. It is the domain used in Monnet, Bacon & Emsellem
+(1992) and Cappellari (2002), already cited by the method.
+
+`deproject_oblate` now checks `0 < i <= 90 deg` before anything else and
+raises `ValueError` otherwise, rather than folding `i in (90, 180)` deg
+through the squared trigonometry (previously `120 deg` silently acted as
+`60 deg`; `< i_min` and `i >= 180 deg` were already caught downstream by the
+NaN / negative-`q` checks in `_check_axial_ratios`). Regression:
+`test_deproject_oblate_rejects_inclination_outside_0_90` in `test_mge.py`.
+
+The broader finite/positive `ml` / `mge_mass_scale` domain checks remain with
+issue #30, as recommended.
+
+### Flattened numerical regression: added to this PR (Medium 1, question 3)
+
+`test_oblate_light_mge_to_galax_flattened_cross_checks` in `test_potential.py`
+builds a genuinely flattened deprojection (`q_obs = 0.7` at `i = 70 deg` ->
+`q_intr ~ 0.65`, asserted `< 0.99`) and checks `to_galax()` two independent
+ways:
+
+1. against `galax.potential.TriaxialGaussianPotential(q1=1, q2=q_intr)` -- a
+   different `galax` class and code path from `AxisymmetricGaussianPotential`
+   -- at three off-principal-axis coordinates; and
+2. against the closed-form Gaussian density along each intrinsic axis, which
+   only matches if `q2` maps to `z` (with `p = 1` on `x`/`y`).
+
+Together these exercise `q2`, `m_tot`, `r_s`, and axis ordering. The stale PR
+description claim about a `TriaxialGaussianPotential(q1=1)` cross-check is now
+true; the description has been updated to match.
+
+### Low 1: stale internal docs
+
+Normalized in the same pass: `triaxial_mge.py` (axisymmetric counterparts
+"planned" -> "live in `tnt.potential.oblate_mge`"), `components.py` and
+`registry.py` ("two MGE composite types" -> "four"; `_VIEWING_ANGLES` comment
+now notes the oblate pair uses `inclination`), `docs/source/potential.md`,
+`docs/source/configuration.md`, `aidocs/KNOWLEDGE.md`.
+
+### Checks re-run
+
+`ruff check` clean; full `pytest` 329 passed (327 + the 2 new tests); strict
+`sphinx-build -W` succeeds.

@@ -2,16 +2,17 @@
 
 `AbstractPotentialComponent` (here) is the base every concrete component
 subclasses -- `GalaxPotentialComponent` (also here, built directly from a
-curated `galax.potential` class) and the MGE-backed composite types
-(`tnt.potential.triaxial_mge`, with more planned as separate modules
-alongside it). `resolve` dispatches to whichever subclass matches a
-config entry's `type` via `tnt.potential.registry._COMPONENT_REGISTRY` -- a
-concrete subclass participates by applying
-`tnt.potential.registry.register_component` directly to its own definition,
-the moment its module is imported; `tnt/potential/__init__.py`'s own
-explicit imports of every concrete implementation module (`triaxial_mge`,
-and others alongside it) are what make that happen in the first place -- a
-module that's never imported never participates.
+curated `galax.potential` class) and the MGE-backed composite types (one
+module per deprojection convention: `tnt.potential.triaxial_mge` and
+`tnt.potential.oblate_mge`). `resolve` dispatches to whichever subclass
+matches a config entry's `type` via
+`tnt.potential.registry._COMPONENT_REGISTRY` -- a concrete subclass
+participates by applying `tnt.potential.registry.register_component`
+directly to its own definition, the moment its module is imported;
+`tnt/potential/__init__.py`'s own explicit imports of every concrete
+implementation module (`triaxial_mge`, `oblate_mge`) are what make that
+happen in the first place -- a module that's never imported never
+participates.
 `ResolvedPotentialComponent` is a component's static structure
 (`type`/`parameterization`/`mge`), resolved once from its config entry and
 reused across every proposed point in parameter space; see
@@ -74,8 +75,9 @@ class ResolvedPotentialComponent(NamedTuple):
         conversion happens here (see `tnt.potential`'s module docstring for
         why). Passed straight through as-is -- a missing or otherwise wrong
         parameter surfaces at construction (a native `galax` constructor
-        error, or `AbstractMGE.deproject_triaxial` for the two MGE composite
-        types, via `AbstractPotentialComponent._build`) or a registered
+        error, or `AbstractMGE.deproject_triaxial`/`deproject_oblate` for the
+        four MGE composite types, via `AbstractPotentialComponent._build`) or a
+        registered
         `parameterization` converter, not here. Exact-name parameter-schema
         validation for TNT's own registered component types already happens
         earlier, at configuration-prep time
@@ -110,12 +112,12 @@ class AbstractPotentialComponent(eqx.Module):
     its own exponent, curated per class (see
     `tnt.potential.registry._SUPPORTED_GALAX_TYPES`) -- e.g.
     `LogarithmicPotential`'s `v_c` scales alongside a true mass parameter
-    like Plummer's `m_tot`, each by its own confirmed exponent. For the two
+    like Plummer's `m_tot`, each by its own confirmed exponent. For the four
     MGE composite types, `rescale` multiplies their one TNT-defined
     mass-normalization parameter (`ml`/`mge_mass_scale`) directly.
     `parameters` always holds canonical, parameterization-independent
     fields: for a native galax type these are exactly that class's own
-    constructor kwarg names; for the two MGE composite types, TNT's own
+    constructor kwarg names; for the four MGE composite types, TNT's own
     `ml`/`mge_mass_scale`.
     """
 
@@ -143,7 +145,7 @@ class AbstractPotentialComponent(eqx.Module):
             settings: One resolved `potential.<name>` entry: `type`, an
                 optional `parameterization`, and `parameters`.
             mges: Named MGEs, e.g. from `tnt.mge.build_mges` -- used only by
-                the two MGE composite types.
+                the four MGE composite types.
             path: This entry's location in the configuration, used in error
                 messages.
 
@@ -160,9 +162,9 @@ class AbstractPotentialComponent(eqx.Module):
         """
         kind = _required_string(settings, "type", path)
         # Every non-native concrete subclass (e.g. the MGE composite types
-        # in tnt.potential.triaxial_mge) registers itself via
-        # tnt.potential.registry.register_component; GalaxPotentialComponent
-        # doesn't, and stays the default.
+        # in tnt.potential.triaxial_mge / tnt.potential.oblate_mge) registers
+        # itself via tnt.potential.registry.register_component;
+        # GalaxPotentialComponent doesn't, and stays the default.
         component_cls = _COMPONENT_REGISTRY.get(kind, GalaxPotentialComponent)
         unsupported = (
             component_cls is GalaxPotentialComponent
@@ -219,9 +221,10 @@ class AbstractPotentialComponent(eqx.Module):
     ) -> Self:
         """Construct this component from its canonical `parameters` and static fields.
 
-        The default just constructs directly -- the two MGE composite types
-        (`tnt.potential.triaxial_mge`) override this to deproject and validate
-        their MGE eagerly, here, rather than lazily inside `to_galax()`: this is
+        The default just constructs directly -- the four MGE composite types
+        (`tnt.potential.triaxial_mge`, `tnt.potential.oblate_mge`) override
+        this to deproject and validate their MGE eagerly, here, rather than
+        lazily inside `to_galax()`: this is
         the point where the proposed parameter values are turned into a concrete
         potential, so it's the appropriate place for that potential to fail if
         it's invalid (e.g. `tnt.mge.MGEDeprojectionError`), before anything
@@ -272,7 +275,7 @@ class AbstractPotentialComponent(eqx.Module):
         actually specifies it, regardless of `rescale`. Identity by default:
         `parameters` already *is* the raw, parameterization-independent
         representation for anything without a registered non-native
-        parameterization -- both MGE composite types (which don't support
+        parameterization -- the four MGE composite types (which don't support
         one at all) and a native `galax` type with `parameterization`
         omitted.
 

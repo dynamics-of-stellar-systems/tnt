@@ -248,12 +248,12 @@ def test_to_mass_rejects_mismatched_component_count():
         light.to_mass(m_over_l)
 
 
-def test_deproject_axisymmetric_edge_on_recovers_observed_q():
+def test_deproject_oblate_edge_on_recovers_observed_q():
     distance = u.Quantity(30.5, "Mpc")
     mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
 
-    deprojected = physical.deproject_axisymmetric(u.Quantity(90.0, "deg"))
+    deprojected = physical.deproject_oblate(u.Quantity(90.0, "deg"))
 
     assert isinstance(deprojected, Deprojected3DMGE)
     assert jnp.allclose(deprojected.q.ustrip(""), physical.q.ustrip(""))
@@ -261,13 +261,13 @@ def test_deproject_axisymmetric_edge_on_recovers_observed_q():
     assert jnp.allclose(deprojected.sigma.ustrip("Mpc"), physical.sigma.ustrip("Mpc"))
 
 
-def test_deproject_axisymmetric_conserves_total_flux():
+def test_deproject_oblate_conserves_total_flux():
     distance = u.Quantity(30.5, "Mpc")
     mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
     inclination = u.Quantity(60.0, "deg")
 
-    deprojected = physical.deproject_axisymmetric(inclination)
+    deprojected = physical.deproject_oblate(inclination)
 
     sigma = physical.sigma.ustrip("Mpc")
     q_obs = physical.q.ustrip("")
@@ -281,14 +281,14 @@ def test_deproject_axisymmetric_conserves_total_flux():
     assert jnp.allclose(flux_2d, mass_3d, rtol=1e-5)
 
 
-def test_deproject_axisymmetric_requires_physical_units():
+def test_deproject_oblate_requires_physical_units():
     mge = _multi_component_light_mge()
 
     with pytest.raises(ValueError, match="physical .length. sigma"):
-        mge.deproject_axisymmetric(u.Quantity(90.0, "deg"))
+        mge.deproject_oblate(u.Quantity(90.0, "deg"))
 
 
-def test_deproject_axisymmetric_requires_zero_pa_twist():
+def test_deproject_oblate_requires_zero_pa_twist():
     distance = u.Quantity(30.5, "Mpc")
     mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
@@ -300,10 +300,10 @@ def test_deproject_axisymmetric_requires_zero_pa_twist():
     )
 
     with pytest.raises(ValueError, match="PA_twist == 0"):
-        twisted.deproject_axisymmetric(u.Quantity(90.0, "deg"))
+        twisted.deproject_oblate(u.Quantity(90.0, "deg"))
 
 
-def test_deproject_axisymmetric_invalid_inclination_raises():
+def test_deproject_oblate_invalid_inclination_raises():
     distance = u.Quantity(30.5, "Mpc")
     mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
@@ -311,7 +311,20 @@ def test_deproject_axisymmetric_invalid_inclination_raises():
     # Smallest q in the fixture is ~0.55, so an inclination close to face-on
     # (cos(i) close to 1) makes deprojection impossible for that component.
     with pytest.raises(MGEDeprojectionError):
-        physical.deproject_axisymmetric(u.Quantity(5.0, "deg"))
+        physical.deproject_oblate(u.Quantity(5.0, "deg"))
+
+
+def test_deproject_oblate_rejects_inclination_outside_0_90():
+    # i and 180 deg - i give the same projection and i = 0 is singular, so the
+    # domain is (0, 90] deg -- out-of-range angles are rejected, not folded
+    # through the squared trigonometry (120 deg would otherwise act as 60).
+    physical = _multi_component_light_mge().angular_to_physical(
+        u.Quantity(30.5, "Mpc")
+    )
+
+    for bad in (0.0, -15.0, 90.001, 120.0):
+        with pytest.raises(ValueError, match=r"inclination in \(0, 90\] degrees"):
+            physical.deproject_oblate(u.Quantity(bad, "deg"))
 
 
 def _single_component_light_mge(q_obs: float, psi: float) -> LightMGE:
@@ -399,7 +412,7 @@ def test_deproject_triaxial_convention_violating_geometry_raises():
     # Same theta/phi/q_obs as test_deproject_triaxial_gives_valid_axial_ratios
     # (which uses psi=0), but psi=0.1 gives a finite p=1.026, q=1.871 --
     # q > p > 1, violating TNT's 0 < q <= p <= 1 convention without being
-    # unsolvable (complementing test_deproject_axisymmetric_invalid_inclination_raises'
+    # unsolvable (complementing test_deproject_oblate_invalid_inclination_raises'
     # nan case, since both go through the same validity check).
     mge = _single_component_light_mge(q_obs=0.9, psi=0.0)
 
