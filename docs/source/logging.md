@@ -76,9 +76,6 @@ the same file. Pass the active session's queue to each worker and configure the
 worker at process startup:
 
 ```python
-import multiprocessing
-
-
 def worker(log_queue):
     import logging
     import tnt
@@ -87,17 +84,32 @@ def worker(log_queue):
     logging.getLogger("tnt.worker").info("Worker started")
 
 
-with tnt.configure_logging(config.as_dict()) as logging_session:
-    process = multiprocessing.Process(
-        target=worker,
-        args=(logging_session.worker_queue,),
-    )
-    process.start()
-    process.join()
+def main():
+    with tnt.configure_logging(config.as_dict()) as logging_session:
+        process = logging_session.worker_context.Process(
+            target=worker,
+            args=(logging_session.worker_queue,),
+        )
+        process.start()
+        process.join()
+
+
+if __name__ == "__main__":
+    main()
 ```
 
 Workers submit records to the queue; only the parent listener formats and
-writes them.
+writes them. `LoggingSession.worker_context` is the same explicit `spawn`
+context that creates `worker_queue`. Use it for every worker process so the
+queue and workers have compatible multiprocessing primitives and TNT never
+forks a process after JAX or the logging listener has started threads. Future
+process pools must likewise receive this context explicitly, for example as
+`ProcessPoolExecutor(mp_context=logging_session.worker_context)`.
+Worker targets must be importable, and executable entry points must use the
+standard `if __name__ == "__main__"` guard required by `spawn`.
+
+TNT does not call `multiprocessing.set_start_method()`: doing so would change
+process-global state owned by the application embedding TNT.
 
 ## Configuration
 

@@ -636,7 +636,13 @@
   reloads Python logging.
 - Worker processes call `tnt.configure_worker_logging()` with the parent
   session's queue. Only the parent listener writes to the logfile and terminal,
-  avoiding concurrent writes from multiple processes.
+  avoiding concurrent writes from multiple processes. The session creates its
+  queue through an explicit `spawn` multiprocessing context and exposes that
+  same context as `LoggingSession.worker_context`; all worker processes and
+  future process pools must use it. TNT must not call
+  `multiprocessing.set_start_method()`, because the embedding application owns
+  that process-global policy. Spawned worker targets must be importable, and
+  executable entry points must use an `if __name__ == "__main__"` guard.
 - `tests/integration_tests/test_configuration_session.py` exercises the
   bootstrap lifecycle with `tnt.configuration_session()` against a complete
   example profile (`configuration.yaml`, alongside it), covering every
