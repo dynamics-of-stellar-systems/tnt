@@ -65,8 +65,7 @@ block.
 
 1. Loads the packaged `default_config.yaml` profile.
 2. Recursively merges the user profile over the packaged profile.
-3. Applies common defaults to every dynamically named potential component and
-   parameter.
+3. Applies common defaults to every dynamically named potential parameter.
 4. Applies defaults selected by each kinematics data set's `type`.
 5. Validates the configured unit systems and the dimensions of supported
    unitful quantities without converting or stripping their declarations.
@@ -83,6 +82,8 @@ or list. User values always take precedence over applicable defaults.
 
 The schema-only `dynamic_object_defaults` and `kinematics_type_defaults`
 sections are applied during preparation and omitted from the resolved file.
+The packaged profile currently defines dynamic defaults for parameters only;
+potential components declare their own type and other component-level fields.
 Consequently, the generated YAML contains all scientific and numerical
 settings needed by TNT without depending on the package defaults used during
 the original preparation.

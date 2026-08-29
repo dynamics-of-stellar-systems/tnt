@@ -177,7 +177,7 @@ It rejects changes to:
 
 - internal units, `cosmological_parameters`, and physical system attributes
   such as distance (`system_attributes.name` remains metadata);
-- potential components, inclusion, types, MGE references, parameter names, or
+- declared potential components, types, MGE references, parameter names, or
   remaining parameter-schema fields;
 - MGE settings, spatial binnings, kinematics, population data, or their
   configured scientific file references;
@@ -202,7 +202,7 @@ not reduce the precision used to decide whether a declaration changed.
 Changing `parameter_space_settings.which_chi2` is allowed only when the chosen
 metric exists and is finite for every successful historical model. A nonempty
 `AllModels` table must also contain every parameter column required by the
-included potential components.
+declared potential components.
 
 TNT does not hash scientific input files. Users must not modify an MGE,
 spatial-binning, kinematics, or population file in place while an existing

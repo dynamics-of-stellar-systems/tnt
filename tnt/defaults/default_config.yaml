@@ -54,8 +54,8 @@ logging_settings:
     enabled: true
     level: "INFO"
 
-# These values apply to every dynamically named object of the corresponding
-# type unless the user overrides the property on that object.
+# These values apply to every dynamically named potential parameter unless the
+# user overrides the property on that parameter.
 dynamic_object_defaults:
   # `fixed` only stops the parameter generator from proposing independent
   # values for a parameter across shape points. It does not exempt a
