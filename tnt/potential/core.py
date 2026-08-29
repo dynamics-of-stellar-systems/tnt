@@ -1,4 +1,4 @@
-"""`Potential`: the sum of included components, and its module-level helpers."""
+"""`Potential`: the sum of its components, and its module-level helpers."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 class Potential(eqx.Module):
-    """The sum of included potential components, at one point in parameter space."""
+    """The sum of the potential components, at one point in parameter space."""
 
     components: dict[str, AbstractPotentialComponent]
 
@@ -32,7 +32,7 @@ class Potential(eqx.Module):
         settings: Mapping[str, Mapping[str, Any]],
         mges: Mapping[str, LightMGE | MassMGE],
     ) -> dict[str, ResolvedPotentialComponent]:
-        """Resolve every included component's static structure, once per run.
+        """Resolve every component's static structure, once per run.
 
         See `AbstractPotentialComponent.resolve` -- a caller building many
         `Potential`s from the same configuration (e.g. `ModelIterator`,
@@ -43,13 +43,11 @@ class Potential(eqx.Module):
         for name, component_value in settings.items():
             path = f"potential.{name}"
             component_settings = _mapping(component_value, path)
-            if not component_settings.get("include", True):
-                continue
             resolved[name] = AbstractPotentialComponent.resolve(
                 component_settings, mges, path=path
             )
         if not resolved:
-            raise ValueError("potential must contain at least one included component.")
+            raise ValueError("potential must contain at least one component.")
         return resolved
 
     @classmethod
@@ -62,7 +60,7 @@ class Potential(eqx.Module):
         """Build a `Potential` from resolved static structure and a proposed point.
 
         Args:
-            resolved: Every included component's static structure, e.g.
+            resolved: Every component's static structure, e.g.
                 from `Potential.resolve`.
             parameter_values: The current point in parameter space, e.g. a
                 `tnt.parameter_generator.ParameterSet`.
@@ -103,7 +101,7 @@ class Potential(eqx.Module):
     def to_galax(
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
-        """This potential's included components, composed into one `galax` potential."""
+        """This potential's components, composed into one `galax` potential."""
         return galax.potential.CompositePotential(
             {
                 name: component.to_galax(unit_system)
@@ -154,7 +152,7 @@ def build_potential(
     """Build the `Potential` from pre-resolved static structure and a proposed point.
 
     Args:
-        resolved: Every included component's static structure, e.g. from
+        resolved: Every component's static structure, e.g. from
             `Potential.resolve(config["potential"], mges)`, called once per
             run.
         parameter_values: The current point in parameter space, e.g. a
@@ -164,7 +162,7 @@ def build_potential(
             parameterizations that need it, e.g. NFW's `concentration_m200`.
 
     Returns:
-        A `Potential` assembled from every included component.
+        A `Potential` assembled from every component.
     """
     return Potential.build(resolved, parameter_values, cosmological_parameters)
 
@@ -193,7 +191,7 @@ def raw_potential_parameters(
     potential: Potential,
     cosmological_parameters: Mapping[str, Quantity],
 ) -> dict[str, dict[str, Quantity]]:
-    """Every included component's parameters, in the config's own parameterization.
+    """Every component's parameters, in the config's own parameterization.
 
     The inverse of `build_potential`/`Potential.from_settings`: where those
     convert each raw config parameter into `galax`'s native constructor
@@ -219,7 +217,7 @@ def raw_potential_parameters(
             parameterizations that need it, e.g. NFW's `concentration_m200`.
 
     Returns:
-        A mapping from each included component's name to its raw
+        A mapping from each component's name to its raw
         parameters, keyed exactly as its configuration's `parameters` are.
     """
     raw: dict[str, dict[str, Quantity]] = {}

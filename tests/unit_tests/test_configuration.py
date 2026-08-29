@@ -125,7 +125,6 @@ def test_read_resolves_defaults_without_allocating_a_run(tmp_path: Path) -> None
     assert written["io_settings"]["output_directory"] == "output"
     assert config.data["io_settings"]["input_directory"] == str(tmp_path / "input")
     assert config.data["io_settings"]["output_directory"] == str(output_directory)
-    assert written["potential"]["stars"]["include"] is True
     parameter = written["potential"]["stars"]["parameters"]["theta"]
     assert parameter["fixed"] is False
     kinematics = written["kinematic_data"]["observed"]
@@ -965,6 +964,33 @@ def test_mass_mge_potential_rejects_ml_parameter(tmp_path: Path) -> None:
     with pytest.raises(
         ValueError,
         match=r"parameters has invalid field\(s\) for TriaxialMassMGEPotential: ml",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_potential_component_rejects_the_removed_include_key(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    user_data["potential"]["stars"]["include"] = True
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=r"potential\.stars contains unknown field\(s\): include",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_potential_component_requires_parameters(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    del user_data["potential"]["stars"]["parameters"]
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError, match=r"potential\.stars is missing required field: parameters"
     ):
         Configuration().read(user_path, workspace_root=tmp_path)
 

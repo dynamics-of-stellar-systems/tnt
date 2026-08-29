@@ -283,10 +283,10 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         component = _mapping(component_value, component_path)
         _reject_unknown_keys(
             component,
-            {"include", "mge", "parameterization", "parameters", "type"},
+            {"mge", "parameterization", "parameters", "type"},
             component_path,
         )
-        _require_keys(component, {"include", "type"}, component_path)
+        _require_keys(component, {"type"}, component_path)
         # `type` names either a registered TNT component (checked against
         # _COMPONENT_REGISTRY below) or a galax.potential class name; this
         # module doesn't check the latter against
@@ -296,28 +296,25 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         component_type = _string(component["type"], f"{component_path}.type")
         if "parameterization" in component:
             _string(component["parameterization"], f"{component_path}.parameterization")
-        include = _boolean(component["include"], f"{component_path}.include")
 
         if "parameters" in component:
             _validate_parameters(
                 _required_mapping(component, "parameters", component_path),
                 f"{component_path}.parameters",
-                require_nonempty=include,
+                require_nonempty=True,
             )
-        elif include:
+        else:
             raise ValueError(f"{component_path} is missing required field: parameters.")
 
         is_mge_potential = component_type in _COMPONENT_REGISTRY
         if is_mge_potential:
-            if include:
-                _require_keys(component, {"mge"}, component_path)
-            if "mge" in component:
-                _validate_registry_reference(
-                    component["mge"],
-                    mge_names,
-                    f"{component_path}.mge",
-                    "MGEs",
-                )
+            _require_keys(component, {"mge"}, component_path)
+            _validate_registry_reference(
+                component["mge"],
+                mge_names,
+                f"{component_path}.mge",
+                "MGEs",
+            )
         elif "mge" in component:
             raise ValueError(
                 f"{component_path}.mge is only valid for MGE potential types."
@@ -328,10 +325,7 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         # versa, theta/phi/psi required for both) comes directly from that
         # type's own registered `_raw_dimensions` (see
         # tnt.potential.registry.register_component) rather than
-        # hand-written here. Extra/forbidden parameters are rejected regardless of
-        # `include` (a disabled component still can't declare a nonsensical
-        # one); missing/required parameters are only enforced when `include`,
-        # matching the same reasoning as the `parameters` presence check above.
+        # hand-written here.
         parameters = component.get("parameters")
         parameter_names = set(parameters) if isinstance(parameters, dict) else set()
         if is_mge_potential:
@@ -343,14 +337,13 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
                     f"{component_path}.parameters has invalid field(s) for "
                     f"{component_type}: {names}."
                 )
-            if include:
-                missing = required - parameter_names
-                if missing:
-                    names = ", ".join(sorted(missing))
-                    raise ValueError(
-                        f"{component_path}.parameters is missing required "
-                        f"field(s): {names}."
-                    )
+            missing = required - parameter_names
+            if missing:
+                names = ", ".join(sorted(missing))
+                raise ValueError(
+                    f"{component_path}.parameters is missing required "
+                    f"field(s): {names}."
+                )
 
 
 def _validate_parameters(

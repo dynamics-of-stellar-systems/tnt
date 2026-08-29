@@ -66,7 +66,6 @@ def _config(input_directory: Path) -> dict[str, object]:
         },
         "potential": {
             "stars": {
-                "include": True,
                 "type": "TriaxialLightMGEPotential",
                 "mge": "light",
                 "parameters": {

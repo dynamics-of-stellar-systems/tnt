@@ -138,7 +138,7 @@ def _validate_parameter_columns(
     all_models: AllModels,
     critical_configuration: Mapping[str, Any],
 ) -> None:
-    """Require every included potential parameter in a nonempty model table."""
+    """Require every potential parameter in a nonempty model table."""
     if not len(all_models):
         return
     potential = _mapping(critical_configuration, "potential")
@@ -146,7 +146,6 @@ def _validate_parameter_columns(
         f"{component_name}.{parameter_name}"
         for component_name, raw_component in potential.items()
         for component in [_require_mapping(raw_component, Path(component_name))]
-        if component.get("include", True)
         for parameter_name in _require_mapping(
             component.get("parameters", {}), Path(f"{component_name}.parameters")
         )

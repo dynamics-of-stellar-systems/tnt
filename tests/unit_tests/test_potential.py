@@ -306,7 +306,7 @@ def test_from_settings_rejects_unrecognized_type() -> None:
         ValueError, match="Unsupported potential.dh.type 'NotAPotential'"
     ):
         AbstractPotentialComponent.resolve(
-            {"type": "NotAPotential", "include": True, "parameters": {}},
+            {"type": "NotAPotential", "parameters": {}},
             {},
             path="potential.dh",
         )
@@ -323,7 +323,7 @@ def test_from_settings_rejects_a_real_but_uncurated_galax_class() -> None:
         ValueError, match="Unsupported potential.dh.type 'MultipolePotential'"
     ):
         AbstractPotentialComponent.resolve(
-            {"type": "MultipolePotential", "include": True, "parameters": {}},
+            {"type": "MultipolePotential", "parameters": {}},
             {},
             path="potential.dh",
         )
@@ -331,7 +331,7 @@ def test_from_settings_rejects_a_real_but_uncurated_galax_class() -> None:
 
 def test_from_settings_resolves_a_real_galax_class_name() -> None:
     resolved = AbstractPotentialComponent.resolve(
-        {"type": "NFWPotential", "include": True, "parameters": {}},
+        {"type": "NFWPotential", "parameters": {}},
         {},
         path="potential.dh",
     )
@@ -351,7 +351,6 @@ def test_from_settings_rejects_unimplemented_parameterization() -> None:
             {
                 "type": "PlummerPotential",
                 "parameterization": "bogus",
-                "include": True,
                 "parameters": {},
             },
             {},
@@ -374,7 +373,6 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
         {
             "type": "NFWPotential",
             "parameterization": "concentration_m200",
-            "include": True,
             "parameters": {},
         },
         {},
@@ -418,7 +416,6 @@ def test_nfw_parameterization_is_invariant_to_declared_units() -> None:
         {
             "type": "NFWPotential",
             "parameterization": "concentration_m200",
-            "include": True,
             "parameters": {},
         },
         {},
@@ -522,11 +519,10 @@ def test_nfw_concentration_m200_inverse_is_self_consistent_after_rescale() -> No
 def test_raw_potential_parameters_uses_each_component_own_parameterization() -> None:
     h = Quantity(7.158985155319864e-05, "1 / Myr")
     settings = {
-        "bh": {"type": "PlummerPotential", "include": True, "parameters": {}},
+        "bh": {"type": "PlummerPotential", "parameters": {}},
         "dh": {
             "type": "NFWPotential",
             "parameterization": "concentration_m200",
-            "include": True,
             "parameters": {"M_200": {"unit": "Msun"}},
         },
     }
@@ -559,7 +555,7 @@ def test_plummer_to_galax_matches_closed_form_potential() -> None:
     unit_system = _internal_unit_system()
     m_tot, r_s = 5.0, 1e-3
     resolved = AbstractPotentialComponent.resolve(
-        {"type": "PlummerPotential", "include": True, "parameters": {}},
+        {"type": "PlummerPotential", "parameters": {}},
         {},
         path="potential.bh",
     )
@@ -581,7 +577,7 @@ def test_plummer_to_galax_matches_closed_form_potential() -> None:
 
 def test_plummer_potential_is_invariant_to_declared_parameter_units() -> None:
     unit_system = _internal_unit_system()
-    settings = {"bh": {"type": "PlummerPotential", "include": True, "parameters": {}}}
+    settings = {"bh": {"type": "PlummerPotential", "parameters": {}}}
     resolved = Potential.resolve(settings, {})
     mass = Quantity(5.0, "Msun")
 
@@ -613,7 +609,7 @@ def test_plummer_potential_is_invariant_to_declared_parameter_units() -> None:
 
 def test_plummer_rescale_scales_only_the_mass_parameter() -> None:
     resolved = AbstractPotentialComponent.resolve(
-        {"type": "PlummerPotential", "include": True, "parameters": {}},
+        {"type": "PlummerPotential", "parameters": {}},
         {},
         path="potential.bh",
     )
@@ -626,37 +622,36 @@ def test_plummer_rescale_scales_only_the_mass_parameter() -> None:
     assert rescaled.parameters["r_s"].ustrip("kpc") == pytest.approx(1e-3)
 
 
-def test_potential_composes_only_included_components() -> None:
+def test_potential_composes_every_declared_component() -> None:
     unit_system = _internal_unit_system()
     settings = {
-        "bh": {"type": "PlummerPotential", "include": True, "parameters": {}},
-        "excluded": {
-            "type": "PlummerPotential",
-            "include": False,
-            "parameters": {},
-        },
+        "bh": {"type": "PlummerPotential", "parameters": {}},
+        "halo": {"type": "PlummerPotential", "parameters": {}},
     }
     parameter_values = {
         "bh": {"m_tot": Quantity(5.0, "Msun"), "r_s": Quantity(1e-3, "kpc")},
-        "excluded": {"m_tot": Quantity(100.0, "Msun"), "r_s": Quantity(1.0, "kpc")},
+        "halo": {"m_tot": Quantity(100.0, "Msun"), "r_s": Quantity(1.0, "kpc")},
     }
     resolved = Potential.resolve(settings, {})
     potential = build_potential(
         resolved, parameter_values, _NO_COSMOLOGICAL_PARAMETERS
     )
-    assert set(potential.components) == {"bh"}
+    assert set(potential.components) == {"bh", "halo"}
 
     galax_potential = potential.to_galax(unit_system)
     xyz = Quantity(jnp.array([0.01, 0.0, 0.0]), "kpc")
     t = Quantity(0.0, "Myr")
     composed_value = float(galax_potential.potential(xyz, t).ustrip("kpc2 / Myr2"))
-    component_value = float(
-        potential.components["bh"]
-        .to_galax(unit_system)
-        .potential(xyz, t)
-        .ustrip("kpc2 / Myr2")
+    summed_components = sum(
+        float(
+            potential.components[name]
+            .to_galax(unit_system)
+            .potential(xyz, t)
+            .ustrip("kpc2 / Myr2")
+        )
+        for name in ("bh", "halo")
     )
-    assert composed_value == pytest.approx(component_value)
+    assert composed_value == pytest.approx(summed_components)
 
 
 # ---------------------------------------------------------------------------
@@ -797,7 +792,6 @@ def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
     resolved = AbstractPotentialComponent.resolve(
         {
             "type": "TriaxialLightMGEPotential",
-            "include": True,
             "mge": "mge_lum",
             "parameters": {},
         },
@@ -827,7 +821,6 @@ def test_mge_component_build_raises_for_invalid_geometry_not_to_galax() -> None:
     resolved = AbstractPotentialComponent.resolve(
         {
             "type": "TriaxialLightMGEPotential",
-            "include": True,
             "mge": "mge_lum",
             "parameters": {},
         },
@@ -1007,7 +1000,6 @@ def test_oblate_mge_component_resolve_and_build_stores_the_referenced_mge() -> N
     resolved = AbstractPotentialComponent.resolve(
         {
             "type": "OblateLightMGEPotential",
-            "include": True,
             "mge": "mge_lum",
             "parameters": {},
         },
@@ -1035,7 +1027,6 @@ def test_oblate_mge_build_raises_for_impossible_inclination_not_to_galax() -> No
     resolved = AbstractPotentialComponent.resolve(
         {
             "type": "OblateLightMGEPotential",
-            "include": True,
             "mge": "mge_lum",
             "parameters": {},
         },
