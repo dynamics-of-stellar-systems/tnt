@@ -162,7 +162,7 @@
   `0 < q <= p <= 1` eagerly. `_check_axial_ratios()` converts JAX results to
   Python control flow (`bool(...)` and `.nonzero()`) and raises
   `MGEDeprojectionError`, so `deproject_triaxial()` and
-  `deproject_axisymmetric()` are deliberately not `jax.jit`/`jax.vmap`
+  `deproject_oblate()` are deliberately not `jax.jit`/`jax.vmap`
   traceable. This is acceptable while model evaluation itself remains eager:
   `ModelIterator._evaluate()` catches Python exceptions and returns a
   variable-length `list[Model]`, while orbit integration and weight solving
@@ -344,12 +344,20 @@
   and emits configured sampling warnings.
 - `potential.<name>.type` names one of a curated set of `galax.potential`
   classes (`tnt.potential._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
-  `PlummerPotential` -- 25 classes total), or one of two TNT-specific MGE
-  composite types, `TriaxialLightMGEPotential`/`TriaxialMassMGEPotential`, provided
-  directly by TNT since `galax` has no native class for a
-  sum-of-triaxial-Gaussians potential. A light-MGE potential requires an
-  `ml` parameter; a mass-MGE potential requires `mge_mass_scale` instead
-  and validation rejects `ml` on it, since its MGE already contains mass.
+  `PlummerPotential` -- 25 classes total), or one of four TNT-specific MGE
+  composite types -- triaxial (`TriaxialLightMGEPotential`/
+  `TriaxialMassMGEPotential`, `tnt/potential/triaxial_mge.py`) or oblate
+  axisymmetric (`OblateLightMGEPotential`/`OblateMassMGEPotential`,
+  `tnt/potential/oblate_mge.py`) -- provided directly by TNT since `galax`
+  has no native class for the MGE-specific deprojection/composition wiring.
+  A light type requires an `ml` parameter; a mass type requires
+  `mge_mass_scale` instead (validation rejects `ml` on it, since its MGE
+  already contains mass). Triaxial types also require `theta`/`phi`/`psi`;
+  oblate types require a single `inclination` in `(0, 90]` deg. TNT's
+  axisymmetric deprojection is oblate-only; prolate would get its own
+  `Prolate...` types. Each type's exact
+  parameter schema comes straight from its own registered `_raw_dimensions`
+  (see `register_component`), not a second hand-written list.
   Deliberately curated rather than "any `AbstractPotential` subclass":
   `galax` also exports abstract/base classes (which passed the old
   `issubclass` check and only failed later, confusingly, at `to_galax()`),

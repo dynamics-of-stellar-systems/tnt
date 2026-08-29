@@ -4,7 +4,7 @@
 `tnt.potential`'s module docstring); these tests cover what's actually
 implemented: dynamic derivation from galax's own `ParameterField` metadata,
 type/parameterization resolution, the fully-working Plummer/NFW native-mode
-paths, and the two MGE composite types' `to_galax`.
+paths, and the four MGE composite types' `to_galax`.
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ from tnt.potential import (
     _SUPPORTED_GALAX_TYPES,
     AbstractPotentialComponent,
     GalaxPotentialComponent,
+    OblateLightMGEPotential,
+    OblateMassMGEPotential,
     Potential,
     TriaxialLightMGEPotential,
     TriaxialMassMGEPotential,
@@ -775,13 +777,17 @@ def test_inherited_type_does_not_register_or_raise(
     }
 
 
-def test_component_registry_contains_the_two_mge_types() -> None:
+def test_component_registry_contains_the_four_mge_types() -> None:
     assert set(_COMPONENT_REGISTRY) == {
         "TriaxialLightMGEPotential",
         "TriaxialMassMGEPotential",
+        "OblateLightMGEPotential",
+        "OblateMassMGEPotential",
     }
     assert _COMPONENT_REGISTRY["TriaxialLightMGEPotential"] is TriaxialLightMGEPotential
     assert _COMPONENT_REGISTRY["TriaxialMassMGEPotential"] is TriaxialMassMGEPotential
+    assert _COMPONENT_REGISTRY["OblateLightMGEPotential"] is OblateLightMGEPotential
+    assert _COMPONENT_REGISTRY["OblateMassMGEPotential"] is OblateMassMGEPotential
 
 
 def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
@@ -974,6 +980,298 @@ def test_triaxial_mass_mge_to_galax_uses_mge_mass_scale() -> None:
     assert potential.potential(xyz, t).ustrip(speed2) == pytest.approx(
         reference.potential(xyz, t).ustrip(speed2), rel=1e-5
     )
+
+
+# ---------------------------------------------------------------------------
+# Oblate axisymmetric MGE composite types: same _build/to_galax wiring as the
+# triaxial pair, under a single `inclination` instead of theta/phi/psi.
+#
+# `AbstractMGE.deproject_oblate` has a real solution for any component
+# whose observed q_obs >= cos(inclination) -- an edge-on inclination (90 deg,
+# cos == 0) is valid for any q_obs, so these tests don't need q=1 fixtures
+# to route around an invalid deprojection. q=1 is still used in the spherical
+# cross-checks below to get an independent reference (galax's own
+# GaussianPotential), which p=q=1 makes exact; a flattened q != 1 case is
+# cross-checked against galax's own TriaxialGaussianPotential(q1=1) further
+# down.
+# ---------------------------------------------------------------------------
+
+
+_INCLINATION = {"inclination": Quantity(90.0, "deg")}
+
+
+def test_oblate_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
+    light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
+        Quantity(30.0, "Mpc")
+    )
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "OblateLightMGEPotential",
+            "include": True,
+            "mge": "mge_lum",
+            "parameters": {},
+        },
+        {"mge_lum": light_mge},
+        path="potential.stars",
+    )
+    component = resolved.build(
+        {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+    )
+    assert isinstance(component, OblateLightMGEPotential)
+    assert component.mge is light_mge
+    assert component.parameters["ml"].ustrip("Msun / Lsun") == pytest.approx(5.0)
+
+
+def test_oblate_mge_build_raises_for_impossible_inclination_not_to_galax() -> None:
+    # q_obs = 0.5 with inclination 20 deg: cos(20 deg) ~ 0.94 > 0.5, so
+    # q_obs < cos(i) and the axisymmetric deprojection has no real solution.
+    flattened = LightMGE(
+        I=Quantity(jnp.array([2.0]), "Lsun / rad2"),
+        sigma=Quantity(jnp.array([1.5]), "rad"),
+        q=Quantity(jnp.array([0.5]), ""),
+        PA_twist=Quantity(jnp.array([0.0]), "rad"),
+    ).angular_to_physical(Quantity(30.0, "Mpc"))
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "OblateLightMGEPotential",
+            "include": True,
+            "mge": "mge_lum",
+            "parameters": {},
+        },
+        {"mge_lum": flattened},
+        path="potential.stars",
+    )
+
+    with pytest.raises(MGEDeprojectionError):
+        resolved.build(
+            {"ml": Quantity(5.0, "Msun / Lsun"), "inclination": Quantity(20.0, "deg")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+
+    # An inclination that *does* deproject builds and to_galax()es fine.
+    component = resolved.build(
+        {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+    )
+    component.to_galax(_internal_unit_system())
+
+
+def test_oblate_light_mge_to_galax_matches_spherical_gaussian() -> None:
+    unit_system = _internal_unit_system()
+    distance = Quantity(30.0, "Mpc")
+    light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
+    ml = Quantity(5.0, "Msun / Lsun")
+    component = OblateLightMGEPotential._build(
+        {"ml": ml, **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": light_mge},
+    )
+
+    potential = component.to_galax(unit_system)
+
+    mass_mge = light_mge.to_mass(ml)
+    deprojected = mass_mge.deproject_oblate(**_INCLINATION)
+    assert deprojected.p.ustrip("") == pytest.approx(1.0)
+    assert deprojected.q.ustrip("") == pytest.approx(1.0)
+    m_tot = (
+        deprojected.I[0]
+        * deprojected.q[0]
+        * (2 * jnp.pi) ** 1.5
+        * deprojected.sigma[0] ** 3
+    )
+    reference = gp.GaussianPotential(
+        m_tot=m_tot, r_s=deprojected.sigma[0], units=unit_system
+    )
+
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    for xyz in (
+        Quantity(jnp.array([3.0, 0.5, -1.0]), "kpc"),
+        Quantity(jnp.array([50.0, -20.0, 8.0]), "kpc"),
+    ):
+        t = Quantity(0.0, "Myr")
+        r = jnp.sqrt(jnp.sum(xyz.ustrip("kpc") ** 2))
+        radial_xyz = Quantity(jnp.array([r, 0.0, 0.0]), "kpc")
+        assert potential.potential(radial_xyz, t).ustrip(speed2) == pytest.approx(
+            reference.potential(radial_xyz, t).ustrip(speed2), rel=1e-5
+        )
+
+
+def test_oblate_light_mge_to_galax_sums_every_component() -> None:
+    unit_system = _internal_unit_system()
+    distance = Quantity(30.0, "Mpc")
+    light_mge = LightMGE(
+        I=Quantity(jnp.array([2.0, 0.5]), "Lsun / rad2"),
+        sigma=Quantity(jnp.array([1.5, 4.0]), "rad"),
+        q=Quantity(jnp.array([0.6, 0.4]), ""),
+        PA_twist=Quantity(jnp.array([0.0, 0.0]), "rad"),
+    ).angular_to_physical(distance)
+    ml = Quantity(5.0, "Msun / Lsun")
+    component = OblateLightMGEPotential._build(
+        {"ml": ml, **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": light_mge},
+    )
+
+    potential = component.to_galax(unit_system)
+
+    deprojected = light_mge.to_mass(ml).deproject_oblate(**_INCLINATION)
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    xyz = Quantity(jnp.array([3.0, 0.5, -1.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    individual_sum = Quantity(0.0, speed2)
+    for i in range(2):
+        m_tot = (
+            deprojected.I[i]
+            * deprojected.q[i]
+            * (2 * jnp.pi) ** 1.5
+            * deprojected.sigma[i] ** 3
+        )
+        component_i = gp.AxisymmetricGaussianPotential(
+            m_tot=m_tot,
+            r_s=deprojected.sigma[i],
+            q2=deprojected.q[i],
+            units=unit_system,
+        )
+        individual_sum = individual_sum + component_i.potential(xyz, t)
+
+    assert potential.potential(xyz, t).ustrip(speed2) == pytest.approx(
+        individual_sum.ustrip(speed2), rel=1e-5
+    )
+
+
+def test_oblate_mass_mge_to_galax_uses_mge_mass_scale() -> None:
+    unit_system = _internal_unit_system()
+    distance = Quantity(30.0, "Mpc")
+    mass_mge = MassMGE(
+        I=Quantity(jnp.array([1e2]), "Msun / rad2"),
+        sigma=Quantity(jnp.array([1.5]), "rad"),
+        q=Quantity(jnp.array([1.0]), ""),
+        PA_twist=Quantity(jnp.array([0.0]), "rad"),
+    ).angular_to_physical(distance)
+    mge_mass_scale = Quantity(3.0, "")
+    component = OblateMassMGEPotential._build(
+        {"mge_mass_scale": mge_mass_scale, **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": mass_mge},
+    )
+
+    potential = component.to_galax(unit_system)
+
+    scaled = mass_mge.rescaled(mge_mass_scale)
+    deprojected = scaled.deproject_oblate(**_INCLINATION)
+    m_tot = (
+        deprojected.I[0]
+        * deprojected.q[0]
+        * (2 * jnp.pi) ** 1.5
+        * deprojected.sigma[0] ** 3
+    )
+    reference = gp.GaussianPotential(
+        m_tot=m_tot, r_s=deprojected.sigma[0], units=unit_system
+    )
+
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    xyz = Quantity(jnp.array([4.0, 0.0, 0.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    assert potential.potential(xyz, t).ustrip(speed2) == pytest.approx(
+        reference.potential(xyz, t).ustrip(speed2), rel=1e-5
+    )
+
+
+def test_oblate_light_mge_rescale_scales_to_galax_without_recompute() -> None:
+    unit_system = _internal_unit_system()
+    distance = Quantity(30.0, "Mpc")
+    light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
+    ml = Quantity(5.0, "Msun / Lsun")
+    component = OblateLightMGEPotential._build(
+        {"ml": ml, **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": light_mge},
+    )
+
+    mass_scale = 2.0
+    rescaled = component.rescale(mass_scale)
+
+    assert rescaled.parameters["ml"].ustrip("Msun / Lsun") == pytest.approx(
+        ml.ustrip("Msun / Lsun") * mass_scale
+    )
+    assert rescaled.deprojected.q.ustrip("") == pytest.approx(
+        component.deprojected.q.ustrip("")
+    )
+
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    xyz = Quantity(jnp.array([3.0, 0.5, -1.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    original = component.to_galax(unit_system).potential(xyz, t)
+    scaled = rescaled.to_galax(unit_system).potential(xyz, t)
+    assert scaled.ustrip(speed2) == pytest.approx(
+        original.ustrip(speed2) * mass_scale, rel=1e-5
+    )
+
+
+def test_oblate_light_mge_to_galax_flattened_cross_checks() -> None:
+    # The spherical cross-checks above use q_obs=1 (so q_intr=1 always) and
+    # can't detect a missing flattening factor or a swapped q -> q2. This uses
+    # a genuinely flattened deprojection (q_obs=0.7 at inclination 70 deg gives
+    # q_intr ~ 0.65) and checks to_galax() two independent ways: against
+    # galax's own TriaxialGaussianPotential(q1=1) -- a different galax class
+    # and code path from AxisymmetricGaussianPotential -- at off-axis points,
+    # and against the closed-form Gaussian density along each intrinsic axis,
+    # which only matches if q2 lands on z (not x/y, where p=1).
+    unit_system = _internal_unit_system()
+    light_mge = LightMGE(
+        I=Quantity(jnp.array([4.0]), "Lsun / kpc2"),
+        sigma=Quantity(jnp.array([2.0]), "kpc"),
+        q=Quantity(jnp.array([0.7]), ""),
+        PA_twist=Quantity(jnp.array([0.0]), "rad"),
+    )
+    ml = Quantity(5.0, "Msun / Lsun")
+    component = OblateLightMGEPotential._build(
+        {"ml": ml, "inclination": Quantity(70.0, "deg")},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": light_mge},
+    )
+    potential = component.to_galax(unit_system)
+
+    deprojected = component.deprojected
+    q = float(deprojected.q.ustrip("")[0])
+    assert deprojected.p.ustrip("")[0] == pytest.approx(1.0)
+    assert 0.0 < q < 0.99  # genuinely flattened, not a spherical special case
+
+    m_tot = (
+        deprojected.I[0]
+        * deprojected.q[0]
+        * (2 * jnp.pi) ** 1.5
+        * deprojected.sigma[0] ** 3
+    )
+    reference = gp.TriaxialGaussianPotential(
+        m_tot=m_tot,
+        r_s=deprojected.sigma[0],
+        q1=Quantity(1.0, ""),
+        q2=deprojected.q[0],
+        units=unit_system,
+    )
+
+    t = Quantity(0.0, "Myr")
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    for xyz in (
+        Quantity(jnp.array([2.0, 3.0, 1.5]), "kpc"),
+        Quantity(jnp.array([-4.0, 1.0, 6.0]), "kpc"),
+        Quantity(jnp.array([0.5, -2.0, -3.0]), "kpc"),
+    ):
+        assert potential.potential(xyz, t).ustrip(speed2) == pytest.approx(
+            reference.potential(xyz, t).ustrip(speed2), rel=1e-5
+        )
+
+    rho_0 = float(deprojected.I.ustrip("Msun / kpc3")[0])
+    sigma = float(deprojected.sigma.ustrip("kpc")[0])
+    density_unit = unit_system["mass"] / unit_system["length"] ** 3
+    for axis_index, axial_ratio in ((0, 1.0), (1, 1.0), (2, q)):
+        xyz = [0.0, 0.0, 0.0]
+        xyz[axis_index] = 3.0
+        analytic = rho_0 * jnp.exp(-0.5 * (3.0 / (axial_ratio * sigma)) ** 2)
+        density = potential.density(Quantity(jnp.array(xyz), "kpc"), t)
+        assert density.ustrip(density_unit) == pytest.approx(analytic, rel=1e-5)
 
 
 def test_potential_generate_orbit_library_not_implemented() -> None:

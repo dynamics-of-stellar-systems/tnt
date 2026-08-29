@@ -4,8 +4,9 @@
 reads from for any `type` without a registered `parameterization`; registered
 non-native parameterizations (e.g. NFW's `concentration_m200`, see
 `tnt.potential.nfw`) have their own hand-declared raw dimensions instead.
-TNT's own composite types (the two MGE potentials, more planned alongside
-them) are neither -- each such class registers itself via `register_component`
+TNT's own composite types (the four MGE potentials -- a light/mass pair each
+for triaxial and oblate axisymmetric deprojection) are neither -- each such
+class registers itself via `register_component`
 (see that function), reading its raw dimensions directly off the registered
 class rather than a separately hand-maintained dict, so there is exactly one
 place a new TNT component's `type`/parameter-dimensions/dispatch-target has
@@ -182,10 +183,11 @@ _SUPPORTED_GALAX_TYPES: dict[str, dict[str, NativeParameter]] = {
 }
 
 
-# Shared by both TNT MGE composite types' own `_raw_dimensions` -- the
-# global viewing angles both deproject against
+# Shared by the two *triaxial* MGE composite types' own `_raw_dimensions` --
+# the global viewing angles they deproject against
 # (`tnt.mge.AbstractMGE.deproject_triaxial`), required regardless of light
-# vs. mass.
+# vs. mass. The oblate pair uses a single `inclination` instead (see
+# `tnt.potential.oblate_mge`).
 _VIEWING_ANGLES: dict[str, str] = {"theta": "angle", "phi": "angle", "psi": "angle"}
 
 # TNT's own potential-component types (as opposed to native `galax` types,

@@ -254,42 +254,59 @@ class AbstractMGE(eqx.Module):
         mass_unit = self.I.unit * coord_unit**2
         return Quantity(binned[1:], mass_unit)
 
-    def deproject_axisymmetric(self, inclination: Quantity) -> Deprojected3DMGE:
-        """Deproject to an intrinsic 3D MGE, assuming axisymmetry.
+    def deproject_oblate(self, inclination: Quantity) -> Deprojected3DMGE:
+        """Deproject to an intrinsic 3D MGE, assuming oblate axisymmetry.
 
-        Axisymmetric MGE deprojection (Monnet, Bacon & Emsellem 1992; Cappellari 2002
-        eq. 9): each projected (2D) Gaussian, with observed axial ratio ``q'`` and width
-        ``sigma``, corresponds to an intrinsic 3D Gaussian with the *same* ``sigma`` and
-        an intrinsic axial ratio ``q`` (short/long axis, i.e. ``C/A``) determined by the
-        inclination ``i`` between the line of sight and the symmetry axis (``i = 90
-        deg`` is edge-on, where ``q = q'``; ``i = 0 deg`` is face-on, where deprojection
-        is undefined). This is the ``p = 1`` (``B = A``) special case of the general
-        triaxial ellipsoid, since an axisymmetric system has no intermediate axis.
+        Oblate axisymmetric MGE deprojection (Monnet, Bacon & Emsellem 1992; Cappellari
+        2002 eq. 9): each projected (2D) Gaussian, with observed axial ratio ``q'`` and
+        width ``sigma``, corresponds to an intrinsic 3D Gaussian with the *same*
+        ``sigma`` and an intrinsic axial ratio ``q`` (short/long axis, i.e. ``C/A``)
+        determined by the inclination ``i`` between the line of sight and the symmetry
+        axis, via ``q**2 = (q'**2 - cos(i)**2) / sin(i)**2``. This is the oblate
+        convention: ``p = B/A = 1``, ``q = C/A <= 1`` (so ``A = B >= C``) -- the
+        ``p = 1`` special case of the general triaxial ellipsoid, an axisymmetric
+        system having no intermediate axis. A *prolate* spheroid (long axis = symmetry
+        axis) obeys a different relation and is not produced by this path.
+
+        ``i`` is canonically in ``(0, 90]`` degrees: ``i = 90 deg`` is edge-on, where
+        ``q = q'``; ``i = 0 deg`` is face-on, where the projection is circular and
+        carries no shape information (``sin(i) = 0``); and ``i`` and ``180 deg - i``
+        give an identical projection for any equatorially-symmetric model, so the
+        upper half-space is redundant. Inclinations outside ``(0, 90]`` deg are
+        rejected rather than folded through the squared trigonometry.
 
         Args:
             inclination: The viewing angle between the line of sight and the symmetry
-                axis.
+                axis, in ``(0, 90]`` degrees.
 
         Returns:
             A `Deprojected3DMGE` with intrinsic axial ratio `q` and `p = 1` for every
             component.
 
         Raises:
-            ValueError: If `sigma` isn't in physical (length) units -- call
-                `angular_to_physical` first -- or if any component has nonzero
-                `PA_twist` (an axisymmetric system can't have isophote twist).
+            ValueError: If `inclination` is outside ``(0, 90]`` degrees; if `sigma`
+                isn't in physical (length) units -- call `angular_to_physical` first;
+                or if any component has nonzero `PA_twist` (an axisymmetric system
+                can't have isophote twist).
             MGEDeprojectionError: If any component has no real solution at this
                 inclination (``q' < cos(i)``), or an intrinsic `q` outside
                 TNT's ``0 < q <= 1`` convention (``p`` is always 1 here).
         """
+        inclination_deg = float(inclination.ustrip("deg"))
+        if not 0.0 < inclination_deg <= 90.0:
+            raise ValueError(
+                "deproject_oblate requires an inclination in (0, 90] degrees "
+                f"(got {inclination_deg} deg); i and 180 deg - i give the same "
+                "projection, and i = 0 deg (face-on) carries no shape information."
+            )
         if not self.sigma.unit.is_equivalent(au.m):
             raise ValueError(
-                "deproject_axisymmetric requires physical (length) sigma; "
+                "deproject_oblate requires physical (length) sigma; "
                 "call angular_to_physical(distance) first."
             )
         if not bool(jnp.allclose(self.PA_twist.ustrip("rad"), 0.0)):
             raise ValueError(
-                "deproject_axisymmetric requires PA_twist == 0 for every "
+                "deproject_oblate requires PA_twist == 0 for every "
                 "component (an axisymmetric system has no isophote twist)."
             )
 
@@ -317,7 +334,7 @@ class AbstractMGE(eqx.Module):
         General triaxial MGE deprojection (de Zeeuw & Franx 1989; Cappellari 2002 eqs.
         6-8; van den Bosch et al. 2008 eqs. 6-9), solving for each Gaussian's intrinsic
         axial ratios ``p`` (``B/A``) and ``q`` (``C/A``) given its observed axial ratio
-        and the viewing geometry. Unlike `deproject_axisymmetric`, the intrinsic `sigma`
+        and the viewing geometry. Unlike `deproject_oblate`, the intrinsic `sigma`
         is *not* generally equal to the observed one -- it's recovered via the
         scale-length compression factor ``u = sigma_observed / sigma_intrinsic`` (van
         den Bosch et al. 2008 eq. 9), which is only ever 1 at special viewing angles
@@ -472,10 +489,10 @@ class Deprojected3DMGE(eqx.Module):
 
     Each Gaussian component is described by its peak (3D) density ``I``, intrinsic width
     ``sigma``, and intrinsic axial ratios ``p`` (``B/A``) and ``q`` (``C/A``).
-    `deproject_axisymmetric` always returns the same `sigma` as the projected MGE it
+    `deproject_oblate` always returns the same `sigma` as the projected MGE it
     came from; `deproject_triaxial` generally does not (see its docstring). An
-    axisymmetric deprojection always has ``p == 1``, since axisymmetric ellipsoids have
-    no intermediate axis.
+    oblate axisymmetric deprojection always has ``p == 1``, since axisymmetric
+    ellipsoids have no intermediate axis.
     """
 
     I: Quantity
