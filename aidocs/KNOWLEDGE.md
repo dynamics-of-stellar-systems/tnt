@@ -489,12 +489,17 @@
   (`forward(inverse(native)) == native`, including after a rescale) rather
   than against any independently derivable expected value, since none
   exists.
+- Every component declared under `potential` is active. Excluding a component
+  means removing or commenting out its complete configuration entry. Each
+  declared component must contain a nonempty `parameters` mapping.
 - Explicit kinematics histogram metadata is grouped under `histogram` as
   `width`, `center`, and `bins`.
-- Defaults for properties of dynamically named potential components and
-  parameters are declared under `dynamic_object_defaults`. The merge layer
-  applies them to each corresponding object unless the user overrides the
-  property on that object.
+- Defaults for dynamically named potential parameters are declared under
+  `dynamic_object_defaults.parameter`. The merge layer applies them to every
+  parameter unless the user overrides the property. The generic resolver can
+  also apply component defaults supplied by schema metadata, but the packaged
+  profile currently declares none; each potential component therefore states
+  its own component-level fields.
 - Policies that depend on a kinematics data-set type are declared under
   `kinematics_type_defaults`. The configuration resolver must select the
   matching type policy and then allow settings on the named data set to
