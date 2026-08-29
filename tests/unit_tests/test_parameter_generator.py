@@ -31,7 +31,6 @@ def test_single_point_generator_proposes_quantities_in_their_declared_unit() -> 
     potential_settings = {
         "bh": {
             "type": "PlummerPotential",
-            "include": True,
             "parameters": {
                 "m_tot": {"value": 5.0, "unit": "kg", "fixed": True},
                 "r_s": {"value": 1.0, "unit": "pc", "fixed": True},
@@ -40,7 +39,6 @@ def test_single_point_generator_proposes_quantities_in_their_declared_unit() -> 
         "dh": {
             "type": "NFWPotential",
             "parameterization": "concentration_m200",
-            "include": True,
             "parameters": {
                 "c": {"value": 8.0, "fixed": True},
                 "M_200": {"value": 1.0e12, "unit": "Msun", "fixed": True},

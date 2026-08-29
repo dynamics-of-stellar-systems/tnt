@@ -75,7 +75,6 @@ native ones, not carried through unchanged.
 potential:
   bh:
     type: "PlummerPotential"      # a galax.potential class name
-    include: true
     parameters:
       m_tot:                      # galax's own native kwarg name
         value: 5.0
@@ -89,7 +88,6 @@ potential:
   dh:
     type: "NFWPotential"
     parameterization: "concentration_m200"   # non-native
-    include: true
     parameters:
       c: {value: 8.0, fixed: true}
       M_200: {value: 1.0e12, unit: "Msun", fixed: true}
@@ -99,11 +97,12 @@ potential:
   composite type names.
 - `parameterization` (optional): a named conversion registered for `type`.
   Omit it to use `type`'s native parameters directly.
-- `parameters` (required unless `include: false`): one entry per parameter
-  the resolved `type`/`parameterization` pair expects, each with a `value`
-  and, if that parameter carries physical units, a `unit`.
-- `include` (required): whether this component participates in the
-  assembled potential.
+- `parameters` (required): one entry per parameter the resolved
+  `type`/`parameterization` pair expects, each with a `value` and, if that
+  parameter carries physical units, a `unit`.
+
+Every declared component is part of the assembled potential -- to leave one
+out, remove or comment out its entry.
 
 ### MGE composite types
 
@@ -131,7 +130,6 @@ split along two independent axes:
 potential:
   stars:
     type: "TriaxialLightMGEPotential"
-    include: true
     mge: "mge_lum"
     parameters:
       ml: {value: 5.0, unit: "Msun / Lsun"}   # a mass type uses mge_mass_scale instead
@@ -141,7 +139,6 @@ potential:
 
   bulge:
     type: "OblateLightMGEPotential"
-    include: true
     mge: "mge_bulge"
     parameters:
       ml: {value: 3.0, unit: "Msun / Lsun"}

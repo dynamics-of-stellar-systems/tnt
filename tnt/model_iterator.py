@@ -78,7 +78,7 @@ class ModelIterator:
     section, as declared -- `AbstractParameterGenerator` reads each
     parameter's declared value/unit from it every round.
     `resolved_potential` is `potential_settings`' fixed per-run static
-    structure (types, MGE references, `include` flags), resolved once via
+    structure (types, MGE references), resolved once via
     `tnt.potential.Potential.resolve` rather than re-derived on every
     proposed point -- see `tnt.potential.build_potential`.
     """

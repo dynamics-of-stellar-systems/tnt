@@ -5,7 +5,7 @@
 of four TNT-specific MGE composite potentials -- triaxial
 (`"TriaxialLightMGEPotential"`/`"TriaxialMassMGEPotential"`) or oblate
 axisymmetric (`"OblateLightMGEPotential"`/`"OblateMassMGEPotential"`) -- each
-built from a named MGE, and pairs every included class with each native
+built from a named MGE, and pairs every supported class with each native
 parameter's mass-rescale exponent.
 `parameterization` is a separate, optional concern: when omitted,
 `parameters` use the resolved type's own native constructor kwargs, with
