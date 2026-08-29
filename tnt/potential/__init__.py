@@ -29,10 +29,10 @@ approach already used for `ProjectedBinning`. `Potential.generate_orbit_library`
 remains `NotImplementedError`.
 
 Split across submodules by concern: `registry` (curated `galax` types, their
-native parameters' dimensions/mass-rescale exponents, and TNT component
-registration), `nfw` (the `concentration_m200` parameterization's
-self-contained numerics),
-`components` (the abstract base and the native-`galax` component,
+native parameters' dimensions/mass-rescale exponents, and TNT component /
+parameterization registration), `nfw` (the `concentration_m200`
+parameterization's self-contained numerics, and its `register_parameterization`
+call), `components` (the abstract base and the native-`galax` component,
 resolution/dispatch included), `triaxial_mge`/`oblate_mge` (the MGE-backed
 composite types, one sibling module per deprojection convention), and
 `core` (`Potential` itself and the module-level helpers around it).
@@ -60,9 +60,7 @@ from tnt.potential.oblate_mge import (
 )
 from tnt.potential.registry import _SUPPORTED_GALAX_TYPES as _SUPPORTED_GALAX_TYPES
 from tnt.potential.registry import (
-    PARAMETERIZATION_RAW_DIMENSIONS,
     NativeParameter,
-    Parameterization,
     raw_parameter_dimensions,
 )
 from tnt.potential.triaxial_mge import (
@@ -71,13 +69,11 @@ from tnt.potential.triaxial_mge import (
 )
 
 __all__ = [
-    "PARAMETERIZATION_RAW_DIMENSIONS",
     "AbstractPotentialComponent",
     "GalaxPotentialComponent",
     "NativeParameter",
     "OblateLightMGEPotential",
     "OblateMassMGEPotential",
-    "Parameterization",
     "Potential",
     "ResolvedPotentialComponent",
     "TriaxialLightMGEPotential",

@@ -12,7 +12,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from tnt.potential.registry import _COMPONENT_REGISTRY, raw_parameter_dimensions
+from tnt.potential.registry import (
+    _COMPONENT_REGISTRY,
+    parameter_schema_is_known,
+    raw_parameter_dimensions,
+)
 from tnt.units import declared_quantity_value, validate_configuration_quantities
 from tnt.validation import (
     _integer,
@@ -287,15 +291,12 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
             component_path,
         )
         _require_keys(component, {"type"}, component_path)
-        # `type` names either a registered TNT component (checked against
-        # _COMPONENT_REGISTRY below) or a galax.potential class name; this
-        # module doesn't check the latter against
-        # tnt.potential.registry._SUPPORTED_GALAX_TYPES yet -- extending
-        # exact-name/completeness validation to native galax types the same
-        # way is tracked separately (issue #44), not a galax-import concern.
         component_type = _string(component["type"], f"{component_path}.type")
+        parameterization: str | None = None
         if "parameterization" in component:
-            _string(component["parameterization"], f"{component_path}.parameterization")
+            parameterization = _string(
+                component["parameterization"], f"{component_path}.parameterization"
+            )
 
         if "parameters" in component:
             _validate_parameters(
@@ -320,22 +321,32 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
                 f"{component_path}.mge is only valid for MGE potential types."
             )
 
-        # Each registered TNT component type's exact parameter schema (ml
-        # required for light and forbidden for mass, mge_mass_scale vice
-        # versa, theta/phi/psi required for both) comes directly from that
-        # type's own registered `_raw_dimensions` (see
-        # tnt.potential.registry.register_component) rather than
-        # hand-written here.
+        # Exact-name completeness check against the resolved type/
+        # parameterization's full parameter set: a registered TNT component's
+        # own `_raw_dimensions` (see tnt.potential.registry.register_component),
+        # a registered non-native parameterization's raw schema, or -- the
+        # common case -- a curated galax class's native constructor kwargs
+        # (`tnt.potential.registry._SUPPORTED_GALAX_TYPES`). Every native field
+        # must be declared, including ones with a galax constructor default, so
+        # the model-table schema is complete and the model reproducible.
+        # `parameter_schema_is_known` gates this: an unrecognized type or an
+        # unimplemented parameterization is left to `resolve()`'s own, clearer
+        # error rather than reported here as "every parameter is extra".
         parameters = component.get("parameters")
         parameter_names = set(parameters) if isinstance(parameters, dict) else set()
-        if is_mge_potential:
-            required = set(raw_parameter_dimensions(component_type, None))
+        if parameter_schema_is_known(component_type, parameterization):
+            required = set(raw_parameter_dimensions(component_type, parameterization))
+            schema_label = component_type
+            if parameterization is not None:
+                schema_label = (
+                    f"{component_type} with parameterization {parameterization!r}"
+                )
             extra = parameter_names - required
             if extra:
                 names = ", ".join(sorted(extra))
                 raise ValueError(
                     f"{component_path}.parameters has invalid field(s) for "
-                    f"{component_type}: {names}."
+                    f"{schema_label}: {names}."
                 )
             missing = required - parameter_names
             if missing:

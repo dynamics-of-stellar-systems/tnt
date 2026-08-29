@@ -116,7 +116,7 @@ def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
         settings = _mapping(potential_value, potential_path)
         dimensions = _potential_parameter_dimensions(settings)
         parameters = settings.get("parameters")
-        if parameters is not None:
+        if parameters is not None and dimensions is not None:
             _validate_parameter_units(
                 _mapping(parameters, f"{potential_path}.parameters"),
                 dimensions,
@@ -147,21 +147,28 @@ def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
                 _validate_field(systematics, "sigma", "speed", systematics_path)
 
 
-def _potential_parameter_dimensions(settings: Mapping[str, Any]) -> Mapping[str, str]:
+def _potential_parameter_dimensions(
+    settings: Mapping[str, Any],
+) -> Mapping[str, str] | None:
     """One potential component's raw parameter dimensions, from `tnt.potential`.
 
-    `tnt.configuration.validation._validate_potential` already validates
-    `type`/`parameterization` as strings, and runs before this (see that
-    module's comment for why) -- but fall back to no declared dimensions
-    (nothing scaled) for a malformed value here anyway, rather than depending
-    on that ordering or duplicating its validation.
+    Returns `None` when the resolved `type`/`parameterization` has no known
+    parameter schema -- a malformed value (already rejected by
+    `_validate_potential`, which runs first), an unrecognized `type`, or an
+    unimplemented `parameterization`. The caller then skips unit validation
+    for this component, leaving the type/parameterization error to
+    `AbstractPotentialComponent.resolve` rather than reporting a misleading
+    "unit not supported for this parameter".
     """
     # Imported lazily: `tnt.mge`/`tnt.kinematics`/`tnt.spatial_binnings` import
     # this module for `validate_dimension`/`declared_quantity`, and
     # `tnt.potential` imports those -- a module-level import here would close
     # that cycle. Config validation, this function's only caller, always runs
     # well after every module is loaded.
-    from tnt.potential import raw_parameter_dimensions
+    from tnt.potential.registry import (
+        parameter_schema_is_known,
+        raw_parameter_dimensions,
+    )
 
     potential_type = settings.get("type")
     parameterization = settings.get("parameterization")
@@ -169,7 +176,9 @@ def _potential_parameter_dimensions(settings: Mapping[str, Any]) -> Mapping[str,
         isinstance(potential_type, str)
         and (parameterization is None or isinstance(parameterization, str))
     ):
-        return {}
+        return None
+    if not parameter_schema_is_known(potential_type, parameterization):
+        return None
     return raw_parameter_dimensions(potential_type, parameterization)
 
 

@@ -29,23 +29,15 @@ import galax.potential
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import LightMGE, MassMGE
-from tnt.potential.nfw import _nfw_concentration_m200, _nfw_concentration_m200_inverse
 from tnt.potential.registry import (
     _COMPONENT_REGISTRY,
     _SUPPORTED_GALAX_TYPES,
     ForwardConverter,
-    Parameterization,
+    get_parameterization,
+    parameterization_names,
     raw_parameter_dimensions,
 )
 from tnt.validation import _required_string, _string
-
-_PARAMETERIZATIONS: dict[str, dict[str, Parameterization]] = {
-    "NFWPotential": {
-        "concentration_m200": Parameterization(
-            _nfw_concentration_m200, _nfw_concentration_m200_inverse
-        ),
-    },
-}
 
 
 class ResolvedPotentialComponent(NamedTuple):
@@ -79,10 +71,10 @@ class ResolvedPotentialComponent(NamedTuple):
         four MGE composite types, via `AbstractPotentialComponent._build`) or a
         registered
         `parameterization` converter, not here. Exact-name parameter-schema
-        validation for TNT's own registered component types already happens
-        earlier, at configuration-prep time
-        (`tnt.configuration.validation._validate_potential`); native `galax`
-        types aren't yet covered the same way (GitHub issue #44). Value/domain
+        validation -- for TNT's own registered component types, curated native
+        `galax` types, and registered parameterizations alike -- already
+        happens earlier, at configuration-prep time
+        (`tnt.configuration.validation._validate_potential`). Value/domain
         validation (positivity, physical bounds, ...) isn't implemented
         anywhere yet (GitHub issue #30).
 
@@ -183,15 +175,16 @@ class AbstractPotentialComponent(eqx.Module):
         convert: ForwardConverter | None = None
         if parameterization_name is not None:
             _string(parameterization_name, f"{path}.parameterization")
-            converters = _PARAMETERIZATIONS.get(kind, {})
-            try:
-                convert = converters[parameterization_name].convert
-            except KeyError as error:
-                allowed = ", ".join(sorted(converters)) or "(none implemented yet)"
+            spec = get_parameterization(kind, parameterization_name)
+            if spec is None:
+                allowed = (
+                    ", ".join(parameterization_names(kind)) or "(none implemented yet)"
+                )
                 raise NotImplementedError(
                     f"{path}.parameterization {parameterization_name!r} is not "
                     f"implemented for type {kind!r}; implemented: {allowed}."
-                ) from error
+                )
+            convert = spec.convert
 
         return ResolvedPotentialComponent(
             component_cls=component_cls,
@@ -349,5 +342,10 @@ class GalaxPotentialComponent(AbstractPotentialComponent):
     ) -> dict[str, Quantity]:
         if parameterization is None:
             return self.parameters
-        invert = _PARAMETERIZATIONS[self.galax_type][parameterization].invert
-        return invert(self.parameters, declared_units, cosmological_parameters)
+        spec = get_parameterization(self.galax_type, parameterization)
+        if spec is None:  # unreachable: resolve() already validated it
+            raise NotImplementedError(
+                f"{self.galax_type}.{parameterization!r} is not a registered "
+                "parameterization."
+            )
+        return spec.invert(self.parameters, declared_units, cosmological_parameters)

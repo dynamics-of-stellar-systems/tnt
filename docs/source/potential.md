@@ -98,8 +98,10 @@ potential:
 - `parameterization` (optional): a named conversion registered for `type`.
   Omit it to use `type`'s native parameters directly.
 - `parameters` (required): one entry per parameter the resolved
-  `type`/`parameterization` pair expects, each with a `value` and, if that
-  parameter carries physical units, a `unit`.
+  `type`/`parameterization` pair expects -- every native field, including
+  ones with a `galax` constructor default (e.g. `TriaxialHernquistPotential`'s
+  `q1`/`q2`) -- each with a `value` and, if it carries physical units, a
+  `unit`.
 
 Every declared component is part of the assembled potential -- to leave one
 out, remove or comment out its entry.

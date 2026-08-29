@@ -785,6 +785,43 @@ def test_component_registry_contains_the_four_mge_types() -> None:
     assert _COMPONENT_REGISTRY["OblateMassMGEPotential"] is OblateMassMGEPotential
 
 
+def test_register_parameterization_bundles_converters_and_schema() -> None:
+    # One register_parameterization call is the single source of truth for a
+    # parameterization's converters *and* its config parameter schema -- so
+    # resolve() and _validate_potential can never disagree on which
+    # parameterizations exist or what they take.
+    from tnt.potential.registry import (
+        _PARAMETERIZATION_REGISTRY,
+        get_parameterization,
+        parameter_schema_is_known,
+        raw_parameter_dimensions,
+        register_parameterization,
+    )
+
+    spec = get_parameterization("NFWPotential", "concentration_m200")
+    assert spec is not None
+    assert spec.convert is _nfw_concentration_m200
+    assert spec.invert is _nfw_concentration_m200_inverse
+    assert spec.raw_dimensions == {"c": "dimensionless", "M_200": "mass"}
+    # The schema readers see exactly what was registered.
+    assert raw_parameter_dimensions("NFWPotential", "concentration_m200") == {
+        "c": "dimensionless",
+        "M_200": "mass",
+    }
+    assert parameter_schema_is_known("NFWPotential", "concentration_m200")
+    assert not parameter_schema_is_known("NFWPotential", "not_registered")
+
+    with pytest.raises(ValueError, match=r"Duplicate parameterization"):
+        register_parameterization(
+            type_name="NFWPotential",
+            name="concentration_m200",
+            convert=_nfw_concentration_m200,
+            invert=_nfw_concentration_m200_inverse,
+            raw_dimensions={"c": "dimensionless", "M_200": "mass"},
+        )
+    assert set(_PARAMETERIZATION_REGISTRY) == {("NFWPotential", "concentration_m200")}
+
+
 def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
     light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
         Quantity(30.0, "Mpc")

@@ -1,21 +1,22 @@
 """Curated `galax.potential` types and TNT's own potential-component registry.
 
-`_SUPPORTED_GALAX_TYPES` is the source of truth `raw_parameter_dimensions`
-reads from for any `type` without a registered `parameterization`; registered
-non-native parameterizations (e.g. NFW's `concentration_m200`, see
-`tnt.potential.nfw`) have their own hand-declared raw dimensions instead.
-TNT's own composite types (the four MGE potentials -- a light/mass pair each
-for triaxial and oblate axisymmetric deprojection) are neither -- each such
-class registers itself via `register_component`
-(see that function), reading its raw dimensions directly off the registered
-class rather than a separately hand-maintained dict, so there is exactly one
-place a new TNT component's `type`/parameter-dimensions/dispatch-target has
-to be declared.
+`raw_parameter_dimensions` draws each config parameter's dimension from one
+of three registries:
 
-Normal `tnt.potential` initialization explicitly imports each concrete
-component module so its decorators populate the registry. Configuration
-preparation may read this static metadata; registration does not construct
-component instances or load scientific input data.
+- `_SUPPORTED_GALAX_TYPES` -- a curated galax class's native constructor
+  kwargs, used for any `type` without a registered `parameterization`;
+- `_COMPONENT_REGISTRY` -- TNT's own composite types (the four MGE
+  potentials), each registered by `register_component` reading its
+  `_raw_dimensions` straight off the class;
+- `_PARAMETERIZATION_REGISTRY` -- non-native parameterizations (e.g. NFW's
+  `concentration_m200`), each registered by `register_parameterization`,
+  which bundles the converters *and* the raw schema in one call.
+
+Each has exactly one declaration site per entry. Normal `tnt.potential`
+initialization explicitly imports each concrete component and parameterization
+module so its `register_*` calls run. Configuration preparation may read this
+static metadata; registration does not construct component instances or load
+scientific input data.
 """
 
 from __future__ import annotations
@@ -51,18 +52,23 @@ configuration declares, so a reported value comes back in the parameterization
 """
 
 
-class Parameterization(NamedTuple):
-    """A registered non-native parameterization, both directions.
+class ParameterizationSpec(NamedTuple):
+    """A registered non-native parameterization: both converters and its raw schema.
 
-    Bundled together so one can never be registered without the other --
-    `AllModels` relies on `invert` existing for every `parameterization` a
-    config can actually specify (see `tnt.potential.raw_potential_parameters`).
+    One `register_parameterization` call bundles all three, so the
+    convert/invert functions and the config parameter schema
+    `tnt.configuration.validation._validate_potential` checks against can
+    never be registered apart or drift out of step. `AllModels` relies on
+    `invert` existing for every `parameterization` a config can specify (see
+    `tnt.potential.raw_potential_parameters`).
     """
 
     convert: ForwardConverter
     """Raw config parameters -> the type's native `galax` constructor kwargs."""
     invert: InverseConverter
     """Native `galax` constructor kwargs -> raw config parameters."""
+    raw_dimensions: dict[str, str]
+    """Each raw config parameter's physical dimension, for schema validation."""
 
 
 class NativeParameter(NamedTuple):
@@ -226,15 +232,52 @@ def register_component(
     _COMPONENT_REGISTRY[type_name] = cls
     return cls
 
-# Raw parameter dimensions for registered non-native parameterizations,
-# keyed by (type, parameterization). Populated alongside
-# `tnt.potential.components._PARAMETERIZATIONS`.
-PARAMETERIZATION_RAW_DIMENSIONS: dict[tuple[str, str], dict[str, str]] = {
-    ("NFWPotential", "concentration_m200"): {
-        "c": "dimensionless",
-        "M_200": "mass",
-    },
-}
+
+# TNT's non-native parameterizations, keyed by `(type, parameterization)`.
+# Populated by `register_parameterization`, called at import from the module
+# that owns each parameterization's numerics (e.g. `tnt.potential.nfw`) --
+# `tnt/potential/__init__.py`'s explicit imports are what run those, exactly
+# as for `_COMPONENT_REGISTRY`. One entry per parameterization is the single
+# place its converters *and* its config parameter schema are declared.
+_PARAMETERIZATION_REGISTRY: dict[tuple[str, str], ParameterizationSpec] = {}
+
+
+def register_parameterization(
+    *,
+    type_name: str,
+    name: str,
+    convert: ForwardConverter,
+    invert: InverseConverter,
+    raw_dimensions: Mapping[str, str],
+) -> None:
+    """Register a non-native `parameterization` for `type_name` under `name`.
+
+    Bundles the forward/inverse converters with the raw config parameter
+    schema so config validation (`_validate_potential`) and runtime
+    resolution can never disagree on which parameterizations exist or what
+    parameters they take.
+
+    Raises:
+        ValueError: If `(type_name, name)` is already registered.
+    """
+    key = (type_name, name)
+    if key in _PARAMETERIZATION_REGISTRY:
+        raise ValueError(f"Duplicate parameterization {name!r} for type {type_name!r}.")
+    _PARAMETERIZATION_REGISTRY[key] = ParameterizationSpec(
+        convert, invert, dict(raw_dimensions)
+    )
+
+
+def get_parameterization(type_name: str, name: str) -> ParameterizationSpec | None:
+    """The registered `ParameterizationSpec` for `(type_name, name)`, or `None`."""
+    return _PARAMETERIZATION_REGISTRY.get((type_name, name))
+
+
+def parameterization_names(type_name: str) -> list[str]:
+    """Every registered parameterization name for `type_name`, sorted."""
+    return sorted(
+        name for (kind, name) in _PARAMETERIZATION_REGISTRY if kind == type_name
+    )
 
 
 def raw_parameter_dimensions(kind: str, parameterization: str | None) -> dict[str, str]:
@@ -242,18 +285,36 @@ def raw_parameter_dimensions(kind: str, parameterization: str | None) -> dict[st
 
     Covers all three sources of truth this module knows about: a registered
     TNT component type's own `_raw_dimensions` (`_COMPONENT_REGISTRY`), a
-    registered non-native parameterization's hand-declared raw dimensions,
-    or -- the common case -- a curated galax class's native constructor
-    kwargs, read directly from `_SUPPORTED_GALAX_TYPES`. Returns `{}` (every
-    parameter treated as dimensionless) for anything unrecognized, deferring
-    the "is this actually a valid type" question to
-    `AbstractPotentialComponent.resolve`.
+    registered non-native parameterization's raw schema
+    (`_PARAMETERIZATION_REGISTRY`), or -- the common case -- a curated galax
+    class's native constructor kwargs, read directly from
+    `_SUPPORTED_GALAX_TYPES`. Returns `{}` (every parameter treated as
+    dimensionless) for anything unrecognized; `parameter_schema_is_known`
+    tells that apart from a genuinely empty schema.
     """
     if parameterization is not None:
-        return PARAMETERIZATION_RAW_DIMENSIONS.get((kind, parameterization), {})
+        spec = _PARAMETERIZATION_REGISTRY.get((kind, parameterization))
+        return dict(spec.raw_dimensions) if spec is not None else {}
     if kind in _COMPONENT_REGISTRY:
         return _COMPONENT_REGISTRY[kind]._raw_dimensions
     return {
         name: parameter.dimension
         for name, parameter in _SUPPORTED_GALAX_TYPES.get(kind, {}).items()
     }
+
+
+def parameter_schema_is_known(kind: str, parameterization: str | None) -> bool:
+    """Whether `raw_parameter_dimensions(kind, parameterization)` is authoritative.
+
+    `raw_parameter_dimensions` returns `{}` both for a recognized type/
+    parameterization with a genuinely empty parameter schema and for anything
+    unrecognized. `_validate_potential` uses this predicate to tell the two
+    apart: it can run exact-name completeness checks on a component's declared
+    `parameters` only when the schema is known, and must otherwise defer the
+    whole question to `AbstractPotentialComponent.resolve`, which raises its
+    own clearer error for an unsupported `type` or an unimplemented
+    `parameterization`.
+    """
+    if parameterization is not None:
+        return (kind, parameterization) in _PARAMETERIZATION_REGISTRY
+    return kind in _COMPONENT_REGISTRY or kind in _SUPPORTED_GALAX_TYPES

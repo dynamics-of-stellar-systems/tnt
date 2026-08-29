@@ -195,13 +195,18 @@ embedded in a kinematics data file, even when both data sets use the same
 The supported potential types are `TriaxialLightMGEPotential`,
 `TriaxialMassMGEPotential`, `OblateLightMGEPotential`,
 `OblateMassMGEPotential`, and a curated set of `galax.potential` class
-names (see [Potential](potential.md)). A light-MGE potential requires an
-`ml` mass-to-light parameter. A mass-MGE potential must not declare `ml`,
-because its input MGE already represents mass. Triaxial MGE types also
-require `theta`/`phi`/`psi`, the global viewing angles the named MGE is
-deprojected under; oblate axisymmetric MGE types require a single
-`inclination` instead. MGE contents and their physical units are inspected
-only in the later object-construction phase.
+names (see [Potential](potential.md)). Every component must declare exactly
+the parameter set its resolved `type`/`parameterization` expects -- a
+missing or unexpected name is rejected at preparation time, for curated
+`galax` types as well as TNT's own MGE composite types, and including native
+fields that have a `galax` constructor default (so the model table is
+complete and reproducible). A light-MGE
+potential requires an `ml` mass-to-light parameter. A mass-MGE potential
+must not declare `ml`, because its input MGE already represents mass.
+Triaxial MGE types also require `theta`/`phi`/`psi`, the global viewing
+angles the named MGE is deprojected under; oblate axisymmetric MGE types
+require a single `inclination` instead. MGE contents and their physical
+units are inspected only in the later object-construction phase.
 
 ## Loading configured MGEs
 
