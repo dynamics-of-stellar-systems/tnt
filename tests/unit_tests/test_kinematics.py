@@ -7,15 +7,14 @@ import pytest
 import unxt as u
 from astropy.table import QTable
 
-import tnt.kinematics as kinematics_module
 from tnt.kinematics import (
-    AbstractKinematics,
     BayesLOSVD,
     GaussHermite,
     Histogram2D,
     ProperMotions,
     build_kinematics,
 )
+from tnt.kinematics.registry import _KINEMATICS_REGISTRY
 from tnt.spatial_binnings import ProjectedBinning
 
 
@@ -394,10 +393,12 @@ def test_build_kinematics_rejects_unknown_binning_before_reading_file(
         build_kinematics({"gh": settings}, tmp_path, {})
 
 
-def test_kinematics_registry_is_derived_from_subclass_types() -> None:
-    expected = {cls._type: cls for cls in AbstractKinematics.__subclasses__()}
-
-    assert kinematics_module._KINEMATICS_CLASSES == expected
+def test_kinematics_registry_contains_every_explicitly_registered_type() -> None:
+    assert _KINEMATICS_REGISTRY == {
+        "bayes_losvd": BayesLOSVD,
+        "gauss_hermite": GaussHermite,
+        "proper_motions": ProperMotions,
+    }
 
 
 def test_build_kinematics_rejects_non_projected_binning(tmp_path: Path) -> None:

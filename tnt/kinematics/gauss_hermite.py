@@ -19,6 +19,7 @@ from tnt.kinematics.base import (
     _read_dimensionless_column,
     _same_length,
 )
+from tnt.kinematics.registry import register_kinematics
 from tnt.mge import LightMGE, MassMGE
 from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
 from tnt.units import declared_quantity, validate_dimension
@@ -36,6 +37,7 @@ from tnt.validation import (
 )
 
 
+@register_kinematics
 class GaussHermite(AbstractKinematics):
     """Line-of-sight kinematics represented by Gauss-Hermite moments."""
 

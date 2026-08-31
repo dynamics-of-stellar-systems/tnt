@@ -15,6 +15,7 @@ from unxt import Quantity
 
 from tnt.all_models import AllModels
 from tnt.potential import raw_parameter_dimensions
+from tnt.registry import register_typed_class
 from tnt.validation import _mapping, _number, _required
 
 ParameterSet = dict[str, dict[str, Quantity]]
@@ -29,7 +30,6 @@ separate, `ModelIterator`-owned mechanism layered on top of whichever
 here converts into a shared internal unit system (see `tnt.potential`'s
 module docstring for why).
 """
-
 
 def _declared_parameter_quantity(
     parameter: Mapping[str, Any], dimension: str | None, path: str
@@ -120,6 +120,35 @@ class AbstractParameterGenerator(eqx.Module):
         }
 
 
+_PARAMETER_GENERATOR_REGISTRY: dict[
+    str, type[AbstractParameterGenerator]
+] = {}
+
+
+def register_parameter_generator(
+    cls: type[AbstractParameterGenerator],
+) -> type[AbstractParameterGenerator]:
+    """Register one concrete parameter generator for configuration dispatch."""
+    return register_typed_class(
+        _PARAMETER_GENERATOR_REGISTRY,
+        cls,
+        family="parameter generator",
+    )
+
+
+def get_parameter_generator_class(
+    type_name: str,
+) -> type[AbstractParameterGenerator] | None:
+    """Return the registered generator class for ``type_name``, if any."""
+    return _PARAMETER_GENERATOR_REGISTRY.get(type_name)
+
+
+def parameter_generator_type_names() -> frozenset[str]:
+    """Return every explicitly registered parameter-generator type name."""
+    return frozenset(_PARAMETER_GENERATOR_REGISTRY)
+
+
+@register_parameter_generator
 class GridSearchParameterGenerator(AbstractParameterGenerator):
     """Proposes parameters on a grid, per each parameter's `generator_settings`."""
 
@@ -132,6 +161,7 @@ class GridSearchParameterGenerator(AbstractParameterGenerator):
         raise NotImplementedError
 
 
+@register_parameter_generator
 class SinglePointParameterGenerator(AbstractParameterGenerator):
     """Proposes one fixed `ParameterSet`, taken from each parameter's declared value.
 
@@ -154,9 +184,6 @@ class SinglePointParameterGenerator(AbstractParameterGenerator):
         ]
 
 
-_GENERATOR_CLASSES = (GridSearchParameterGenerator, SinglePointParameterGenerator)
-
-
 def build_parameter_generator(
     parameter_space_settings: Mapping[str, Any],
     potential_settings: Mapping[str, Mapping[str, Any]],
@@ -174,12 +201,14 @@ def build_parameter_generator(
         `parameter_space_settings.generator_type`.
     """
     generator_type = parameter_space_settings["generator_type"]
-    for generator_cls in _GENERATOR_CLASSES:
-        if generator_type == generator_cls._type:
-            return generator_cls(
-                potential_settings=potential_settings,
-                generator_settings=parameter_space_settings["generator_settings"],
-            )
-    raise ValueError(
-        f"Unknown parameter_space_settings.generator_type: {generator_type!r}"
+    generator_cls = get_parameter_generator_class(generator_type)
+    if generator_cls is None:
+        allowed = ", ".join(sorted(parameter_generator_type_names()))
+        raise ValueError(
+            "Unknown parameter_space_settings.generator_type: "
+            f"{generator_type!r}; expected one of: {allowed}."
+        )
+    return generator_cls(
+        potential_settings=potential_settings,
+        generator_settings=parameter_space_settings["generator_settings"],
     )

@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+import tnt.parameter_generator as parameter_generator_module
 from tnt.all_models import AllModels
 from tnt.configuration import validation as configuration_validation
-from tnt.parameter_generator import _GENERATOR_CLASSES, SinglePointParameterGenerator
+from tnt.parameter_generator import (
+    SinglePointParameterGenerator,
+    build_parameter_generator,
+    parameter_generator_type_names,
+)
 
 
 def test_generator_settings_keys_match_the_real_classes() -> None:
@@ -17,11 +22,50 @@ def test_generator_settings_keys_match_the_real_classes() -> None:
     duplicated data in sync with each class's own
     `_required_generator_settings`.
     """
+    registered_generators = (
+        parameter_generator_module._PARAMETER_GENERATOR_REGISTRY.values()
+    )
     expected = {
         generator_cls._type: generator_cls._required_generator_settings
-        for generator_cls in _GENERATOR_CLASSES
+        for generator_cls in registered_generators
     }
     assert configuration_validation._GENERATOR_SETTINGS_KEYS == expected
+
+
+def test_parameter_generator_registry_contains_every_explicit_type() -> None:
+    assert parameter_generator_type_names() == {
+        "GridSearch",
+        "SinglePoint",
+    }
+
+
+def test_build_parameter_generator_dispatches_through_the_registry() -> None:
+    generator = build_parameter_generator(
+        {
+            "generator_type": "SinglePoint",
+            "generator_settings": {},
+        },
+        {},
+    )
+
+    assert isinstance(generator, SinglePointParameterGenerator)
+
+
+def test_build_parameter_generator_rejects_an_unregistered_type() -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Unknown parameter_space_settings.generator_type: 'Unknown'; "
+            "expected one of: GridSearch, SinglePoint"
+        ),
+    ):
+        build_parameter_generator(
+            {
+                "generator_type": "Unknown",
+                "generator_settings": {},
+            },
+            {},
+        )
 
 
 def test_single_point_generator_proposes_quantities_in_their_declared_unit() -> None:

@@ -18,6 +18,7 @@ from tnt.kinematics.base import (
     _explicit_histogram,
     _nonnegative_finite,
 )
+from tnt.kinematics.registry import register_kinematics
 from tnt.mge import LightMGE, MassMGE
 from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
 from tnt.units import validate_dimension
@@ -35,6 +36,7 @@ from tnt.validation import (
 _LOGGER = logging.getLogger(__name__)
 
 
+@register_kinematics
 class ProperMotions(AbstractKinematics):
     """Two-dimensional proper-motion velocity distributions."""
 

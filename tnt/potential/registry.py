@@ -6,8 +6,8 @@ of three registries:
 - `_SUPPORTED_GALAX_TYPES` -- a curated galax class's native constructor
   kwargs, used for any `type` without a registered `parameterization`;
 - `_COMPONENT_REGISTRY` -- TNT's own composite types (the four MGE
-  potentials), each registered by `register_component` reading its
-  `_raw_dimensions` straight off the class;
+  potentials), each registered by `register_component`; schema access reads
+  its `_raw_dimensions` from the registered class;
 - `_PARAMETERIZATION_REGISTRY` -- non-native parameterizations (e.g. NFW's
   `concentration_m200`), each registered by `register_parameterization`,
   which bundles the converters *and* the raw schema in one call.
@@ -25,6 +25,8 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, NamedTuple
 
 from unxt import Quantity
+
+from tnt.registry import register_typed_class
 
 if TYPE_CHECKING:
     from tnt.potential.components import AbstractPotentialComponent
@@ -200,37 +202,47 @@ _VIEWING_ANGLES: dict[str, str] = {"theta": "angle", "phi": "angle", "psi": "ang
 # `_SUPPORTED_GALAX_TYPES` above), keyed by `_type`. Populated by
 # `register_component`, applied directly to each concrete
 # `AbstractPotentialComponent` subclass in its own defining module -- this
-# dict is the single place both `AbstractPotentialComponent.resolve` (runtime
-# dispatch) and `tnt.configuration.validation` (config-prep schema checks)
-# read from; there is no second, independently-maintained list of TNT type
-# names or dimensions to keep in sync with it.
+# dict is the single source used through lookup, type-predicate, and schema
+# accessors by runtime dispatch and configuration preparation; there is no
+# second, independently maintained list of TNT type names or dimensions.
 _COMPONENT_REGISTRY: dict[str, type[AbstractPotentialComponent]] = {}
 
 
 def register_component(
     cls: type[AbstractPotentialComponent],
 ) -> type[AbstractPotentialComponent]:
-    """Register `cls` -- reading its own `_type`/`_raw_dimensions` -- for dispatch.
+    """Register `cls` under its own explicitly declared `_type` for dispatch.
 
     Applied directly to a concrete `AbstractPotentialComponent` subclass's
     definition, e.g. `@register_component` above `class
-    TriaxialLightMGEPotential(AbstractPotentialComponent): ...`. Only ever
-    reads what the class already declares about itself (`_type`,
-    `_raw_dimensions`) -- this decorator's job is registering that
-    self-description, not being a second place either value gets typed in.
+    TriaxialLightMGEPotential(AbstractPotentialComponent): ...`. The registry
+    stores the class itself; schema access subsequently reads that class's
+    `_raw_dimensions`, so neither the type name nor dimensions are repeated.
 
     Raises:
+        TypeError: If the class does not declare its own non-empty string
+            `_type`.
         ValueError: If another registered class already declared the same
             `_type`.
     """
-    type_name = cls._type
-    if type_name in _COMPONENT_REGISTRY:
-        existing = _COMPONENT_REGISTRY[type_name].__name__
-        raise ValueError(
-            f"Duplicate potential type {type_name!r} on {existing} and {cls.__name__}."
-        )
-    _COMPONENT_REGISTRY[type_name] = cls
-    return cls
+    return register_typed_class(_COMPONENT_REGISTRY, cls, family="potential")
+
+
+def get_component_class(
+    type_name: str,
+) -> type[AbstractPotentialComponent] | None:
+    """Return TNT's registered component class for ``type_name``, if any."""
+    return _COMPONENT_REGISTRY.get(type_name)
+
+
+def component_type_names() -> frozenset[str]:
+    """Return every explicitly registered TNT component type name."""
+    return frozenset(_COMPONENT_REGISTRY)
+
+
+def is_registered_component_type(type_name: str) -> bool:
+    """Whether ``type_name`` identifies a registered TNT component class."""
+    return type_name in _COMPONENT_REGISTRY
 
 
 # TNT's non-native parameterizations, keyed by `(type, parameterization)`.
@@ -311,8 +323,9 @@ def raw_parameter_dimensions(kind: str, parameterization: str | None) -> dict[st
     if parameterization is not None:
         spec = _PARAMETERIZATION_REGISTRY.get((kind, parameterization))
         return dict(spec.raw_dimensions) if spec is not None else {}
-    if kind in _COMPONENT_REGISTRY:
-        return _COMPONENT_REGISTRY[kind]._raw_dimensions
+    component_cls = get_component_class(kind)
+    if component_cls is not None:
+        return component_cls._raw_dimensions
     return {
         name: parameter.dimension
         for name, parameter in _SUPPORTED_GALAX_TYPES.get(kind, {}).items()
@@ -333,4 +346,4 @@ def parameter_schema_is_known(kind: str, parameterization: str | None) -> bool:
     """
     if parameterization is not None:
         return (kind, parameterization) in _PARAMETERIZATION_REGISTRY
-    return kind in _COMPONENT_REGISTRY or kind in _SUPPORTED_GALAX_TYPES
+    return is_registered_component_type(kind) or kind in _SUPPORTED_GALAX_TYPES

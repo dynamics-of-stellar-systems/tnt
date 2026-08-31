@@ -708,7 +708,7 @@ _VIEWING_ANGLES = {
 }
 
 
-def test_register_component_reads_type_and_raw_dimensions(
+def test_register_component_stores_the_class_under_its_own_type(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # An isolated fake registry, swapped in for the module-level real one --
@@ -751,10 +751,8 @@ def test_inherited_type_does_not_register_or_raise(
 ) -> None:
     """A subclass that inherits `_type` without its own `@register_component`
     call must not participate in dispatch under that name -- and, since
-    registration is now explicit rather than reflection-discovered, there's
-    no ambiguous "is this a real second registration" question for it to get
-    wrong (see PR #45's audit, the inherited-`_type` false-duplicate finding
-    this replaces).
+    registration is explicit, there is no ambiguity about whether the child
+    is a second registered type.
     """
     monkeypatch.setattr(_registry_module, "_COMPONENT_REGISTRY", {})
 

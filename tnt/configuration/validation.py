@@ -1,10 +1,9 @@
 """Validate resolved TNT configuration data without constructing objects.
 
-Configuration validation may import component modules to read their static
-registration metadata (`_type`, `_raw_dimensions`, and
-`tnt.potential.registry._COMPONENT_REGISTRY`). Import-time registration is
-allowed; validation must not instantiate scientific objects, load scientific
-input data, or begin scientific execution.
+Configuration validation may import runtime-family modules to read their static
+registration metadata (`_type`, `_raw_dimensions`, and registry type names).
+Import-time registration is allowed; validation must not instantiate
+scientific objects, load scientific input data, or begin scientific execution.
 """
 
 from __future__ import annotations
@@ -12,8 +11,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from tnt.kinematics.registry import kinematics_type_names
 from tnt.potential.registry import (
-    _COMPONENT_REGISTRY,
+    is_registered_component_type,
     parameter_schema_is_known,
     raw_parameter_dimensions,
 )
@@ -51,9 +51,6 @@ _TOP_LEVEL_KEYS = {
     "units",
     "weight_solver_settings",
 }
-_KINEMATICS_TYPES = {"bayes_losvd", "gauss_hermite", "proper_motions"}
-
-
 def validate_resolved_configuration(config: ConfigDict) -> None:
     """Validate a fully merged configuration using data-only checks.
 
@@ -307,7 +304,7 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         else:
             raise ValueError(f"{component_path} is missing required field: parameters.")
 
-        is_mge_potential = component_type in _COMPONENT_REGISTRY
+        is_mge_potential = is_registered_component_type(component_type)
         if is_mge_potential:
             _require_keys(component, {"mge"}, component_path)
             _validate_registry_reference(
@@ -450,7 +447,7 @@ def _validate_kinematics(
         )
         _choice(
             settings["type"],
-            _KINEMATICS_TYPES,
+            set(kinematics_type_names()),
             f"{settings_path}.type",
         )
         filename = _string(settings["data_file"], f"{settings_path}.data_file")
