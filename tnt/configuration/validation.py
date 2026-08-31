@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from tnt.kinematics.registry import kinematics_type_names
+from tnt.parameter_generator import parameter_generator_required_settings
 from tnt.potential.registry import (
     is_registered_component_type,
     parameter_schema_is_known,
@@ -51,6 +52,8 @@ _TOP_LEVEL_KEYS = {
     "units",
     "weight_solver_settings",
 }
+
+
 def validate_resolved_configuration(config: ConfigDict) -> None:
     """Validate a fully merged configuration using data-only checks.
 
@@ -632,19 +635,6 @@ def _validate_weight_solver_settings(settings: ConfigDict) -> None:
         )
 
 
-# Which `generator_settings` keys each `generator_type` requires. Mirrors
-# each `tnt.parameter_generator.AbstractParameterGenerator` subclass's own
-# `_required_generator_settings` -- kept as plain data here, rather than
-# imported from `tnt.parameter_generator`, since that module (transitively,
-# via `tnt.all_models`/`tnt.model`/`tnt.potential`) pulls in `galax`, which
-# this validation-only module should not depend on just to read
-# configuration.
-_GENERATOR_SETTINGS_KEYS = {
-    "GridSearch": frozenset({"delta_chi2_threshold"}),
-    "SinglePoint": frozenset(),
-}
-
-
 def _validate_parameter_space_settings(settings: ConfigDict) -> None:
     path = "parameter_space_settings"
     keys = {
@@ -656,16 +646,17 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
     }
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
+    required_settings_by_type = parameter_generator_required_settings()
     generator_type = _choice(
         settings["generator_type"],
-        set(_GENERATOR_SETTINGS_KEYS),
+        set(required_settings_by_type),
         f"{path}.generator_type",
     )
     _choice(
         settings["which_chi2"], {"chi2", "kinchi2", "kinmapchi2"}, f"{path}.which_chi2"
     )
     generator = _required_mapping(settings, "generator_settings", path)
-    required_generator_keys = _GENERATOR_SETTINGS_KEYS[generator_type]
+    required_generator_keys = required_settings_by_type[generator_type]
     # Not `_reject_unknown_keys`: recursive default-merging can't remove a
     # mapping key, so a user who overrides `generator_type` away from the
     # packaged default's ("GridSearch") still inherits its

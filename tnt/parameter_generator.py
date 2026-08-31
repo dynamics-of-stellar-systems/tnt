@@ -31,6 +31,7 @@ here converts into a shared internal unit system (see `tnt.potential`'s
 module docstring for why).
 """
 
+
 def _declared_parameter_quantity(
     parameter: Mapping[str, Any], dimension: str | None, path: str
 ) -> Quantity:
@@ -120,9 +121,7 @@ class AbstractParameterGenerator(eqx.Module):
         }
 
 
-_PARAMETER_GENERATOR_REGISTRY: dict[
-    str, type[AbstractParameterGenerator]
-] = {}
+_PARAMETER_GENERATOR_REGISTRY: dict[str, type[AbstractParameterGenerator]] = {}
 
 
 def register_parameter_generator(
@@ -146,6 +145,14 @@ def get_parameter_generator_class(
 def parameter_generator_type_names() -> frozenset[str]:
     """Return every explicitly registered parameter-generator type name."""
     return frozenset(_PARAMETER_GENERATOR_REGISTRY)
+
+
+def parameter_generator_required_settings() -> dict[str, frozenset[str]]:
+    """Return required configuration-setting names for every generator type."""
+    return {
+        type_name: cls._required_generator_settings
+        for type_name, cls in _PARAMETER_GENERATOR_REGISTRY.items()
+    }
 
 
 @register_parameter_generator

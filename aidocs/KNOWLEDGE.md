@@ -595,9 +595,9 @@
   `register_parameter_generator`; `build_parameter_generator` dispatches from
   that owned registry. Undecorated subclasses are not selectable through
   configuration, and duplicate or inherited `_type` declarations fail at
-  registration. Preparation-time generator-setting schemas remain plain data
-  in `tnt.configuration.validation` to avoid an execution-module dependency;
-  a regression test keeps that data synchronized with the registered classes.
+  registration. Configuration validation obtains each generator type's
+  required settings from the registered class, so dispatch and validation
+  share the same authoritative declarations.
 - `parameter_space_settings.stopping_criteria.target_model_count` is a soft
   cumulative target, not a strict maximum. TNT starts a new iteration only
   while the existing model count is below it, then completes every proposed

@@ -4,38 +4,26 @@ from __future__ import annotations
 
 import pytest
 
-import tnt.parameter_generator as parameter_generator_module
 from tnt.all_models import AllModels
-from tnt.configuration import validation as configuration_validation
 from tnt.parameter_generator import (
     SinglePointParameterGenerator,
     build_parameter_generator,
+    parameter_generator_required_settings,
     parameter_generator_type_names,
 )
-
-
-def test_generator_settings_keys_match_the_real_classes() -> None:
-    """`tnt.configuration.validation._GENERATOR_SETTINGS_KEYS` is duplicated,
-    plain-data information -- it can't import these classes directly (see
-    its own comment for why: preparation-phase code shouldn't depend on
-    execution-phase modules). This is the regression test that keeps that
-    duplicated data in sync with each class's own
-    `_required_generator_settings`.
-    """
-    registered_generators = (
-        parameter_generator_module._PARAMETER_GENERATOR_REGISTRY.values()
-    )
-    expected = {
-        generator_cls._type: generator_cls._required_generator_settings
-        for generator_cls in registered_generators
-    }
-    assert configuration_validation._GENERATOR_SETTINGS_KEYS == expected
 
 
 def test_parameter_generator_registry_contains_every_explicit_type() -> None:
     assert parameter_generator_type_names() == {
         "GridSearch",
         "SinglePoint",
+    }
+
+
+def test_parameter_generator_registry_exposes_required_settings() -> None:
+    assert parameter_generator_required_settings() == {
+        "GridSearch": frozenset({"delta_chi2_threshold"}),
+        "SinglePoint": frozenset(),
     }
 
 
