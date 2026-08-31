@@ -378,6 +378,31 @@
   schema); the curated 25 drops `HenonHeilesPotential`/`NullPotential`
   (not astrophysically relevant to TNT) and `AbstractCompositePotential`
   (an empty-parameter base class) from that 28.
+- Config-prep validation (`_validate_potential`) checks the declared
+  `parameters` are *exactly* the resolved `type`/`parameterization`'s set --
+  missing or unexpected names rejected -- for curated native `galax` types
+  and registered parameterizations as well as TNT's own MGE composite types.
+  `registry.raw_parameter_dimensions(kind, parameterization)` supplies the
+  authoritative set; `registry.parameter_schema_is_known(kind,
+  parameterization)` gates it (an unrecognized type or an unimplemented
+  parameterization is left to `resolve()`'s own error, not reported as
+  "every parameter is extra"). Native fields with a `galax` constructor
+  default (e.g. `TriaxialHernquistPotential`'s `q1`/`q2`) must still be
+  declared -- intentional TNT policy, for a complete/reproducible
+  model-table schema.
+- Non-native parameterizations register via `registry.register_parameterization(
+  type_name=, name=, convert=, invert=, raw_dimensions=)` -- one call, from the
+  module owning the numerics (`tnt.potential.nfw` for `concentration_m200`),
+  mirroring `register_component`. It bundles the forward/inverse converters and
+  the config parameter schema in a single `ParameterizationSpec`, so validation
+  and runtime resolution can't disagree on which parameterizations exist. Read
+  back via `get_parameterization(type, name)` / `parameterization_names(type)`.
+  `type_name` must be a curated native `galax` type: a parameterization
+  converts a raw config convention into that class's native constructor kwargs,
+  and only `GalaxPotentialComponent` runs the inverse converter (`AllModels`
+  reporting). A TNT MGE composite type is rejected -- supporting one needs the
+  inverse dispatch lifted to a type-independent layer first (the `(p, q, u)`
+  shape scheme `triaxial_mge` mentions would be the first such case).
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`
@@ -451,9 +476,9 @@
   parameters in their configured units.
   Bare-number stripping only remains where a library function isn't
   `Quantity`-aware (`_nfw_g`'s `jnp.log`) or where `_solve_nfw_concentration`'s
-  bisection needs a plain number to compare against. Hand-maintained
-  dimension tables cover registered non-native parameterizations in
-  `tnt.potential.registry.PARAMETERIZATION_RAW_DIMENSIONS`; each registered TNT
+  bisection needs a plain number to compare against. A registered non-native
+  parameterization carries its own `raw_dimensions` in its
+  `ParameterizationSpec` (see `register_parameterization`); each registered TNT
   composite type declares its own `_raw_dimensions`, while curated native
   `galax` types use `_SUPPORTED_GALAX_TYPES`. A parameterization is deliberately
   scoped to one component's own raw parameters and, where needed,
@@ -468,11 +493,10 @@
   consumed by the parameter generator/search space rather than by potential
   construction -- deliberately deferred rather than shoehorned into
   `parameterization`.
-- Every registered parameterization converts both ways:
-  `tnt.potential.components._PARAMETERIZATIONS`
-  maps to a `tnt.potential.Parameterization(convert, invert)` pair, not a
-  bare converter, so one direction can never be registered without the
-  other. `AbstractPotentialComponent.raw_parameters`/
+- Every registered parameterization converts both ways: a
+  `register_parameterization` call takes `convert` *and* `invert` (bundled in
+  its `ParameterizationSpec`), so one direction can never be registered without
+  the other. `AbstractPotentialComponent.raw_parameters`/
   `tnt.potential.raw_potential_parameters` use `invert` to report a
   `Potential`'s components back in their configuration's own
   parameterization (`Model.raw_parameters`, read by

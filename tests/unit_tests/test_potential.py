@@ -785,6 +785,78 @@ def test_component_registry_contains_the_four_mge_types() -> None:
     assert _COMPONENT_REGISTRY["OblateMassMGEPotential"] is OblateMassMGEPotential
 
 
+def test_nfw_concentration_m200_is_registered_with_its_converters_and_schema() -> None:
+    # register_parameterization bundles converters + schema, so resolve() and
+    # _validate_potential can never disagree on what the parameterization takes.
+    spec = _registry_module.get_parameterization("NFWPotential", "concentration_m200")
+    assert spec is not None
+    assert spec.convert is _nfw_concentration_m200
+    assert spec.invert is _nfw_concentration_m200_inverse
+    assert spec.raw_dimensions == {"c": "dimensionless", "M_200": "mass"}
+    assert _registry_module.raw_parameter_dimensions(
+        "NFWPotential", "concentration_m200"
+    ) == {"c": "dimensionless", "M_200": "mass"}
+    assert _registry_module.parameter_schema_is_known(
+        "NFWPotential", "concentration_m200"
+    )
+    assert not _registry_module.parameter_schema_is_known(
+        "NFWPotential", "not_registered"
+    )
+
+
+def _identity_forward(raw: dict, cosmological_parameters: object) -> dict:
+    return raw
+
+
+def _identity_inverse(native: dict, declared_units: object, cosmo: object) -> dict:
+    return native
+
+
+def test_register_parameterization_success_and_duplicate(monkeypatch) -> None:
+    monkeypatch.setattr(_registry_module, "_PARAMETERIZATION_REGISTRY", {})
+
+    _registry_module.register_parameterization(
+        type_name="PlummerPotential",
+        name="scheme",
+        convert=_identity_forward,
+        invert=_identity_inverse,
+        raw_dimensions={"a": "mass"},
+    )
+    spec = _registry_module.get_parameterization("PlummerPotential", "scheme")
+    assert spec is not None
+    assert spec.convert is _identity_forward
+    assert spec.invert is _identity_inverse
+    assert spec.raw_dimensions == {"a": "mass"}
+    assert _registry_module.parameterization_names("PlummerPotential") == ["scheme"]
+
+    before = dict(_registry_module._PARAMETERIZATION_REGISTRY)
+    with pytest.raises(ValueError, match=r"Duplicate parameterization 'scheme'"):
+        _registry_module.register_parameterization(
+            type_name="PlummerPotential",
+            name="scheme",
+            convert=_identity_forward,
+            invert=_identity_inverse,
+            raw_dimensions={"a": "mass"},
+        )
+    assert _registry_module._PARAMETERIZATION_REGISTRY == before
+
+
+def test_register_parameterization_rejects_a_non_galax_target_type(monkeypatch) -> None:
+    # Parameterizations convert to a component's native galax constructor
+    # kwargs and only GalaxPotentialComponent runs the inverse -- a TNT MGE
+    # composite type would silently round-trip through canonical parameters.
+    monkeypatch.setattr(_registry_module, "_PARAMETERIZATION_REGISTRY", {})
+    with pytest.raises(ValueError, match=r"not a curated native galax type"):
+        _registry_module.register_parameterization(
+            type_name="TriaxialLightMGEPotential",
+            name="shape",
+            convert=_identity_forward,
+            invert=_identity_inverse,
+            raw_dimensions={"p": "dimensionless"},
+        )
+    assert _registry_module._PARAMETERIZATION_REGISTRY == {}
+
+
 def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
     light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
         Quantity(30.0, "Mpc")

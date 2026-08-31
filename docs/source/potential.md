@@ -98,8 +98,10 @@ potential:
 - `parameterization` (optional): a named conversion registered for `type`.
   Omit it to use `type`'s native parameters directly.
 - `parameters` (required): one entry per parameter the resolved
-  `type`/`parameterization` pair expects, each with a `value` and, if that
-  parameter carries physical units, a `unit`.
+  `type`/`parameterization` pair expects -- every native field, including
+  ones with a `galax` constructor default (e.g. `TriaxialHernquistPotential`'s
+  `q1`/`q2`) -- each with a `value` and, if it carries physical units, a
+  `unit`.
 
 Every declared component is part of the assembled potential -- to leave one
 out, remove or comment out its entry.
@@ -164,7 +166,9 @@ potential:
 - **NFW's `concentration_m200` parameterization**: implemented and verified
   against `galax`'s own enclosed-mass function. Converts a concentration `c`
   and $M_{200c}$ into native `(m, r_s)` via the critical-density definition
-  of $M_{200c}$: $\rho_\mathrm{crit} = 3 H_0^2 / (8\pi G)$,
+  of $M_{200c}$, using the configured Hubble parameter $H$ (the value at the
+  halo's epoch, not necessarily the present-day $H_0$):
+  $\rho_\mathrm{crit} = 3 H^2 / (8\pi G)$,
   $r_{200} = (3 M_{200} / (4\pi \cdot 200 \rho_\mathrm{crit}))^{1/3}$,
   $r_s = r_{200} / c$, $m = M_{200} / (\ln(1+c) - c/(1+c))$. The reverse
   conversion, native `(m, r_s)` back to `(c, M_200)`, is implemented too --

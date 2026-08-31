@@ -1058,6 +1058,178 @@ def test_oblate_mge_potential_resolves_with_inclination(tmp_path: Path) -> None:
     assert stars["parameters"]["inclination"]["value"] == 90.0
 
 
+def _native_stars(user_data: dict, type_name: str, parameters: dict) -> dict:
+    """Retarget the default `stars` component at a native `galax` potential type."""
+    stars = user_data["potential"]["stars"]
+    stars["type"] = type_name
+    stars.pop("mge", None)
+    stars.pop("parameterization", None)
+    stars["parameters"] = parameters
+    return stars
+
+
+def _write_native_stars_config(
+    user_path: Path, output_directory: Path, type_name: str, parameters: dict
+) -> None:
+    _write_user_config(user_path, output_directory)
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    _native_stars(user_data, type_name, parameters)
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+
+def test_native_galax_potential_resolves_with_its_exact_parameter_set(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_native_stars_config(
+        user_path,
+        tmp_path / "output",
+        "PlummerPotential",
+        {
+            "m_tot": {"value": 5.0, "unit": "Msun"},
+            "r_s": {"value": 1.0, "unit": "kpc"},
+        },
+    )
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert config.data["potential"]["stars"]["type"] == "PlummerPotential"
+
+
+def test_native_galax_potential_rejects_a_missing_parameter(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_native_stars_config(
+        user_path,
+        tmp_path / "output",
+        "PlummerPotential",
+        {"m_tot": {"value": 5.0, "unit": "Msun"}},
+    )
+
+    with pytest.raises(
+        ValueError, match=r"parameters is missing required field\(s\): r_s"
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_native_galax_potential_rejects_an_unexpected_parameter(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_native_stars_config(
+        user_path,
+        tmp_path / "output",
+        "PlummerPotential",
+        {
+            "m_tot": {"value": 5.0, "unit": "Msun"},
+            "r_s": {"value": 1.0, "unit": "kpc"},
+            "q1": {"value": 0.9},
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"parameters has invalid field\(s\) for PlummerPotential: q1",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_native_galax_potential_requires_fields_with_a_galax_default(
+    tmp_path: Path,
+) -> None:
+    # TriaxialHernquistPotential's q1/q2 default to 1.0 in galax; TNT still
+    # requires them so the model-table schema is complete and reproducible.
+    user_path = tmp_path / "user.yaml"
+    _write_native_stars_config(
+        user_path,
+        tmp_path / "output",
+        "TriaxialHernquistPotential",
+        {
+            "m_tot": {"value": 5.0, "unit": "Msun"},
+            "r_s": {"value": 1.0, "unit": "kpc"},
+        },
+    )
+
+    with pytest.raises(
+        ValueError, match=r"parameters is missing required field\(s\): q1, q2"
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_native_parameterization_rejects_a_missing_parameter(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    stars = _native_stars(user_data, "NFWPotential", {"c": {"value": 8.0}})
+    stars["parameterization"] = "concentration_m200"
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError, match=r"parameters is missing required field\(s\): M_200"
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_native_parameterization_validates_against_its_own_schema(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    stars = _native_stars(
+        user_data,
+        "NFWPotential",
+        {
+            "c": {"value": 8.0},
+            "M_200": {"value": 1.0e12, "unit": "Msun"},
+            "r_s": {"value": 1.0, "unit": "kpc"},  # native field, not in this scheme
+        },
+    )
+    stars["parameterization"] = "concentration_m200"
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"invalid field\(s\) for NFWPotential with parameterization "
+            r"'concentration_m200': r_s"
+        ),
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_unrecognized_potential_type_defers_to_resolve_not_parameter_errors(
+    tmp_path: Path,
+) -> None:
+    # A misspelled type must not be reported as "every parameter is extra";
+    # the unknown-type error surfaces later, at resolve().
+    user_path = tmp_path / "user.yaml"
+    _write_native_stars_config(
+        user_path,
+        tmp_path / "output",
+        "PlummerPotentail",
+        {"m_tot": {"value": 5.0, "unit": "Msun"}},
+    )
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+    assert config.data["potential"]["stars"]["type"] == "PlummerPotentail"
+
+
+def test_unimplemented_parameterization_defers_to_resolve_not_parameter_errors(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    stars = _native_stars(
+        user_data,
+        "NFWPotential",
+        {"c": {"value": 8.0}, "M_200": {"value": 1.0e12, "unit": "Msun"}},
+    )
+    stars["parameterization"] = "not_a_real_scheme"
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+    assert config.data["potential"]["stars"]["parameterization"] == "not_a_real_scheme"
+
+
 def test_read_rejects_invalid_potential_rescaling_range(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"

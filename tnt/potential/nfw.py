@@ -8,6 +8,8 @@ from typing import Any
 import jax.numpy as jnp
 from unxt import Quantity
 
+from tnt.potential.registry import register_parameterization
+
 
 def _newtonian_gravitational_constant() -> Quantity:
     """Construct Newton's gravitational constant under the active JAX policy.
@@ -117,3 +119,12 @@ def _nfw_concentration_m200_inverse(
     c = _solve_nfw_concentration(target)
     m200 = m * _nfw_g(c)
     return {"c": Quantity(c, ""), "M_200": m200.to(declared_units["M_200"])}
+
+
+register_parameterization(
+    type_name="NFWPotential",
+    name="concentration_m200",
+    convert=_nfw_concentration_m200,
+    invert=_nfw_concentration_m200_inverse,
+    raw_dimensions={"c": "dimensionless", "M_200": "mass"},
+)
