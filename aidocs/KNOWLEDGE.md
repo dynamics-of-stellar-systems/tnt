@@ -643,6 +643,11 @@
   `multiprocessing.set_start_method()`, because the embedding application owns
   that process-global policy. Spawned worker targets must be importable, and
   executable entry points must use an `if __name__ == "__main__"` guard.
+- Because `spawn` gives each worker a fresh interpreter with a cold JAX JIT
+  cache, a future worker pool should also set `jax_compilation_cache_dir` (via
+  `jax.config`) so workers load compiled XLA executables from disk instead of
+  each recompiling every jitted function. That is a separate concern from the
+  logging context and belongs with the production-execution work, not here.
 - `tests/integration_tests/test_configuration_session.py` exercises the
   bootstrap lifecycle with `tnt.configuration_session()` against a complete
   example profile (`configuration.yaml`, alongside it), covering every
