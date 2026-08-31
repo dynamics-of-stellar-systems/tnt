@@ -208,3 +208,48 @@ documentation and inverse conversion imply, or whether it is intended to
 support TNT composite components as well. The implementation should enforce
 whichever contract is chosen rather than accepting an only partially supported
 combination.
+
+## Response
+
+All three findings addressed.
+
+### Medium: restrict `register_parameterization()` to native `galax` types
+
+Chose option 1 (the recommended one). A parameterization converts a raw
+config convention into a component's native `galax` constructor kwargs, and
+only `GalaxPotentialComponent` runs the inverse converter -- so the contract
+genuinely is "native `galax` types only" today.
+
+`register_parameterization()` now raises `ValueError` if `type_name` is not in
+`_SUPPORTED_GALAX_TYPES`, before the duplicate check. Its docstring states the
+restriction and why, and points at what supporting composite types would need
+(inverse dispatch lifted to a type-independent layer). `aidocs/KNOWLEDGE.md`
+updated to match. The `(p, q, u)` shape scheme in `triaxial_mge` would be the
+first composite-type parameterization and is where that generalisation
+belongs -- not deferred to a tracked issue yet, per Prashin.
+
+New test `test_register_parameterization_rejects_a_non_galax_target_type`.
+
+### Low: registry test no longer pins the entry count
+
+`test_register_parameterization_bundles_converters_and_schema` split into:
+
+- `test_nfw_concentration_m200_is_registered_with_its_converters_and_schema` --
+  read-only assertions about the real NFW registration and the schema readers;
+- `test_register_parameterization_success_and_duplicate` -- `monkeypatch`s a
+  fresh `_PARAMETERIZATION_REGISTRY`, registers a temporary `PlummerPotential`
+  spec, exercises the success path directly, then snapshots the registry and
+  asserts a rejected duplicate registration leaves it unchanged.
+
+No test now asserts NFW is the registry's only entry.
+
+### Low: NFW critical-density equation uses configured `H`
+
+`docs/source/potential.md` now writes $\rho_\mathrm{crit} = 3 H^2 / (8\pi G)$
+and states explicitly that $H$ is the configured Hubble parameter at the
+halo's epoch, not necessarily the present-day $H_0$.
+
+### Checks re-run
+
+`ruff check` clean; full `pytest` **344 passed** (342 + the split test);
+strict `sphinx-build -W` succeeds.

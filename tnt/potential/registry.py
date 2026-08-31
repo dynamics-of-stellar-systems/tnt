@@ -257,9 +257,25 @@ def register_parameterization(
     resolution can never disagree on which parameterizations exist or what
     parameters they take.
 
+    `type_name` must be a curated native `galax` class
+    (`_SUPPORTED_GALAX_TYPES`). A parameterization converts a raw config
+    convention into a component's native `galax` constructor kwargs, and only
+    `GalaxPotentialComponent` runs the inverse converter that reports a model
+    back in its configured parameterization (`AllModels`); a TNT MGE composite
+    type would silently round-trip through its canonical parameters instead.
+    Supporting composite types needs the inverse dispatch moved to a
+    type-independent layer first.
+
     Raises:
-        ValueError: If `(type_name, name)` is already registered.
+        ValueError: If `type_name` is not a curated native `galax` type, or if
+            `(type_name, name)` is already registered.
     """
+    if type_name not in _SUPPORTED_GALAX_TYPES:
+        raise ValueError(
+            f"Cannot register parameterization {name!r}: {type_name!r} is not a "
+            "curated native galax type. Parameterizations are only supported for "
+            "native galax component types."
+        )
     key = (type_name, name)
     if key in _PARAMETERIZATION_REGISTRY:
         raise ValueError(f"Duplicate parameterization {name!r} for type {type_name!r}.")

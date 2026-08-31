@@ -397,6 +397,12 @@
   the config parameter schema in a single `ParameterizationSpec`, so validation
   and runtime resolution can't disagree on which parameterizations exist. Read
   back via `get_parameterization(type, name)` / `parameterization_names(type)`.
+  `type_name` must be a curated native `galax` type: a parameterization
+  converts a raw config convention into that class's native constructor kwargs,
+  and only `GalaxPotentialComponent` runs the inverse converter (`AllModels`
+  reporting). A TNT MGE composite type is rejected -- supporting one needs the
+  inverse dispatch lifted to a type-independent layer first (the `(p, q, u)`
+  shape scheme `triaxial_mge` mentions would be the first such case).
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`
