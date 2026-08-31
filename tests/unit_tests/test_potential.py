@@ -746,7 +746,7 @@ def test_register_component_rejects_duplicate_type(
         register_component(_Second)
 
 
-def test_inherited_type_does_not_register_or_raise(
+def test_undecorated_child_with_inherited_type_is_not_registered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A subclass that inherits `_type` without its own `@register_component`
