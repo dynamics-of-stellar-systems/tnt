@@ -137,9 +137,8 @@ orbit_library_settings:
 
 weight_solver_settings:
   type: "NNLS"
-  # cvxopt/scipy are no longer supported -- only JAX-native NNLS solvers
-  # will be. Which one(s) is still undecided; "TBD" is a placeholder, not a
-  # real option.
+  # TNT will use a JAX-native NNLS solver. The specific implementation is
+  # undecided; "TBD" is a placeholder, not a real option.
   nnls_solver: "TBD"
   maxiter_factor: 3
   regularisation: 0

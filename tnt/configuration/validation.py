@@ -616,10 +616,9 @@ def _validate_weight_solver_settings(settings: ConfigDict) -> None:
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
     _choice(settings["type"], {"NNLS"}, f"{path}.type")
-    # cvxopt/scipy are no longer supported -- only JAX-native NNLS solvers
-    # will be. Which one(s) is still undecided, so this only checks that a
-    # name was given; tighten to a `_choice` over the real options once
-    # chosen.
+    # TNT will use a JAX-native NNLS solver. The specific implementation is
+    # undecided, so this only checks that a name was given; tighten to a
+    # `_choice` over the real options once chosen.
     _string(settings["nnls_solver"], f"{path}.nnls_solver")
     _positive_number(settings["maxiter_factor"], f"{path}.maxiter_factor")
     _nonnegative_number(settings["regularisation"], f"{path}.regularisation")

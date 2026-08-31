@@ -41,10 +41,8 @@ def _write_ecsv(
     path.write_text(header + body)
 
 
-# The multi-component rows below match what used to be a checked-in fixture
-# file (tests/integration_tests/fixtures/mge_lum.ecsv / mge_mass.ecsv), now
-# defined directly here so unit tests don't reach into another test
-# directory's data for something they can just as easily construct inline.
+# Define the multi-component rows directly here so these unit tests remain
+# self-contained rather than depending on integration-test fixture files.
 _LIGHT_ROWS = [
     (26819.14, 0.49416, 0.89541, 0.0),
     (2456.39, 2.04299, 0.79093, 0.0),
@@ -545,8 +543,8 @@ def test_angular_to_physical_converts_sigma_and_intensity():
 
 def test_angular_to_physical_is_invariant_to_the_declared_angular_unit():
     # The same physical MGE declared in radians vs. arcsec/deg must project
-    # to the same physical `sigma` and `I` -- `angular_to_physical` no longer
-    # assumes `sigma`/`I` are already in radians.
+    # to the same physical `sigma` and `I`; `angular_to_physical` converts
+    # each declared angular unit on demand.
     rad = _multi_component_light_mge()
     arcsec = LightMGE(
         I=u.Quantity(rad.I.ustrip("Lsun / arcsec2"), "Lsun / arcsec2"),

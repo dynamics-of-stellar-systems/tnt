@@ -412,13 +412,10 @@
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`
-  constructor kwargs exactly; their physical dimensions are read directly
-  from `_SUPPORTED_GALAX_TYPES` (each entry a `NativeParameter(dimension,
-  exponent)`). Dynamic derivation from `galax`'s own
-  `ParameterField(dimensions=...)` metadata isn't production code at all any
-  more -- since curating dimension by hand costs nothing extra once every
-  parameter is individually verified for its exponent anyway, that
-  derivation now lives only as a test-local helper in
+  constructor kwargs exactly; production reads their physical dimensions
+  directly from `_SUPPORTED_GALAX_TYPES` (each entry a
+  `NativeParameter(dimension, exponent)`). Dynamic derivation from `galax`'s
+  own `ParameterField(dimensions=...)` metadata is a test-local helper in
   `tests/unit_tests/test_potential.py`
   (`test_supported_galax_types_covers_every_curated_class_parameter` cross-checks
   the curated table against it).
@@ -465,11 +462,11 @@
   `tnt.potential`, since it's generic declared-quantity conversion with no
   potential-specific knowledge, matching the other declared-quantity helpers'
   home in `tnt.units` (`declared_quantity`, `validate_dimension`). `tnt.units`
-  still needs `raw_parameter_dimensions` from `tnt.potential` for config
-  validation, but imports it lazily inside the one function that uses it:
-  `tnt.mge`/`tnt.kinematics`/`tnt.spatial_binnings` now import `tnt.units` for
-  `validate_dimension`/`declared_quantity`, and `tnt.potential` imports those,
-  so a module-level import would close the cycle.
+  needs `raw_parameter_dimensions` from `tnt.potential` for config validation
+  and imports it lazily inside the one function that uses it.
+  `tnt.mge`/`tnt.kinematics`/`tnt.spatial_binnings` import `tnt.units` for
+  `validate_dimension`/`declared_quantity`, while `tnt.potential` imports those
+  modules, so a module-level import would close the cycle.
   `_nfw_concentration_m200`/its inverse do their entire calculation in
   `Quantity` arithmetic rather than eagerly stripping every input to a bare
   float in one specific unit -- `unxt` composes/converts units automatically

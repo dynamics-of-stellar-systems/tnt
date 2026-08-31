@@ -686,7 +686,7 @@ def test_nfw_component_plumbing_works_without_from_settings() -> None:
 # these tests isolate to_galax's wiring (mass-to-light/mass-scale conversion,
 # deprojection, per-component TriaxialGaussianPotential construction, and
 # CompositePotential summation) against galax's independent GaussianPotential.
-# Invalid geometries now raise MGEDeprojectionError during component build;
+# Invalid geometries raise MGEDeprojectionError during component build;
 # genuinely triaxial validity and axis mapping are covered separately below
 # and by test_mge.py's forward-projection round-trip tests.
 # ---------------------------------------------------------------------------

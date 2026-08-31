@@ -219,3 +219,15 @@ From the PR head on macOS (Apple Silicon):
 
 None. The Medium fix is the removal described above; a lazy `tnt/__init__.py`
 is a separate, optional future issue.
+
+## Resolution after audit
+
+The Medium finding was resolved by removing `_GENERATOR_SETTINGS_KEYS` and
+deriving required generator settings directly from the registered classes;
+the obsolete synchronization test and rationale were removed as well. Low 1
+was fixed by formatting `configuration/validation.py`, and Low 2 by renaming
+the inherited-type test to describe the undecorated-child behavior precisely.
+For Low 3, we decided to retain the PEP 695 generic-function syntax because
+TNT requires Python 3.12 or newer and the configured tooling supports it. The
+remaining documentation and test comments were also rewritten as direct
+descriptions of current TNT behavior.
