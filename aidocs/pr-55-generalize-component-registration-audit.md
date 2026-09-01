@@ -231,3 +231,53 @@ For Low 3, we decided to retain the PEP 695 generic-function syntax because
 TNT requires Python 3.12 or newer and the configured tooling supports it. The
 remaining documentation and test comments were also rewritten as direct
 descriptions of current TNT behavior.
+
+## Re-review of the resolution (commits `9f172d6`, `9a2df93`, `313d48a`)
+
+The Medium fix is correct and complete.
+
+- `_GENERATOR_SETTINGS_KEYS` and its comment are gone from
+  `configuration/validation.py`. `tnt.parameter_generator` gains
+  `parameter_generator_required_settings()`, which builds the
+  `{type_name: frozenset}` mapping from each registered class's
+  `_required_generator_settings` (a `ClassVar`, so no instantiation).
+  `_validate_parameter_space_settings` reads its `generator_type` choice set
+  and its per-type required keys from that one accessor -- dispatch and
+  validation now share a single authoritative declaration.
+- `from tnt.parameter_generator import parameter_generator_required_settings`
+  in `validation.py` introduces no cycle. Verified: `import
+  tnt.configuration.validation` then `import tnt.parameter_generator`, and the
+  reverse order, both load cleanly; `import tnt.configuration.validation`
+  alone leaves all three registries (potential, kinematics,
+  parameter-generator) populated -- importing the `tnt.kinematics.registry` /
+  `tnt.parameter_generator` submodules runs the concrete-class decorators via
+  the parent packages' `__init__`.
+- The sync regression test is replaced by
+  `test_parameter_generator_registry_exposes_required_settings`, asserting the
+  accessor's output directly -- appropriate now that there is no second list
+  to cross-check.
+- Low 1: `ruff format --check` no longer flags `configuration/validation.py`.
+- Low 2: renamed to
+  `test_undecorated_child_with_inherited_type_is_not_registered`. The
+  suggested extra assertion (that `register_component` on a decorated
+  inheriting child raises) was not added; `test_registry.py` covers the raise
+  at the shared-helper level, so this is optional, not required.
+- `313d48a` is comment/prose only -- no logic change; the `KNOWLEDGE.md`
+  parameter-generator paragraph now matches the new behaviour.
+
+**One cosmetic note (not a blocker):** `tnt/registry.py` (new) is not
+`ruff format`-clean -- two manually wrapped f-strings that fit on one line.
+The project runs neither `ruff format` nor pre-commit in CI (only `pytest`),
+and 14 pre-existing files fail the same check, so this does not gate merge;
+worth a one-line `ruff format tnt/registry.py` while touching the file.
+
+### Checks re-run from `313d48a`
+
+- full suite: **350 passed**, same one dependency-owned warning;
+- `ruff check .`: passed;
+- strict `sphinx-build -E -b html -W`: passed;
+- `git diff --check main...HEAD`: passed;
+- import-cycle and registry-population checks: as above.
+
+**Verdict: mergeable.** Squash-merge, then remove this audit document in its
+own commit.
