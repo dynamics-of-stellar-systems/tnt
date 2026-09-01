@@ -1,0 +1,84 @@
+Jax plugin configuration error: Exception when calling jax_plugins.xla_cuda12.initialize()
+Traceback (most recent call last):
+  File "/gpfs/data/fs71474/prashin/tnt/.venv/lib/python3.12/site-packages/jax/_src/xla_bridge.py", line 508, in discover_pjrt_plugins
+    plugin_module.initialize()
+  File "/gpfs/data/fs71474/prashin/tnt/.venv/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 370, in initialize
+    _check_cuda_versions(raise_on_first_error = True)
+  File "/gpfs/data/fs71474/prashin/tnt/.venv/lib/python3.12/site-packages/jax_plugins/xla_cuda12/__init__.py", line 274, in _check_cuda_versions
+    for d in range(cuda_versions.cuda_device_count())
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: jaxlib/cuda/versions_helpers.cc:135: operation cuInit(0) failed: CUDA_ERROR_NO_DEVICE
+jax.devices(): [CpuDevice(id=0)]
+jax default backend: cpu
+
+  N        B impl          potential (ms)   gradient (ms)
+---------------------------------------------------------
+# N=5 component fingerprint: 67726b44409b
+  5        1 composite              0.039           0.050
+  5        1 array-fused            0.035           0.044
+  5        1 scan-fused             0.026           0.029
+  5       10 composite              0.047           0.077
+  5       10 array-fused            0.030           0.050
+  5       10 scan-fused             0.031           0.069
+  5      100 composite              0.088           0.105
+  5      100 array-fused            0.173           0.171
+  5      100 scan-fused             0.050           0.209
+  5     1000 composite              0.591           1.017
+  5     1000 array-fused            1.867           0.616
+  5     1000 scan-fused             1.812           2.931
+  5    10000 composite              5.201           4.973
+  5    10000 array-fused            4.980           4.142
+  5    10000 scan-fused            14.438          31.543
+  5   100000 composite             15.772          27.074
+  5   100000 array-fused           11.276          42.136
+  5   100000 scan-fused            50.434          85.825
+  5  1000000 composite             56.368         116.814
+  5  1000000 array-fused           61.381         191.525
+  5  1000000 scan-fused            81.379         404.952
+# N=25 component fingerprint: bb17e11dcdbe
+ 25        1 composite              0.195           0.473
+ 25        1 array-fused            0.034           0.055
+ 25        1 scan-fused             0.023           0.069
+ 25       10 composite              0.146           0.366
+ 25       10 array-fused            0.078           0.080
+ 25       10 scan-fused             0.069           0.165
+ 25      100 composite              0.245           0.452
+ 25      100 array-fused            0.248           1.084
+ 25      100 scan-fused             0.245           0.269
+ 25     1000 composite              2.236           3.501
+ 25     1000 array-fused            4.187           3.207
+ 25     1000 scan-fused             2.484           5.097
+ 25    10000 composite             14.378          20.835
+ 25    10000 array-fused           12.855          15.970
+ 25    10000 scan-fused            13.589          38.194
+ 25   100000 composite             98.040          89.053
+ 25   100000 array-fused           61.640         174.500
+ 25   100000 scan-fused            28.015         249.871
+ 25  1000000 composite            440.260         578.738
+ 25  1000000 array-fused          478.822         736.372
+ 25  1000000 scan-fused            68.728        2265.141
+# N=125 component fingerprint: a4066787d288
+125        1 composite              0.761           1.618
+125        1 array-fused            0.043           0.135
+125        1 scan-fused             0.075           0.154
+125       10 composite              0.780           1.117
+125       10 array-fused            0.103           0.864
+125       10 scan-fused             0.179           0.250
+125      100 composite              1.034           2.772
+125      100 array-fused            0.798           2.648
+125      100 scan-fused             0.781           1.879
+125     1000 composite              5.400           9.207
+125     1000 array-fused           17.086           9.056
+125     1000 scan-fused             7.480          14.407
+125    10000 composite             57.639          71.611
+125    10000 array-fused           84.022          43.996
+125    10000 scan-fused            12.787         125.413
+125   100000 composite            464.498         396.163
+125   100000 array-fused          229.881         750.454
+125   100000 scan-fused            36.083         841.264
+125  1000000 composite           1807.730        2586.932
+125  1000000 array-fused         1998.364        3200.965
+125  1000000 scan-fused           132.332       11670.013
+
+Results written to aidocs/benchmark_mge_fusion_cpu_n3502-047_20260831T201114Z.csv
+Wrote aidocs/benchmark_mge_fusion_cpu_n3502-047_20260831T201114Z.csv
