@@ -1,8 +1,8 @@
 """Unit tests for `ModelIterator`'s control flow, using fake collaborators.
 
 Real orbit integration and weight solving are still unimplemented (see
-`tnt.model_iterator`'s module docstring). Potential-building is now real for
-native-galax types (`tnt.potential`), but these tests still exercise
+`tnt.model_iterator`'s module docstring). Potential-building uses concrete
+native-galax types (`tnt.potential`), while these tests exercise
 `ModelIterator`'s own logic -- the generate/evaluate/record/stop loop,
 mass-scale rescaling, failure handling, and logging -- against small fakes
 standing in for `Potential`/`OrbitLibrary`/`AbstractWeightSolver`, with

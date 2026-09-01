@@ -209,10 +209,10 @@ potential:
   or intrinsic axial ratios outside TNT's `0 < q <= p <= 1` convention)
   surfaces there, before anything downstream is attempted. `to_galax()` then
   sums one `galax.potential.TriaxialGaussianPotential` /
-  `AxisymmetricGaussianPotential` per Gaussian component -- `galax` gained
-  these native Gaussian potentials and `CompositePotential` after this was
-  first scoped, so no custom `galax.potential.AbstractPotential` subclass or
-  new potential formula was needed after all; each density matches its
+  `AxisymmetricGaussianPotential` per Gaussian component. TNT uses these
+  native `galax` Gaussian potentials and `CompositePotential` directly rather
+  than defining a custom `galax.potential.AbstractPotential` subclass; each
+  density matches its
   `Deprojected3DMGE` counterpart term for term (`r_s <-> sigma`,
   `q1 <-> p`, `q2 <-> q`; an oblate axisymmetric deprojection's `p` is always 1),
   giving a direct, verified `m_tot = I * p * q * (2*pi)**1.5 * sigma**3`

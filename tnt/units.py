@@ -240,9 +240,8 @@ def validate_dimension(unit: Any, dimension: str, path: str) -> None:
 def declared_quantity(value: Any, dimension: str, path: str) -> Quantity:
     """Validate an explicit ``{value, unit}`` mapping, keeping its declared unit.
 
-    The unconverted counterpart of the old eager normalization: returns a
-    `Quantity` in the unit the configuration declares, leaving any
-    conversion to whatever consumer later needs one.
+    Returns a `Quantity` in the unit the configuration declares, leaving any
+    conversion to the runtime consumer that needs one.
     """
     numeric, source = _declared_quantity(value, dimension, path)
     return Quantity(numeric, source)

@@ -231,10 +231,9 @@ def test_harmonic_oscillator_rescale_scales_omega_by_sqrt_mass_scale() -> None:
 
 def test_rescale_finds_a_field_inherited_from_an_abstract_parent() -> None:
     # MN3ExponentialPotential doesn't redeclare m_tot itself -- it's a
-    # ParameterField on an abstract parent. Regression guard: an earlier
-    # version looked parameters up via `galax_cls.__dict__.get(name)`,
-    # which only sees a class's own attributes and silently missed
-    # anything declared on a parent class.
+    # ParameterField on an abstract parent. Normal attribute lookup is required
+    # because direct inspection of the subclass's own `__dict__` cannot see
+    # fields declared on a parent class.
     cls = gp.MN3ExponentialPotential
     assert "m_tot" not in cls.__dict__
     assert isinstance(getattr(cls, "m_tot", None), ParameterField)
@@ -322,8 +321,8 @@ def test_from_settings_rejects_a_real_but_uncurated_galax_class() -> None:
     # test_from_settings_rejects_unrecognized_type's made-up name -- but
     # isn't in _SUPPORTED_GALAX_TYPES (its required l_max: int
     # hyperparameter isn't representable by this module's scalar-Quantity
-    # schema). "Any AbstractPotential subclass" would have wrongly
-    # accepted this and failed later, confusingly, at to_galax() instead.
+    # schema). Curating supported classes makes this fail clearly during
+    # resolution instead of deferring the error to to_galax().
     with pytest.raises(
         ValueError, match="Unsupported potential.dh.type 'MultipolePotential'"
     ):

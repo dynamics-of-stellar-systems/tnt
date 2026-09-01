@@ -507,12 +507,12 @@
   `galax` types use `_SUPPORTED_GALAX_TYPES`. A parameterization is deliberately
   scoped to one component's own raw parameters and, where needed,
   `cosmological_parameters` -- it cannot depend on another component's
-  resolved state. NFW's
+  resolved state. TNT does not support an NFW
   `(c, f) -> (m, r_s)` "concentration + mass fraction" parameterization
   (`f = M_200 / M*_TOT`, `M*_TOT` derived from the stellar MGE component)
-  was removed for exactly this reason: `Potential.from_settings` resolves
-  each component independently in one pass, so no component-local converter
-  can see another component's resolved mass. That kind of cross-component
+  because `Potential.from_settings` resolves each component independently in
+  one pass, so no component-local converter can see another component's
+  resolved mass. That kind of cross-component
   relationship belongs to a separate, not-yet-designed "prior" concept,
   consumed by the parameter generator/search space rather than by potential
   construction -- deliberately deferred rather than shoehorned into

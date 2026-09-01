@@ -171,9 +171,8 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert manifest["run_id"] == 0
     assert manifest["configuration"]["logfile"] is None
     assert manifest["configuration"]["resolved"] == "runs/0000/resolved_config.yaml"
-    # Full manifest shape, not just the fields the rest of this test happens to
-    # use -- restores the coverage test_configuration.py had before archiving
-    # moved out of Configuration.read() (see the PR 37 run-boundary audit).
+    # Verify the complete manifest shape, including fields not otherwise read
+    # by this test.
     assert set(manifest["tnt"]) == {"version", "git_commit", "git_working_tree_dirty"}
     assert "unxt" in manifest["dependencies"]
     assert manifest["execution"]["workspace_root"] == str(tmp_path)

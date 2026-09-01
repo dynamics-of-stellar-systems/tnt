@@ -67,7 +67,7 @@ def _multi_component_light_mge() -> LightMGE:
     Same values as `_LIGHT_ROWS`, converted to radians up front and
     constructed directly rather than read from a file -- for tests that just
     need some realistic LightMGE to operate on, as opposed to testing
-    file-reading behaviour itself. (`LightMGE.read` now keeps each column's
+    file-reading behaviour itself. (`LightMGE.read` keeps each column's
     declared unit, so a real MGE would carry arcsec/deg here; radians keep
     these fixtures' expected values unchanged.)
     """
