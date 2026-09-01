@@ -106,6 +106,23 @@ potential:
 Every declared component is part of the assembled potential -- to leave one
 out, remove or comment out its entry.
 
+Configuration preparation checks parameter names and declared physical
+dimensions. When a proposed parameter set is turned into a runtime potential,
+TNT additionally requires every value to be a scalar, finite `Quantity` and
+applies the physical-domain rules owned by that component type. Raw
+parameterization values are checked before conversion; the resulting native
+parameters are checked again afterward. This catches invalid inputs such as
+non-positive masses or scale lengths, non-positive NFW `c`/`M_200`, profile
+slopes outside their analytic domains, invalid axis ordering, and invalid MGE
+normalizations before a `galax` potential or orbit library is constructed.
+Masses, MGE normalizations, and every scale length are strictly positive;
+zero is not a disabled-component convention or an accepted limiting case.
+`MonariEtAl2016BarPotential.alpha` and its pattern speed `Omega` remain signed
+parameters, so either rotation direction is representable.
+Comparisons convert compatible units locally but do not normalize or replace a
+parameter's declared unit. MGE deprojection continues to own the more complex
+viewing-geometry checks that depend on the MGE data itself.
+
 ### MGE composite types
 
 All four build a potential from a named Multi-Gaussian Expansion (MGE) --
@@ -163,6 +180,8 @@ potential:
   play opposite roles. Adding a new class to the curated set requires the
   same kind of direct verification against `galax`'s own potential formula
   for every one of its parameters.
+  Runtime construction also validates the scalar/finite contract and each
+  curated parameter's physical domain before constructing the component.
 - **NFW's `concentration_m200` parameterization**: implemented and verified
   against `galax`'s own enclosed-mass function. Converts a concentration `c`
   and $M_{200c}$ into native `(m, r_s)` via the critical-density definition

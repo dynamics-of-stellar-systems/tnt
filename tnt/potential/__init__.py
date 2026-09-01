@@ -33,7 +33,8 @@ native parameters' dimensions/mass-rescale exponents, and TNT component /
 parameterization registration), `nfw` (the `concentration_m200`
 parameterization's self-contained numerics, and its `register_parameterization`
 call), `components` (the abstract base and the native-`galax` component,
-resolution/dispatch included), `triaxial_mge`/`oblate_mge` (the MGE-backed
+resolution/dispatch and eager runtime domain validation included),
+`triaxial_mge`/`oblate_mge` (the MGE-backed
 composite types, one sibling module per deprojection convention), and
 `core` (`Potential` itself and the module-level helpers around it).
 """

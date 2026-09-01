@@ -396,12 +396,32 @@
   default (e.g. `TriaxialHernquistPotential`'s `q1`/`q2`) must still be
   declared -- intentional TNT policy, for a complete/reproducible
   model-table schema.
+- Runtime potential construction owns value/domain validation.
+  `ResolvedPotentialComponent.build()` checks that every raw parameter is an
+  exactly named, dimensionally correct, scalar, finite `Quantity`, applies the
+  resolved type/parameterization's physical-domain constraints, runs any
+  forward converter, and repeats the checks against the canonical native
+  schema and constraints. This is deliberately eager Python boundary logic,
+  before a potential object enters JAX/Equinox numerical work; it does not
+  mutate or normalize the parameter's declared unit. MGE data-dependent
+  deprojection geometry remains validated by the MGE composite `_build()`
+  methods. Native `galax` constraints live beside dimension/rescale metadata in
+  `_SUPPORTED_GALAX_TYPES`; TNT composite constraints live on each component's
+  `_constraints`; parameterization raw constraints live in the same registered
+  `ParameterizationSpec` as its converters and schema. Registration rejects
+  constraint names or relationships that disagree with their owning schema.
+  TNT's chosen physical policy is strict positivity for every mass, MGE
+  normalization (`ml`/`mge_mass_scale`), and scale length, including parameters
+  such as Miyamoto-Nagai `a`; zero does not disable a component or select a
+  limiting profile. `MonariEtAl2016BarPotential.alpha` and its pattern speed
+  `Omega` deliberately remain signed, including negative values.
 - Non-native parameterizations register via `registry.register_parameterization(
-  type_name=, name=, convert=, invert=, raw_dimensions=)` -- one call, from the
-  module owning the numerics (`tnt.potential.nfw` for `concentration_m200`),
-  mirroring `register_component`. It bundles the forward/inverse converters and
-  the config parameter schema in a single `ParameterizationSpec`, so validation
-  and runtime resolution can't disagree on which parameterizations exist. Read
+  type_name=, name=, convert=, invert=, raw_dimensions=, raw_constraints=)` --
+  one call, from the module owning the numerics (`tnt.potential.nfw` for
+  `concentration_m200`), mirroring `register_component`. It bundles the
+  forward/inverse converters, config parameter schema, and raw domain rules in
+  a single `ParameterizationSpec`, so validation and runtime resolution can't
+  disagree on which parameterizations exist. Read
   back via `get_parameterization(type, name)` / `parameterization_names(type)`.
   `type_name` must be a curated native `galax` type: a parameterization
   converts a raw config convention into that class's native constructor kwargs,
@@ -414,7 +434,8 @@
   parameter names must match the resolved `type`'s own native `galax`
   constructor kwargs exactly; production reads their physical dimensions
   directly from `_SUPPORTED_GALAX_TYPES` (each entry a
-  `NativeParameter(dimension, exponent)`). Dynamic derivation from `galax`'s
+  `NativeParameter(dimension, exponent, constraint)`). Dynamic derivation from
+  `galax`'s
   own `ParameterField(dimensions=...)` metadata is a test-local helper in
   `tests/unit_tests/test_potential.py`
   (`test_supported_galax_types_covers_every_curated_class_parameter` cross-checks

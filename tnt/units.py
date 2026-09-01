@@ -43,12 +43,14 @@ _INTERNAL_DIMENSIONS = ("length", "time", "mass", "angle")
 # units (see this module's docstring and `docs/source/units.md`).
 _DISPLAY_DIMENSIONS = frozenset((*_INTERNAL_DIMENSIONS, "speed", "power"))
 _REFERENCE_UNITS = {
+    "dimensionless": "",
     "length": "m",
     "time": "s",
     "mass": "kg",
     "angle": "rad",
     "power": "W",
     "speed": "m / s",
+    "frequency": "1 / s",
     "inverse_time": "1 / s",
     "mass_to_light": "kg / W",
     "light_surface_brightness": "W / rad2",
