@@ -680,9 +680,7 @@ def test_nfw_concentration_m200_inverse_round_trips_the_forward_conversion() -> 
     for c, m200 in ((3.0, 1.0e11), (8.0, 1.0e12), (20.0, 5.0e13)):
         raw = {"c": Quantity(c, ""), "M_200": Quantity(m200, "Msun")}
         native = _nfw_concentration_m200(raw, {"H": h})
-        recovered = _nfw_concentration_m200_inverse(
-            native, {"M_200": "Msun"}, {"H": h}
-        )
+        recovered = _nfw_concentration_m200_inverse(native, {"M_200": "Msun"}, {"H": h})
         assert float(recovered["c"].ustrip("")) == pytest.approx(c, rel=1e-5)
         assert float(recovered["M_200"].ustrip("Msun")) == pytest.approx(m200, rel=1e-5)
 
@@ -837,9 +835,7 @@ def test_potential_composes_every_declared_component() -> None:
         "halo": {"m_tot": Quantity(100.0, "Msun"), "r_s": Quantity(1.0, "kpc")},
     }
     resolved = Potential.resolve(settings, {})
-    potential = build_potential(
-        resolved, parameter_values, _NO_COSMOLOGICAL_PARAMETERS
-    )
+    potential = build_potential(resolved, parameter_values, _NO_COSMOLOGICAL_PARAMETERS)
     assert set(potential.components) == {"bh", "halo"}
 
     galax_potential = potential.to_galax(unit_system)

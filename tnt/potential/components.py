@@ -80,6 +80,9 @@ class ResolvedPotentialComponent(NamedTuple):
         `tnt.potential`'s module docstring); constraints convert only as needed
         for a comparison. MGE geometry validation remains owned by the eager
         deprojection in the four composite types' `_build` methods.
+        Validation converts scalar values to Python numbers, so `build` is an
+        eager runtime boundary and must remain outside `jax.jit`/`jax.vmap`
+        traces; only the resulting potential enters compiled numerical work.
 
         Args:
             parameter_values: This component's current values, e.g. one

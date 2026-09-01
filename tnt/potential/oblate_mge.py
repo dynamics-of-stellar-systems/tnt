@@ -133,9 +133,7 @@ class OblateMassMGEPotential(AbstractPotentialComponent):
         **_INCLINATION,
     }
     _constraints: ClassVar[dict[str, ParameterConstraint]] = {
-        "mge_mass_scale": ParameterConstraint(
-            minimum=0.0, minimum_inclusive=False
-        ),
+        "mge_mass_scale": ParameterConstraint(minimum=0.0, minimum_inclusive=False),
         "inclination": _INCLINATION_CONSTRAINT,
     }
     mge: MassMGE

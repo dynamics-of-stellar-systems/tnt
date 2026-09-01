@@ -133,9 +133,7 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
         cosmological_parameters: Any,
     ) -> Potential:
         captured_parameter_values.append(parameter_values)
-        return real_build_potential(
-            resolved, parameter_values, cosmological_parameters
-        )
+        return real_build_potential(resolved, parameter_values, cosmological_parameters)
 
     monkeypatch.setattr(
         model_iterator_module, "build_potential", spying_build_potential
@@ -182,8 +180,9 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
         "output_directory",
         "resolved",
     }
-    assert manifest["configuration"]["input_directory"] == (
-        resolved["io_settings"]["input_directory"]
+    assert (
+        manifest["configuration"]["input_directory"]
+        == (resolved["io_settings"]["input_directory"])
     )
     assert manifest["configuration"]["output_directory"] == str(output)
     assert manifest["randomness"] == {

@@ -129,9 +129,7 @@ class TriaxialMassMGEPotential(AbstractPotentialComponent):
         **_VIEWING_ANGLES,
     }
     _constraints: ClassVar[dict[str, ParameterConstraint]] = {
-        "mge_mass_scale": ParameterConstraint(
-            minimum=0.0, minimum_inclusive=False
-        )
+        "mge_mass_scale": ParameterConstraint(minimum=0.0, minimum_inclusive=False)
     }
     mge: MassMGE
     deprojected: Deprojected3DMGE

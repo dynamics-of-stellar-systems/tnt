@@ -376,17 +376,16 @@ def _validate_constraint_metadata(
     for name, constraint in constraints.items():
         if not isinstance(constraint, ParameterConstraint):
             raise TypeError(
-                f"{context}: constraint for {name!r} must be a "
-                "ParameterConstraint."
+                f"{context}: constraint for {name!r} must be a ParameterConstraint."
             )
         if constraint.relation not in {None, ">", ">=", "<", "<="}:
             raise ValueError(
                 f"{context}: constraint for {name!r} has unsupported relation "
                 f"{constraint.relation!r}."
             )
-        relationship_is_complete = (
-            constraint.other_parameter is None
-        ) == (constraint.relation is None)
+        relationship_is_complete = (constraint.other_parameter is None) == (
+            constraint.relation is None
+        )
         if not relationship_is_complete:
             raise ValueError(
                 f"{context}: constraint for {name!r} must specify both "
@@ -411,8 +410,7 @@ def _validate_constraint_metadata(
                 or (
                     constraint.minimum == constraint.maximum
                     and not (
-                        constraint.minimum_inclusive
-                        and constraint.maximum_inclusive
+                        constraint.minimum_inclusive and constraint.maximum_inclusive
                     )
                 )
             )
