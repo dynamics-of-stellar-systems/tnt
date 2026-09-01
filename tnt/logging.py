@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from multiprocessing.context import BaseContext
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
@@ -28,6 +29,7 @@ class LoggingSession:
     def __init__(
         self,
         *,
+        worker_context: BaseContext,
         log_queue: Any,
         queue_handler: logging.handlers.QueueHandler,
         listener: logging.handlers.QueueListener,
@@ -37,6 +39,7 @@ class LoggingSession:
         previous_propagate: bool,
     ) -> None:
         """Store resources created by :func:`configure_logging`."""
+        self.worker_context = worker_context
         self.worker_queue = log_queue
         self.logfile_path = logfile_path
         self._queue_handler = queue_handler
@@ -180,7 +183,8 @@ def configure_logging(configuration: Mapping[str, Any]) -> LoggingSession:
                 )
                 output_handlers.append(console_handler)
 
-            log_queue = multiprocessing.get_context().Queue()
+            worker_context = multiprocessing.get_context("spawn")
+            log_queue = worker_context.Queue()
             queue_handler = logging.handlers.QueueHandler(log_queue)
             queue_handler.setLevel(logging.DEBUG)
             setattr(queue_handler, _OWNED_HANDLER_ATTRIBUTE, True)
@@ -208,6 +212,7 @@ def configure_logging(configuration: Mapping[str, Any]) -> LoggingSession:
                 raise
 
             session = LoggingSession(
+                worker_context=worker_context,
                 log_queue=log_queue,
                 queue_handler=queue_handler,
                 listener=listener,

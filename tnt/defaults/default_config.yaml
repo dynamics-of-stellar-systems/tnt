@@ -16,7 +16,6 @@ units:
     time: "Myr"
     mass: "Msun"
     angle: "rad"
-    power: "Lsun"
   display:
     angle: "arcsec"
     speed: "km / s"
@@ -55,11 +54,9 @@ logging_settings:
     enabled: true
     level: "INFO"
 
-# These values apply to every dynamically named object of the corresponding
-# type unless the user overrides the property on that object.
+# These values apply to every dynamically named potential parameter unless the
+# user overrides the property on that parameter.
 dynamic_object_defaults:
-  potential:
-    include: true
   # `fixed` only stops the parameter generator from proposing independent
   # values for a parameter across shape points. It does not exempt a
   # potential component's mass parameter (ml, mge_mass_scale, ...) from
@@ -140,9 +137,8 @@ orbit_library_settings:
 
 weight_solver_settings:
   type: "NNLS"
-  # cvxopt/scipy are no longer supported -- only JAX-native NNLS solvers
-  # will be. Which one(s) is still undecided; "TBD" is a placeholder, not a
-  # real option.
+  # TNT will use a JAX-native NNLS solver. The specific implementation is
+  # undecided; "TBD" is a placeholder, not a real option.
   nnls_solver: "TBD"
   maxiter_factor: 3
   regularisation: 0

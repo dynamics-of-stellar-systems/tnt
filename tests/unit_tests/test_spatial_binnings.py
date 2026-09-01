@@ -12,10 +12,6 @@ _QUAD_ORDER = 3
 _DISTANCE = u.Quantity(30.0, "Mpc")
 
 
-def _internal_unit_system() -> u.AbstractUnitSystem:
-    return u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
-
-
 def _settings(**overrides):
     settings = {
         "min_x": {"value": -1.0, "unit": "rad"},
@@ -36,7 +32,6 @@ def test_build_spatial_binnings_reads_each_named_binning(tmp_path):
     binnings = build_spatial_binnings(
         {"observed": _settings()},
         tmp_path,
-        _internal_unit_system(),
         _QUAD_ORDER,
         _DISTANCE,
     )
@@ -55,13 +50,12 @@ def test_build_spatial_binnings_returns_physical_units(tmp_path):
     bins = np.array([[0, 1], [2, 0], [1, 1]])
     np.save(tmp_path / "bins.npy", bins)
     angular = ProjectedBinning.from_settings(
-        _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+        _settings(), bins, _QUAD_ORDER
     )
 
     binnings = build_spatial_binnings(
         {"observed": _settings()},
         tmp_path,
-        _internal_unit_system(),
         _QUAD_ORDER,
         _DISTANCE,
     )
@@ -80,7 +74,6 @@ def test_build_spatial_binnings_without_entries_returns_empty_dict(tmp_path):
         build_spatial_binnings(
             {},
             tmp_path,
-            _internal_unit_system(),
             _QUAD_ORDER,
             _DISTANCE,
         )
@@ -95,7 +88,6 @@ def test_build_spatial_binnings_rejects_non_mapping_entry(tmp_path):
         build_spatial_binnings(
             {"observed": None},
             tmp_path,
-            _internal_unit_system(),
             _QUAD_ORDER,
             _DISTANCE,
         )
@@ -109,7 +101,6 @@ def test_build_spatial_binnings_rejects_missing_bins_file(tmp_path):
         build_spatial_binnings(
             {"observed": settings},
             tmp_path,
-            _internal_unit_system(),
             _QUAD_ORDER,
             _DISTANCE,
         )
@@ -121,7 +112,6 @@ def test_build_spatial_binnings_rejects_invalid_bins_file(tmp_path, bins_file):
         build_spatial_binnings(
             {"observed": _settings(bins_file=bins_file)},
             tmp_path,
-            _internal_unit_system(),
             _QUAD_ORDER,
             _DISTANCE,
         )
@@ -135,7 +125,6 @@ def test_build_spatial_binnings_validates_geometry_before_opening_file(tmp_path)
         build_spatial_binnings(
             {"observed": settings},
             tmp_path,
-            _internal_unit_system(),
             _QUAD_ORDER,
             _DISTANCE,
         )
@@ -149,7 +138,6 @@ def test_build_spatial_binnings_rejects_unknown_field(tmp_path):
         build_spatial_binnings(
             {"observed": _settings(unexpected=123)},
             tmp_path,
-            _internal_unit_system(),
             _QUAD_ORDER,
             _DISTANCE,
         )
@@ -165,25 +153,23 @@ def test_build_spatial_binnings_rejects_empty_loaded_bins(tmp_path):
         build_spatial_binnings(
             {"observed": _settings()},
             tmp_path,
-            _internal_unit_system(),
             _QUAD_ORDER,
             _DISTANCE,
         )
 
 
-def test_from_settings_converts_declared_units(tmp_path):
+def test_from_settings_keeps_declared_units(tmp_path):
     bins = np.zeros((2, 2), dtype=int)
     settings = _settings(
         min_x={"value": -3600.0, "unit": "arcsec"},
         PA={"value": 90.0, "unit": "deg"},
     )
 
-    binning = ProjectedBinning.from_settings(
-        settings, bins, _internal_unit_system(), _QUAD_ORDER
-    )
+    binning = ProjectedBinning.from_settings(settings, bins, _QUAD_ORDER)
 
-    assert binning.min_x.unit == u.unit("rad")
-    assert binning.min_x.ustrip("rad") == pytest.approx(-3600.0 * np.pi / 648000)
+    assert binning.min_x.unit == u.unit("arcsec")
+    assert binning.min_x.ustrip("arcsec") == pytest.approx(-3600.0)
+    assert binning.PA.unit == u.unit("deg")
     assert binning.PA.ustrip("rad") == pytest.approx(np.pi / 2)
 
 
@@ -191,20 +177,16 @@ def test_from_settings_rejects_non_angle_unit(tmp_path):
     bins = np.zeros((2, 2), dtype=int)
     settings = _settings(x_extent={"value": 1.0, "unit": "kpc"})
 
-    with pytest.raises(ValueError, match="not convertible"):
-        ProjectedBinning.from_settings(
-            settings, bins, _internal_unit_system(), _QUAD_ORDER
-        )
+    with pytest.raises(ValueError, match="must describe angle"):
+        ProjectedBinning.from_settings(settings, bins, _QUAD_ORDER)
 
 
 def test_from_settings_rejects_unparseable_unit():
     bins = np.zeros((2, 2), dtype=int)
     settings = _settings(PA={"value": 1.0, "unit": "notaunit"})
 
-    with pytest.raises(ValueError, match="did not parse as unit"):
-        ProjectedBinning.from_settings(
-            settings, bins, _internal_unit_system(), _QUAD_ORDER
-        )
+    with pytest.raises(ValueError, match="invalid unit"):
+        ProjectedBinning.from_settings(settings, bins, _QUAD_ORDER)
 
 
 def test_from_settings_rejects_missing_field():
@@ -214,7 +196,7 @@ def test_from_settings_rejects_missing_field():
 
     with pytest.raises(ValueError, match="missing required field: PA"):
         ProjectedBinning.from_settings(
-            settings, bins, _internal_unit_system(), _QUAD_ORDER
+            settings, bins, _QUAD_ORDER
         )
 
 
@@ -224,27 +206,29 @@ def test_from_settings_rejects_unknown_field():
 
     with pytest.raises(ValueError, match="contains unknown field.*unexpected"):
         ProjectedBinning.from_settings(
-            settings, bins, _internal_unit_system(), _QUAD_ORDER
+            settings, bins, _QUAD_ORDER
         )
 
 
 @pytest.mark.parametrize(
-    "malformed",
+    ("malformed", "error", "match"),
     [
-        {"value": 1.0},
-        {"unit": "rad"},
-        {"value": 1.0, "unit": "rad", "extra": 1},
-        1.0,
+        ({"value": 1.0}, ValueError, r"missing required field\(s\): unit"),
+        ({"unit": "rad"}, ValueError, r"missing required field\(s\): value"),
+        (
+            {"value": 1.0, "unit": "rad", "extra": 1},
+            ValueError,
+            r"unknown field\(s\): extra",
+        ),
+        (1.0, TypeError, "mapping containing value and unit"),
     ],
 )
-def test_from_settings_rejects_malformed_quantity_mapping(malformed):
+def test_from_settings_rejects_malformed_quantity_mapping(malformed, error, match):
     bins = np.zeros((2, 2), dtype=int)
     settings = _settings(PA=malformed)
 
-    with pytest.raises(ValueError, match="must be a mapping with exactly"):
-        ProjectedBinning.from_settings(
-            settings, bins, _internal_unit_system(), _QUAD_ORDER
-        )
+    with pytest.raises(error, match=match):
+        ProjectedBinning.from_settings(settings, bins, _QUAD_ORDER)
 
 
 def test_from_settings_rejects_non_numeric_value():
@@ -253,7 +237,7 @@ def test_from_settings_rejects_non_numeric_value():
 
     with pytest.raises(TypeError, match="PA.value must be a number"):
         ProjectedBinning.from_settings(
-            settings, bins, _internal_unit_system(), _QUAD_ORDER
+            settings, bins, _QUAD_ORDER
         )
 
 
@@ -263,7 +247,7 @@ def test_from_settings_rejects_non_finite_value():
 
     with pytest.raises(ValueError, match="PA.value must be finite"):
         ProjectedBinning.from_settings(
-            settings, bins, _internal_unit_system(), _QUAD_ORDER
+            settings, bins, _QUAD_ORDER
         )
 
 
@@ -275,7 +259,7 @@ def test_from_settings_rejects_non_positive_extent(key, bad_value):
 
     with pytest.raises(ValueError, match=f"{key} must be greater than zero"):
         ProjectedBinning.from_settings(
-            settings, bins, _internal_unit_system(), _QUAD_ORDER
+            settings, bins, _QUAD_ORDER
         )
 
 
@@ -284,7 +268,7 @@ def test_from_settings_rejects_non_2d_bins():
 
     with pytest.raises(ValueError, match="must be a 2D"):
         ProjectedBinning.from_settings(
-            _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+            _settings(), bins, _QUAD_ORDER
         )
 
 
@@ -294,7 +278,7 @@ def test_from_settings_rejects_empty_bins(shape):
 
     with pytest.raises(ValueError, match="dimensions must not be empty"):
         ProjectedBinning.from_settings(
-            _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+            _settings(), bins, _QUAD_ORDER
         )
 
 
@@ -303,7 +287,7 @@ def test_from_settings_rejects_non_integer_bins():
 
     with pytest.raises(TypeError, match="integer dtype"):
         ProjectedBinning.from_settings(
-            _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+            _settings(), bins, _QUAD_ORDER
         )
 
 
@@ -312,7 +296,7 @@ def test_from_settings_rejects_negative_bin_ids():
 
     with pytest.raises(ValueError, match="negative bin ID"):
         ProjectedBinning.from_settings(
-            _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+            _settings(), bins, _QUAD_ORDER
         )
 
 
@@ -321,7 +305,7 @@ def test_from_settings_rejects_non_contiguous_bin_ids():
 
     with pytest.raises(ValueError, match="contiguous"):
         ProjectedBinning.from_settings(
-            _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+            _settings(), bins, _QUAD_ORDER
         )
 
 
@@ -329,7 +313,7 @@ def test_from_settings_accepts_contiguous_bin_ids_with_unbinned_pixels():
     bins = np.array([[0, 1], [2, 0]])
 
     binning = ProjectedBinning.from_settings(
-        _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+        _settings(), bins, _QUAD_ORDER
     )
 
     assert binning.n_bins == 2
@@ -339,7 +323,6 @@ def test_observational_bin_ids_may_use_any_row_order(tmp_path):
     binning = ProjectedBinning.from_settings(
         _settings(),
         np.array([[0, 1], [2, 3]]),
-        _internal_unit_system(),
         _QUAD_ORDER,
     )
 
@@ -359,7 +342,6 @@ def test_observational_bin_ids_must_cover_binning(tmp_path, bin_ids, message):
     binning = ProjectedBinning.from_settings(
         _settings(),
         np.array([[0, 1], [2, 3]]),
-        _internal_unit_system(),
         _QUAD_ORDER,
     )
 
@@ -382,7 +364,6 @@ def test_projected_binning_infers_npix_from_bins_shape(
     binnings = build_spatial_binnings(
         {"observed": _settings()},
         tmp_path,
-        _internal_unit_system(),
         _QUAD_ORDER,
         _DISTANCE,
     )
@@ -395,7 +376,7 @@ def test_projected_binning_infers_npix_from_bins_shape(
 def test_angular_to_physical_converts_spatial_fields():
     bins = np.zeros((2, 2), dtype=int)
     binning = ProjectedBinning.from_settings(
-        _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+        _settings(), bins, _QUAD_ORDER
     )
     distance = u.Quantity(30.5, "Mpc")
 
@@ -419,7 +400,7 @@ def test_angular_to_physical_converts_spatial_fields():
 def test_angular_to_physical_leaves_pa_and_bins_unchanged():
     bins = np.array([[0, 1], [2, 0]])
     binning = ProjectedBinning.from_settings(
-        _settings(), bins, _internal_unit_system(), _QUAD_ORDER
+        _settings(), bins, _QUAD_ORDER
     )
     distance = u.Quantity(30.5, "Mpc")
 

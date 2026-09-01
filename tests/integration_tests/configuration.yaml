@@ -23,7 +23,6 @@ spatial_binnings:
 potential:
   bh:
     type: "PlummerPotential"
-    include: true
     parameters:
       m_tot:
         unit: "Msun"
@@ -39,7 +38,6 @@ potential:
   dh:
     type: "NFWPotential"
     parameterization: "concentration_m200"
-    include: true
     parameters:
       c:
         fixed: true
@@ -53,7 +51,6 @@ potential:
 
   stars:
     type: "TriaxialLightMGEPotential"
-    include: true
     mge: "mge_lum"
     parameters:
       theta:

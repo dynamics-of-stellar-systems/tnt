@@ -79,13 +79,17 @@ class ModelIterator:
     section, as declared -- `AbstractParameterGenerator` reads each
     parameter's declared value/unit from it every round.
     `resolved_potential` is `potential_settings`' fixed per-run static
-    structure (types, MGE references, `include` flags), resolved once via
+    structure (types, MGE references), resolved once via
     `tnt.potential.Potential.resolve` rather than re-derived on every
     proposed point -- see `tnt.potential.build_potential`.
     """
 
     potential_settings: Mapping[str, Mapping[str, Any]]
     resolved_potential: Mapping[str, ResolvedPotentialComponent]
+    # Retained for `Potential.to_galax()` once orbit integration wires it in
+    # (`generate_orbit_library` is still `NotImplementedError`). Runtime
+    # construction preserves declared quantities instead of converting them
+    # into this unit system, so nothing reads it yet.
     unit_system: AbstractUnitSystem
     cosmological_parameters: Mapping[str, Quantity]
     kinematic_data: Mapping[str, AbstractKinematics]
@@ -147,23 +151,21 @@ class ModelIterator:
         parameter_space_settings = config["parameter_space_settings"]
 
         distance = resolve_system_distance(config["system_attributes"])
-        mges = build_mges(config["MGEs"], input_directory, unit_system, distance)
+        mges = build_mges(config["MGEs"], input_directory, distance)
         spatial_binnings = build_spatial_binnings(
             config["spatial_binnings"],
             input_directory,
-            unit_system,
             config["mge_settings"]["projected_mass_quad_order"],
             distance,
         )
         kinematic_data = build_kinematics(
             config["kinematic_data"],
             input_directory,
-            unit_system,
             spatial_binnings,
             mges,
         )
         population_data = build_populations(
-            config["population_data"], input_directory, unit_system, spatial_binnings
+            config["population_data"], input_directory, spatial_binnings
         )
         potential_settings = config["potential"]
         resolved_potential = Potential.resolve(potential_settings, mges)
@@ -454,7 +456,6 @@ class ModelIterator:
             potential = build_potential(
                 self.resolved_potential,
                 parameters,
-                self.unit_system,
                 self.cosmological_parameters,
             )
         except MGEDeprojectionError as error:
@@ -510,7 +511,6 @@ class ModelIterator:
         return raw_potential_parameters(
             self.potential_settings,
             potential,
-            self.unit_system,
             self.cosmological_parameters,
         )
 

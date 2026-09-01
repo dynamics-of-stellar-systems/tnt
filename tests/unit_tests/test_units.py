@@ -5,8 +5,9 @@ import unxt as u
 
 from tnt.units import (
     build_unit_systems,
-    normalize_unitful_value,
+    declared_quantity,
     validate_configuration_quantities,
+    validate_dimension,
 )
 
 
@@ -17,7 +18,6 @@ def _unit_settings() -> dict:
             "time": "Myr",
             "mass": "Msun",
             "angle": "rad",
-            "power": "Lsun",
         },
         "display": {
             "angle": "arcsec",
@@ -55,45 +55,59 @@ def test_build_unit_systems_rejects_invalid_units(
 
 def test_build_unit_systems_requires_every_internal_dimension() -> None:
     settings = _unit_settings()
-    del settings["internal"]["power"]
+    del settings["internal"]["angle"]
+
+    with pytest.raises(ValueError, match=r"units\.internal.*angle"):
+        build_unit_systems(settings)
+
+
+def test_build_unit_systems_rejects_power_in_internal() -> None:
+    settings = _unit_settings()
+    settings["internal"]["power"] = "Lsun"
 
     with pytest.raises(ValueError, match=r"units\.internal.*power"):
         build_unit_systems(settings)
 
 
-def test_normalize_unitful_value_accepts_explicit_value_and_unit() -> None:
-    systems = build_unit_systems(_unit_settings())
+def test_build_unit_systems_accepts_power_display_override() -> None:
+    settings = _unit_settings()
+    settings["display"]["power"] = "erg / s"
 
-    assert normalize_unitful_value(
+    systems = build_unit_systems(settings)
+
+    assert systems.display[u.dimension("power")] == u.unit("erg / s")
+
+
+def test_declared_quantity_keeps_its_declared_unit() -> None:
+    quantity = declared_quantity(
         {"value": 2.5, "unit": "Mpc"},
         "length",
-        systems.internal,
         "system_attributes.distance",
-    ) == pytest.approx(2500.0)
+    )
+
+    assert quantity.unit == u.unit("Mpc")
+    assert quantity.ustrip("Mpc") == pytest.approx(2.5)
 
 
-def test_normalize_unitful_value_rejects_bare_number() -> None:
-    systems = build_unit_systems(_unit_settings())
-
+def test_declared_quantity_rejects_bare_number() -> None:
     with pytest.raises(TypeError, match="must state their unit explicitly"):
-        normalize_unitful_value(
-            2.5,
-            "length",
-            systems.internal,
-            "system_attributes.distance",
-        )
+        declared_quantity(2.5, "length", "system_attributes.distance")
 
 
-def test_normalize_unitful_value_rejects_sequence_shorthand() -> None:
-    systems = build_unit_systems(_unit_settings())
-
+def test_declared_quantity_rejects_sequence_shorthand() -> None:
     with pytest.raises(TypeError, match="mapping containing value and unit"):
-        normalize_unitful_value(
-            [2.5, "Mpc"],
-            "length",
-            systems.internal,
-            "system_attributes.distance",
+        declared_quantity(
+            [2.5, "Mpc"], "length", "system_attributes.distance"
         )
+
+
+def test_validate_dimension_accepts_equivalent_unit() -> None:
+    validate_dimension(u.unit("km / s"), "speed", "kinematic_data.x")
+
+
+def test_validate_dimension_rejects_wrong_dimension() -> None:
+    with pytest.raises(ValueError, match="must describe speed"):
+        validate_dimension(u.unit("kpc"), "speed", "kinematic_data.x")
 
 
 def test_configuration_quantity_validation_does_not_modify_declarations() -> None:
@@ -122,26 +136,43 @@ def test_configuration_quantity_validation_does_not_modify_declarations() -> Non
     assert config == original
 
 
-def test_parameter_unit_is_rejected_until_dimension_is_declared() -> None:
+def test_parameter_unit_is_rejected_on_a_dimensionless_native_parameter() -> None:
     config = {
         "cosmological_parameters": {},
         "system_attributes": {},
         "potential": {
             "halo": {
-                "type": "not_a_registered_potential_type",
+                "type": "gNFWPotential",
                 "parameters": {
-                    "c": {
-                        "value": 1.0,
-                        "unit": "m",
-                    }
+                    "m": {"value": 1.0e12, "unit": "Msun"},
+                    "r_s": {"value": 10.0, "unit": "kpc"},
+                    "gamma": {"value": 1.0, "unit": "m"},
                 },
             }
         },
         "kinematic_data": {},
     }
 
-    with pytest.raises(ValueError, match=r"parameters\.c\.unit is not supported"):
+    with pytest.raises(ValueError, match=r"parameters\.gamma\.unit is not supported"):
         validate_configuration_quantities(config)
+
+
+def test_parameter_unit_check_defers_for_an_unrecognized_potential_type() -> None:
+    # An unknown type has no known parameter schema, so unit validation is
+    # skipped here -- the "unsupported type" error is left to resolve().
+    config = {
+        "cosmological_parameters": {},
+        "system_attributes": {},
+        "potential": {
+            "halo": {
+                "type": "not_a_registered_potential_type",
+                "parameters": {"c": {"value": 1.0, "unit": "m"}},
+            }
+        },
+        "kinematic_data": {},
+    }
+
+    validate_configuration_quantities(config)
 
 
 @pytest.mark.parametrize(

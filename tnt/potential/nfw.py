@@ -6,8 +6,9 @@ from collections.abc import Mapping
 from typing import Any
 
 import jax.numpy as jnp
-import unxt as u
-from unxt import AbstractUnitSystem, Quantity
+from unxt import Quantity
+
+from tnt.potential.registry import register_parameterization
 
 
 def _newtonian_gravitational_constant() -> Quantity:
@@ -23,7 +24,6 @@ def _newtonian_gravitational_constant() -> Quantity:
 
 def _nfw_concentration_m200(
     raw: dict[str, Quantity],
-    unit_system: AbstractUnitSystem,
     cosmological_parameters: Mapping[str, Quantity],
 ) -> dict[str, Quantity]:
     """Convert NFW's `(c, M_200)` parameterization to native `(m, r_s)`.
@@ -48,10 +48,10 @@ def _nfw_concentration_m200(
     r200 = (3 * m200 / (4 * jnp.pi * 200 * rho_crit)) ** (1 / 3)
     r_s = r200 / c
     m = m200 / _nfw_g(c.ustrip(""))
-    return {
-        "m": m.to(unit_system[u.dimension("mass")]),
-        "r_s": r_s.to(unit_system[u.dimension("length")]),
-    }
+    # No unit-system conversion: `m`/`r_s` keep whatever unit the arithmetic
+    # above produces -- `to_galax()`'s native `NFWPotential` constructor
+    # converts them regardless (see `tnt.potential`'s module docstring).
+    return {"m": m, "r_s": r_s}
 
 
 def _nfw_g(c: Any) -> Any:
@@ -88,10 +88,14 @@ def _solve_nfw_concentration(target: Any) -> Any:
 
 def _nfw_concentration_m200_inverse(
     native: dict[str, Quantity],
-    unit_system: AbstractUnitSystem,
+    declared_units: Mapping[str, str],
     cosmological_parameters: Mapping[str, Quantity],
 ) -> dict[str, Quantity]:
     """Convert NFW's native `(m, r_s)` back to `(c, M_200)`.
+
+    `M_200` is returned in `declared_units["M_200"]` -- the unit the
+    configuration declares for it -- so `AllModels` reports it exactly as
+    configured. `c` is dimensionless.
 
     The inverse of `_nfw_concentration_m200`. Substituting
     `r_200 = c * r_s` into that function's `r_200`/`m` relations leaves one
@@ -114,4 +118,13 @@ def _nfw_concentration_m200_inverse(
     target = (m / (4 * jnp.pi * 200 * rho_crit / 3 * r_s**3)).ustrip("")
     c = _solve_nfw_concentration(target)
     m200 = m * _nfw_g(c)
-    return {"c": Quantity(c, ""), "M_200": m200.to(unit_system[u.dimension("mass")])}
+    return {"c": Quantity(c, ""), "M_200": m200.to(declared_units["M_200"])}
+
+
+register_parameterization(
+    type_name="NFWPotential",
+    name="concentration_m200",
+    convert=_nfw_concentration_m200,
+    invert=_nfw_concentration_m200_inverse,
+    raw_dimensions={"c": "dimensionless", "M_200": "mass"},
+)

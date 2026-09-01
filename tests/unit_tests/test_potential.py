@@ -4,12 +4,13 @@
 `tnt.potential`'s module docstring); these tests cover what's actually
 implemented: dynamic derivation from galax's own `ParameterField` metadata,
 type/parameterization resolution, the fully-working Plummer/NFW native-mode
-paths, and the two MGE composite types' `to_galax`.
+paths, and the four MGE composite types' `to_galax`.
 """
 
 from __future__ import annotations
 
 import dataclasses
+from typing import ClassVar
 
 import galax.potential as gp
 import jax
@@ -24,6 +25,8 @@ from tnt.potential import (
     _SUPPORTED_GALAX_TYPES,
     AbstractPotentialComponent,
     GalaxPotentialComponent,
+    OblateLightMGEPotential,
+    OblateMassMGEPotential,
     Potential,
     TriaxialLightMGEPotential,
     TriaxialMassMGEPotential,
@@ -35,7 +38,9 @@ from tnt.potential import (
     raw_parameter_dimensions,
     raw_potential_parameters,
 )
+from tnt.potential import registry as _registry_module
 from tnt.potential.nfw import _newtonian_gravitational_constant
+from tnt.potential.registry import _COMPONENT_REGISTRY, register_component
 
 
 def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
@@ -66,7 +71,7 @@ def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
 
 
 def _internal_unit_system() -> u.AbstractUnitSystem:
-    return u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
+    return u.unitsystem("kpc", "Myr", "Msun", "rad")
 
 
 # Only the concentration_m200 parameterization uses cosmological_parameters;
@@ -301,7 +306,7 @@ def test_from_settings_rejects_unrecognized_type() -> None:
         ValueError, match="Unsupported potential.dh.type 'NotAPotential'"
     ):
         AbstractPotentialComponent.resolve(
-            {"type": "NotAPotential", "include": True, "parameters": {}},
+            {"type": "NotAPotential", "parameters": {}},
             {},
             path="potential.dh",
         )
@@ -318,22 +323,20 @@ def test_from_settings_rejects_a_real_but_uncurated_galax_class() -> None:
         ValueError, match="Unsupported potential.dh.type 'MultipolePotential'"
     ):
         AbstractPotentialComponent.resolve(
-            {"type": "MultipolePotential", "include": True, "parameters": {}},
+            {"type": "MultipolePotential", "parameters": {}},
             {},
             path="potential.dh",
         )
 
 
 def test_from_settings_resolves_a_real_galax_class_name() -> None:
-    unit_system = _internal_unit_system()
     resolved = AbstractPotentialComponent.resolve(
-        {"type": "NFWPotential", "include": True, "parameters": {}},
+        {"type": "NFWPotential", "parameters": {}},
         {},
         path="potential.dh",
     )
     component = resolved.build(
         {"m": Quantity(1e11, "Msun"), "r_s": Quantity(10.0, "kpc")},
-        unit_system,
         _NO_COSMOLOGICAL_PARAMETERS,
     )
     assert isinstance(component, GalaxPotentialComponent)
@@ -348,7 +351,6 @@ def test_from_settings_rejects_unimplemented_parameterization() -> None:
             {
                 "type": "PlummerPotential",
                 "parameterization": "bogus",
-                "include": True,
                 "parameters": {},
             },
             {},
@@ -362,7 +364,6 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
     # that radius should reproduce the M_200 that was put in.
     from galax.potential._src.builtin.nfw.base import mass_enclosed
 
-    unit_system = _internal_unit_system()
     c, m200 = 8.0, 1.0e12
     h = Quantity(
         7.158985155319864e-05, "1 / Myr"
@@ -372,7 +373,6 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
         {
             "type": "NFWPotential",
             "parameterization": "concentration_m200",
-            "include": True,
             "parameters": {},
         },
         {},
@@ -380,7 +380,6 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
     )
     component = resolved.build(
         {"c": Quantity(c, ""), "M_200": Quantity(m200, "Msun")},
-        unit_system,
         {"H": h},
     )
     m = component.parameters["m"].ustrip("Msun")
@@ -413,12 +412,10 @@ def test_nfw_gravitational_constant_follows_active_jax_precision(
 
 
 def test_nfw_parameterization_is_invariant_to_declared_units() -> None:
-    unit_system = _internal_unit_system()
     resolved = AbstractPotentialComponent.resolve(
         {
             "type": "NFWPotential",
             "parameterization": "concentration_m200",
-            "include": True,
             "parameters": {},
         },
         {},
@@ -429,7 +426,6 @@ def test_nfw_parameterization_is_invariant_to_declared_units() -> None:
 
     internal = resolved.build(
         {"c": Quantity(8.0, ""), "M_200": m200.to("Msun")},
-        unit_system,
         {"H": h.to("1 / Myr")},
     )
     differently_declared = resolved.build(
@@ -437,7 +433,6 @@ def test_nfw_parameterization_is_invariant_to_declared_units() -> None:
             "c": Quantity(8.0, ""),
             "M_200": Quantity(100.0, "1e10 Msun"),
         },
-        unit_system,
         {"H": h},
     )
 
@@ -475,14 +470,15 @@ def test_solve_nfw_concentration_recovers_a_known_c() -> None:
 
 
 def test_nfw_concentration_m200_inverse_round_trips_the_forward_conversion() -> None:
-    unit_system = _internal_unit_system()
     h = Quantity(
         7.158985155319864e-05, "1 / Myr"
     )  # 70 km/s/Mpc, in this unit system's 1/Myr
     for c, m200 in ((3.0, 1.0e11), (8.0, 1.0e12), (20.0, 5.0e13)):
         raw = {"c": Quantity(c, ""), "M_200": Quantity(m200, "Msun")}
-        native = _nfw_concentration_m200(raw, unit_system, {"H": h})
-        recovered = _nfw_concentration_m200_inverse(native, unit_system, {"H": h})
+        native = _nfw_concentration_m200(raw, {"H": h})
+        recovered = _nfw_concentration_m200_inverse(
+            native, {"M_200": "Msun"}, {"H": h}
+        )
         assert float(recovered["c"].ustrip("")) == pytest.approx(c, rel=1e-5)
         assert float(recovered["M_200"].ustrip("Msun")) == pytest.approx(m200, rel=1e-5)
 
@@ -492,17 +488,16 @@ def test_nfw_concentration_m200_inverse_is_self_consistent_after_rescale() -> No
     # holds r_s fixed and scales only m -- not the same as holding c fixed
     # and scaling M_200), so the only checkable invariant is that inverting
     # and then re-converting forward reproduces the same rescaled (m, r_s).
-    unit_system = _internal_unit_system()
     h = Quantity(7.158985155319864e-05, "1 / Myr")
     raw = {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")}
-    native = _nfw_concentration_m200(raw, unit_system, {"H": h})
+    native = _nfw_concentration_m200(raw, {"H": h})
 
     mass_scale = 2.5
     rescaled_native = {"m": native["m"] * mass_scale, "r_s": native["r_s"]}
     recovered_raw = _nfw_concentration_m200_inverse(
-        rescaled_native, unit_system, {"H": h}
+        rescaled_native, {"M_200": "Msun"}, {"H": h}
     )
-    reconverted_native = _nfw_concentration_m200(recovered_raw, unit_system, {"H": h})
+    reconverted_native = _nfw_concentration_m200(recovered_raw, {"H": h})
 
     assert reconverted_native["m"].ustrip("Msun") == pytest.approx(
         rescaled_native["m"].ustrip("Msun"), rel=1e-5
@@ -522,33 +517,29 @@ def test_nfw_concentration_m200_inverse_is_self_consistent_after_rescale() -> No
 
 
 def test_raw_potential_parameters_uses_each_component_own_parameterization() -> None:
-    unit_system = _internal_unit_system()
     h = Quantity(7.158985155319864e-05, "1 / Myr")
     settings = {
-        "bh": {"type": "PlummerPotential", "include": True, "parameters": {}},
+        "bh": {"type": "PlummerPotential", "parameters": {}},
         "dh": {
             "type": "NFWPotential",
             "parameterization": "concentration_m200",
-            "include": True,
-            "parameters": {},
+            "parameters": {"M_200": {"unit": "Msun"}},
         },
     }
     parameter_values = {
         "bh": {"m_tot": Quantity(5.0, "Msun"), "r_s": Quantity(1e-3, "kpc")},
         "dh": {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")},
     }
-    potential = Potential.from_settings(
-        settings, parameter_values, {}, unit_system, {"H": h}
-    )
+    potential = Potential.from_settings(settings, parameter_values, {}, {"H": h})
 
-    raw = raw_potential_parameters(settings, potential, unit_system, {"H": h})
+    raw = raw_potential_parameters(settings, potential, {"H": h})
     assert set(raw["bh"]) == {"m_tot", "r_s"}
     assert set(raw["dh"]) == {"c", "M_200"}
     assert raw["dh"]["c"].ustrip("") == pytest.approx(8.0, rel=1e-5)
     assert raw["dh"]["M_200"].ustrip("Msun") == pytest.approx(1.0e12, rel=1e-5)
 
     rescaled = potential.rescale(2.0)
-    raw_rescaled = raw_potential_parameters(settings, rescaled, unit_system, {"H": h})
+    raw_rescaled = raw_potential_parameters(settings, rescaled, {"H": h})
     assert set(raw_rescaled["dh"]) == {"c", "M_200"}
     assert raw_rescaled["dh"]["M_200"].ustrip("Msun") != pytest.approx(
         raw["dh"]["M_200"].ustrip("Msun"), rel=1e-3
@@ -564,13 +555,12 @@ def test_plummer_to_galax_matches_closed_form_potential() -> None:
     unit_system = _internal_unit_system()
     m_tot, r_s = 5.0, 1e-3
     resolved = AbstractPotentialComponent.resolve(
-        {"type": "PlummerPotential", "include": True, "parameters": {}},
+        {"type": "PlummerPotential", "parameters": {}},
         {},
         path="potential.bh",
     )
     component = resolved.build(
         {"m_tot": Quantity(m_tot, "Msun"), "r_s": Quantity(r_s, "kpc")},
-        unit_system,
         _NO_COSMOLOGICAL_PARAMETERS,
     )
     galax_potential = component.to_galax(unit_system)
@@ -587,14 +577,13 @@ def test_plummer_to_galax_matches_closed_form_potential() -> None:
 
 def test_plummer_potential_is_invariant_to_declared_parameter_units() -> None:
     unit_system = _internal_unit_system()
-    settings = {"bh": {"type": "PlummerPotential", "include": True, "parameters": {}}}
+    settings = {"bh": {"type": "PlummerPotential", "parameters": {}}}
     resolved = Potential.resolve(settings, {})
     mass = Quantity(5.0, "Msun")
 
     internal = Potential.build(
         resolved,
         {"bh": {"m_tot": mass, "r_s": Quantity(1.0, "kpc")}},
-        unit_system,
         _NO_COSMOLOGICAL_PARAMETERS,
     ).to_galax(unit_system)
     differently_declared = Potential.build(
@@ -605,7 +594,6 @@ def test_plummer_potential_is_invariant_to_declared_parameter_units() -> None:
                 "r_s": Quantity(1000.0, "pc"),
             }
         },
-        unit_system,
         _NO_COSMOLOGICAL_PARAMETERS,
     ).to_galax(unit_system)
 
@@ -620,15 +608,13 @@ def test_plummer_potential_is_invariant_to_declared_parameter_units() -> None:
 
 
 def test_plummer_rescale_scales_only_the_mass_parameter() -> None:
-    unit_system = _internal_unit_system()
     resolved = AbstractPotentialComponent.resolve(
-        {"type": "PlummerPotential", "include": True, "parameters": {}},
+        {"type": "PlummerPotential", "parameters": {}},
         {},
         path="potential.bh",
     )
     component = resolved.build(
         {"m_tot": Quantity(5.0, "Msun"), "r_s": Quantity(1e-3, "kpc")},
-        unit_system,
         _NO_COSMOLOGICAL_PARAMETERS,
     )
     rescaled = component.rescale(2.0)
@@ -636,37 +622,36 @@ def test_plummer_rescale_scales_only_the_mass_parameter() -> None:
     assert rescaled.parameters["r_s"].ustrip("kpc") == pytest.approx(1e-3)
 
 
-def test_potential_composes_only_included_components() -> None:
+def test_potential_composes_every_declared_component() -> None:
     unit_system = _internal_unit_system()
     settings = {
-        "bh": {"type": "PlummerPotential", "include": True, "parameters": {}},
-        "excluded": {
-            "type": "PlummerPotential",
-            "include": False,
-            "parameters": {},
-        },
+        "bh": {"type": "PlummerPotential", "parameters": {}},
+        "halo": {"type": "PlummerPotential", "parameters": {}},
     }
     parameter_values = {
         "bh": {"m_tot": Quantity(5.0, "Msun"), "r_s": Quantity(1e-3, "kpc")},
-        "excluded": {"m_tot": Quantity(100.0, "Msun"), "r_s": Quantity(1.0, "kpc")},
+        "halo": {"m_tot": Quantity(100.0, "Msun"), "r_s": Quantity(1.0, "kpc")},
     }
     resolved = Potential.resolve(settings, {})
     potential = build_potential(
-        resolved, parameter_values, unit_system, _NO_COSMOLOGICAL_PARAMETERS
+        resolved, parameter_values, _NO_COSMOLOGICAL_PARAMETERS
     )
-    assert set(potential.components) == {"bh"}
+    assert set(potential.components) == {"bh", "halo"}
 
     galax_potential = potential.to_galax(unit_system)
     xyz = Quantity(jnp.array([0.01, 0.0, 0.0]), "kpc")
     t = Quantity(0.0, "Myr")
     composed_value = float(galax_potential.potential(xyz, t).ustrip("kpc2 / Myr2"))
-    component_value = float(
-        potential.components["bh"]
-        .to_galax(unit_system)
-        .potential(xyz, t)
-        .ustrip("kpc2 / Myr2")
+    summed_components = sum(
+        float(
+            potential.components[name]
+            .to_galax(unit_system)
+            .potential(xyz, t)
+            .ustrip("kpc2 / Myr2")
+        )
+        for name in ("bh", "halo")
     )
-    assert composed_value == pytest.approx(component_value)
+    assert composed_value == pytest.approx(summed_components)
 
 
 # ---------------------------------------------------------------------------
@@ -701,7 +686,7 @@ def test_nfw_component_plumbing_works_without_from_settings() -> None:
 # these tests isolate to_galax's wiring (mass-to-light/mass-scale conversion,
 # deprojection, per-component TriaxialGaussianPotential construction, and
 # CompositePotential summation) against galax's independent GaussianPotential.
-# Invalid geometries now raise MGEDeprojectionError during component build;
+# Invalid geometries raise MGEDeprojectionError during component build;
 # genuinely triaxial validity and axis mapping are covered separately below
 # and by test_mge.py's forward-projection round-trip tests.
 # ---------------------------------------------------------------------------
@@ -723,6 +708,153 @@ _VIEWING_ANGLES = {
 }
 
 
+def test_register_component_stores_the_class_under_its_own_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An isolated fake registry, swapped in for the module-level real one --
+    # _COMPONENT_REGISTRY is shared, mutable, global state, so a test that
+    # registers into it directly must not leak into the real registry other
+    # tests (and application code) read from.
+    fake_registry: dict[str, type] = {}
+    monkeypatch.setattr(_registry_module, "_COMPONENT_REGISTRY", fake_registry)
+
+    class _Test:
+        _type: ClassVar[str] = "_test_potential_type"
+        _raw_dimensions: ClassVar[dict[str, str]] = {"m": "mass"}
+
+    result = register_component(_Test)
+
+    assert result is _Test
+    assert fake_registry == {"_test_potential_type": _Test}
+
+
+def test_register_component_rejects_duplicate_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_registry_module, "_COMPONENT_REGISTRY", {})
+
+    class _First:
+        _type: ClassVar[str] = "_test_duplicate_potential_type"
+        _raw_dimensions: ClassVar[dict[str, str]] = {}
+
+    class _Second:
+        _type: ClassVar[str] = "_test_duplicate_potential_type"
+        _raw_dimensions: ClassVar[dict[str, str]] = {}
+
+    register_component(_First)
+    with pytest.raises(ValueError, match="Duplicate potential type"):
+        register_component(_Second)
+
+
+def test_undecorated_child_with_inherited_type_is_not_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A subclass that inherits `_type` without its own `@register_component`
+    call must not participate in dispatch under that name -- and, since
+    registration is explicit, there is no ambiguity about whether the child
+    is a second registered type.
+    """
+    monkeypatch.setattr(_registry_module, "_COMPONENT_REGISTRY", {})
+
+    class _Parent:
+        _type: ClassVar[str] = "_test_inherited_potential_type"
+        _raw_dimensions: ClassVar[dict[str, str]] = {}
+
+    class _Child(_Parent):
+        pass  # inherits _type, never itself passed to register_component
+
+    register_component(_Parent)
+
+    assert _registry_module._COMPONENT_REGISTRY == {
+        "_test_inherited_potential_type": _Parent
+    }
+
+
+def test_component_registry_contains_the_four_mge_types() -> None:
+    assert set(_COMPONENT_REGISTRY) == {
+        "TriaxialLightMGEPotential",
+        "TriaxialMassMGEPotential",
+        "OblateLightMGEPotential",
+        "OblateMassMGEPotential",
+    }
+    assert _COMPONENT_REGISTRY["TriaxialLightMGEPotential"] is TriaxialLightMGEPotential
+    assert _COMPONENT_REGISTRY["TriaxialMassMGEPotential"] is TriaxialMassMGEPotential
+    assert _COMPONENT_REGISTRY["OblateLightMGEPotential"] is OblateLightMGEPotential
+    assert _COMPONENT_REGISTRY["OblateMassMGEPotential"] is OblateMassMGEPotential
+
+
+def test_nfw_concentration_m200_is_registered_with_its_converters_and_schema() -> None:
+    # register_parameterization bundles converters + schema, so resolve() and
+    # _validate_potential can never disagree on what the parameterization takes.
+    spec = _registry_module.get_parameterization("NFWPotential", "concentration_m200")
+    assert spec is not None
+    assert spec.convert is _nfw_concentration_m200
+    assert spec.invert is _nfw_concentration_m200_inverse
+    assert spec.raw_dimensions == {"c": "dimensionless", "M_200": "mass"}
+    assert _registry_module.raw_parameter_dimensions(
+        "NFWPotential", "concentration_m200"
+    ) == {"c": "dimensionless", "M_200": "mass"}
+    assert _registry_module.parameter_schema_is_known(
+        "NFWPotential", "concentration_m200"
+    )
+    assert not _registry_module.parameter_schema_is_known(
+        "NFWPotential", "not_registered"
+    )
+
+
+def _identity_forward(raw: dict, cosmological_parameters: object) -> dict:
+    return raw
+
+
+def _identity_inverse(native: dict, declared_units: object, cosmo: object) -> dict:
+    return native
+
+
+def test_register_parameterization_success_and_duplicate(monkeypatch) -> None:
+    monkeypatch.setattr(_registry_module, "_PARAMETERIZATION_REGISTRY", {})
+
+    _registry_module.register_parameterization(
+        type_name="PlummerPotential",
+        name="scheme",
+        convert=_identity_forward,
+        invert=_identity_inverse,
+        raw_dimensions={"a": "mass"},
+    )
+    spec = _registry_module.get_parameterization("PlummerPotential", "scheme")
+    assert spec is not None
+    assert spec.convert is _identity_forward
+    assert spec.invert is _identity_inverse
+    assert spec.raw_dimensions == {"a": "mass"}
+    assert _registry_module.parameterization_names("PlummerPotential") == ["scheme"]
+
+    before = dict(_registry_module._PARAMETERIZATION_REGISTRY)
+    with pytest.raises(ValueError, match=r"Duplicate parameterization 'scheme'"):
+        _registry_module.register_parameterization(
+            type_name="PlummerPotential",
+            name="scheme",
+            convert=_identity_forward,
+            invert=_identity_inverse,
+            raw_dimensions={"a": "mass"},
+        )
+    assert _registry_module._PARAMETERIZATION_REGISTRY == before
+
+
+def test_register_parameterization_rejects_a_non_galax_target_type(monkeypatch) -> None:
+    # Parameterizations convert to a component's native galax constructor
+    # kwargs and only GalaxPotentialComponent runs the inverse -- a TNT MGE
+    # composite type would silently round-trip through canonical parameters.
+    monkeypatch.setattr(_registry_module, "_PARAMETERIZATION_REGISTRY", {})
+    with pytest.raises(ValueError, match=r"not a curated native galax type"):
+        _registry_module.register_parameterization(
+            type_name="TriaxialLightMGEPotential",
+            name="shape",
+            convert=_identity_forward,
+            invert=_identity_inverse,
+            raw_dimensions={"p": "dimensionless"},
+        )
+    assert _registry_module._PARAMETERIZATION_REGISTRY == {}
+
+
 def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
     light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
         Quantity(30.0, "Mpc")
@@ -730,7 +862,6 @@ def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
     resolved = AbstractPotentialComponent.resolve(
         {
             "type": "TriaxialLightMGEPotential",
-            "include": True,
             "mge": "mge_lum",
             "parameters": {},
         },
@@ -739,7 +870,6 @@ def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
     )
     component = resolved.build(
         {"ml": Quantity(5.0, "Msun / Lsun"), **_VIEWING_ANGLES},
-        _internal_unit_system(),
         _NO_COSMOLOGICAL_PARAMETERS,
     )
     assert isinstance(component, TriaxialLightMGEPotential)
@@ -761,7 +891,6 @@ def test_mge_component_build_raises_for_invalid_geometry_not_to_galax() -> None:
     resolved = AbstractPotentialComponent.resolve(
         {
             "type": "TriaxialLightMGEPotential",
-            "include": True,
             "mge": "mge_lum",
             "parameters": {},
         },
@@ -781,7 +910,6 @@ def test_mge_component_build_raises_for_invalid_geometry_not_to_galax() -> None:
     with pytest.raises(MGEDeprojectionError):
         resolved.build(
             {"ml": Quantity(5.0, "Msun / Lsun"), **bad_angles},
-            _internal_unit_system(),
             _NO_COSMOLOGICAL_PARAMETERS,
         )
 
@@ -790,7 +918,6 @@ def test_mge_component_build_raises_for_invalid_geometry_not_to_galax() -> None:
     # build time.
     component = resolved.build(
         {"ml": Quantity(5.0, "Msun / Lsun"), **good_angles},
-        _internal_unit_system(),
         _NO_COSMOLOGICAL_PARAMETERS,
     )
     component.to_galax(_internal_unit_system())
@@ -803,7 +930,6 @@ def test_triaxial_light_mge_to_galax_matches_spherical_gaussian() -> None:
     ml = Quantity(5.0, "Msun / Lsun")
     component = TriaxialLightMGEPotential._build(
         {"ml": ml, **_VIEWING_ANGLES},
-        unit_system,
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
     )
@@ -847,7 +973,6 @@ def test_triaxial_light_mge_to_galax_sums_every_component() -> None:
     ml = Quantity(5.0, "Msun / Lsun")
     component = TriaxialLightMGEPotential._build(
         {"ml": ml, **_VIEWING_ANGLES},
-        unit_system,
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
     )
@@ -893,7 +1018,6 @@ def test_triaxial_mass_mge_to_galax_uses_mge_mass_scale() -> None:
     mge_mass_scale = Quantity(3.0, "")
     component = TriaxialMassMGEPotential._build(
         {"mge_mass_scale": mge_mass_scale, **_VIEWING_ANGLES},
-        unit_system,
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": mass_mge},
     )
@@ -919,6 +1043,296 @@ def test_triaxial_mass_mge_to_galax_uses_mge_mass_scale() -> None:
     assert potential.potential(xyz, t).ustrip(speed2) == pytest.approx(
         reference.potential(xyz, t).ustrip(speed2), rel=1e-5
     )
+
+
+# ---------------------------------------------------------------------------
+# Oblate axisymmetric MGE composite types: same _build/to_galax wiring as the
+# triaxial pair, under a single `inclination` instead of theta/phi/psi.
+#
+# `AbstractMGE.deproject_oblate` has a real solution for any component
+# whose observed q_obs >= cos(inclination) -- an edge-on inclination (90 deg,
+# cos == 0) is valid for any q_obs, so these tests don't need q=1 fixtures
+# to route around an invalid deprojection. q=1 is still used in the spherical
+# cross-checks below to get an independent reference (galax's own
+# GaussianPotential), which p=q=1 makes exact; a flattened q != 1 case is
+# cross-checked against galax's own TriaxialGaussianPotential(q1=1) further
+# down.
+# ---------------------------------------------------------------------------
+
+
+_INCLINATION = {"inclination": Quantity(90.0, "deg")}
+
+
+def test_oblate_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
+    light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
+        Quantity(30.0, "Mpc")
+    )
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "OblateLightMGEPotential",
+            "mge": "mge_lum",
+            "parameters": {},
+        },
+        {"mge_lum": light_mge},
+        path="potential.stars",
+    )
+    component = resolved.build(
+        {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+    )
+    assert isinstance(component, OblateLightMGEPotential)
+    assert component.mge is light_mge
+    assert component.parameters["ml"].ustrip("Msun / Lsun") == pytest.approx(5.0)
+
+
+def test_oblate_mge_build_raises_for_impossible_inclination_not_to_galax() -> None:
+    # q_obs = 0.5 with inclination 20 deg: cos(20 deg) ~ 0.94 > 0.5, so
+    # q_obs < cos(i) and the axisymmetric deprojection has no real solution.
+    flattened = LightMGE(
+        I=Quantity(jnp.array([2.0]), "Lsun / rad2"),
+        sigma=Quantity(jnp.array([1.5]), "rad"),
+        q=Quantity(jnp.array([0.5]), ""),
+        PA_twist=Quantity(jnp.array([0.0]), "rad"),
+    ).angular_to_physical(Quantity(30.0, "Mpc"))
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "OblateLightMGEPotential",
+            "mge": "mge_lum",
+            "parameters": {},
+        },
+        {"mge_lum": flattened},
+        path="potential.stars",
+    )
+
+    with pytest.raises(MGEDeprojectionError):
+        resolved.build(
+            {"ml": Quantity(5.0, "Msun / Lsun"), "inclination": Quantity(20.0, "deg")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+
+    # An inclination that *does* deproject builds and to_galax()es fine.
+    component = resolved.build(
+        {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+    )
+    component.to_galax(_internal_unit_system())
+
+
+def test_oblate_light_mge_to_galax_matches_spherical_gaussian() -> None:
+    unit_system = _internal_unit_system()
+    distance = Quantity(30.0, "Mpc")
+    light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
+    ml = Quantity(5.0, "Msun / Lsun")
+    component = OblateLightMGEPotential._build(
+        {"ml": ml, **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": light_mge},
+    )
+
+    potential = component.to_galax(unit_system)
+
+    mass_mge = light_mge.to_mass(ml)
+    deprojected = mass_mge.deproject_oblate(**_INCLINATION)
+    assert deprojected.p.ustrip("") == pytest.approx(1.0)
+    assert deprojected.q.ustrip("") == pytest.approx(1.0)
+    m_tot = (
+        deprojected.I[0]
+        * deprojected.q[0]
+        * (2 * jnp.pi) ** 1.5
+        * deprojected.sigma[0] ** 3
+    )
+    reference = gp.GaussianPotential(
+        m_tot=m_tot, r_s=deprojected.sigma[0], units=unit_system
+    )
+
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    for xyz in (
+        Quantity(jnp.array([3.0, 0.5, -1.0]), "kpc"),
+        Quantity(jnp.array([50.0, -20.0, 8.0]), "kpc"),
+    ):
+        t = Quantity(0.0, "Myr")
+        r = jnp.sqrt(jnp.sum(xyz.ustrip("kpc") ** 2))
+        radial_xyz = Quantity(jnp.array([r, 0.0, 0.0]), "kpc")
+        assert potential.potential(radial_xyz, t).ustrip(speed2) == pytest.approx(
+            reference.potential(radial_xyz, t).ustrip(speed2), rel=1e-5
+        )
+
+
+def test_oblate_light_mge_to_galax_sums_every_component() -> None:
+    unit_system = _internal_unit_system()
+    distance = Quantity(30.0, "Mpc")
+    light_mge = LightMGE(
+        I=Quantity(jnp.array([2.0, 0.5]), "Lsun / rad2"),
+        sigma=Quantity(jnp.array([1.5, 4.0]), "rad"),
+        q=Quantity(jnp.array([0.6, 0.4]), ""),
+        PA_twist=Quantity(jnp.array([0.0, 0.0]), "rad"),
+    ).angular_to_physical(distance)
+    ml = Quantity(5.0, "Msun / Lsun")
+    component = OblateLightMGEPotential._build(
+        {"ml": ml, **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": light_mge},
+    )
+
+    potential = component.to_galax(unit_system)
+
+    deprojected = light_mge.to_mass(ml).deproject_oblate(**_INCLINATION)
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    xyz = Quantity(jnp.array([3.0, 0.5, -1.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    individual_sum = Quantity(0.0, speed2)
+    for i in range(2):
+        m_tot = (
+            deprojected.I[i]
+            * deprojected.q[i]
+            * (2 * jnp.pi) ** 1.5
+            * deprojected.sigma[i] ** 3
+        )
+        component_i = gp.AxisymmetricGaussianPotential(
+            m_tot=m_tot,
+            r_s=deprojected.sigma[i],
+            q2=deprojected.q[i],
+            units=unit_system,
+        )
+        individual_sum = individual_sum + component_i.potential(xyz, t)
+
+    assert potential.potential(xyz, t).ustrip(speed2) == pytest.approx(
+        individual_sum.ustrip(speed2), rel=1e-5
+    )
+
+
+def test_oblate_mass_mge_to_galax_uses_mge_mass_scale() -> None:
+    unit_system = _internal_unit_system()
+    distance = Quantity(30.0, "Mpc")
+    mass_mge = MassMGE(
+        I=Quantity(jnp.array([1e2]), "Msun / rad2"),
+        sigma=Quantity(jnp.array([1.5]), "rad"),
+        q=Quantity(jnp.array([1.0]), ""),
+        PA_twist=Quantity(jnp.array([0.0]), "rad"),
+    ).angular_to_physical(distance)
+    mge_mass_scale = Quantity(3.0, "")
+    component = OblateMassMGEPotential._build(
+        {"mge_mass_scale": mge_mass_scale, **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": mass_mge},
+    )
+
+    potential = component.to_galax(unit_system)
+
+    scaled = mass_mge.rescaled(mge_mass_scale)
+    deprojected = scaled.deproject_oblate(**_INCLINATION)
+    m_tot = (
+        deprojected.I[0]
+        * deprojected.q[0]
+        * (2 * jnp.pi) ** 1.5
+        * deprojected.sigma[0] ** 3
+    )
+    reference = gp.GaussianPotential(
+        m_tot=m_tot, r_s=deprojected.sigma[0], units=unit_system
+    )
+
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    xyz = Quantity(jnp.array([4.0, 0.0, 0.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    assert potential.potential(xyz, t).ustrip(speed2) == pytest.approx(
+        reference.potential(xyz, t).ustrip(speed2), rel=1e-5
+    )
+
+
+def test_oblate_light_mge_rescale_scales_to_galax_without_recompute() -> None:
+    unit_system = _internal_unit_system()
+    distance = Quantity(30.0, "Mpc")
+    light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
+    ml = Quantity(5.0, "Msun / Lsun")
+    component = OblateLightMGEPotential._build(
+        {"ml": ml, **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": light_mge},
+    )
+
+    mass_scale = 2.0
+    rescaled = component.rescale(mass_scale)
+
+    assert rescaled.parameters["ml"].ustrip("Msun / Lsun") == pytest.approx(
+        ml.ustrip("Msun / Lsun") * mass_scale
+    )
+    assert rescaled.deprojected.q.ustrip("") == pytest.approx(
+        component.deprojected.q.ustrip("")
+    )
+
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    xyz = Quantity(jnp.array([3.0, 0.5, -1.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+    original = component.to_galax(unit_system).potential(xyz, t)
+    scaled = rescaled.to_galax(unit_system).potential(xyz, t)
+    assert scaled.ustrip(speed2) == pytest.approx(
+        original.ustrip(speed2) * mass_scale, rel=1e-5
+    )
+
+
+def test_oblate_light_mge_to_galax_flattened_cross_checks() -> None:
+    # The spherical cross-checks above use q_obs=1 (so q_intr=1 always) and
+    # can't detect a missing flattening factor or a swapped q -> q2. This uses
+    # a genuinely flattened deprojection (q_obs=0.7 at inclination 70 deg gives
+    # q_intr ~ 0.65) and checks to_galax() two independent ways: against
+    # galax's own TriaxialGaussianPotential(q1=1) -- a different galax class
+    # and code path from AxisymmetricGaussianPotential -- at off-axis points,
+    # and against the closed-form Gaussian density along each intrinsic axis,
+    # which only matches if q2 lands on z (not x/y, where p=1).
+    unit_system = _internal_unit_system()
+    light_mge = LightMGE(
+        I=Quantity(jnp.array([4.0]), "Lsun / kpc2"),
+        sigma=Quantity(jnp.array([2.0]), "kpc"),
+        q=Quantity(jnp.array([0.7]), ""),
+        PA_twist=Quantity(jnp.array([0.0]), "rad"),
+    )
+    ml = Quantity(5.0, "Msun / Lsun")
+    component = OblateLightMGEPotential._build(
+        {"ml": ml, "inclination": Quantity(70.0, "deg")},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": light_mge},
+    )
+    potential = component.to_galax(unit_system)
+
+    deprojected = component.deprojected
+    q = float(deprojected.q.ustrip("")[0])
+    assert deprojected.p.ustrip("")[0] == pytest.approx(1.0)
+    assert 0.0 < q < 0.99  # genuinely flattened, not a spherical special case
+
+    m_tot = (
+        deprojected.I[0]
+        * deprojected.q[0]
+        * (2 * jnp.pi) ** 1.5
+        * deprojected.sigma[0] ** 3
+    )
+    reference = gp.TriaxialGaussianPotential(
+        m_tot=m_tot,
+        r_s=deprojected.sigma[0],
+        q1=Quantity(1.0, ""),
+        q2=deprojected.q[0],
+        units=unit_system,
+    )
+
+    t = Quantity(0.0, "Myr")
+    speed2 = unit_system["length"] ** 2 / unit_system["time"] ** 2
+    for xyz in (
+        Quantity(jnp.array([2.0, 3.0, 1.5]), "kpc"),
+        Quantity(jnp.array([-4.0, 1.0, 6.0]), "kpc"),
+        Quantity(jnp.array([0.5, -2.0, -3.0]), "kpc"),
+    ):
+        assert potential.potential(xyz, t).ustrip(speed2) == pytest.approx(
+            reference.potential(xyz, t).ustrip(speed2), rel=1e-5
+        )
+
+    rho_0 = float(deprojected.I.ustrip("Msun / kpc3")[0])
+    sigma = float(deprojected.sigma.ustrip("kpc")[0])
+    density_unit = unit_system["mass"] / unit_system["length"] ** 3
+    for axis_index, axial_ratio in ((0, 1.0), (1, 1.0), (2, q)):
+        xyz = [0.0, 0.0, 0.0]
+        xyz[axis_index] = 3.0
+        analytic = rho_0 * jnp.exp(-0.5 * (3.0 / (axial_ratio * sigma)) ** 2)
+        density = potential.density(Quantity(jnp.array(xyz), "kpc"), t)
+        assert density.ustrip(density_unit) == pytest.approx(analytic, rel=1e-5)
 
 
 def test_potential_generate_orbit_library_not_implemented() -> None:
@@ -950,7 +1364,7 @@ def test_triaxial_light_mge_to_galax_density_matches_analytic_along_each_axis() 
     }
     ml = Quantity(5.0, "Msun / Lsun")
     component = TriaxialLightMGEPotential._build(
-        {"ml": ml, **angles}, unit_system, _NO_COSMOLOGICAL_PARAMETERS, {"mge": mge}
+        {"ml": ml, **angles}, _NO_COSMOLOGICAL_PARAMETERS, {"mge": mge}
     )
     potential = component.to_galax(unit_system)
 
@@ -981,7 +1395,6 @@ def test_triaxial_light_mge_rescale_scales_to_galax_without_ml_recompute() -> No
     ml = Quantity(5.0, "Msun / Lsun")
     component = TriaxialLightMGEPotential._build(
         {"ml": ml, **_VIEWING_ANGLES},
-        unit_system,
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
     )

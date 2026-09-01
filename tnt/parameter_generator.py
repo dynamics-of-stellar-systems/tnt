@@ -17,6 +17,7 @@ from unxt import Quantity
 from tnt.all_models import AllModels
 from tnt.potential import raw_parameter_dimensions
 from tnt.priors import Prior
+from tnt.registry import register_typed_class
 from tnt.validation import _mapping, _number, _required
 
 ParameterSet = dict[str, dict[str, Quantity]]
@@ -140,6 +141,41 @@ class AbstractParameterGenerator(eqx.Module):
         }
 
 
+_PARAMETER_GENERATOR_REGISTRY: dict[str, type[AbstractParameterGenerator]] = {}
+
+
+def register_parameter_generator(
+    cls: type[AbstractParameterGenerator],
+) -> type[AbstractParameterGenerator]:
+    """Register one concrete parameter generator for configuration dispatch."""
+    return register_typed_class(
+        _PARAMETER_GENERATOR_REGISTRY,
+        cls,
+        family="parameter generator",
+    )
+
+
+def get_parameter_generator_class(
+    type_name: str,
+) -> type[AbstractParameterGenerator] | None:
+    """Return the registered generator class for ``type_name``, if any."""
+    return _PARAMETER_GENERATOR_REGISTRY.get(type_name)
+
+
+def parameter_generator_type_names() -> frozenset[str]:
+    """Return every explicitly registered parameter-generator type name."""
+    return frozenset(_PARAMETER_GENERATOR_REGISTRY)
+
+
+def parameter_generator_required_settings() -> dict[str, frozenset[str]]:
+    """Return required configuration-setting names for every generator type."""
+    return {
+        type_name: cls._required_generator_settings
+        for type_name, cls in _PARAMETER_GENERATOR_REGISTRY.items()
+    }
+
+
+@register_parameter_generator
 class GridSearchParameterGenerator(AbstractParameterGenerator):
     """Proposes parameters on a grid, per each parameter's declared `prior`."""
 
@@ -152,6 +188,7 @@ class GridSearchParameterGenerator(AbstractParameterGenerator):
         raise NotImplementedError
 
 
+@register_parameter_generator
 class SinglePointParameterGenerator(AbstractParameterGenerator):
     """Proposes one fixed `ParameterSet`, taken from each parameter's declared value.
 
@@ -207,6 +244,7 @@ def _parameter_sets_from_samples(
     return parameter_sets
 
 
+@register_parameter_generator
 class PriorSampler(AbstractParameterGenerator):
     """Proposes parameters by sampling from a `tnt.priors.Prior`.
 
@@ -236,13 +274,6 @@ class PriorSampler(AbstractParameterGenerator):
         return _parameter_sets_from_samples(samples, self.potential_settings)
 
 
-_GENERATOR_CLASSES = (
-    GridSearchParameterGenerator,
-    SinglePointParameterGenerator,
-    PriorSampler,
-)
-
-
 def build_parameter_generator(
     parameter_space_settings: Mapping[str, Any],
     potential_settings: Mapping[str, Mapping[str, Any]],
@@ -264,32 +295,33 @@ def build_parameter_generator(
         `parameter_space_settings.generator_type`.
     """
     generator_type = parameter_space_settings["generator_type"]
+    generator_cls = get_parameter_generator_class(generator_type)
+    if generator_cls is None:
+        allowed = ", ".join(sorted(parameter_generator_type_names()))
+        raise ValueError(
+            "Unknown parameter_space_settings.generator_type: "
+            f"{generator_type!r}; expected one of: {allowed}."
+        )
     generator_settings = parameter_space_settings["generator_settings"]
     max_new_mods_per_iter = parameter_space_settings["stopping_criteria"][
         "max_new_mods_per_iter"
     ]
-    for generator_cls in _GENERATOR_CLASSES:
-        if generator_type != generator_cls._type:
-            continue
-        if generator_cls is PriorSampler:
-            if prior is None:
-                raise ValueError(
-                    "build_parameter_generator: generator_type 'PriorSampler' "
-                    "requires a built Prior."
-                )
-            return PriorSampler(
-                potential_settings=potential_settings,
-                generator_settings=generator_settings,
-                max_new_mods_per_iter=max_new_mods_per_iter,
-                prior=prior,
-                seed=generator_settings["seed"],
-                num_warmup=generator_settings["num_warmup"],
+    if generator_cls is PriorSampler:
+        if prior is None:
+            raise ValueError(
+                "build_parameter_generator: generator_type 'PriorSampler' "
+                "requires a built Prior."
             )
-        return generator_cls(
+        return PriorSampler(
             potential_settings=potential_settings,
             generator_settings=generator_settings,
             max_new_mods_per_iter=max_new_mods_per_iter,
+            prior=prior,
+            seed=generator_settings["seed"],
+            num_warmup=generator_settings["num_warmup"],
         )
-    raise ValueError(
-        f"Unknown parameter_space_settings.generator_type: {generator_type!r}"
+    return generator_cls(
+        potential_settings=potential_settings,
+        generator_settings=generator_settings,
+        max_new_mods_per_iter=max_new_mods_per_iter,
     )

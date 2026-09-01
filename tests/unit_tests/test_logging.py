@@ -1,5 +1,4 @@
 import logging
-import multiprocessing
 from pathlib import Path
 from typing import Any
 
@@ -114,18 +113,24 @@ def test_logging_destinations_can_be_disabled(
 
 
 def test_worker_records_are_written_by_parent_listener(tmp_path: Path) -> None:
-    context = multiprocessing.get_context()
     with configure_logging(_logging_configuration(tmp_path)) as session:
-        process = context.Process(
+        assert session.worker_context.get_start_method() == "spawn"
+        process = session.worker_context.Process(
             target=_emit_worker_message,
             args=(session.worker_queue,),
         )
         process.start()
-        process.join(timeout=10)
-        assert not process.is_alive()
-        assert process.exitcode == 0
-        assert session.logfile_path is not None
-        logfile_path = session.logfile_path
+        try:
+            process.join(timeout=30)
+            assert not process.is_alive()
+            assert process.exitcode == 0
+            assert session.logfile_path is not None
+            logfile_path = session.logfile_path
+        finally:
+            if process.is_alive():
+                process.terminate()
+                process.join()
+            process.close()
 
     logfile = logfile_path.read_text(encoding="utf-8")
     assert "message from worker" in logfile

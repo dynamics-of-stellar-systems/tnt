@@ -19,10 +19,6 @@ from tnt.mge import (
 from tnt.spatial_binnings import ProjectedBinning, SphericalGrid
 
 
-def _internal_unit_system() -> u.AbstractUnitSystem:
-    return u.unitsystem("kpc", "Myr", "Msun", "rad", "Lsun")
-
-
 def _write_ecsv(
     path: Path,
     *,
@@ -45,10 +41,8 @@ def _write_ecsv(
     path.write_text(header + body)
 
 
-# The multi-component rows below match what used to be a checked-in fixture
-# file (tests/integration_tests/fixtures/mge_lum.ecsv / mge_mass.ecsv), now
-# defined directly here so unit tests don't reach into another test
-# directory's data for something they can just as easily construct inline.
+# Define the multi-component rows directly here so these unit tests remain
+# self-contained rather than depending on integration-test fixture files.
 _LIGHT_ROWS = [
     (26819.14, 0.49416, 0.89541, 0.0),
     (2456.39, 2.04299, 0.79093, 0.0),
@@ -70,17 +64,12 @@ _MASS_ROWS = [
 def _multi_component_light_mge() -> LightMGE:
     """A multi-component LightMGE with realistic, varied q values.
 
-    Same values as `_LIGHT_ROWS`, converted to radians up front (matching
-    what `LightMGE.read` would produce for `_internal_unit_system`'s "rad"
-    angle unit) and constructed directly rather than read from a file -- for
-    tests that just need some realistic LightMGE to operate on, as opposed to
-    testing file-reading behaviour itself.
-
-    `angular_to_physical` only gives correct results for an angle unit of
-    exactly "rad" (its `solid_angle` shortcut assumes it), which is why this
-    doesn't just store the raw arcsec/deg values directly: real MGEs are
-    always converted to "rad" by `.read()` before that method would ever see
-    them.
+    Same values as `_LIGHT_ROWS`, converted to radians up front and
+    constructed directly rather than read from a file -- for tests that just
+    need some realistic LightMGE to operate on, as opposed to testing
+    file-reading behaviour itself. (`LightMGE.read` now keeps each column's
+    declared unit, so a real MGE would carry arcsec/deg here; radians keep
+    these fixtures' expected values unchanged.)
     """
     intensity, sigma, q, pa_twist = zip(*_LIGHT_ROWS, strict=True)
     sigma_arcsec = u.Quantity(jnp.array(sigma), "arcsec")
@@ -94,34 +83,32 @@ def _multi_component_light_mge() -> LightMGE:
     )
 
 
-def test_read_converts_light_columns_to_unit_system(tmp_path):
+def test_read_keeps_declared_light_column_units(tmp_path):
     path = tmp_path / "mge_lum.ecsv"
     _write_ecsv(path, intensity_unit="Lsun / arcsec2", rows=_LIGHT_ROWS)
-    unit_system = _internal_unit_system()
 
-    mge = LightMGE.read(path, unit_system)
+    mge = LightMGE.read(path)
 
-    assert mge.I.unit == u.unit("Lsun / rad2")
-    assert mge.sigma.unit == u.unit("rad")
+    assert mge.I.unit == u.unit("Lsun / arcsec2")
+    assert mge.sigma.unit == u.unit("arcsec")
     assert mge.q.unit == u.unit("")
-    assert mge.PA_twist.unit == u.unit("rad")
+    assert mge.PA_twist.unit == u.unit("deg")
     assert jnp.allclose(
         mge.q.ustrip(""),
         jnp.array([0.89541, 0.79093, 0.9999, 0.55097, 0.9999, 0.55097]),
     )
 
 
-def test_read_converts_mass_columns_to_unit_system(tmp_path):
+def test_read_keeps_declared_mass_column_units(tmp_path):
     path = tmp_path / "mge_mass.ecsv"
     _write_ecsv(path, intensity_unit="Msun / arcsec2", rows=_MASS_ROWS)
-    unit_system = _internal_unit_system()
 
-    mge = MassMGE.read(path, unit_system)
+    mge = MassMGE.read(path)
 
-    assert mge.I.unit == u.unit("Msun / rad2")
-    assert mge.sigma.unit == u.unit("rad")
+    assert mge.I.unit == u.unit("Msun / arcsec2")
+    assert mge.sigma.unit == u.unit("arcsec")
     assert mge.q.unit == u.unit("")
-    assert mge.PA_twist.unit == u.unit("rad")
+    assert mge.PA_twist.unit == u.unit("deg")
     assert jnp.allclose(
         mge.q.ustrip(""),
         jnp.array([0.91205, 0.83017, 0.9999, 0.60214, 0.9999, 0.60214]),
@@ -132,20 +119,20 @@ def test_read_mge_infers_light_kind(tmp_path):
     path = tmp_path / "mge.ecsv"
     _write_ecsv(path, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, 0.9, 0.0)])
 
-    mge = read_mge(path, _internal_unit_system())
+    mge = read_mge(path)
 
     assert isinstance(mge, LightMGE)
-    assert mge.I.unit == u.unit("Lsun / rad2")
+    assert mge.I.unit == u.unit("Lsun / arcsec2")
 
 
 def test_read_mge_infers_mass_kind(tmp_path):
     path = tmp_path / "mge.ecsv"
     _write_ecsv(path, intensity_unit="Msun / arcsec2", rows=[(1.0, 1.0, 0.9, 0.0)])
 
-    mge = read_mge(path, _internal_unit_system())
+    mge = read_mge(path)
 
     assert isinstance(mge, MassMGE)
-    assert mge.I.unit == u.unit("Msun / rad2")
+    assert mge.I.unit == u.unit("Msun / arcsec2")
 
 
 def test_build_mges_reads_each_named_file(tmp_path):
@@ -163,7 +150,6 @@ def test_build_mges_reads_each_named_file(tmp_path):
     mges = build_mges(
         {"light": "light.ecsv", "mass": "mass.ecsv"},
         tmp_path,
-        _internal_unit_system(),
         u.Quantity(30.5, "Mpc"),
     )
 
@@ -176,7 +162,7 @@ def test_build_mges_reads_each_named_file(tmp_path):
 
 def test_build_mges_without_entries_returns_empty_dict(tmp_path):
     assert (
-        build_mges({}, tmp_path, _internal_unit_system(), u.Quantity(30.5, "Mpc")) == {}
+        build_mges({}, tmp_path, u.Quantity(30.5, "Mpc")) == {}
     )
 
 
@@ -188,14 +174,14 @@ def test_read_rejects_q_out_of_range(tmp_path, bad_q):
     )
 
     with pytest.raises(ValueError, match="q must satisfy 0 < q <= 1"):
-        LightMGE.read(bad_file, _internal_unit_system())
+        LightMGE.read(bad_file)
 
 
 def test_read_accepts_q_equal_to_one(tmp_path):
     ok_file = tmp_path / "q_one.ecsv"
     _write_ecsv(ok_file, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, 1.0, 0.0)])
 
-    mge = LightMGE.read(ok_file, _internal_unit_system())
+    mge = LightMGE.read(ok_file)
 
     assert jnp.allclose(mge.q.ustrip(""), 1.0)
 
@@ -205,7 +191,7 @@ def test_read_mge_rejects_unrecognized_units(tmp_path):
     _write_ecsv(bad_file, intensity_unit="s", rows=[(1.0, 1.0, 1.0, 0.0)])
 
     with pytest.raises(ValueError, match="Could not infer MGE kind"):
-        read_mge(bad_file, _internal_unit_system())
+        read_mge(bad_file)
 
 
 def test_to_mass_with_constant_ratio():
@@ -260,12 +246,12 @@ def test_to_mass_rejects_mismatched_component_count():
         light.to_mass(m_over_l)
 
 
-def test_deproject_axisymmetric_edge_on_recovers_observed_q():
+def test_deproject_oblate_edge_on_recovers_observed_q():
     distance = u.Quantity(30.5, "Mpc")
     mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
 
-    deprojected = physical.deproject_axisymmetric(u.Quantity(90.0, "deg"))
+    deprojected = physical.deproject_oblate(u.Quantity(90.0, "deg"))
 
     assert isinstance(deprojected, Deprojected3DMGE)
     assert jnp.allclose(deprojected.q.ustrip(""), physical.q.ustrip(""))
@@ -273,13 +259,13 @@ def test_deproject_axisymmetric_edge_on_recovers_observed_q():
     assert jnp.allclose(deprojected.sigma.ustrip("Mpc"), physical.sigma.ustrip("Mpc"))
 
 
-def test_deproject_axisymmetric_conserves_total_flux():
+def test_deproject_oblate_conserves_total_flux():
     distance = u.Quantity(30.5, "Mpc")
     mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
     inclination = u.Quantity(60.0, "deg")
 
-    deprojected = physical.deproject_axisymmetric(inclination)
+    deprojected = physical.deproject_oblate(inclination)
 
     sigma = physical.sigma.ustrip("Mpc")
     q_obs = physical.q.ustrip("")
@@ -293,14 +279,14 @@ def test_deproject_axisymmetric_conserves_total_flux():
     assert jnp.allclose(flux_2d, mass_3d, rtol=1e-5)
 
 
-def test_deproject_axisymmetric_requires_physical_units():
+def test_deproject_oblate_requires_physical_units():
     mge = _multi_component_light_mge()
 
     with pytest.raises(ValueError, match="physical .length. sigma"):
-        mge.deproject_axisymmetric(u.Quantity(90.0, "deg"))
+        mge.deproject_oblate(u.Quantity(90.0, "deg"))
 
 
-def test_deproject_axisymmetric_requires_zero_pa_twist():
+def test_deproject_oblate_requires_zero_pa_twist():
     distance = u.Quantity(30.5, "Mpc")
     mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
@@ -312,10 +298,10 @@ def test_deproject_axisymmetric_requires_zero_pa_twist():
     )
 
     with pytest.raises(ValueError, match="PA_twist == 0"):
-        twisted.deproject_axisymmetric(u.Quantity(90.0, "deg"))
+        twisted.deproject_oblate(u.Quantity(90.0, "deg"))
 
 
-def test_deproject_axisymmetric_invalid_inclination_raises():
+def test_deproject_oblate_invalid_inclination_raises():
     distance = u.Quantity(30.5, "Mpc")
     mge = _multi_component_light_mge()
     physical = mge.angular_to_physical(distance)
@@ -323,7 +309,20 @@ def test_deproject_axisymmetric_invalid_inclination_raises():
     # Smallest q in the fixture is ~0.55, so an inclination close to face-on
     # (cos(i) close to 1) makes deprojection impossible for that component.
     with pytest.raises(MGEDeprojectionError):
-        physical.deproject_axisymmetric(u.Quantity(5.0, "deg"))
+        physical.deproject_oblate(u.Quantity(5.0, "deg"))
+
+
+def test_deproject_oblate_rejects_inclination_outside_0_90():
+    # i and 180 deg - i give the same projection and i = 0 is singular, so the
+    # domain is (0, 90] deg -- out-of-range angles are rejected, not folded
+    # through the squared trigonometry (120 deg would otherwise act as 60).
+    physical = _multi_component_light_mge().angular_to_physical(
+        u.Quantity(30.5, "Mpc")
+    )
+
+    for bad in (0.0, -15.0, 90.001, 120.0):
+        with pytest.raises(ValueError, match=r"inclination in \(0, 90\] degrees"):
+            physical.deproject_oblate(u.Quantity(bad, "deg"))
 
 
 def _single_component_light_mge(q_obs: float, psi: float) -> LightMGE:
@@ -411,7 +410,7 @@ def test_deproject_triaxial_convention_violating_geometry_raises():
     # Same theta/phi/q_obs as test_deproject_triaxial_gives_valid_axial_ratios
     # (which uses psi=0), but psi=0.1 gives a finite p=1.026, q=1.871 --
     # q > p > 1, violating TNT's 0 < q <= p <= 1 convention without being
-    # unsolvable (complementing test_deproject_axisymmetric_invalid_inclination_raises'
+    # unsolvable (complementing test_deproject_oblate_invalid_inclination_raises'
     # nan case, since both go through the same validity check).
     mge = _single_component_light_mge(q_obs=0.9, psi=0.0)
 
@@ -542,6 +541,32 @@ def test_angular_to_physical_converts_sigma_and_intensity():
     )
 
 
+def test_angular_to_physical_is_invariant_to_the_declared_angular_unit():
+    # The same physical MGE declared in radians vs. arcsec/deg must project
+    # to the same physical `sigma` and `I`; `angular_to_physical` converts
+    # each declared angular unit on demand.
+    rad = _multi_component_light_mge()
+    arcsec = LightMGE(
+        I=u.Quantity(rad.I.ustrip("Lsun / arcsec2"), "Lsun / arcsec2"),
+        sigma=u.Quantity(rad.sigma.ustrip("arcsec"), "arcsec"),
+        q=rad.q,
+        PA_twist=u.Quantity(rad.PA_twist.ustrip("deg"), "deg"),
+    )
+    distance = u.Quantity(30.5, "Mpc")
+
+    from_rad = rad.angular_to_physical(distance)
+    from_arcsec = arcsec.angular_to_physical(distance)
+
+    assert jnp.allclose(
+        from_arcsec.I.ustrip("Lsun / Mpc2"),
+        from_rad.I.ustrip("Lsun / Mpc2"),
+        rtol=1e-9,
+    )
+    assert jnp.allclose(
+        from_arcsec.sigma.ustrip("Mpc"), from_rad.sigma.ustrip("Mpc"), rtol=1e-9
+    )
+
+
 def test_angular_to_physical_leaves_q_and_pa_twist_unchanged():
     mge = _multi_component_light_mge()
     distance = u.Quantity(30.5, "Mpc")
@@ -569,7 +594,6 @@ def _projected_binning(
             "PA": {"value": pa, "unit": "rad"},
         },
         bins,
-        _internal_unit_system(),
         _PROJECTED_MASS_QUAD_ORDER,
     )
 

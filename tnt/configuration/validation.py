@@ -1,10 +1,23 @@
-"""Validate resolved TNT configuration data without constructing objects."""
+"""Validate resolved TNT configuration data without constructing objects.
+
+Configuration validation may import runtime-family modules to read their static
+registration metadata (`_type`, `_raw_dimensions`, and registry type names).
+Import-time registration is allowed; validation must not instantiate
+scientific objects, load scientific input data, or begin scientific execution.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
+from tnt.kinematics.registry import kinematics_type_names
+from tnt.parameter_generator import parameter_generator_required_settings
+from tnt.potential.registry import (
+    is_registered_component_type,
+    parameter_schema_is_known,
+    raw_parameter_dimensions,
+)
 from tnt.units import declared_quantity_value, validate_configuration_quantities
 from tnt.validation import (
     _integer,
@@ -39,13 +52,6 @@ _TOP_LEVEL_KEYS = {
     "units",
     "weight_solver_settings",
 }
-# `potential.<name>.type` names either one of these two TNT-specific MGE
-# composite potentials, or -- for every other value -- a `galax.potential`
-# class name, resolved dynamically by `tnt.potential` at runtime rather than
-# validated against a closed set here (this module deliberately avoids
-# constructing scientific objects; see module docstring).
-_MGE_POTENTIAL_TYPES = {"TriaxialLightMGEPotential", "TriaxialMassMGEPotential"}
-_KINEMATICS_TYPES = {"bayes_losvd", "gauss_hermite", "proper_motions"}
 
 
 def validate_resolved_configuration(config: ConfigDict) -> None:
@@ -147,11 +153,11 @@ def _validate_units(settings: ConfigDict) -> None:
     _reject_unknown_keys(settings, {"display", "internal"}, path)
     _require_keys(settings, {"display", "internal"}, path)
     internal = _required_mapping(settings, "internal", path)
-    internal_keys = {"angle", "length", "mass", "power", "time"}
+    internal_keys = {"angle", "length", "mass", "time"}
     _reject_unknown_keys(internal, internal_keys, f"{path}.internal")
     _require_keys(internal, internal_keys, f"{path}.internal")
     display = _required_mapping(settings, "display", path)
-    _reject_unknown_keys(display, internal_keys | {"speed"}, f"{path}.display")
+    _reject_unknown_keys(display, internal_keys | {"power", "speed"}, f"{path}.display")
     for section_name, section in (("internal", internal), ("display", display)):
         for key, value in section.items():
             _string(value, f"{path}.{section_name}.{key}")
@@ -281,90 +287,73 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         component = _mapping(component_value, component_path)
         _reject_unknown_keys(
             component,
-            {"include", "mge", "parameterization", "parameters", "type"},
+            {"mge", "parameterization", "parameters", "type"},
             component_path,
         )
-        _require_keys(component, {"include", "type"}, component_path)
-        # `type` names either a TNT MGE composite (checked against
-        # _MGE_POTENTIAL_TYPES below) or a galax.potential class name, which
-        # this module deliberately doesn't validate -- resolving it requires
-        # constructing/importing galax, deferred to tnt.potential at runtime.
+        _require_keys(component, {"type"}, component_path)
         component_type = _string(component["type"], f"{component_path}.type")
+        parameterization: str | None = None
         if "parameterization" in component:
-            _string(component["parameterization"], f"{component_path}.parameterization")
-        include = _boolean(component["include"], f"{component_path}.include")
+            parameterization = _string(
+                component["parameterization"], f"{component_path}.parameterization"
+            )
 
         if "parameters" in component:
             _validate_parameters(
                 _required_mapping(component, "parameters", component_path),
                 f"{component_path}.parameters",
-                require_nonempty=include,
+                require_nonempty=True,
             )
-        elif include:
+        else:
             raise ValueError(f"{component_path} is missing required field: parameters.")
 
-        is_mge_potential = component_type in _MGE_POTENTIAL_TYPES
+        is_mge_potential = is_registered_component_type(component_type)
         if is_mge_potential:
-            if include:
-                _require_keys(component, {"mge"}, component_path)
-            if "mge" in component:
-                _validate_registry_reference(
-                    component["mge"],
-                    mge_names,
-                    f"{component_path}.mge",
-                    "MGEs",
-                )
+            _require_keys(component, {"mge"}, component_path)
+            _validate_registry_reference(
+                component["mge"],
+                mge_names,
+                f"{component_path}.mge",
+                "MGEs",
+            )
         elif "mge" in component:
             raise ValueError(
                 f"{component_path}.mge is only valid for MGE potential types."
             )
 
+        # Exact-name completeness check against the resolved type/
+        # parameterization's full parameter set: a registered TNT component's
+        # own `_raw_dimensions` (see tnt.potential.registry.register_component),
+        # a registered non-native parameterization's raw schema, or -- the
+        # common case -- a curated galax class's native constructor kwargs
+        # (`tnt.potential.registry._SUPPORTED_GALAX_TYPES`). Every native field
+        # must be declared, including ones with a galax constructor default, so
+        # the model-table schema is complete and the model reproducible.
+        # `parameter_schema_is_known` gates this: an unrecognized type or an
+        # unimplemented parameterization is left to `resolve()`'s own, clearer
+        # error rather than reported here as "every parameter is extra".
         parameters = component.get("parameters")
         parameter_names = set(parameters) if isinstance(parameters, dict) else set()
-        if (
-            include
-            and component_type == "TriaxialLightMGEPotential"
-            and "ml" not in parameter_names
-        ):
-            raise ValueError(
-                f"{component_path}.parameters is missing required field: ml."
-            )
-        if component_type == "TriaxialMassMGEPotential" and "ml" in parameter_names:
-            raise ValueError(
-                f"{component_path}.parameters.ml is invalid for a mass MGE potential."
-            )
-        # mge_mass_scale is a mass MGE's analogue of a light MGE's ml -- a
-        # mass-normalization parameter on top of an otherwise-fixed shape.
-        # It's typically `fixed`, but nothing requires that: see
-        # tnt.potential.components.AbstractPotentialComponent.rescale explains
-        # why a fixed mass parameter can still move under potential_rescalings.
-        if (
-            include
-            and component_type == "TriaxialMassMGEPotential"
-            and "mge_mass_scale" not in parameter_names
-        ):
-            raise ValueError(
-                f"{component_path}.parameters is missing required field: "
-                "mge_mass_scale."
-            )
-        if (
-            component_type == "TriaxialLightMGEPotential"
-            and "mge_mass_scale" in parameter_names
-        ):
-            raise ValueError(
-                f"{component_path}.parameters.mge_mass_scale is invalid for a "
-                "light MGE potential."
-            )
-        # theta/phi/psi are the global viewing angles both MGE composite
-        # types deproject against (tnt.mge.AbstractMGE.deproject_triaxial) --
-        # required regardless of light vs. mass.
-        if include and is_mge_potential:
-            missing_angles = {"theta", "phi", "psi"} - parameter_names
-            if missing_angles:
-                names = ", ".join(sorted(missing_angles))
+        if parameter_schema_is_known(component_type, parameterization):
+            required = set(raw_parameter_dimensions(component_type, parameterization))
+            schema_label = component_type
+            if parameterization is not None:
+                schema_label = (
+                    f"{component_type} with parameterization {parameterization!r}"
+                )
+            extra = parameter_names - required
+            if extra:
+                names = ", ".join(sorted(extra))
                 raise ValueError(
-                    f"{component_path}.parameters is missing required field(s): "
-                    f"{names}."
+                    f"{component_path}.parameters has invalid field(s) for "
+                    f"{schema_label}: {names}."
+                )
+            missing = required - parameter_names
+            if missing:
+                names = ", ".join(sorted(missing))
+                raise ValueError(
+                    f"{component_path}.parameters is missing required "
+                    f"field(s): {names}."
                 )
 
 
@@ -482,7 +471,7 @@ def _validate_kinematics(
         )
         _choice(
             settings["type"],
-            _KINEMATICS_TYPES,
+            set(kinematics_type_names()),
             f"{settings_path}.type",
         )
         filename = _string(settings["data_file"], f"{settings_path}.data_file")
@@ -648,10 +637,9 @@ def _validate_weight_solver_settings(settings: ConfigDict) -> None:
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
     _choice(settings["type"], {"NNLS"}, f"{path}.type")
-    # cvxopt/scipy are no longer supported -- only JAX-native NNLS solvers
-    # will be. Which one(s) is still undecided, so this only checks that a
-    # name was given; tighten to a `_choice` over the real options once
-    # chosen.
+    # TNT will use a JAX-native NNLS solver. The specific implementation is
+    # undecided, so this only checks that a name was given; tighten to a
+    # `_choice` over the real options once chosen.
     _string(settings["nnls_solver"], f"{path}.nnls_solver")
     _positive_number(settings["maxiter_factor"], f"{path}.maxiter_factor")
     _nonnegative_number(settings["regularisation"], f"{path}.regularisation")
@@ -667,20 +655,6 @@ def _validate_weight_solver_settings(settings: ConfigDict) -> None:
         )
 
 
-# Which `generator_settings` keys each `generator_type` requires. Mirrors
-# each `tnt.parameter_generator.AbstractParameterGenerator` subclass's own
-# `_required_generator_settings` -- kept as plain data here, rather than
-# imported from `tnt.parameter_generator`, since that module (transitively,
-# via `tnt.all_models`/`tnt.model`/`tnt.potential`) pulls in `galax`, which
-# this validation-only module should not depend on just to read
-# configuration.
-_GENERATOR_SETTINGS_KEYS = {
-    "GridSearch": frozenset({"delta_chi2_threshold"}),
-    "SinglePoint": frozenset(),
-    "PriorSampler": frozenset({"num_warmup", "seed"}),
-}
-
-
 def _validate_parameter_space_settings(settings: ConfigDict) -> None:
     path = "parameter_space_settings"
     keys = {
@@ -693,16 +667,17 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
     }
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
+    required_settings_by_type = parameter_generator_required_settings()
     generator_type = _choice(
         settings["generator_type"],
-        set(_GENERATOR_SETTINGS_KEYS),
+        set(required_settings_by_type),
         f"{path}.generator_type",
     )
     _choice(
         settings["which_chi2"], {"chi2", "kinchi2", "kinmapchi2"}, f"{path}.which_chi2"
     )
     generator = _required_mapping(settings, "generator_settings", path)
-    required_generator_keys = _GENERATOR_SETTINGS_KEYS[generator_type]
+    required_generator_keys = required_settings_by_type[generator_type]
     # Not `_reject_unknown_keys`: recursive default-merging can't remove a
     # mapping key, so a user who overrides `generator_type` away from the
     # packaged default's ("GridSearch") still inherits its

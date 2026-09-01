@@ -179,7 +179,7 @@ It rejects changes to:
 
 - internal units, `cosmological_parameters`, and physical system attributes
   such as distance (`system_attributes.name` remains metadata);
-- potential components, inclusion, types, MGE references, parameter names, or
+- declared potential components, types, MGE references, parameter names, or
   remaining parameter-schema fields;
 - MGE settings, spatial binnings, kinematics, population data, or their
   configured scientific file references;
@@ -204,7 +204,7 @@ not reduce the precision used to decide whether a declaration changed.
 Changing `parameter_space_settings.which_chi2` is allowed only when the chosen
 metric exists and is finite for every successful historical model. A nonempty
 `AllModels` table must also contain every parameter column required by the
-included potential components.
+declared potential components.
 
 TNT does not hash scientific input files. Users must not modify an MGE,
 spatial-binning, kinematics, or population file in place while an existing
@@ -228,13 +228,16 @@ potential-component name to a mapping of parameter name to value (e.g.
 `{"bh": {"m": 5.0, "a": 0.001}, "stars": {"ml": 5.2, ...}}`). Every
 `AbstractParameterGenerator` implements `_propose_free_parameters(all_models)`;
 the base class's concrete `generate_parameters(all_models)` calls it and caps
-the result at `stopping_criteria.max_new_mods_per_iter`, uniformly across
-every generator regardless of how many candidates its own proposal logic
-happens to produce. Which implementation runs is chosen by
-`parameter_space_settings.generator_type`:
+the result at `stopping_criteria.max_new_mods_per_iter`, uniformly across every
+generator regardless of how many candidates its own proposal logic happens to
+produce. Which implementation runs is chosen by
+`parameter_space_settings.generator_type`. Concrete generators explicitly
+register their `_type`; an undecorated subclass is not a
+configuration-selectable generator:
 
-- `GridSearchParameterGenerator` ("GridSearch") proposes parameters on a grid.
-  Not yet implemented.
+- `GridSearchParameterGenerator` ("GridSearch") is the registered scaffold for
+  proposing parameters on a grid from each parameter's declared `prior`; its
+  proposal algorithm is not implemented yet.
 - `SinglePointParameterGenerator` ("SinglePoint") always proposes the same
   single point, taken directly from each parameter's configured `value`. It
   ignores `all_models` entirely and never consults `parameter_space_settings.priors`,

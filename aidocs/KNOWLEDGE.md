@@ -24,13 +24,34 @@
 - `tnt/configuration/` groups configuration resolution and preservation
   (`core.py`), preparation-time schema validation (`validation.py`), and
   resume compatibility (`compatibility.py`).
+- `tnt/registry.py` provides the small shared class-registration mechanic used
+  by configured runtime-object families. Each family owns its registry,
+  public lookup helpers, and domain-specific decorator; the shared helper
+  only enforces an explicitly declared, unique, non-empty `_type`.
 - `tnt/kinematics/` keeps shared base objects in `base.py`, one concrete data
-  family per module, and registry/orchestration logic in `__init__.py`.
+  family per module, explicit registration in `registry.py`, and construction
+  orchestration in `__init__.py`.
 - `tnt/potential/` separates curated type metadata (`registry.py`), NFW
   parameterization mathematics (`nfw.py`), the component hierarchy
   (`components.py`), and whole-potential orchestration (`core.py`). Its
   `__init__.py` defines the intended package-level API; implementation-specific
   names remain in their owning submodules.
+- TNT's own potential-component types (as opposed to curated native `galax`
+  types) register themselves with `tnt.potential.registry.register_component`,
+  applied directly to each concrete `AbstractPotentialComponent` subclass's
+  definition (e.g. `tnt.potential.triaxial_mge`). The decorator registers the
+  class under its own `_type`; schema access reads `_raw_dimensions` from that
+  registered class. Runtime dispatch uses its lookup helper, while
+  configuration validation uses its public type predicate and schema accessors
+  rather than reading private registry state. A class participates only when
+  it is explicitly decorated.
+  `tnt/potential/__init__.py` must import every concrete component module so
+  its decorators run during normal package initialization.
+- `tnt.configuration`'s "does not construct scientific objects" boundary
+  permits imports needed to read static registration metadata. Import-time
+  registration is allowed; configuration preparation must not instantiate
+  scientific objects, load scientific input data, or begin scientific
+  execution.
 
 ## Linux development container
 
@@ -70,11 +91,18 @@
   runtime-object, MGE-content, and optional-dependency checks remain the
   responsibility of the execution phase.
   Unknown fields raise validation errors rather than being ignored.
-- TNT uses `unxt` for configuration units. The required
-  `units.internal` block defines length, time, mass, angle, and power;
-  `units.display` selectively overrides presentation units and otherwise
-  inherits from the internal system. `Configuration.unit_systems` exposes the
-  two constructed systems.
+- TNT uses `unxt` for configuration units. `units.internal` is *only* the
+  unit system handed to `galax` in `Potential.to_galax()` -- not a
+  normalization applied to declared values or file data, which keep their
+  own units. It requires exactly `length`, `time`, `mass`, and `angle`:
+  the dimensions `galax`'s potential types need that `unxt` can't derive
+  for you. `unxt` builds `power`/`speed`/`frequency`/... from
+  mass/length/time automatically, so derived dimensions must not be declared
+  in `units.internal`. `angle` is dimensionally independent (`unxt` can't
+  decompose `rad`) and a real native parameter dimension for some `galax`
+  types, so it is required. `units.display` may override `power` and `speed`
+  for presentation. `Configuration.unit_systems` exposes both constructed
+  systems.
 - Every known unitful configuration value must state its unit explicitly;
   internal units and zero values are not implicit exceptions. Standalone
   quantities use `{value: ..., unit: ...}`. Unitful parameter definitions use
@@ -91,14 +119,16 @@
   Their runtime handling is consumer-specific rather than one blanket
   normalization step; in particular, potential parameter values, bounds, and
   steps remain expressed in their declared unit.
-- Runtime kinematics construction converts configured histogram quantities and
-  Gauss-Hermite velocity systematics. Potential parameters instead keep their
-  own declared unit all the way through `AbstractParameterGenerator` and
-  `Potential` construction -- `ModelIterator.from_configuration()` does not
-  pre-convert them into a shared internal-unit copy; `galax`'s own
-  potential classes already convert generically at evaluation time, so
-  nothing needs them pre-normalized (see `tnt.potential`'s module
-  docstring). `ModelIterator.from_configuration()` also converts
+- Runtime kinematics construction validates configured histogram quantities
+  and Gauss-Hermite velocity systematics and keeps their declared units.
+  Computations that combine equivalent quantities convert them on demand into
+  the data set's local reference unit. Potential parameters likewise keep
+  their declared unit through `AbstractParameterGenerator` and `Potential`
+  construction -- `ModelIterator.from_configuration()` does not create a
+  shared internal-unit copy. `galax` converts potential parameters when
+  `Potential.to_galax()` constructs its runtime potential, so they do not need
+  pre-normalization (see `tnt.potential`'s module docstring).
+  `ModelIterator.from_configuration()` also converts
   `cosmological_parameters`, including `H`, into `Quantity` objects for
   runtime consumers such as NFW's `concentration_m200` parameterization.
   System distance remains a declared quantity until a runtime consumer needs
@@ -114,21 +144,20 @@
   runtime object before `run()` can publish the configuration. Malformed
   runtime-owned fields such as `spatial_binnings.*.min_x` therefore fail before
   any run bundle exists.
-- Prep-time validation and construction-time conversion don't cover the same
-  fields consistently, and this isn't one shared policy: `spatial_binnings`
-  has no prep-time check at all (construction owns it exclusively);
-  kinematics histogram and systematic-uncertainty fields are checked at both
-  prep time and construction time, independently. Potential parameters now
-  follow the same pattern as `spatial_binnings`: checked at prep time
-  (`validate_configuration_quantities`) and converted -- or, for potential
-  parameters specifically, just kept in their declared unit -- at
-  construction time (`AbstractParameterGenerator`/`Potential.resolve`/
-  `Potential.build`), not eagerly at prep time.
+- Validation ownership depends on the field rather than one blanket unit
+  policy. `spatial_binnings` has no prep-time quantity check because runtime
+  construction owns its complete entry schema. Kinematics histogram and
+  systematic-uncertainty fields are checked independently at preparation and
+  construction time. Potential-parameter dimensions are checked during
+  preparation by `validate_configuration_quantities`; parameter generation and
+  potential construction then preserve the declared unit. No one of these
+  construction paths normalizes values into `units.internal`.
 - MGE contents and quantities inside observational files are deliberately
   deferred to the object-construction/data-loading phase. Configuration
   preparation does not open those files. `tnt.kinematics.build_kinematics`
   constructs named `GaussHermite`, `BayesLOSVD`, and `ProperMotions` objects;
-  it converts unitful observations into the internal unit system and retains
+  it validates each column's/metadata's declared unit for the right dimension
+  (against a fixed reference, not any unit system) and keeps it, retaining
   JAX arrays in immutable Equinox modules. Population observations are loaded
   separately by `tnt.populations.build_populations()`.
 - `tnt.mge.build_mges()` is the explicit runtime boundary that loads the
@@ -138,7 +167,7 @@
   `0 < q <= p <= 1` eagerly. `_check_axial_ratios()` converts JAX results to
   Python control flow (`bool(...)` and `.nonzero()`) and raises
   `MGEDeprojectionError`, so `deproject_triaxial()` and
-  `deproject_axisymmetric()` are deliberately not `jax.jit`/`jax.vmap`
+  `deproject_oblate()` are deliberately not `jax.jit`/`jax.vmap`
   traceable. This is acceptable while model evaluation itself remains eager:
   `ModelIterator._evaluate()` catches Python exceptions and returns a
   variable-length `list[Model]`, while orbit integration and weight solving
@@ -275,15 +304,17 @@
 - `tnt.populations.build_populations()` loads each configured population ECSV
   into an immutable JAX/Equinox `Populations` object. It resolves a strictly
   typed `ProjectedBinning` but no MGE. Files require a `bin_id` column and one
-  or more `property`/`dproperty` column pairs. Paired units must be equivalent;
-  declared quantities are converted to the internal unit system, unitless
-  columns remain dimensionless, and uncertainties must be positive. The
-  shared observational bin-ID rule below applies.
+  or more `property`/`dproperty` column pairs. Paired units must be
+  dimensionally equivalent (any dimension); the uncertainty is converted into
+  the value column's declared unit and that unit is kept, unitless columns
+  remain dimensionless, and uncertainties must be positive. The shared
+  observational bin-ID rule below applies.
 - `tnt.spatial_binnings.build_spatial_binnings()` is the explicit runtime
   boundary that loads the resolved `spatial_binnings` registry into named
   `ProjectedBinning` objects. It validates the complete entry before file
-  access, validates the loaded non-empty bin array, converts coordinates to
-  the internal angle unit, and precomputes pixel quadrature.
+  access, validates the loaded non-empty bin array, validates that each
+  coordinate's declared unit is an angle and keeps it (the grid geometry is
+  done on demand in `min_x`'s unit), and precomputes pixel quadrature.
 - `AbstractMGE.get_projected_mass()` integrates projected MGE totals into the
   positive bin IDs of a `ProjectedBinning`; bin ID 0 is excluded. The MGE and
   binning coordinate units must be dimensionally consistent.
@@ -293,9 +324,11 @@
   mapping. Its runtime boundary rejects incorrectly typed registry values.
 - `AbstractKinematics.binning` is strictly a `ProjectedBinning`; its optional
   `mge` is strictly a `LightMGE` or `MassMGE`. Each concrete kinematics class
-  owns its configuration identifier in `_type`, and the builder's dispatch
-  registry is derived from those subclasses with duplicate detection rather
-  than maintained independently.
+  owns its configuration identifier in `_type` and explicitly registers via
+  `tnt.kinematics.registry.register_kinematics`. Both runtime dispatch and
+  configuration validation read the kinematics-owned registry through public
+  accessors. Undecorated subclasses do not silently become configuration
+  types, and duplicate or inherited `_type` declarations fail at registration.
 - `AbstractKinematics.design_matrix()` defines the weight-solver projection
   boundary introduced by the model-architecture scaffold. It deliberately
   raises `NotImplementedError` until orbit integration and the concrete
@@ -321,15 +354,23 @@
   and emits configured sampling warnings.
 - `potential.<name>.type` names one of a curated set of `galax.potential`
   classes (`tnt.potential._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
-  `PlummerPotential` -- 25 classes total), or one of two TNT-specific MGE
-  composite types, `TriaxialLightMGEPotential`/`TriaxialMassMGEPotential`, provided
-  directly by TNT since `galax` has no native class for a
-  sum-of-triaxial-Gaussians potential. A light-MGE potential requires an
-  `ml` parameter; a mass-MGE potential requires `mge_mass_scale` instead
-  and validation rejects `ml` on it, since its MGE already contains mass.
+  `PlummerPotential` -- 25 classes total), or one of four TNT-specific MGE
+  composite types -- triaxial (`TriaxialLightMGEPotential`/
+  `TriaxialMassMGEPotential`, `tnt/potential/triaxial_mge.py`) or oblate
+  axisymmetric (`OblateLightMGEPotential`/`OblateMassMGEPotential`,
+  `tnt/potential/oblate_mge.py`) -- provided directly by TNT since `galax`
+  has no native class for the MGE-specific deprojection/composition wiring.
+  A light type requires an `ml` parameter; a mass type requires
+  `mge_mass_scale` instead (validation rejects `ml` on it, since its MGE
+  already contains mass). Triaxial types also require `theta`/`phi`/`psi`;
+  oblate types require a single `inclination` in `(0, 90]` deg. TNT's
+  axisymmetric deprojection is oblate-only; prolate would get its own
+  `Prolate...` types. Each type's exact
+  parameter schema comes straight from its own registered `_raw_dimensions`
+  (see `register_component`), not a second hand-written list.
   Deliberately curated rather than "any `AbstractPotential` subclass":
-  `galax` also exports abstract/base classes (which passed the old
-  `issubclass` check and only failed later, confusingly, at `to_galax()`),
+  `galax` also exports abstract/base classes, which cannot be constructed as
+  concrete TNT potential components;
   pre-packaged multi-component bundles with no free parameters of their own
   like `MilkyWayPotential`/`LM10Potential` (their `disk`/`bulge`/`halo`/
   `nucleus` fields are themselves sub-potentials, not `ParameterField`s --
@@ -338,8 +379,7 @@
   (e.g. `TranslatedPotential`, `FlattenedInThePotential` -- these do carry
   their own `ParameterField`s, but the required nested potential still
   isn't representable), and classes needing a required non-`Quantity`
-  hyperparameter (`MultipolePotential`'s `l_max: int`, which the old
-  dispatch silently mis-wrapped as a dimensionless `Quantity`) -- none
+  hyperparameter (`MultipolePotential`'s `l_max: int`) -- none
   representable by the scalar `parameters.<name>.value` schema. Checked
   directly against every one of galax's 45
   `AbstractPotential` subclasses: 28 have every field either a scalar
@@ -347,16 +387,38 @@
   schema); the curated 25 drops `HenonHeilesPotential`/`NullPotential`
   (not astrophysically relevant to TNT) and `AbstractCompositePotential`
   (an empty-parameter base class) from that 28.
+- Config-prep validation (`_validate_potential`) checks the declared
+  `parameters` are *exactly* the resolved `type`/`parameterization`'s set --
+  missing or unexpected names rejected -- for curated native `galax` types
+  and registered parameterizations as well as TNT's own MGE composite types.
+  `registry.raw_parameter_dimensions(kind, parameterization)` supplies the
+  authoritative set; `registry.parameter_schema_is_known(kind,
+  parameterization)` gates it (an unrecognized type or an unimplemented
+  parameterization is left to `resolve()`'s own error, not reported as
+  "every parameter is extra"). Native fields with a `galax` constructor
+  default (e.g. `TriaxialHernquistPotential`'s `q1`/`q2`) must still be
+  declared -- intentional TNT policy, for a complete/reproducible
+  model-table schema.
+- Non-native parameterizations register via `registry.register_parameterization(
+  type_name=, name=, convert=, invert=, raw_dimensions=)` -- one call, from the
+  module owning the numerics (`tnt.potential.nfw` for `concentration_m200`),
+  mirroring `register_component`. It bundles the forward/inverse converters and
+  the config parameter schema in a single `ParameterizationSpec`, so validation
+  and runtime resolution can't disagree on which parameterizations exist. Read
+  back via `get_parameterization(type, name)` / `parameterization_names(type)`.
+  `type_name` must be a curated native `galax` type: a parameterization
+  converts a raw config convention into that class's native constructor kwargs,
+  and only `GalaxPotentialComponent` runs the inverse converter (`AllModels`
+  reporting). A TNT MGE composite type is rejected -- supporting one needs the
+  inverse dispatch lifted to a type-independent layer first (the `(p, q, u)`
+  shape scheme `triaxial_mge` mentions would be the first such case).
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`
-  constructor kwargs exactly; their physical dimensions are read directly
-  from `_SUPPORTED_GALAX_TYPES` (each entry a `NativeParameter(dimension,
-  exponent)`). Dynamic derivation from `galax`'s own
-  `ParameterField(dimensions=...)` metadata isn't production code at all any
-  more -- since curating dimension by hand costs nothing extra once every
-  parameter is individually verified for its exponent anyway, that
-  derivation now lives only as a test-local helper in
+  constructor kwargs exactly; production reads their physical dimensions
+  directly from `_SUPPORTED_GALAX_TYPES` (each entry a
+  `NativeParameter(dimension, exponent)`). Dynamic derivation from `galax`'s
+  own `ParameterField(dimensions=...)` metadata is a test-local helper in
   `tests/unit_tests/test_potential.py`
   (`test_supported_galax_types_covers_every_curated_class_parameter` cross-checks
   the curated table against it).
@@ -385,44 +447,49 @@
   and $M_{200c}$ (mass enclosed within the radius where mean density is
   200x the critical density) into native `(m, r_s)` via
   `rho_crit = 3*H**2 / (8*pi*G)`, `r200 = (3*M200 / (4*pi*200*rho_crit))**(1/3)`,
-  `r_s = r200 / c`, `m = M200 / (ln(1+c) - c/(1+c))`. Converters receive the
-  resolved configuration's `cosmological_parameters` as a third argument
-  (`tnt.potential.registry.ParameterizationConverter`'s signature) so
-  parameterizations like this one that need `H` can use it.
+  `r_s = r200 / c`, `m = M200 / (ln(1+c) - c/(1+c))`. A registered
+  `ForwardConverter` receives the component's raw parameters and the resolved
+  configuration's `cosmological_parameters`; an `InverseConverter` additionally
+  receives the raw parameters' declared units so reported values can be
+  restored to the configured representation. Parameterizations like this one
+  can therefore use `H` without depending on `units.internal`.
   `cosmological_parameters` is
   threaded from `Configuration` through `ModelIterator` (a stored field, set
-  in `from_configuration`) into `build_potential`, mirroring how
-  `unit_system` is already threaded. Since configuration preparation now
+  in `from_configuration`) into `build_potential`. The internal unit system
+  follows a separate path and is retained for `Potential.to_galax()`. Since
+  configuration preparation
   preserves declared quantities as `{value, unit}` rather than stripping
   them (see the units-handling entries above), `ModelIterator.from_configuration`
   converts `cosmological_parameters` into `Quantity`s once via
   `tnt.units.resolve_cosmological_parameters` -- in `tnt.units`, not
   `tnt.potential`, since it's generic declared-quantity conversion with no
-  potential-specific knowledge, matching `normalize_unitful_value`'s existing
-  home rather than the opposite direction (`tnt.units` importing
-  `raw_parameter_dimensions` from
-  `tnt.potential`, which *does* need `tnt.potential`'s own domain
-  knowledge -- galax `ParameterField` metadata, the parameterization
-  registry -- and couldn't move the other way).
+  potential-specific knowledge, matching the other declared-quantity helpers'
+  home in `tnt.units` (`declared_quantity`, `validate_dimension`). `tnt.units`
+  needs `raw_parameter_dimensions` from `tnt.potential` for config validation
+  and imports it lazily inside the one function that uses it.
+  `tnt.mge`/`tnt.kinematics`/`tnt.spatial_binnings` import `tnt.units` for
+  `validate_dimension`/`declared_quantity`, while `tnt.potential` imports those
+  modules, so a module-level import would close the cycle.
   `_nfw_concentration_m200`/its inverse do their entire calculation in
   `Quantity` arithmetic rather than eagerly stripping every input to a bare
   float in one specific unit -- `unxt` composes/converts units automatically
   through the whole chain (verified: mixing `H` in `km / (s Mpc)` with
   `_newtonian_gravitational_constant()` in `m3 / (kg s2)` and `M_200` in `Msun`
-  still gives the correct `r_s`/`m`
-  once converted to `unit_system`'s units at the very end), so `H` works in
-  whatever unit it's declared in, not just the internal unit system's.
+  still gives the correct `r_s`/`m`), so `H` works in whatever unit it is
+  declared in. The forward conversion leaves the native quantities in the
+  units produced by that arithmetic; `Potential.to_galax()` later supplies
+  the shared unit system to `galax`. The inverse returns dimensioned raw
+  parameters in their configured units.
   Bare-number stripping only remains where a library function isn't
   `Quantity`-aware (`_nfw_g`'s `jnp.log`) or where `_solve_nfw_concentration`'s
-  bisection needs a plain number to compare against. Hand-maintained
-  dimension tables now
-  cover only non-native parameterizations and the two MGE composite types'
-  own parameters
-  (`tnt.potential.registry.PARAMETERIZATION_RAW_DIMENSIONS` and
-  `tnt.potential.registry._MGE_RAW_DIMENSIONS`),
-  not native-galax types. A parameterization is deliberately scoped to one
-  component's own raw parameters (plus `unit_system`/`cosmological_parameters`)
-  -- it can't depend on another component's resolved state. NFW's
+  bisection needs a plain number to compare against. A registered non-native
+  parameterization carries its own `raw_dimensions` in its
+  `ParameterizationSpec` (see `register_parameterization`); each registered TNT
+  composite type declares its own `_raw_dimensions`, while curated native
+  `galax` types use `_SUPPORTED_GALAX_TYPES`. A parameterization is deliberately
+  scoped to one component's own raw parameters and, where needed,
+  `cosmological_parameters` -- it cannot depend on another component's
+  resolved state. NFW's
   `(c, f) -> (m, r_s)` "concentration + mass fraction" parameterization
   (`f = M_200 / M*_TOT`, `M*_TOT` derived from the stellar MGE component)
   was removed for exactly this reason: `Potential.from_settings` resolves
@@ -449,11 +516,10 @@
   a `Model`'s real chi2) needs a further bridge -- turning chi2 into a
   `numpyro.factor` -- that doesn't exist yet; deliberately out of scope,
   real future work reusing the same composed-model machinery.
-- Every registered parameterization converts both ways:
-  `tnt.potential.components._PARAMETERIZATIONS`
-  maps to a `tnt.potential.Parameterization(convert, invert)` pair, not a
-  bare converter, so one direction can never be registered without the
-  other. `AbstractPotentialComponent.raw_parameters`/
+- Every registered parameterization converts both ways: a
+  `register_parameterization` call takes `convert` *and* `invert` (bundled in
+  its `ParameterizationSpec`), so one direction can never be registered without
+  the other. `AbstractPotentialComponent.raw_parameters`/
   `tnt.potential.raw_potential_parameters` use `invert` to report a
   `Potential`'s components back in their configuration's own
   parameterization (`Model.raw_parameters`, read by
@@ -470,12 +536,17 @@
   (`forward(inverse(native)) == native`, including after a rescale) rather
   than against any independently derivable expected value, since none
   exists.
+- Every component declared under `potential` is active. Excluding a component
+  means removing or commenting out its complete configuration entry. Each
+  declared component must contain a nonempty `parameters` mapping.
 - Explicit kinematics histogram metadata is grouped under `histogram` as
   `width`, `center`, and `bins`.
-- Defaults for properties of dynamically named potential components and
-  parameters are declared under `dynamic_object_defaults`. The merge layer
-  applies them to each corresponding object unless the user overrides the
-  property on that object.
+- Defaults for dynamically named potential parameters are declared under
+  `dynamic_object_defaults.parameter`. The merge layer applies them to every
+  parameter unless the user overrides the property. The generic resolver can
+  also apply component defaults supplied by schema metadata, but the packaged
+  profile currently declares none; each potential component therefore states
+  its own component-level fields.
 - Policies that depend on a kinematics data-set type are declared under
   `kinematics_type_defaults`. The configuration resolver must select the
   matching type policy and then allow settings on the named data set to
@@ -537,6 +608,13 @@
   exists, later failed-only iterations retain the previous best, skip the
   delta-chi2 check, and allow the generator to continue subject to its normal
   limits.
+- Concrete parameter generators explicitly register their own `_type` through
+  `register_parameter_generator`; `build_parameter_generator` dispatches from
+  that owned registry. Undecorated subclasses are not selectable through
+  configuration, and duplicate or inherited `_type` declarations fail at
+  registration. Configuration validation obtains each generator type's
+  required settings from the registered class, so dispatch and validation
+  share the same authoritative declarations.
 - `parameter_space_settings.stopping_criteria.target_model_count` is a soft
   cumulative target, not a strict maximum. TNT starts a new iteration only
   while the existing model count is below it, then completes every proposed
@@ -612,7 +690,18 @@
   reloads Python logging.
 - Worker processes call `tnt.configure_worker_logging()` with the parent
   session's queue. Only the parent listener writes to the logfile and terminal,
-  avoiding concurrent writes from multiple processes.
+  avoiding concurrent writes from multiple processes. The session creates its
+  queue through an explicit `spawn` multiprocessing context and exposes that
+  same context as `LoggingSession.worker_context`; all worker processes and
+  future process pools must use it. TNT must not call
+  `multiprocessing.set_start_method()`, because the embedding application owns
+  that process-global policy. Spawned worker targets must be importable, and
+  executable entry points must use an `if __name__ == "__main__"` guard.
+- Because `spawn` gives each worker a fresh interpreter with a cold JAX JIT
+  cache, a future worker pool should also set `jax_compilation_cache_dir` (via
+  `jax.config`) so workers load compiled XLA executables from disk instead of
+  each recompiling every jitted function. That is a separate concern from the
+  logging context and belongs with the production-execution work, not here.
 - `tests/integration_tests/test_configuration_session.py` exercises the
   bootstrap lifecycle with `tnt.configuration_session()` against a complete
   example profile (`configuration.yaml`, alongside it), covering every

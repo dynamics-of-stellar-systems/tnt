@@ -28,7 +28,6 @@ def test_default_config_is_packaged() -> None:
     assert "    total_mass: 1.0e-8" in config_text
     assert "    intrinsic_mass: 1.0e-16" in config_text
     assert "dynamic_object_defaults:" in config_text
-    assert "  potential:\n    include: true" in config_text
     assert "  parameter:\n    fixed: false" in config_text
     assert "MGEs: {}" in config_text
     assert "spatial_binnings: {}" in config_text

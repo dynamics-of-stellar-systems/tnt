@@ -3,10 +3,12 @@
 TNT uses [`unxt`](https://unxt.readthedocs.io/) to validate units and define
 two related unit systems:
 
-- `units.internal` defines the canonical units used by runtime converters and
-  later numerical calculations. Potential parameter proposals are an explicit
-  exception: they retain each parameter's declared unit until potential
-  construction consumes them, as described below.
+- `units.internal` names the base units of the unit system TNT hands to
+  `galax` when it constructs a real potential object for orbit integration
+  (and for prior plugins that need one) -- see
+  `Potential.to_galax()`. It is *not* a normalization applied to declared
+  configuration values or to data read from files: those keep the units they
+  are declared in.
 - `units.display` controls presentation preferences. Any dimension not
   overridden there inherits its internal unit.
 
@@ -19,11 +21,20 @@ units:
     time: "Myr"
     mass: "Msun"
     angle: "rad"
-    power: "Lsun"
   display:
     angle: "arcsec"
     speed: "km / s"
 ```
+
+`units.internal` requires exactly four keys -- `length`, `time`, `mass`, and
+`angle` -- the dimensions `galax`'s potential types use that `unxt` cannot
+derive on its own. `unxt` builds `power`, `speed`, `frequency`, ...
+automatically from mass/length/time, so derived dimensions must not be
+declared in `units.internal`. `angle` is dimensionally independent (`unxt`
+cannot decompose `rad` into the mechanical bases) and is a real native
+parameter dimension for some `galax` types, so it must be stated.
+`units.display` accepts `power` and `speed` as optional presentation overrides,
+alongside the four base dimensions.
 
 TNT checks that every unit describes the dimension named by its key. For
 example, using `Myr` as the internal length unit is an error. The resolved
@@ -32,9 +43,9 @@ configuration object exposes the constructed systems as
 
 ## Quantity syntax
 
-Every unitful value must state its unit, even when that unit is the configured
-internal unit and even when the value is zero. Standalone quantities use a
-`value` and `unit` mapping:
+Every unitful value must state its unit, even when that unit matches a
+configured internal unit and even when the value is zero. Standalone
+quantities use a `value` and `unit` mapping:
 
 ```yaml
 system_attributes:
@@ -72,14 +83,21 @@ parameters:
 For a potential parameter, `value` and a declared `prior`'s `args` are all
 coordinates in its declared unit. Parameter generators retain that unit rather
 than eagerly converting the coordinates into the internal unit system;
-potential construction converts or transforms a proposed `Quantity` only when
-its native component or registered parameterization needs it.
+potential construction transforms a proposed `Quantity` only when a registered
+parameterization needs it, and the value first reaches a shared unit system
+inside `Potential.to_galax()`, where `galax`'s own constructor converts it.
 
 Dimensionless fields remain plain numbers and must not add a `unit`. Examples
 include axial ratios, Gauss-Hermite coefficients, relative error factors, and
 unitless warning thresholds.
 
-## Configuration validation and runtime conversion
+## Dimension validation, not conversion
+
+Dimension validation and conversion into orbit-integration units are
+deliberately separate concerns. Every declared unit is checked for
+*dimensional* correctness against a fixed per-dimension reference
+(`tnt.units._REFERENCE_UNITS`) that is independent of any run's chosen unit
+system; the value then keeps its declared or source unit.
 
 Configuration preparation dimensionally validates:
 
@@ -98,21 +116,12 @@ It does not convert these quantities or remove their units. Each per-run
 user profile remains transient input: TNT does not archive its source path or
 bytes, but its declarations survive after defaults have been applied.
 
-Runtime constructors convert the settings they consume. Kinematics builders
-convert explicit histogram width/center and Gauss-Hermite velocity systematic
-uncertainties. Potential parameters are different: they keep their own
-declared unit all the way through `AbstractParameterGenerator` and
-`Potential` construction -- nothing coerces them into a shared internal unit
-system, since `galax`'s own potential classes already convert generically at
-evaluation time. Configuration preparation still validates that a declared
-unit's *dimension* is correct (as listed above), but that check is against
-each dimension's own fixed reference unit, not the configured internal unit
-system (see [Potential](potential.md)). The resolved configuration itself
-remains unchanged. `ModelIterator.from_configuration()` converts
-`cosmological_parameters`, including `H`, into `Quantity` objects for runtime
-consumers such as NFW's `concentration_m200` parameterization. System distance
-remains a declared quantity until a runtime consumer needs it; compatibility
-checks compare its physical value directly from the preserved declaration.
+`ModelIterator.from_configuration()` wraps `cosmological_parameters`,
+including `H`, into `Quantity` objects for runtime consumers such as NFW's
+`concentration_m200` parameterization; those consumers let `unxt` handle any
+conversion rather than assuming a declared unit. System distance remains a
+declared quantity until a runtime consumer needs it; compatibility checks
+compare its physical value directly from the preserved declaration.
 
 Every run receives its own immutable resolved configuration, while resume
 compatibility compares physical meaning. It recognizes atomic `{value, unit}`
@@ -126,26 +135,40 @@ configured JAX runtime precision. In particular, selecting 32-bit JAX
 calculations cannot round away a small change in a preserved configuration
 declaration.
 
-MGE (multi-Gaussian expansion) contents and quantities read from observational
-data files are intentionally not converted during configuration preparation.
-Those files are not opened at this stage. MGE, kinematics, and population
-constructors validate their declared units and convert arrays into the internal
-unit system.
+## Runtime objects keep their source units
 
-Gauss-Hermite velocity columns declare units directly in ECSV. Bayesian LOSVD
-ECSV metadata declares a `velocity_unit` applying to `vcent` and `dv`.
-Proper-motion NPZ archives contain a scalar string `velocity_unit` applying to
-`vxrange` and `vyrange`. Dimensionless moments, distributions, and relative
-uncertainties do not carry a unit.
+MGE contents and quantities read from observational data files are not
+converted during configuration preparation -- those files are not opened at
+that stage -- and they are not converted into a unit system when the runtime
+objects are built either. Each constructor checks its columns' or metadata's
+declared units for the right dimension and then keeps them:
 
-Population ECSV files may mix properties with different physical dimensions.
-Each `property`/`dproperty` pair must declare equivalent units when unitful;
-the pair is converted to the matching internal unit. A pair without declared
-units is treated as dimensionless.
+- **MGE** (`tnt.mge`): the `I`, `sigma`, `q`, and `PA_twist` columns are read
+  in the units the ECSV file declares. `build_mges()` still projects each MGE
+  to physical units with `AbstractMGE.angular_to_physical()`, which works for
+  any angular unit `sigma`/`I` were declared in.
+- **Gauss-Hermite kinematics**: the `v`/`dv`/`sigma`/`dsigma` columns keep
+  their ECSV units; the velocity column's unit is the local reference the
+  quadrature errors and the auto-sized histogram are computed in.
+- **Bayesian LOSVD**: the ECSV metadata's `velocity_unit` (applying to
+  `vcent` and `dv`) is kept.
+- **Proper motions**: the NPZ archive's scalar `velocity_unit` (applying to
+  `vxrange` and `vyrange`) is kept.
+- **Populations**: each `property`/`dproperty` pair must declare
+  dimensionally equivalent units when unitful (any dimension is allowed); the
+  uncertainty is converted into the *value column's* declared unit and that
+  unit is kept. A pair without declared units is treated as dimensionless.
+- **Projected spatial binning**: `min_x`, `min_y`, `x_extent`, `y_extent`,
+  and `PA` are validated as angular quantities and kept in their declared
+  units; `ProjectedBinning` does its grid geometry on demand in `min_x`'s
+  unit, and `build_spatial_binnings()` then projects to physical units the
+  same way `build_mges()` does.
 
-Projected spatial-binning geometry is also converted during runtime-object
-construction rather than preparation. Its `min_x`, `min_y`, `x_extent`,
-`y_extent`, and `PA` fields still use explicit `{value, unit}` mappings in the
-resolved configuration. `ProjectedBinning.from_settings()` validates that
-these are angular quantities and converts them to the internal angle unit when
-`build_spatial_binnings()` loads the binning registry.
+Dimensionless moments, distributions, and relative uncertainties never carry
+a unit.
+
+The one place a shared, explicit unit system is genuinely needed is
+`Potential.to_galax()` and its callers: `galax`'s potential classes require
+an explicit `units=` argument, and converting every parameter and physical
+constant into one fixed system once, outside the JIT-compiled hot loop, is
+what that argument is for.

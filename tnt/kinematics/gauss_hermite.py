@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, ClassVar, Self
+from typing import ClassVar, Self
 
 import equinox as eqx
 import jax.numpy as jnp
-import unxt as u
 from astropy.table import QTable
-from unxt import AbstractUnitSystem, Quantity
+from unxt import Quantity
 
 from tnt.kinematics.base import (
     AbstractKinematics,
@@ -20,9 +19,10 @@ from tnt.kinematics.base import (
     _read_dimensionless_column,
     _same_length,
 )
+from tnt.kinematics.registry import register_kinematics
 from tnt.mge import LightMGE, MassMGE
 from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
-from tnt.units import normalize_unitful_value
+from tnt.units import declared_quantity, validate_dimension
 from tnt.validation import (
     ConfigMapping,
     _finite,
@@ -37,6 +37,7 @@ from tnt.validation import (
 )
 
 
+@register_kinematics
 class GaussHermite(AbstractKinematics):
     """Line-of-sight kinematics represented by Gauss-Hermite moments."""
 
@@ -68,9 +69,14 @@ class GaussHermite(AbstractKinematics):
         data_file: Path,
         binning: ProjectedBinning,
         mge: LightMGE | MassMGE | None,
-        unit_system: AbstractUnitSystem,
     ) -> Self:
-        """Read and construct one configured Gauss-Hermite data set."""
+        """Read and construct one configured Gauss-Hermite data set.
+
+        Each velocity column and systematic keeps its own declared unit; the
+        velocity column's unit is the local reference the derived quantities
+        (quadrature errors, the auto-sized histogram) are computed in -- no
+        unit-system conversion happens here (see `tnt.units`' module docstring).
+        """
         path = f"kinematic_data.{name}"
         _reject_unknown_keys(settings, cls._allowed_settings, path)
         maximum_order = _integer(
@@ -80,40 +86,30 @@ class GaussHermite(AbstractKinematics):
         if maximum_order < 2:
             raise ValueError(f"{path}.maximum_gh_order must be at least 2.")
 
-        systematics = _gauss_hermite_systematics(
-            settings, maximum_order, unit_system, path
-        )
+        systematics = _gauss_hermite_systematics(settings, maximum_order, path)
         table = QTable.read(data_file, format="ascii.ecsv")
         bin_ids = _read_bin_ids(table, data_file)
         _validate_bin_ids_cover_binning(bin_ids, binning, data_file)
-        speed_unit = unit_system[u.dimension("speed")]
 
-        velocity = _read_quantity_column(table, "v", speed_unit, data_file)
-        velocity_error = _read_quantity_column(table, "dv", speed_unit, data_file)
-        dispersion = _read_quantity_column(table, "sigma", speed_unit, data_file)
-        dispersion_error = _read_quantity_column(table, "dsigma", speed_unit, data_file)
+        velocity = _read_quantity_column(table, "v", data_file)
+        velocity_error = _read_quantity_column(table, "dv", data_file)
+        dispersion = _read_quantity_column(table, "sigma", data_file)
+        dispersion_error = _read_quantity_column(table, "dsigma", data_file)
+        speed_unit = velocity.unit
         _same_length(table, bin_ids.shape[0], data_file)
         _positive_finite(dispersion.ustrip(speed_unit), f"{data_file}: sigma")
 
-        velocity_error = _quadrature_quantity(
-            velocity_error, systematics["v"], speed_unit
+        velocity_error = _quadrature_quantity(velocity_error, systematics["v"])
+        dispersion_error = _quadrature_quantity(dispersion_error, systematics["sigma"])
+        _positive_finite(velocity_error.ustrip(velocity_error.unit), f"{data_file}: dv")
+        _positive_finite(
+            dispersion_error.ustrip(dispersion_error.unit), f"{data_file}: dsigma"
         )
-        dispersion_error = _quadrature_quantity(
-            dispersion_error, systematics["sigma"], speed_unit
-        )
-        _positive_finite(velocity_error.ustrip(speed_unit), f"{data_file}: dv")
-        _positive_finite(dispersion_error.ustrip(speed_unit), f"{data_file}: dsigma")
 
         coefficients, coefficient_errors = _read_gh_coefficients(
             table, maximum_order, systematics, data_file
         )
-        histogram = _build_gh_histogram(
-            settings,
-            velocity,
-            dispersion,
-            unit_system,
-            path,
-        )
+        histogram = _build_gh_histogram(settings, velocity, dispersion, path)
         return cls(
             name=name,
             data_file=data_file,
@@ -152,30 +148,29 @@ class GaussHermite(AbstractKinematics):
         return values, uncertainties
 
 
-def _read_quantity_column(
-    table: QTable, name: str, target_unit: Any, data_file: Path
-) -> Quantity:
+def _read_quantity_column(table: QTable, name: str, data_file: Path) -> Quantity:
     if name not in table.colnames:
         raise ValueError(f"{data_file} is missing required column: {name}.")
     column = table[name]
     if column.unit is None:
         raise ValueError(f"{data_file}: column {name} must declare a unit.")
-    quantity = Quantity.from_(column.to(target_unit))
-    _finite(quantity.ustrip(target_unit), f"{data_file}: {name}")
+    validate_dimension(column.unit, "speed", f"{data_file}: column {name}")
+    quantity = Quantity.from_(column)
+    _finite(quantity.ustrip(column.unit), f"{data_file}: {name}")
     return quantity
 
 
-def _quadrature_quantity(error: Quantity, systematic: float, unit: Any) -> Quantity:
-    values = jnp.sqrt(error.ustrip(unit) ** 2 + systematic**2)
+def _quadrature_quantity(error: Quantity, systematic: Quantity) -> Quantity:
+    unit = error.unit
+    values = jnp.sqrt(error.ustrip(unit) ** 2 + systematic.ustrip(unit) ** 2)
     return Quantity(values, unit)
 
 
 def _gauss_hermite_systematics(
     settings: ConfigMapping,
     maximum_order: int,
-    unit_system: AbstractUnitSystem,
     path: str,
-) -> dict[str, float]:
+) -> dict[str, float | Quantity]:
     errors = _mapping(
         _required(settings, "observational_errors", path),
         f"{path}.observational_errors",
@@ -194,22 +189,22 @@ def _gauss_hermite_systematics(
     if missing:
         names = ", ".join(sorted(missing))
         raise ValueError(f"{systematics_path} is missing required field(s): {names}.")
-    result = {}
+    result: dict[str, float | Quantity] = {}
     for key in expected:
         key_path = f"{systematics_path}.{key}"
-        value = (
-            normalize_unitful_value(systematics[key], "speed", unit_system, key_path)
-            if key in {"v", "sigma"}
-            else systematics[key]
-        )
-        result[key] = _nonnegative_number(value, key_path)
+        if key in {"v", "sigma"}:
+            quantity = declared_quantity(systematics[key], "speed", key_path)
+            _nonnegative_number(float(quantity.ustrip(quantity.unit)), key_path)
+            result[key] = quantity
+        else:
+            result[key] = _nonnegative_number(systematics[key], key_path)
     return result
 
 
 def _read_gh_coefficients(
     table: QTable,
     maximum_order: int,
-    systematics: Mapping[str, float],
+    systematics: Mapping[str, float | Quantity],
     data_file: Path,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     values: list[jnp.ndarray] = []
@@ -243,13 +238,12 @@ def _build_gh_histogram(
     settings: ConfigMapping,
     velocity: Quantity,
     dispersion: Quantity,
-    unit_system: AbstractUnitSystem,
     path: str,
 ) -> Histogram:
-    speed_unit = unit_system[u.dimension("speed")]
+    speed_unit = velocity.unit
     histogram = _mapping(_required(settings, "histogram", path), f"{path}.histogram")
     if set(histogram) == {"width", "center", "bins"}:
-        return _explicit_histogram(histogram, unit_system, path)
+        return _explicit_histogram(histogram, path)
     histogram_path = f"{path}.histogram"
     allowed = {"bin_width_sigma_fraction", "center", "sigma_extent"}
     _reject_unknown_keys(histogram, allowed, histogram_path)
@@ -264,15 +258,13 @@ def _build_gh_histogram(
         histogram["bin_width_sigma_fraction"],
         f"{histogram_path}.bin_width_sigma_fraction",
     )
-    center = normalize_unitful_value(
-        histogram["center"], "speed", unit_system, f"{histogram_path}.center"
-    )
+    center = declared_quantity(histogram["center"], "speed", f"{histogram_path}.center")
     v = velocity.ustrip(speed_unit)
     sigma = dispersion.ustrip(speed_unit)
     width = float(2 * jnp.max(jnp.abs(v) + extent * sigma))
     bins = _odd_ceiling(width / (fraction * float(jnp.min(sigma))))
     return Histogram(
         width=Quantity(width, speed_unit),
-        center=Quantity(center, speed_unit),
+        center=center,
         bins=bins,
     )

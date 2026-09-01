@@ -65,8 +65,7 @@ block.
 
 1. Loads the packaged `default_config.yaml` profile.
 2. Recursively merges the user profile over the packaged profile.
-3. Applies common defaults to every dynamically named potential component and
-   parameter.
+3. Applies common defaults to every dynamically named potential parameter.
 4. Applies defaults selected by each kinematics data set's `type`.
 5. Validates the configured unit systems and the dimensions of supported
    unitful quantities without converting or stripping their declarations.
@@ -83,6 +82,8 @@ or list. User values always take precedence over applicable defaults.
 
 The schema-only `dynamic_object_defaults` and `kinematics_type_defaults`
 sections are applied during preparation and omitted from the resolved file.
+The packaged profile currently defines dynamic defaults for parameters only;
+potential components declare their own type and other component-level fields.
 Consequently, the generated YAML contains all scientific and numerical
 settings needed by TNT without depending on the package defaults used during
 the original preparation.
@@ -192,14 +193,21 @@ Population observations must always be supplied through their own
 embedded in a kinematics data file, even when both data sets use the same
 `spatial_binnings` entry.
 
-The supported potential types are `TriaxialLightMGEPotential`, `TriaxialMassMGEPotential`,
-and a curated set of `galax.potential` class names (see
-[Potential](potential.md)). A light-MGE potential requires an `ml`
-mass-to-light parameter. A mass-MGE potential must not declare `ml`,
-because its input MGE already represents mass. Both MGE types also require
-`theta`/`phi`/`psi`, the global viewing angles the named MGE is deprojected
-under. MGE contents and their physical units are inspected only in the
-later object-construction phase.
+The supported potential types are `TriaxialLightMGEPotential`,
+`TriaxialMassMGEPotential`, `OblateLightMGEPotential`,
+`OblateMassMGEPotential`, and a curated set of `galax.potential` class
+names (see [Potential](potential.md)). Every component must declare exactly
+the parameter set its resolved `type`/`parameterization` expects -- a
+missing or unexpected name is rejected at preparation time, for curated
+`galax` types as well as TNT's own MGE composite types, and including native
+fields that have a `galax` constructor default (so the model table is
+complete and reproducible). A light-MGE
+potential requires an `ml` mass-to-light parameter. A mass-MGE potential
+must not declare `ml`, because its input MGE already represents mass.
+Triaxial MGE types also require `theta`/`phi`/`psi`, the global viewing
+angles the named MGE is deprojected under; oblate axisymmetric MGE types
+require a single `inclination` instead. MGE contents and their physical
+units are inspected only in the later object-construction phase.
 
 ## Loading configured MGEs
 
@@ -218,7 +226,6 @@ resolved = config.as_dict()
 mges = build_mges(
     resolved["MGEs"],
     resolved["io_settings"]["input_directory"],
-    config.unit_systems.internal,
     resolve_system_distance(resolved["system_attributes"]),
 )
 ```
@@ -246,7 +253,6 @@ resolved = config.as_dict()
 binnings = build_spatial_binnings(
     resolved["spatial_binnings"],
     resolved["io_settings"]["input_directory"],
-    config.unit_systems.internal,
     resolved["mge_settings"]["projected_mass_quad_order"],
     resolve_system_distance(resolved["system_attributes"]),
 )
@@ -255,11 +261,12 @@ binnings = build_spatial_binnings(
 The returned dictionary uses the configured binning names as keys and contains
 `ProjectedBinning` values. This loading step opens each `.npy` file, validates
 the exact entry schema and inline geometry, and rejects empty, negative, or
-non-contiguous pixel-to-bin arrays. It converts the geometry to the internal
-angle unit, then to physical units via `angular_to_physical(distance)` --
-matching `build_mges` above, so that MGEs and spatial binnings loaded this way
-are always dimensionally consistent -- and precomputes pixel edges and
-quadrature nodes.
+non-contiguous pixel-to-bin arrays. Each angular quantity is validated and
+keeps its declared unit while the grid geometry is constructed. The result is
+then projected to physical units via `angular_to_physical(distance)` -- matching
+`build_mges` above, so that MGEs and spatial binnings loaded this way are always
+dimensionally consistent -- and pixel edges and quadrature nodes are
+precomputed.
 
 `AbstractMGE.get_projected_mass()` integrates an MGE over a
 `ProjectedBinning`; both must be angular or both physical.
@@ -318,13 +325,11 @@ from tnt.spatial_binnings import build_spatial_binnings
 from tnt.units import resolve_system_distance
 
 input_directory = config.data["io_settings"]["input_directory"]
-unit_system = config.unit_systems.internal
 distance = resolve_system_distance(config.data["system_attributes"])
-mges = build_mges(config.data["MGEs"], input_directory, unit_system, distance)
+mges = build_mges(config.data["MGEs"], input_directory, distance)
 spatial_binnings = build_spatial_binnings(
     config.data["spatial_binnings"],
     input_directory,
-    unit_system,
     config.data["mge_settings"]["projected_mass_quad_order"],
     distance,
 )
@@ -332,7 +337,6 @@ spatial_binnings = build_spatial_binnings(
 kinematics = build_kinematics(
     config.data["kinematic_data"],
     input_directory,
-    unit_system,
     spatial_binnings,
     mges,
 )
@@ -373,7 +377,6 @@ from tnt.populations import build_populations
 populations = build_populations(
     config.data["population_data"],
     input_directory,
-    unit_system,
     spatial_binnings,
 )
 ```
@@ -385,9 +388,10 @@ column whose positive, unique integer values cover every positive ID in the
 referenced binning exactly once. It also requires at least one paired
 population property and uncertainty, for example `age`/`dage` or
 `metallicity`/`dmetallicity`. Property names are otherwise unrestricted.
-Declared units on each pair must be equivalent and are converted into the
-internal unit system; columns without declared units are dimensionless. All
-values must be finite and all uncertainties must be strictly positive.
+Declared units on each pair must be equivalent. The value column keeps its
+declared unit and the uncertainty is converted into that same local unit;
+columns without declared units are dimensionless. All values must be finite
+and all uncertainties must be strictly positive.
 
 Population objects do not contain an MGE. A population file must also be
 different from every configured kinematics file; sharing only the

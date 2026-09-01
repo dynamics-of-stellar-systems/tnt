@@ -28,7 +28,9 @@ mass-rescale exponent per native parameter (see [What's implemented
 today](#whats-implemented-today)).
 
 In addition to `galax` potential components, TNT provides MGE-based
-component types, `"TriaxialLightMGEPotential"` and `"TriaxialMassMGEPotential"` (see
+component types -- triaxial (`"TriaxialLightMGEPotential"`/
+`"TriaxialMassMGEPotential"`) and oblate axisymmetric
+(`"OblateLightMGEPotential"`/`"OblateMassMGEPotential"`) (see
 [MGE composite types](#mge-composite-types)).
 
 ## Parameterizations (optional)
@@ -73,7 +75,6 @@ native ones, not carried through unchanged.
 potential:
   bh:
     type: "PlummerPotential"      # a galax.potential class name
-    include: true
     parameters:
       m_tot:                      # galax's own native kwarg name
         value: 5.0
@@ -87,48 +88,64 @@ potential:
   dh:
     type: "NFWPotential"
     parameterization: "concentration_m200"   # non-native
-    include: true
     parameters:
       c: {value: 8.0, fixed: true}
       M_200: {value: 1.0e12, unit: "Msun", fixed: true}
 ```
 
-- `type` (required): a `galax.potential` class name, or one of the two MGE
+- `type` (required): a `galax.potential` class name, or one of the four MGE
   composite type names.
 - `parameterization` (optional): a named conversion registered for `type`.
   Omit it to use `type`'s native parameters directly.
-- `parameters` (required unless `include: false`): one entry per parameter
-  the resolved `type`/`parameterization` pair expects, each with a `value`
-  and, if that parameter carries physical units, a `unit`.
-- `include` (required): whether this component participates in the
-  assembled potential.
+- `parameters` (required): one entry per parameter the resolved
+  `type`/`parameterization` pair expects -- every native field, including
+  ones with a `galax` constructor default (e.g. `TriaxialHernquistPotential`'s
+  `q1`/`q2`) -- each with a `value` and, if it carries physical units, a
+  `unit`.
+
+Every declared component is part of the assembled potential -- to leave one
+out, remove or comment out its entry.
 
 ### MGE composite types
 
-`"TriaxialLightMGEPotential"` and `"TriaxialMassMGEPotential"` build a potential from a
-named Multi-Gaussian Expansion (MGE) -- TNT provides these two types
-directly, since `galax.potential` has no "sum of triaxial Gaussians"
-potential of its own to name. Both require an `mge` field naming a
-registered MGE (see [Configuration preparation](configuration.md)):
+All four build a potential from a named Multi-Gaussian Expansion (MGE) --
+TNT provides these directly, since `galax.potential` has no "sum of
+Gaussians" potential of its own to name for the MGE-specific
+deprojection/composition wiring. All require an `mge` field naming a
+registered MGE (see [Configuration preparation](configuration.md)), and
+split along two independent axes:
+
+- **Mass parameterization**: light types (`ml`, a mass-to-light ratio) vs.
+  mass types (`mge_mass_scale`, a pure multiplicative scale factor on an
+  already mass-calibrated MGE) -- TNT's own parameter names, not `galax`'s.
+- **Deprojection convention**: triaxial types (`theta`/`phi`/`psi`, the
+  global viewing angles the MGE is deprojected under -- see
+  `AbstractMGE.deproject_triaxial`) vs. oblate axisymmetric types (a single
+  `inclination`, in `(0, 90]` degrees -- see `AbstractMGE.deproject_oblate`,
+  which also requires the named MGE's `PA_twist` to be zero for every
+  component, an axisymmetric system having no isophote twist). The
+  axisymmetric deprojection is the oblate convention only (`p = B/A = 1`,
+  `q = C/A <= 1`); a prolate spheroid needs a different relation and would
+  get its own `Prolate...` types.
 
 ```yaml
 potential:
   stars:
     type: "TriaxialLightMGEPotential"
-    include: true
     mge: "mge_lum"
     parameters:
-      ml: {value: 5.0, unit: "Msun / Lsun"}   # TriaxialMassMGEPotential uses mge_mass_scale instead
+      ml: {value: 5.0, unit: "Msun / Lsun"}   # a mass type uses mge_mass_scale instead
       theta: {value: 1.0, unit: "rad"}
       phi: {value: 0.5, unit: "rad"}
       psi: {value: 0.0, unit: "rad"}
-```
 
-`TriaxialLightMGEPotential`'s `ml` (mass-to-light ratio) and `TriaxialMassMGEPotential`'s
-`mge_mass_scale` (a pure multiplicative scale factor on an already
-mass-calibrated MGE) are TNT's own parameter names for these two types.
-`theta`, `phi`, and `psi` are shared by both -- the global viewing angles
-the named MGE is deprojected under (`AbstractMGE.deproject_triaxial`).
+  bulge:
+    type: "OblateLightMGEPotential"
+    mge: "mge_bulge"
+    parameters:
+      ml: {value: 3.0, unit: "Msun / Lsun"}
+      inclination: {value: 90.0, unit: "deg"}   # edge-on; must be in (0, 90] deg
+```
 
 ## What's implemented today
 
@@ -149,7 +166,9 @@ the named MGE is deprojected under (`AbstractMGE.deproject_triaxial`).
 - **NFW's `concentration_m200` parameterization**: implemented and verified
   against `galax`'s own enclosed-mass function. Converts a concentration `c`
   and $M_{200c}$ into native `(m, r_s)` via the critical-density definition
-  of $M_{200c}$: $\rho_\mathrm{crit} = 3 H_0^2 / (8\pi G)$,
+  of $M_{200c}$, using the configured Hubble parameter $H$ (the value at the
+  halo's epoch, not necessarily the present-day $H_0$):
+  $\rho_\mathrm{crit} = 3 H^2 / (8\pi G)$,
   $r_{200} = (3 M_{200} / (4\pi \cdot 200 \rho_\mathrm{crit}))^{1/3}$,
   $r_s = r_{200} / c$, $m = M_{200} / (\ln(1+c) - c/(1+c))$. The reverse
   conversion, native `(m, r_s)` back to `(c, M_200)`, is implemented too --
@@ -161,23 +180,26 @@ the named MGE is deprojected under (`AbstractMGE.deproject_triaxial`).
   (converting the recovered `(c, M_200)` forward again reproduces the same
   rescaled `(m, r_s)`), since there's no independent closed-form answer to
   check against.
-- **The two MGE composite types**: implemented. The named MGE is deprojected
-  under `theta`/`phi`/`psi` (`AbstractMGE.deproject_triaxial`) once, when the
-  component itself is built from a proposed point in parameter space -- not
-  lazily inside `to_galax()` -- so an invalid viewing geometry
+- **All four MGE composite types**: implemented. The named MGE is
+  deprojected -- triaxial types under `theta`/`phi`/`psi`
+  (`AbstractMGE.deproject_triaxial`), oblate axisymmetric types under a
+  single `inclination` (`AbstractMGE.deproject_oblate`) -- once, when the
+  component itself is built from a proposed point in parameter space, not
+  lazily inside `to_galax()`, so an invalid viewing geometry
   (`tnt.mge.MGEDeprojectionError`, for a deprojection with no real solution
   or intrinsic axial ratios outside TNT's `0 < q <= p <= 1` convention)
   surfaces there, before anything downstream is attempted. `to_galax()` then
-  sums one `galax.potential.TriaxialGaussianPotential` per Gaussian
-  component -- `galax` gained native axisymmetric/triaxial Gaussian
-  potentials and `CompositePotential` after this was first scoped, so no
-  custom `galax.potential.AbstractPotential` subclass or new potential
-  formula was needed after all; the two densities match term for term
-  (`r_s <-> sigma`, `q1 <-> p`, `q2 <-> q`), giving a direct, verified
-  `m_tot = I * p * q * (2*pi)**1.5 * sigma**3` conversion per component.
-  `(theta, phi, psi)` are native; the alternative `(p, q, u)`
-  shape/compression parameterization closer to the
-  triaxial-Schwarzschild-modeling / DYNAMITE-successor literature isn't
+  sums one `galax.potential.TriaxialGaussianPotential` /
+  `AxisymmetricGaussianPotential` per Gaussian component -- `galax` gained
+  these native Gaussian potentials and `CompositePotential` after this was
+  first scoped, so no custom `galax.potential.AbstractPotential` subclass or
+  new potential formula was needed after all; each density matches its
+  `Deprojected3DMGE` counterpart term for term (`r_s <-> sigma`,
+  `q1 <-> p`, `q2 <-> q`; an oblate axisymmetric deprojection's `p` is always 1),
+  giving a direct, verified `m_tot = I * p * q * (2*pi)**1.5 * sigma**3`
+  conversion per component. `(theta, phi, psi)` / `inclination` are native;
+  the alternative `(p, q, u)` shape/compression parameterization closer to
+  the triaxial-Schwarzschild-modeling / DYNAMITE-successor literature isn't
   registered yet -- converting it to `(theta, phi, psi)` needs a formula
   that hasn't been confirmed.
 - **`Potential.generate_orbit_library`**: not implemented -- blocked on

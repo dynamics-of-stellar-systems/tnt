@@ -30,7 +30,6 @@ def _config(input_directory: Path) -> dict[str, object]:
                 "time": "Myr",
                 "mass": "Msun",
                 "angle": "rad",
-                "power": "Lsun",
             },
             "display": {"angle": "arcsec"},
         },
@@ -65,7 +64,6 @@ def _config(input_directory: Path) -> dict[str, object]:
         },
         "potential": {
             "stars": {
-                "include": True,
                 "type": "TriaxialLightMGEPotential",
                 "mge": "light",
                 "parameters": {
@@ -463,6 +461,43 @@ def test_resume_rejects_unavailable_historical_chi2(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ConfigurationCompatibilityError, match="no such column"):
+        ensure_resume_compatible(
+            _critical_configuration(config),
+            baseline_run,
+            models,
+            "kinchi2",
+        )
+
+
+def test_resume_rejects_missing_declared_potential_parameter_column(
+    tmp_path: Path,
+) -> None:
+    input_directory = tmp_path / "input"
+    _write_inputs(input_directory)
+    config = _config(input_directory)
+    config["potential"]["halo"] = {
+        "type": "PlummerPotential",
+        "parameters": {
+            "m_tot": {"value": 1.0, "unit": "Msun"},
+            "b": {"value": 1.0, "unit": "kpc"},
+        },
+    }
+    baseline_run = _run(tmp_path, 0, config)
+    models = AllModels(
+        QTable(
+            {
+                "stars.q": [0.8],
+                "stars.ml": [5.0],
+                "halo.m_tot": [1.0],
+                "iteration": [0],
+                "orblib_done": [True],
+                "weights_done": [True],
+                "kinchi2": [1.0],
+            }
+        )
+    )
+
+    with pytest.raises(ConfigurationCompatibilityError, match=r"halo\.b"):
         ensure_resume_compatible(
             _critical_configuration(config),
             baseline_run,

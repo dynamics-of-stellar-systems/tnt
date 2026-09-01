@@ -1,4 +1,4 @@
-"""`Potential`: the sum of included components, and its module-level helpers."""
+"""`Potential`: the sum of its components, and its module-level helpers."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 class Potential(eqx.Module):
-    """The sum of included potential components, at one point in parameter space."""
+    """The sum of the potential components, at one point in parameter space."""
 
     components: dict[str, AbstractPotentialComponent]
 
@@ -32,7 +32,7 @@ class Potential(eqx.Module):
         settings: Mapping[str, Mapping[str, Any]],
         mges: Mapping[str, LightMGE | MassMGE],
     ) -> dict[str, ResolvedPotentialComponent]:
-        """Resolve every included component's static structure, once per run.
+        """Resolve every component's static structure, once per run.
 
         See `AbstractPotentialComponent.resolve` -- a caller building many
         `Potential`s from the same configuration (e.g. `ModelIterator`,
@@ -43,13 +43,11 @@ class Potential(eqx.Module):
         for name, component_value in settings.items():
             path = f"potential.{name}"
             component_settings = _mapping(component_value, path)
-            if not component_settings.get("include", True):
-                continue
             resolved[name] = AbstractPotentialComponent.resolve(
                 component_settings, mges, path=path
             )
         if not resolved:
-            raise ValueError("potential must contain at least one included component.")
+            raise ValueError("potential must contain at least one component.")
         return resolved
 
     @classmethod
@@ -57,18 +55,15 @@ class Potential(eqx.Module):
         cls,
         resolved: Mapping[str, ResolvedPotentialComponent],
         parameter_values: ParameterSet,
-        unit_system: AbstractUnitSystem,
         cosmological_parameters: Mapping[str, Quantity],
     ) -> Self:
         """Build a `Potential` from resolved static structure and a proposed point.
 
         Args:
-            resolved: Every included component's static structure, e.g.
+            resolved: Every component's static structure, e.g.
                 from `Potential.resolve`.
             parameter_values: The current point in parameter space, e.g. a
                 `tnt.parameter_generator.ParameterSet`.
-            unit_system: Passed through to each component's construction --
-                see `ResolvedPotentialComponent.build`.
             cosmological_parameters: A resolved configuration's
                 `cosmological_parameters` section -- used only by
                 parameterizations that need it, e.g. NFW's `concentration_m200`.
@@ -76,7 +71,7 @@ class Potential(eqx.Module):
         return cls(
             components={
                 name: component.build(
-                    parameter_values.get(name, {}), unit_system, cosmological_parameters
+                    parameter_values.get(name, {}), cosmological_parameters
                 )
                 for name, component in resolved.items()
             }
@@ -88,7 +83,6 @@ class Potential(eqx.Module):
         settings: Mapping[str, Mapping[str, Any]],
         parameter_values: ParameterSet,
         mges: Mapping[str, LightMGE | MassMGE],
-        unit_system: AbstractUnitSystem,
         cosmological_parameters: Mapping[str, Quantity],
     ) -> Self:
         """Build a `Potential` from a resolved configuration's `potential` section.
@@ -101,14 +95,13 @@ class Potential(eqx.Module):
         return cls.build(
             cls.resolve(settings, mges),
             parameter_values,
-            unit_system,
             cosmological_parameters,
         )
 
     def to_galax(
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
-        """This potential's included components, composed into one `galax` potential."""
+        """This potential's components, composed into one `galax` potential."""
         return galax.potential.CompositePotential(
             {
                 name: component.to_galax(unit_system)
@@ -154,37 +147,51 @@ class Potential(eqx.Module):
 def build_potential(
     resolved: Mapping[str, ResolvedPotentialComponent],
     parameter_values: ParameterSet,
-    unit_system: AbstractUnitSystem,
     cosmological_parameters: Mapping[str, Quantity],
 ) -> Potential:
     """Build the `Potential` from pre-resolved static structure and a proposed point.
 
     Args:
-        resolved: Every included component's static structure, e.g. from
+        resolved: Every component's static structure, e.g. from
             `Potential.resolve(config["potential"], mges)`, called once per
             run.
         parameter_values: The current point in parameter space, e.g. a
             `tnt.parameter_generator.ParameterSet`.
-        unit_system: Passed through to each component's construction.
         cosmological_parameters: A resolved configuration's
             `cosmological_parameters` section -- used only by
             parameterizations that need it, e.g. NFW's `concentration_m200`.
 
     Returns:
-        A `Potential` assembled from every included component.
+        A `Potential` assembled from every component.
     """
-    return Potential.build(
-        resolved, parameter_values, unit_system, cosmological_parameters
-    )
+    return Potential.build(resolved, parameter_values, cosmological_parameters)
+
+
+def _declared_parameter_units(
+    component_settings: Mapping[str, Any],
+) -> dict[str, str]:
+    """Each raw parameter's declared unit string, from a `potential.<name>` entry.
+
+    Dimensionless parameters (no declared `unit`) are simply absent -- a
+    registered `invert` converter only looks up the dimensioned ones (see
+    `tnt.potential.nfw._nfw_concentration_m200_inverse`).
+    """
+    parameters = component_settings.get("parameters")
+    if not isinstance(parameters, Mapping):
+        return {}
+    return {
+        name: spec["unit"]
+        for name, spec in parameters.items()
+        if isinstance(spec, Mapping) and "unit" in spec
+    }
 
 
 def raw_potential_parameters(
     potential_settings: Mapping[str, Mapping[str, Any]],
     potential: Potential,
-    unit_system: AbstractUnitSystem,
     cosmological_parameters: Mapping[str, Quantity],
 ) -> dict[str, dict[str, Quantity]]:
-    """Every included component's parameters, in the config's own parameterization.
+    """Every component's parameters, in the config's own parameterization.
 
     The inverse of `build_potential`/`Potential.from_settings`: where those
     convert each raw config parameter into `galax`'s native constructor
@@ -201,28 +208,24 @@ def raw_potential_parameters(
 
     Args:
         potential_settings: A resolved configuration's `potential` section
-            (e.g. `ModelIterator.potential_settings`) -- only each
-            component's `parameterization` is used.
+            (e.g. `ModelIterator.potential_settings`) -- each component's
+            `parameterization` and its parameters' declared units are used.
         potential: The resolved `Potential` to report, e.g. from
             `build_potential`, possibly after `Potential.rescale`.
-        unit_system: Passed through to a registered `parameterization`'s
-            inverse converter, e.g. NFW's `concentration_m200` needs it to
-            compute a critical density.
         cosmological_parameters: A resolved configuration's
             `cosmological_parameters` section -- used only by
             parameterizations that need it, e.g. NFW's `concentration_m200`.
 
     Returns:
-        A mapping from each included component's name to its raw
+        A mapping from each component's name to its raw
         parameters, keyed exactly as its configuration's `parameters` are.
     """
-    return {
-        name: component.raw_parameters(
-            _mapping(potential_settings.get(name, {}), f"potential.{name}").get(
-                "parameterization"
-            ),
-            unit_system,
+    raw: dict[str, dict[str, Quantity]] = {}
+    for name, component in potential.components.items():
+        settings = _mapping(potential_settings.get(name, {}), f"potential.{name}")
+        raw[name] = component.raw_parameters(
+            settings.get("parameterization"),
+            _declared_parameter_units(settings),
             cosmological_parameters,
         )
-        for name, component in potential.components.items()
-    }
+    return raw

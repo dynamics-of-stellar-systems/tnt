@@ -2,18 +2,20 @@
 
 `AbstractPotentialComponent` (here) is the base every concrete component
 subclasses -- `GalaxPotentialComponent` (also here, built directly from a
-curated `galax.potential` class) and the MGE-backed composite types
-(`tnt.potential.triaxial_mge`, with more planned as separate modules
-alongside it). `resolve` dispatches to whichever subclass matches a
-config entry's `type` by walking `cls.__subclasses__()` -- a new *direct*
-subclass with a `_type` participates automatically, without needing to be
-registered here, but this walk isn't recursive and doesn't check for a
-duplicate `_type` across two subclasses (unlike, e.g.,
-`tnt.kinematics`'s equivalent registry) -- narrower than it sounds; a
-metadata-on-class redesign that closes both gaps is tracked separately
-rather than fixed here. `ResolvedPotentialComponent` is a component's static
-structure (`type`/`parameterization`/`mge`), resolved once from its config
-entry and reused across every proposed point in parameter space; see
+curated `galax.potential` class) and the MGE-backed composite types (one
+module per deprojection convention: `tnt.potential.triaxial_mge` and
+`tnt.potential.oblate_mge`). `resolve` dispatches to whichever subclass
+matches a config entry's `type` via
+the explicit registry in `tnt.potential.registry` -- a concrete subclass
+participates by applying `tnt.potential.registry.register_component`
+directly to its own definition, the moment its module is imported;
+`tnt/potential/__init__.py`'s own explicit imports of every concrete
+implementation module (`triaxial_mge`, `oblate_mge`) are what make that
+happen in the first place -- a module that's never imported never
+participates.
+`ResolvedPotentialComponent` is a component's static structure
+(`type`/`parameterization`/`mge`), resolved once from its config entry and
+reused across every proposed point in parameter space; see
 `AbstractPotentialComponent.resolve`.
 """
 
@@ -27,22 +29,16 @@ import galax.potential
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import LightMGE, MassMGE
-from tnt.potential.nfw import _nfw_concentration_m200, _nfw_concentration_m200_inverse
 from tnt.potential.registry import (
     _SUPPORTED_GALAX_TYPES,
-    Parameterization,
-    ParameterizationConverter,
+    ForwardConverter,
+    component_type_names,
+    get_component_class,
+    get_parameterization,
+    parameterization_names,
     raw_parameter_dimensions,
 )
 from tnt.validation import _required_string, _string
-
-_PARAMETERIZATIONS: dict[str, dict[str, Parameterization]] = {
-    "NFWPotential": {
-        "concentration_m200": Parameterization(
-            _nfw_concentration_m200, _nfw_concentration_m200_inverse
-        ),
-    },
-}
 
 
 class ResolvedPotentialComponent(NamedTuple):
@@ -56,13 +52,12 @@ class ResolvedPotentialComponent(NamedTuple):
 
     component_cls: type[AbstractPotentialComponent]
     raw_dimensions: dict[str, str]
-    convert: ParameterizationConverter | None
+    convert: ForwardConverter | None
     extra_fields: dict[str, Any]
 
     def build(
         self,
         parameter_values: Mapping[str, Quantity],
-        unit_system: AbstractUnitSystem,
         cosmological_parameters: Mapping[str, Quantity],
     ) -> AbstractPotentialComponent:
         """Build this component from one proposed point in parameter space.
@@ -73,31 +68,32 @@ class ResolvedPotentialComponent(NamedTuple):
         conversion happens here (see `tnt.potential`'s module docstring for
         why). Passed straight through as-is -- a missing or otherwise wrong
         parameter surfaces at construction (a native `galax` constructor
-        error, or `AbstractMGE.deproject_triaxial` for the two MGE composite
-        types, via `AbstractPotentialComponent._build`) or a registered
-        `parameterization` converter, not here -- parameter-schema
-        validation (exact expected names, positivity, ...) is a separate,
-        not-yet-implemented concern.
+        error, or `AbstractMGE.deproject_triaxial`/`deproject_oblate` for the
+        four MGE composite types, via `AbstractPotentialComponent._build`) or a
+        registered
+        `parameterization` converter, not here. Exact-name parameter-schema
+        validation -- for TNT's own registered component types, curated native
+        `galax` types, and registered parameterizations alike -- already
+        happens earlier, at configuration-prep time
+        (`tnt.configuration.validation._validate_potential`). Value/domain
+        validation (positivity, physical bounds, ...) isn't implemented
+        anywhere yet (GitHub issue #30).
 
         Args:
             parameter_values: This component's current values, e.g. one
                 entry of a `tnt.parameter_generator.ParameterSet`.
-            unit_system: Passed through to a registered `parameterization`
-                converter (e.g. NFW's `concentration_m200` needs it to
-                compute a critical density) and to the resulting component's
-                own construction.
             cosmological_parameters: Passed through to a registered
                 `parameterization` converter that needs it, e.g. NFW's
                 `concentration_m200` via `H`.
         """
         raw = dict(parameter_values)
         canonical = (
-            self.convert(raw, unit_system, cosmological_parameters)
+            self.convert(raw, cosmological_parameters)
             if self.convert is not None
             else raw
         )
         return self.component_cls._build(
-            canonical, unit_system, cosmological_parameters, self.extra_fields
+            canonical, cosmological_parameters, self.extra_fields
         )
 
 
@@ -109,12 +105,12 @@ class AbstractPotentialComponent(eqx.Module):
     its own exponent, curated per class (see
     `tnt.potential.registry._SUPPORTED_GALAX_TYPES`) -- e.g.
     `LogarithmicPotential`'s `v_c` scales alongside a true mass parameter
-    like Plummer's `m_tot`, each by its own confirmed exponent. For the two
+    like Plummer's `m_tot`, each by its own confirmed exponent. For the four
     MGE composite types, `rescale` multiplies their one TNT-defined
     mass-normalization parameter (`ml`/`mge_mass_scale`) directly.
     `parameters` always holds canonical, parameterization-independent
     fields: for a native galax type these are exactly that class's own
-    constructor kwarg names; for the two MGE composite types, TNT's own
+    constructor kwarg names; for the four MGE composite types, TNT's own
     `ml`/`mge_mass_scale`.
     """
 
@@ -142,7 +138,7 @@ class AbstractPotentialComponent(eqx.Module):
             settings: One resolved `potential.<name>` entry: `type`, an
                 optional `parameterization`, and `parameters`.
             mges: Named MGEs, e.g. from `tnt.mge.build_mges` -- used only by
-                the two MGE composite types.
+                the four MGE composite types.
             path: This entry's location in the configuration, used in error
                 messages.
 
@@ -159,25 +155,16 @@ class AbstractPotentialComponent(eqx.Module):
         """
         kind = _required_string(settings, "type", path)
         # Every non-native concrete subclass (e.g. the MGE composite types
-        # in tnt.potential.triaxial_mge) declares its own `_type`;
-        # GalaxPotentialComponent doesn't, and stays the default -- walking
-        # __subclasses__() here, rather than a hand-maintained registry,
-        # means a new *direct* subclass participates the moment it's
-        # imported. Doesn't recurse into further subclasses, and a
-        # duplicate `_type` across two subclasses silently overwrites
-        # rather than raising (see this module's own docstring).
-        registered = {
-            subclass._type: subclass
-            for subclass in cls.__subclasses__()
-            if hasattr(subclass, "_type")
-        }
-        component_cls = registered.get(kind, GalaxPotentialComponent)
+        # in tnt.potential.triaxial_mge / tnt.potential.oblate_mge) registers
+        # itself via tnt.potential.registry.register_component;
+        # GalaxPotentialComponent doesn't, and stays the default.
+        component_cls = get_component_class(kind) or GalaxPotentialComponent
         unsupported = (
             component_cls is GalaxPotentialComponent
             and kind not in _SUPPORTED_GALAX_TYPES
         )
         if unsupported:
-            allowed = ", ".join(sorted(registered))
+            allowed = ", ".join(sorted(component_type_names()))
             raise ValueError(
                 f"Unsupported {path}.type {kind!r}; expected a supported "
                 "galax.potential class name (see "
@@ -186,18 +173,19 @@ class AbstractPotentialComponent(eqx.Module):
             )
 
         parameterization_name = settings.get("parameterization")
-        convert: ParameterizationConverter | None = None
+        convert: ForwardConverter | None = None
         if parameterization_name is not None:
             _string(parameterization_name, f"{path}.parameterization")
-            converters = _PARAMETERIZATIONS.get(kind, {})
-            try:
-                convert = converters[parameterization_name].convert
-            except KeyError as error:
-                allowed = ", ".join(sorted(converters)) or "(none implemented yet)"
+            spec = get_parameterization(kind, parameterization_name)
+            if spec is None:
+                allowed = (
+                    ", ".join(parameterization_names(kind)) or "(none implemented yet)"
+                )
                 raise NotImplementedError(
                     f"{path}.parameterization {parameterization_name!r} is not "
                     f"implemented for type {kind!r}; implemented: {allowed}."
-                ) from error
+                )
+            convert = spec.convert
 
         return ResolvedPotentialComponent(
             component_cls=component_cls,
@@ -222,15 +210,15 @@ class AbstractPotentialComponent(eqx.Module):
     def _build(
         cls,
         parameters: dict[str, Quantity],
-        unit_system: AbstractUnitSystem,
         cosmological_parameters: Mapping[str, Quantity],
         extra_fields: dict[str, Any],
     ) -> Self:
         """Construct this component from its canonical `parameters` and static fields.
 
-        The default just constructs directly -- the two MGE composite types
-        (`tnt.potential.triaxial_mge`) override this to deproject and validate
-        their MGE eagerly, here, rather than lazily inside `to_galax()`: this is
+        The default just constructs directly -- the four MGE composite types
+        (`tnt.potential.triaxial_mge`, `tnt.potential.oblate_mge`) override
+        this to deproject and validate their MGE eagerly, here, rather than
+        lazily inside `to_galax()`: this is
         the point where the proposed parameter values are turned into a concrete
         potential, so it's the appropriate place for that potential to fail if
         it's invalid (e.g. `tnt.mge.MGEDeprojectionError`), before anything
@@ -240,14 +228,12 @@ class AbstractPotentialComponent(eqx.Module):
             parameters: This component's canonical, parameterization-independent
                 parameter values (post-`ResolvedPotentialComponent.build`'s
                 `convert` step).
-            unit_system: Passed through for subclasses that need it; unused by
-                the default implementation.
             cosmological_parameters: Passed through for subclasses that need it;
                 unused by the default implementation.
             extra_fields: This component's resolved static structure beyond
                 `parameters`, e.g. `galax_type` or `mge` -- see `_extra_fields`.
         """
-        del unit_system, cosmological_parameters
+        del cosmological_parameters
         return cls(parameters=parameters, **extra_fields)
 
     def to_galax(
@@ -273,7 +259,7 @@ class AbstractPotentialComponent(eqx.Module):
     def raw_parameters(
         self,
         parameterization: str | None,
-        unit_system: AbstractUnitSystem,
+        declared_units: Mapping[str, str],
         cosmological_parameters: Mapping[str, Quantity],
     ) -> dict[str, Quantity]:
         """This component's parameters in the resolved config's own parameterization.
@@ -283,11 +269,21 @@ class AbstractPotentialComponent(eqx.Module):
         actually specifies it, regardless of `rescale`. Identity by default:
         `parameters` already *is* the raw, parameterization-independent
         representation for anything without a registered non-native
-        parameterization -- both MGE composite types (which don't support
+        parameterization -- the four MGE composite types (which don't support
         one at all) and a native `galax` type with `parameterization`
         omitted.
+
+        Args:
+            parameterization: The registered non-native parameterization
+                the configuration specified, or `None`.
+            declared_units: Each raw parameter's declared unit string, from
+                the component's `potential.<name>.parameters` section --
+                passed to a registered `invert` converter so a reported value
+                comes back in the configured unit.
+            cosmological_parameters: Passed through to an `invert` converter
+                that needs it, e.g. NFW's `concentration_m200` via `H`.
         """
-        del parameterization, unit_system, cosmological_parameters
+        del parameterization, declared_units, cosmological_parameters
         return self.parameters
 
 
@@ -342,10 +338,15 @@ class GalaxPotentialComponent(AbstractPotentialComponent):
     def raw_parameters(
         self,
         parameterization: str | None,
-        unit_system: AbstractUnitSystem,
+        declared_units: Mapping[str, str],
         cosmological_parameters: Mapping[str, Quantity],
     ) -> dict[str, Quantity]:
         if parameterization is None:
             return self.parameters
-        invert = _PARAMETERIZATIONS[self.galax_type][parameterization].invert
-        return invert(self.parameters, unit_system, cosmological_parameters)
+        spec = get_parameterization(self.galax_type, parameterization)
+        if spec is None:  # unreachable: resolve() already validated it
+            raise NotImplementedError(
+                f"{self.galax_type}.{parameterization!r} is not a registered "
+                "parameterization."
+            )
+        return spec.invert(self.parameters, declared_units, cosmological_parameters)

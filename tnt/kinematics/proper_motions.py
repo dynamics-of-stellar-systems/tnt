@@ -10,8 +10,7 @@ from typing import ClassVar, Self
 import astropy.units as au
 import jax.numpy as jnp
 import numpy as np
-import unxt as u
-from unxt import AbstractUnitSystem, Quantity
+from unxt import Quantity
 
 from tnt.kinematics.base import (
     AbstractKinematics,
@@ -19,8 +18,10 @@ from tnt.kinematics.base import (
     _explicit_histogram,
     _nonnegative_finite,
 )
+from tnt.kinematics.registry import register_kinematics
 from tnt.mge import LightMGE, MassMGE
 from tnt.spatial_binnings import ProjectedBinning, _validate_bin_ids_cover_binning
+from tnt.units import validate_dimension
 from tnt.validation import (
     BIN_ID_COLUMN,
     ConfigMapping,
@@ -35,6 +36,7 @@ from tnt.validation import (
 _LOGGER = logging.getLogger(__name__)
 
 
+@register_kinematics
 class ProperMotions(AbstractKinematics):
     """Two-dimensional proper-motion velocity distributions."""
 
@@ -63,9 +65,12 @@ class ProperMotions(AbstractKinematics):
         data_file: Path,
         binning: ProjectedBinning,
         mge: LightMGE | MassMGE | None,
-        unit_system: AbstractUnitSystem,
     ) -> Self:
-        """Read and construct one configured proper-motion data set."""
+        """Read and construct one configured proper-motion data set.
+
+        The velocity ranges keep the unit declared in the NPZ archive; no
+        unit-system conversion happens here (see `tnt.units`' module docstring).
+        """
         path = f"kinematic_data.{name}"
         _reject_unknown_keys(settings, cls._allowed_settings, path)
         variance_scale = _proper_motion_variance_scale(settings, path)
@@ -90,11 +95,8 @@ class ProperMotions(AbstractKinematics):
             bin_ids = _validated_bin_ids(archive[BIN_ID_COLUMN], data_file)
             stars = jnp.asarray(archive["nstarbin"])
             source_unit = au.Unit(str(archive["velocity_unit"].item()))
-            speed_unit = unit_system[u.dimension("speed")]
-            ranges = source_unit.to(
-                speed_unit,
-                np.asarray([archive["vxrange"], archive["vyrange"]], dtype=float),
-            )
+            validate_dimension(source_unit, "speed", f"{data_file}: velocity_unit")
+            ranges = np.asarray([archive["vxrange"], archive["vyrange"]], dtype=float)
 
         _validate_bin_ids_cover_binning(bin_ids, binning, data_file)
         _validate_proper_motion_arrays(
@@ -106,13 +108,11 @@ class ProperMotions(AbstractKinematics):
         distribution = distribution / normalization[:, None, None]
         uncertainty = uncertainty / normalization[:, None, None]
         observed_histogram = Histogram2D(
-            width=Quantity(2 * jnp.asarray(ranges), speed_unit),
-            center=Quantity(jnp.zeros(2), speed_unit),
+            width=Quantity(2 * jnp.asarray(ranges), source_unit),
+            center=Quantity(jnp.zeros(2), source_unit),
             bins=(int(distribution.shape[1]), int(distribution.shape[2])),
         )
-        histogram = _proper_motion_histogram(
-            settings, observed_histogram, unit_system, path
-        )
+        histogram = _proper_motion_histogram(settings, observed_histogram, path)
         _warn_about_proper_motion_sampling(
             name, distribution, observed_histogram, thresholds
         )
@@ -199,15 +199,16 @@ def _validate_proper_motion_arrays(
 def _proper_motion_histogram(
     settings: ConfigMapping,
     observed: Histogram2D,
-    unit_system: AbstractUnitSystem,
     path: str,
 ) -> Histogram2D:
     if "histogram" not in settings:
         return observed
     configured = _explicit_histogram(
-        _mapping(settings["histogram"], f"{path}.histogram"), unit_system, path
+        _mapping(settings["histogram"], f"{path}.histogram"), path
     )
-    speed_unit = unit_system[u.dimension("speed")]
+    # Match the observed histogram's unit -- the local reference this data
+    # set is expressed in -- rather than any run's unit system.
+    speed_unit = observed.width.unit
     return Histogram2D(
         width=Quantity(jnp.repeat(configured.width.ustrip(speed_unit), 2), speed_unit),
         center=Quantity(
