@@ -53,12 +53,12 @@ class AbstractWeightSolver(eqx.Module):
 class NNLSWeightSolver(AbstractWeightSolver):
     """Non-negative least squares weight solver.
 
-    `solver` names a JAX-native NNLS implementation -- cvxopt/scipy are no
-    longer supported, since they aren't traceable/jittable. Which JAX
-    option(s) `solver` picks between is still undecided (see
+    `solver` names a JAX-native NNLS implementation. TNT requires a
+    traceable/jittable solver rather than a cvxopt/scipy implementation.
+    Which JAX option(s) `solver` picks between is still undecided (see
     `weight_solver_settings.nnls_solver` in `tnt.configuration.validation`);
-    once chosen, `solve` becoming jittable removes what was otherwise the
-    main obstacle to jitting `ModelIterator._evaluate`.
+    once chosen, a jittable `solve` permits `ModelIterator._evaluate` to be
+    jitted as well.
     """
 
     _type: ClassVar[str] = "NNLS"
