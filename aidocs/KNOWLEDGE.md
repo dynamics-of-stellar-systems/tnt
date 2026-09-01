@@ -502,12 +502,21 @@
   `sample`/`factor` plugin contract) and a documented worked example (see
   `docs/source/model_search.md`'s "Priors" section). A plugin is a plain
   Python function loaded from its own `.py` file (file-path-only, resolved
-  relative to `io_settings.input_directory`, not an installed package) that
-  may only call `numpyro.factor` -- never `sample`/`deterministic` -- so it
-  can add a soft preference over already-established values but can never
-  independently assign or overwrite a parameter, ruling out any collision
-  with that parameter's own ordinary `prior` by construction, not
-  validation. `Prior.sample` auto-selects `numpyro.infer.Predictive` (no
+  relative to `io_settings.input_directory`, not an installed package) with a
+  fixed signature: `def fn(context: tnt.priors.PriorContext) -> None`,
+  callable with one positional argument (a trailing default parameter or
+  `*args` is tolerated but never populated; `load_prior_plugin` rejects any
+  other arity).
+  `PriorContext` is an `eqx.Module` -- the single, extensible object holding
+  the run state a plugin may read (`context.candidate`, `context.mges`
+  today); adding a field there stays backward-compatible because a plugin
+  only ever names that one argument. It is built once per draw inside the
+  numpyro model, after every `sample` site, and consumed immediately -- never
+  a traced/`jit` argument, so its size costs nothing. A plugin may only call
+  `numpyro.factor` -- never `sample`/`deterministic` -- so it can add a soft
+  preference over already-established values but can never independently
+  assign or overwrite a parameter, ruling out any collision with that
+  parameter's own ordinary `prior` by construction, not validation. `Prior.sample` auto-selects `numpyro.infer.Predictive` (no
   factor sites) or `numpyro.infer.MCMC`/`NUTS` (any factor sites present) --
   a hard `Uniform.log_prob` factor does not work well with NUTS (flat
   interior gradient, discontinuous boundary; verified empirically, not just

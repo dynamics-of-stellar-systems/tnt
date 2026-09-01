@@ -56,10 +56,11 @@ _STARS_MGE = LightMGE(
 _MGES = {"stars": _STARS_MGE}
 
 
-def _mass_fraction_plugin(mges, candidate) -> None:
+def _mass_fraction_plugin(context) -> None:
     import numpyro
 
-    stars = mges["stars"]
+    stars = context.mges["stars"]
+    candidate = context.candidate
     # `candidate`'s values are bare (unit-stripped) numbers -- see
     # `Prior.sample`'s docstring -- so `total_light` must be stripped to
     # match, in the same unit its `ml` prior's args are implicitly in
@@ -130,9 +131,7 @@ def test_sample_with_factors_uses_mcmc_and_concentrates_near_the_factor() -> Non
 
 def test_load_prior_plugin_loads_the_named_function(tmp_path: Path) -> None:
     plugin_file = tmp_path / "mass_fraction.py"
-    plugin_file.write_text(
-        "def mass_fraction(mges, candidate):\n    pass\n", encoding="utf-8"
-    )
+    plugin_file.write_text("def mass_fraction(context):\n    pass\n", encoding="utf-8")
 
     function = load_prior_plugin("mass_fraction.py:mass_fraction", tmp_path)
 
@@ -147,11 +146,30 @@ def test_load_prior_plugin_rejects_a_missing_function(tmp_path: Path) -> None:
         load_prior_plugin("mass_fraction.py:mass_fraction", tmp_path)
 
 
-def test_load_prior_plugins_loads_every_configured_entry(tmp_path: Path) -> None:
+def test_load_prior_plugin_rejects_a_wrong_arity_signature(tmp_path: Path) -> None:
     plugin_file = tmp_path / "mass_fraction.py"
     plugin_file.write_text(
         "def mass_fraction(mges, candidate):\n    pass\n", encoding="utf-8"
     )
+
+    with pytest.raises(TypeError, match="must be callable as"):
+        load_prior_plugin("mass_fraction.py:mass_fraction", tmp_path)
+
+
+def test_load_prior_plugin_allows_a_trailing_default_argument(tmp_path: Path) -> None:
+    plugin_file = tmp_path / "mass_fraction.py"
+    plugin_file.write_text(
+        "def mass_fraction(context, _scratch=None):\n    pass\n", encoding="utf-8"
+    )
+
+    function = load_prior_plugin("mass_fraction.py:mass_fraction", tmp_path)
+
+    assert function.__name__ == "mass_fraction"
+
+
+def test_load_prior_plugins_loads_every_configured_entry(tmp_path: Path) -> None:
+    plugin_file = tmp_path / "mass_fraction.py"
+    plugin_file.write_text("def mass_fraction(context):\n    pass\n", encoding="utf-8")
 
     plugins = load_prior_plugins(
         {"dh_mass_fraction": {"plugin": "mass_fraction.py:mass_fraction"}}, tmp_path

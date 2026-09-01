@@ -275,17 +275,29 @@ A plugin function may only call `numpyro.factor` -- never `numpyro.sample` or
 plugins compose safely with no coordination between them: a plugin can add a
 soft log-density preference over values already established elsewhere, but
 it can never independently assign or overwrite a parameter's value, so it can
-never collide with that parameter's own declared `prior`. A plugin receives
-the run's named MGEs and the candidate assembled so far:
+never collide with that parameter's own declared `prior`.
+
+**The signature is fixed:** a plugin is callable with one positional argument,
+a `tnt.priors.PriorContext`, and returns nothing. (A trailing parameter with a
+default, or `*args`, is tolerated but never populated; any other arity is
+rejected when the plugin is loaded.) `PriorContext` carries the run's
+state a plugin is allowed to read -- currently `context.candidate` (the
+parameter values assembled so far this draw, `{component: {parameter: value}}`,
+bare unit-stripped numbers) and `context.mges` (the run's named MGEs). New
+fields are added there over time; because a plugin only ever names this one
+argument, that stays backward-compatible.
 
 ```python
 import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
 
+from tnt.priors import PriorContext
 
-def mass_fraction(mges, candidate):
-    stars = mges["stars"]
+
+def mass_fraction(context: PriorContext) -> None:
+    stars = context.mges["stars"]
+    candidate = context.candidate
     # `candidate`'s values are bare (unit-stripped) numbers, so `total_light`
     # is stripped to match -- here to Lsun, paired with `ml`'s Msun / Lsun.
     # Stripping the per-component term before summing (rather than summing
