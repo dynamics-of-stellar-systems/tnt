@@ -61,6 +61,7 @@ from tnt.potential.oblate_mge import (
 )
 from tnt.potential.registry import _SUPPORTED_GALAX_TYPES as _SUPPORTED_GALAX_TYPES
 from tnt.potential.registry import (
+    InvalidPotentialParametersError,
     NativeParameter,
     raw_parameter_dimensions,
 )
@@ -72,6 +73,7 @@ from tnt.potential.triaxial_mge import (
 __all__ = [
     "AbstractPotentialComponent",
     "GalaxPotentialComponent",
+    "InvalidPotentialParametersError",
     "NativeParameter",
     "OblateLightMGEPotential",
     "OblateMassMGEPotential",

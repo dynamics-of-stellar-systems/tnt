@@ -54,6 +54,7 @@ from tnt.parameter_generator import (
 )
 from tnt.populations import Populations, build_populations
 from tnt.potential import (
+    InvalidPotentialParametersError,
     Potential,
     ResolvedPotentialComponent,
     build_potential,
@@ -431,9 +432,10 @@ class ModelIterator:
         Sets `Model.valid_potential`/`orblib_done`/`weights_done` (and
         `weights`/`chi2`) to reflect what actually happened, per `Model`'s own
         docstring, rather than assuming success. `build_potential` failing
-        with `MGEDeprojectionError` (an invalid MGE viewing geometry) is
-        caught specifically, since it's the one currently-possible way a
-        `Potential` itself can fail to build. A failed orbit integration or
+        with `MGEDeprojectionError` (an invalid MGE viewing geometry) or
+        `InvalidPotentialParametersError` (a proposed point outside its
+        component's physical domain) is recorded as an invalid model. A
+        failed orbit integration or
         weight solve, distinct from that, is caught as a bare `Exception` --
         there's no narrower exception type established anywhere else in the
         codebase yet for either failure, so this is a placeholder pending one.
@@ -453,7 +455,7 @@ class ModelIterator:
                 parameters,
                 self.cosmological_parameters,
             )
-        except MGEDeprojectionError as error:
+        except (MGEDeprojectionError, InvalidPotentialParametersError) as error:
             _LOGGER.warning("Invalid potential for %s: %s", parameters, error)
             return [_invalid_potential_model(parameters)]
 

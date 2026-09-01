@@ -22,6 +22,7 @@ scientific input data.
 
 from __future__ import annotations
 
+import operator
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
@@ -55,6 +56,18 @@ configuration declares, so a reported value comes back in the parameterization
 """
 
 
+class InvalidPotentialParametersError(ValueError):
+    """A proposed parameter set cannot define a physically valid potential."""
+
+
+_RELATION_OPERATORS: dict[str, Callable[[float, float], bool]] = {
+    ">": operator.gt,
+    ">=": operator.ge,
+    "<": operator.lt,
+    "<=": operator.le,
+}
+
+
 class ParameterConstraint(NamedTuple):
     """Bounds and an optional same-component parameter relationship.
 
@@ -74,6 +87,62 @@ class ParameterConstraint(NamedTuple):
     unit: str | None = None
     other_parameter: str | None = None
     relation: Literal[">", ">=", "<", "<="] | None = None
+
+    def violation(
+        self,
+        value: Quantity,
+        siblings: Mapping[str, Quantity],
+    ) -> str | None:
+        """Return why ``value`` violates this constraint, or ``None``.
+
+        Constraint metadata has already been checked by registration, and the
+        caller must first verify the parameter mapping's names, types,
+        dimensions, scalar shapes, and finite values.
+        """
+        unit = self.unit or value.unit
+        try:
+            number = float(value.ustrip(unit))
+        except (TypeError, ValueError):
+            return f"{value} cannot be compared in constraint unit {unit!s}."
+
+        if self.minimum is not None:
+            valid = (
+                number >= self.minimum
+                if self.minimum_inclusive
+                else number > self.minimum
+            )
+            if not valid:
+                relation = "at least" if self.minimum_inclusive else "greater than"
+                suffix = f" {unit}" if str(unit) else ""
+                return f"{value} must be {relation} {self.minimum}{suffix}."
+
+        if self.maximum is not None:
+            valid = (
+                number <= self.maximum
+                if self.maximum_inclusive
+                else number < self.maximum
+            )
+            if not valid:
+                relation = "at most" if self.maximum_inclusive else "less than"
+                suffix = f" {unit}" if str(unit) else ""
+                return f"{value} must be {relation} {self.maximum}{suffix}."
+
+        if self.other_parameter is None:
+            return None
+        other_value = siblings[self.other_parameter]
+        try:
+            other = float(other_value.ustrip(unit))
+        except (TypeError, ValueError):
+            return (
+                f"{value} and parameter {self.other_parameter!r} "
+                f"({other_value}) do not have compatible units."
+            )
+        if not _RELATION_OPERATORS[self.relation](number, other):
+            return (
+                f"{value} must be {self.relation} parameter "
+                f"{self.other_parameter!r} ({other_value})."
+            )
+        return None
 
 
 class ParameterizationSpec(NamedTuple):

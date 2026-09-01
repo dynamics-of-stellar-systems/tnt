@@ -33,6 +33,7 @@ from tnt.mge import LightMGE, MassMGE
 from tnt.potential.registry import (
     _SUPPORTED_GALAX_TYPES,
     ForwardConverter,
+    InvalidPotentialParametersError,
     ParameterConstraint,
     component_type_names,
     get_component_class,
@@ -88,20 +89,24 @@ class ResolvedPotentialComponent(NamedTuple):
                 `concentration_m200` via `H`.
         """
         raw = dict(parameter_values)
-        _validate_parameter_values(
-            raw,
-            self.raw_dimensions,
-            self.raw_constraints,
-            path=self.path,
-            stage="raw",
+        _check_parameter_set_contract(
+            raw, self.raw_dimensions, path=self.path, stage="raw"
+        )
+        _validate_parameter_constraints(
+            raw, self.raw_constraints, path=self.path, stage="raw"
         )
         if self.convert is None:
             canonical = raw
         else:
             canonical = self.convert(raw, cosmological_parameters)
-            _validate_parameter_values(
+            _check_parameter_set_contract(
                 canonical,
                 self.canonical_dimensions,
+                path=self.path,
+                stage="converted",
+            )
+            _validate_parameter_constraints(
+                canonical,
                 self.canonical_constraints,
                 path=self.path,
                 stage="converted",
@@ -111,15 +116,14 @@ class ResolvedPotentialComponent(NamedTuple):
         )
 
 
-def _validate_parameter_values(
+def _check_parameter_set_contract(
     values: Mapping[str, Quantity],
     dimensions: Mapping[str, str],
-    constraints: Mapping[str, ParameterConstraint],
     *,
     path: str,
     stage: str,
 ) -> None:
-    """Validate one component's raw or canonical runtime parameter mapping."""
+    """Check the generator/converter contract for one parameter mapping."""
     expected = set(dimensions)
     actual = set(values)
     if actual != expected:
@@ -130,7 +134,7 @@ def _validate_parameter_values(
             details.append(f"missing {missing}")
         if extra:
             details.append(f"unexpected {extra}")
-        raise ValueError(
+        raise InvalidPotentialParametersError(
             f"Invalid {stage} parameters for {path}: {', '.join(details)}."
         )
 
@@ -144,89 +148,34 @@ def _validate_parameter_values(
         try:
             validate_dimension(value.unit, dimensions[name], label)
         except ValueError as error:
-            raise ValueError(f"Invalid {stage} value: {error}") from error
+            raise InvalidPotentialParametersError(
+                f"Invalid {stage} value: {error}"
+            ) from error
         stripped = value.ustrip(value.unit)
         if getattr(stripped, "shape", ()) != ():
-            raise ValueError(
+            raise InvalidPotentialParametersError(
                 f"Invalid {stage} value for {label}: expected a scalar, "
                 f"got shape {getattr(stripped, 'shape', None)}."
             )
         if not math.isfinite(float(stripped)):
-            raise ValueError(
+            raise InvalidPotentialParametersError(
                 f"Invalid {stage} value for {label}: {value} must be finite."
             )
 
+
+def _validate_parameter_constraints(
+    values: Mapping[str, Quantity],
+    constraints: Mapping[str, ParameterConstraint],
+    *,
+    path: str,
+    stage: str,
+) -> None:
+    """Apply registered physical-domain constraints to checked parameters."""
     for name, constraint in constraints.items():
-        value = values[name]
-        label = f"{path}.parameters.{name}"
-        unit = constraint.unit or value.unit
-        try:
-            number = float(value.ustrip(unit))
-        except (TypeError, ValueError) as error:
-            raise ValueError(
-                f"Invalid {stage} value for {label}: {value} cannot be "
-                f"compared in constraint unit {unit!s}."
-            ) from error
-
-        if constraint.minimum is not None:
-            valid = (
-                number >= constraint.minimum
-                if constraint.minimum_inclusive
-                else number > constraint.minimum
-            )
-            if not valid:
-                relation = (
-                    "at least" if constraint.minimum_inclusive else "greater than"
-                )
-                suffix = f" {unit}" if str(unit) else ""
-                raise ValueError(
-                    f"Invalid {stage} value for {label}: {value} must be "
-                    f"{relation} {constraint.minimum}{suffix}."
-                )
-        if constraint.maximum is not None:
-            valid = (
-                number <= constraint.maximum
-                if constraint.maximum_inclusive
-                else number < constraint.maximum
-            )
-            if not valid:
-                relation = "at most" if constraint.maximum_inclusive else "less than"
-                suffix = f" {unit}" if str(unit) else ""
-                raise ValueError(
-                    f"Invalid {stage} value for {label}: {value} must be "
-                    f"{relation} {constraint.maximum}{suffix}."
-                )
-
-        if constraint.other_parameter is None and constraint.relation is None:
-            continue
-        if constraint.other_parameter is None or constraint.relation is None:
-            raise RuntimeError(
-                f"Incomplete relationship constraint for {path}.parameters.{name}."
-            )
-        other_name = constraint.other_parameter
-        if other_name not in values:
-            raise RuntimeError(
-                f"Constraint for {path}.parameters.{name} refers to unknown "
-                f"parameter {other_name!r}."
-            )
-        try:
-            other = float(values[other_name].ustrip(unit))
-        except (TypeError, ValueError) as error:
-            raise ValueError(
-                f"Invalid {stage} values for {path}: parameters {name!r} and "
-                f"{other_name!r} do not have compatible units."
-            ) from error
-        comparisons = {
-            ">": number > other,
-            ">=": number >= other,
-            "<": number < other,
-            "<=": number <= other,
-        }
-        if not comparisons[constraint.relation]:
-            raise ValueError(
-                f"Invalid {stage} value for {label}: {value} must be "
-                f"{constraint.relation} {path}.parameters.{other_name} "
-                f"({values[other_name]})."
+        violation = constraint.violation(values[name], values)
+        if violation is not None:
+            raise InvalidPotentialParametersError(
+                f"Invalid {stage} value for {path}.parameters.{name}: {violation}"
             )
 
 

@@ -15,12 +15,14 @@ import logging
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import jax.numpy as jnp
 import pytest
 import unxt as u
 
 import tnt.model_iterator as model_iterator_module
-from tnt.mge import MGEDeprojectionError
+from tnt.mge import LightMGE, MGEDeprojectionError
 from tnt.model_iterator import ModelIterator
+from tnt.potential import Potential
 from tnt.run_config_log import (
     RunConfigLog,
     RunManifestReference,
@@ -237,6 +239,65 @@ def test_evaluate_logs_and_flags_invalid_potential_build(
     assert record.levelno == logging.WARNING
     assert "invalid potential" in record.message.lower()
     assert "{'bh': {'m': 1.0}}" in record.message
+
+
+def test_evaluate_records_domain_invalid_oblate_inclination(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    light_mge = LightMGE(
+        I=u.Quantity(jnp.array([1.0]), "Lsun / rad2"),
+        sigma=u.Quantity(jnp.array([1.0]), "rad"),
+        q=u.Quantity(jnp.array([1.0]), ""),
+        PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+    ).angular_to_physical(u.Quantity(30.0, "Mpc"))
+    resolved = Potential.resolve(
+        {
+            "stars": {
+                "type": "OblateLightMGEPotential",
+                "mge": "mge_lum",
+                "parameters": {},
+            }
+        },
+        {"mge_lum": light_mge},
+    )
+    iterator = _make_iterator(resolved_potential=resolved)
+    parameters = {
+        "stars": {
+            "ml": u.Quantity(5.0, "Msun / Lsun"),
+            "inclination": u.Quantity(180.0, "deg"),
+        }
+    }
+
+    with caplog.at_level(logging.WARNING, logger="tnt.model_iterator"):
+        (model,) = iterator._evaluate(parameters)
+
+    assert model.potential is None
+    assert model.valid_potential is False
+    assert model.orblib_done is False
+    assert model.weights_done is False
+    assert model.raw_parameters == parameters
+    [record] = caplog.records
+    assert "invalid potential" in record.message.lower()
+    assert "inclination" in record.message
+    assert "at most 90" in record.message
+
+
+def test_evaluate_does_not_record_a_non_quantity_programming_error() -> None:
+    resolved = Potential.resolve(
+        {"bh": {"type": "PlummerPotential", "parameters": {}}},
+        {},
+    )
+    iterator = _make_iterator(resolved_potential=resolved)
+
+    with pytest.raises(TypeError, match=r"m_tot.*expected a Quantity"):
+        iterator._evaluate(
+            {
+                "bh": {
+                    "m_tot": 5.0,
+                    "r_s": u.Quantity(1.0e-3, "kpc"),
+                }
+            }
+        )
 
 
 def test_evaluate_logs_and_flags_weight_solve_failure(

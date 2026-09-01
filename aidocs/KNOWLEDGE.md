@@ -410,6 +410,14 @@
   `_constraints`; parameterization raw constraints live in the same registered
   `ParameterizationSpec` as its converters and schema. Registration rejects
   constraint names or relationships that disagree with their owning schema.
+  `components._check_parameter_set_contract()` separately enforces the
+  generator/converter pipeline contract; each `ParameterConstraint.violation()`
+  owns its bound and relationship evaluation. Physical-domain and well-formed
+  `Quantity` failures raise `InvalidPotentialParametersError`, which
+  `ModelIterator._evaluate()` records as an invalid model alongside
+  `MGEDeprojectionError`. A non-`Quantity` value remains an uncaught `TypeError`
+  because it indicates a programming error rather than a physically invalid
+  proposed point.
   TNT's chosen physical policy is strict positivity for every mass, MGE
   normalization (`ml`/`mge_mass_scale`), and scale length, including parameters
   such as Miyamoto-Nagai `a`; zero does not disable a component or select a
