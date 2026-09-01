@@ -251,3 +251,26 @@ From the PR head on macOS (Apple Silicon):
 Whether Low 1's refactor happens in this PR (bundled with the Medium fix,
 since both touch `_validate_parameter_values`) or as an immediate fast-follow
 -- either is reasonable, but the Medium fix itself is not optional.
+
+## Resolution update
+
+All findings were addressed on the PR branch:
+
+- The Medium finding now has a dedicated
+  `InvalidPotentialParametersError`, which `ModelIterator._evaluate()` records
+  as an invalid potential candidate. An end-to-end oblate-inclination
+  regression covers this path, while a non-`Quantity` programming error still
+  propagates.
+- Low 1 was resolved by separating the parameter-set contract check from
+  physical-domain validation and moving bound/relationship evaluation onto
+  `ParameterConstraint.violation()`.
+- Low 2 was resolved by documenting that potential construction is an eager
+  Python boundary outside `jax.jit`/`jax.vmap` and that only the constructed
+  potential enters compiled numerical work.
+- Low 3 was resolved by formatting the Python files changed by the PR. The
+  remaining current-state wording in `NNLSWeightSolver` was also clarified.
+
+Linux validation through the Colima development container completed with
+**370 tests passed** (one dependency-owned JAX deprecation warning),
+`ruff check .` passed, and strict Sphinx
+(`sphinx-build -E -b html -W docs/source docs/build/html`) passed.
