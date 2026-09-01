@@ -6,7 +6,7 @@ curated `galax.potential` class) and the MGE-backed composite types (one
 module per deprojection convention: `tnt.potential.triaxial_mge` and
 `tnt.potential.oblate_mge`). `resolve` dispatches to whichever subclass
 matches a config entry's `type` via
-`tnt.potential.registry._COMPONENT_REGISTRY` -- a concrete subclass
+the explicit registry in `tnt.potential.registry` -- a concrete subclass
 participates by applying `tnt.potential.registry.register_component`
 directly to its own definition, the moment its module is imported;
 `tnt/potential/__init__.py`'s own explicit imports of every concrete
@@ -30,9 +30,10 @@ from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import LightMGE, MassMGE
 from tnt.potential.registry import (
-    _COMPONENT_REGISTRY,
     _SUPPORTED_GALAX_TYPES,
     ForwardConverter,
+    component_type_names,
+    get_component_class,
     get_parameterization,
     parameterization_names,
     raw_parameter_dimensions,
@@ -157,13 +158,13 @@ class AbstractPotentialComponent(eqx.Module):
         # in tnt.potential.triaxial_mge / tnt.potential.oblate_mge) registers
         # itself via tnt.potential.registry.register_component;
         # GalaxPotentialComponent doesn't, and stays the default.
-        component_cls = _COMPONENT_REGISTRY.get(kind, GalaxPotentialComponent)
+        component_cls = get_component_class(kind) or GalaxPotentialComponent
         unsupported = (
             component_cls is GalaxPotentialComponent
             and kind not in _SUPPORTED_GALAX_TYPES
         )
         if unsupported:
-            allowed = ", ".join(sorted(_COMPONENT_REGISTRY))
+            allowed = ", ".join(sorted(component_type_names()))
             raise ValueError(
                 f"Unsupported {path}.type {kind!r}; expected a supported "
                 "galax.potential class name (see "

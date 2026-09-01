@@ -1,10 +1,9 @@
 """Validate resolved TNT configuration data without constructing objects.
 
-Configuration validation may import component modules to read their static
-registration metadata (`_type`, `_raw_dimensions`, and
-`tnt.potential.registry._COMPONENT_REGISTRY`). Import-time registration is
-allowed; validation must not instantiate scientific objects, load scientific
-input data, or begin scientific execution.
+Configuration validation may import runtime-family modules to read their static
+registration metadata (`_type`, `_raw_dimensions`, and registry type names).
+Import-time registration is allowed; validation must not instantiate
+scientific objects, load scientific input data, or begin scientific execution.
 """
 
 from __future__ import annotations
@@ -12,8 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from tnt.kinematics.registry import kinematics_type_names
+from tnt.parameter_generator import parameter_generator_required_settings
 from tnt.potential.registry import (
-    _COMPONENT_REGISTRY,
+    is_registered_component_type,
     parameter_schema_is_known,
     raw_parameter_dimensions,
 )
@@ -51,7 +52,6 @@ _TOP_LEVEL_KEYS = {
     "units",
     "weight_solver_settings",
 }
-_KINEMATICS_TYPES = {"bayes_losvd", "gauss_hermite", "proper_motions"}
 
 
 def validate_resolved_configuration(config: ConfigDict) -> None:
@@ -307,7 +307,7 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
         else:
             raise ValueError(f"{component_path} is missing required field: parameters.")
 
-        is_mge_potential = component_type in _COMPONENT_REGISTRY
+        is_mge_potential = is_registered_component_type(component_type)
         if is_mge_potential:
             _require_keys(component, {"mge"}, component_path)
             _validate_registry_reference(
@@ -450,7 +450,7 @@ def _validate_kinematics(
         )
         _choice(
             settings["type"],
-            _KINEMATICS_TYPES,
+            set(kinematics_type_names()),
             f"{settings_path}.type",
         )
         filename = _string(settings["data_file"], f"{settings_path}.data_file")
@@ -616,10 +616,9 @@ def _validate_weight_solver_settings(settings: ConfigDict) -> None:
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
     _choice(settings["type"], {"NNLS"}, f"{path}.type")
-    # cvxopt/scipy are no longer supported -- only JAX-native NNLS solvers
-    # will be. Which one(s) is still undecided, so this only checks that a
-    # name was given; tighten to a `_choice` over the real options once
-    # chosen.
+    # TNT will use a JAX-native NNLS solver. The specific implementation is
+    # undecided, so this only checks that a name was given; tighten to a
+    # `_choice` over the real options once chosen.
     _string(settings["nnls_solver"], f"{path}.nnls_solver")
     _positive_number(settings["maxiter_factor"], f"{path}.maxiter_factor")
     _nonnegative_number(settings["regularisation"], f"{path}.regularisation")
@@ -635,19 +634,6 @@ def _validate_weight_solver_settings(settings: ConfigDict) -> None:
         )
 
 
-# Which `generator_settings` keys each `generator_type` requires. Mirrors
-# each `tnt.parameter_generator.AbstractParameterGenerator` subclass's own
-# `_required_generator_settings` -- kept as plain data here, rather than
-# imported from `tnt.parameter_generator`, since that module (transitively,
-# via `tnt.all_models`/`tnt.model`/`tnt.potential`) pulls in `galax`, which
-# this validation-only module should not depend on just to read
-# configuration.
-_GENERATOR_SETTINGS_KEYS = {
-    "GridSearch": frozenset({"delta_chi2_threshold"}),
-    "SinglePoint": frozenset(),
-}
-
-
 def _validate_parameter_space_settings(settings: ConfigDict) -> None:
     path = "parameter_space_settings"
     keys = {
@@ -659,16 +645,17 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
     }
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
+    required_settings_by_type = parameter_generator_required_settings()
     generator_type = _choice(
         settings["generator_type"],
-        set(_GENERATOR_SETTINGS_KEYS),
+        set(required_settings_by_type),
         f"{path}.generator_type",
     )
     _choice(
         settings["which_chi2"], {"chi2", "kinchi2", "kinmapchi2"}, f"{path}.which_chi2"
     )
     generator = _required_mapping(settings, "generator_settings", path)
-    required_generator_keys = _GENERATOR_SETTINGS_KEYS[generator_type]
+    required_generator_keys = required_settings_by_type[generator_type]
     # Not `_reject_unknown_keys`: recursive default-merging can't remove a
     # mapping key, so a user who overrides `generator_type` away from the
     # packaged default's ("GridSearch") still inherits its

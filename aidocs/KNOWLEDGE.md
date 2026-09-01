@@ -24,8 +24,13 @@
 - `tnt/configuration/` groups configuration resolution and preservation
   (`core.py`), preparation-time schema validation (`validation.py`), and
   resume compatibility (`compatibility.py`).
+- `tnt/registry.py` provides the small shared class-registration mechanic used
+  by configured runtime-object families. Each family owns its registry,
+  public lookup helpers, and domain-specific decorator; the shared helper
+  only enforces an explicitly declared, unique, non-empty `_type`.
 - `tnt/kinematics/` keeps shared base objects in `base.py`, one concrete data
-  family per module, and registry/orchestration logic in `__init__.py`.
+  family per module, explicit registration in `registry.py`, and construction
+  orchestration in `__init__.py`.
 - `tnt/potential/` separates curated type metadata (`registry.py`), NFW
   parameterization mathematics (`nfw.py`), the component hierarchy
   (`components.py`), and whole-potential orchestration (`core.py`). Its
@@ -34,14 +39,14 @@
 - TNT's own potential-component types (as opposed to curated native `galax`
   types) register themselves with `tnt.potential.registry.register_component`,
   applied directly to each concrete `AbstractPotentialComponent` subclass's
-  definition (e.g. `tnt.potential.triaxial_mge`). The decorator reads the
-  class's own `_type`/`_raw_dimensions` class attributes into
-  `registry._COMPONENT_REGISTRY`, a single dict both
-  `AbstractPotentialComponent.resolve` (runtime dispatch) and
-  `tnt.configuration.validation` (config-prep exact-parameter-name schema
-  checks) read from directly. A class participates only when it is explicitly
-  decorated. `tnt/potential/__init__.py` must import every concrete component
-  module so its decorators run during normal package initialization.
+  definition (e.g. `tnt.potential.triaxial_mge`). The decorator registers the
+  class under its own `_type`; schema access reads `_raw_dimensions` from that
+  registered class. Runtime dispatch uses its lookup helper, while
+  configuration validation uses its public type predicate and schema accessors
+  rather than reading private registry state. A class participates only when
+  it is explicitly decorated.
+  `tnt/potential/__init__.py` must import every concrete component module so
+  its decorators run during normal package initialization.
 - `tnt.configuration`'s "does not construct scientific objects" boundary
   permits imports needed to read static registration metadata. Import-time
   registration is allowed; configuration preparation must not instantiate
@@ -316,9 +321,11 @@
   mapping. Its runtime boundary rejects incorrectly typed registry values.
 - `AbstractKinematics.binning` is strictly a `ProjectedBinning`; its optional
   `mge` is strictly a `LightMGE` or `MassMGE`. Each concrete kinematics class
-  owns its configuration identifier in `_type`, and the builder's dispatch
-  registry is derived from those subclasses with duplicate detection rather
-  than maintained independently.
+  owns its configuration identifier in `_type` and explicitly registers via
+  `tnt.kinematics.registry.register_kinematics`. Both runtime dispatch and
+  configuration validation read the kinematics-owned registry through public
+  accessors. Undecorated subclasses do not silently become configuration
+  types, and duplicate or inherited `_type` declarations fail at registration.
 - `AbstractKinematics.design_matrix()` defines the weight-solver projection
   boundary introduced by the model-architecture scaffold. It deliberately
   raises `NotImplementedError` until orbit integration and the concrete
@@ -359,8 +366,8 @@
   parameter schema comes straight from its own registered `_raw_dimensions`
   (see `register_component`), not a second hand-written list.
   Deliberately curated rather than "any `AbstractPotential` subclass":
-  `galax` also exports abstract/base classes (which passed the old
-  `issubclass` check and only failed later, confusingly, at `to_galax()`),
+  `galax` also exports abstract/base classes, which cannot be constructed as
+  concrete TNT potential components;
   pre-packaged multi-component bundles with no free parameters of their own
   like `MilkyWayPotential`/`LM10Potential` (their `disk`/`bulge`/`halo`/
   `nucleus` fields are themselves sub-potentials, not `ParameterField`s --
@@ -369,8 +376,7 @@
   (e.g. `TranslatedPotential`, `FlattenedInThePotential` -- these do carry
   their own `ParameterField`s, but the required nested potential still
   isn't representable), and classes needing a required non-`Quantity`
-  hyperparameter (`MultipolePotential`'s `l_max: int`, which the old
-  dispatch silently mis-wrapped as a dimensionless `Quantity`) -- none
+  hyperparameter (`MultipolePotential`'s `l_max: int`) -- none
   representable by the scalar `parameters.<name>.value` schema. Checked
   directly against every one of galax's 45
   `AbstractPotential` subclasses: 28 have every field either a scalar
@@ -406,13 +412,10 @@
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`
-  constructor kwargs exactly; their physical dimensions are read directly
-  from `_SUPPORTED_GALAX_TYPES` (each entry a `NativeParameter(dimension,
-  exponent)`). Dynamic derivation from `galax`'s own
-  `ParameterField(dimensions=...)` metadata isn't production code at all any
-  more -- since curating dimension by hand costs nothing extra once every
-  parameter is individually verified for its exponent anyway, that
-  derivation now lives only as a test-local helper in
+  constructor kwargs exactly; production reads their physical dimensions
+  directly from `_SUPPORTED_GALAX_TYPES` (each entry a
+  `NativeParameter(dimension, exponent)`). Dynamic derivation from `galax`'s
+  own `ParameterField(dimensions=...)` metadata is a test-local helper in
   `tests/unit_tests/test_potential.py`
   (`test_supported_galax_types_covers_every_curated_class_parameter` cross-checks
   the curated table against it).
@@ -459,11 +462,11 @@
   `tnt.potential`, since it's generic declared-quantity conversion with no
   potential-specific knowledge, matching the other declared-quantity helpers'
   home in `tnt.units` (`declared_quantity`, `validate_dimension`). `tnt.units`
-  still needs `raw_parameter_dimensions` from `tnt.potential` for config
-  validation, but imports it lazily inside the one function that uses it:
-  `tnt.mge`/`tnt.kinematics`/`tnt.spatial_binnings` now import `tnt.units` for
-  `validate_dimension`/`declared_quantity`, and `tnt.potential` imports those,
-  so a module-level import would close the cycle.
+  needs `raw_parameter_dimensions` from `tnt.potential` for config validation
+  and imports it lazily inside the one function that uses it.
+  `tnt.mge`/`tnt.kinematics`/`tnt.spatial_binnings` import `tnt.units` for
+  `validate_dimension`/`declared_quantity`, while `tnt.potential` imports those
+  modules, so a module-level import would close the cycle.
   `_nfw_concentration_m200`/its inverse do their entire calculation in
   `Quantity` arithmetic rather than eagerly stripping every input to a bare
   float in one specific unit -- `unxt` composes/converts units automatically
@@ -585,6 +588,13 @@
   exists, later failed-only iterations retain the previous best, skip the
   delta-chi2 check, and allow the generator to continue subject to its normal
   limits.
+- Concrete parameter generators explicitly register their own `_type` through
+  `register_parameter_generator`; `build_parameter_generator` dispatches from
+  that owned registry. Undecorated subclasses are not selectable through
+  configuration, and duplicate or inherited `_type` declarations fail at
+  registration. Configuration validation obtains each generator type's
+  required settings from the registered class, so dispatch and validation
+  share the same authoritative declarations.
 - `parameter_space_settings.stopping_criteria.target_model_count` is a soft
   cumulative target, not a strict maximum. TNT starts a new iteration only
   while the existing model count is below it, then completes every proposed

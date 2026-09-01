@@ -227,11 +227,13 @@ potential-component name to a mapping of parameter name to value (e.g.
 `AbstractParameterGenerator` implements one method,
 `generate_parameters(all_models)`, returning the next round of `ParameterSet`s
 to evaluate given every model evaluated so far. Which implementation runs is
-chosen by `parameter_space_settings.generator_type`:
+chosen by `parameter_space_settings.generator_type`. Concrete generators
+explicitly register their `_type`; an undecorated subclass is not a
+configuration-selectable generator:
 
-- `GridSearchParameterGenerator` ("GridSearch") proposes parameters on a grid,
-  per each parameter's `generator_settings` (`lower_bound`, `upper_bound`,
-  `step`, `minimum_step`) in the configuration's `potential` section.
+- `GridSearchParameterGenerator` ("GridSearch") is the registered scaffold for
+  proposing parameters on a grid from each parameter's `generator_settings`;
+  its proposal algorithm is not implemented yet.
 - `SinglePointParameterGenerator` ("SinglePoint") always proposes the same
   single point, taken directly from each parameter's configured `value`. It
   ignores `all_models` entirely, so it's meant for evaluating one nominal

@@ -86,8 +86,9 @@ class ModelIterator:
     potential_settings: Mapping[str, Mapping[str, Any]]
     resolved_potential: Mapping[str, ResolvedPotentialComponent]
     # Retained for `Potential.to_galax()` once orbit integration wires it in
-    # (`generate_orbit_library` is still `NotImplementedError`); nothing reads
-    # it yet, since construction no longer converts anything into it.
+    # (`generate_orbit_library` is still `NotImplementedError`). Runtime
+    # construction preserves declared quantities instead of converting them
+    # into this unit system, so nothing reads it yet.
     unit_system: AbstractUnitSystem
     cosmological_parameters: Mapping[str, Quantity]
     kinematic_data: Mapping[str, AbstractKinematics]
