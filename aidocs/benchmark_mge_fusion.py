@@ -16,7 +16,7 @@ in how the reduction over nodes is done:
   tested, laptop or cluster CPU).
 - "scan-fused": `jax.lax.scan` over the nodes, summing components inside
   the scan body. This one *is* shipped, as
-  `tnt.potential.fused_triaxial_gaussian_composite.FusedTriaxialGaussianCompositePotential`
+  `tnt.potential.fused_composite.FusedCompositePotential`
   -- benchmarked here via the actual class, not a reimplementation, so
   what's measured is exactly what a real switch-over would run.
 
@@ -86,8 +86,8 @@ import jax.numpy as jnp
 import numpy as np
 import unxt as u
 
-from tnt.potential.fused_triaxial_gaussian_composite import (
-    FusedTriaxialGaussianCompositePotential,
+from tnt.potential.fused_composite import (
+    FusedCompositePotential,
 )
 
 UNITS = "galactic"
@@ -177,7 +177,7 @@ def _composite_potential_fn(children: dict[str, gp.TriaxialGaussianPotential]):
 
 
 def _scan_fused_potential_fn(children: dict[str, gp.TriaxialGaussianPotential]):
-    pot = FusedTriaxialGaussianCompositePotential(children)
+    pot = FusedCompositePotential(children)
 
     def potential_fn(xyz: jnp.ndarray) -> jnp.ndarray:
         return pot._potential(xyz, 0.0)
