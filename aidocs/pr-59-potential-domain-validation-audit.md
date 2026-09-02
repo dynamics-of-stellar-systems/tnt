@@ -274,3 +274,27 @@ Linux validation through the Colima development container completed with
 **370 tests passed** (one dependency-owned JAX deprecation warning),
 `ruff check .` passed, and strict Sphinx
 (`sphinx-build -E -b html -W docs/source docs/build/html`) passed.
+
+## Re-review (commits `fdf36a2`..`6394c0a`)
+
+Verified. The Medium fix is complete: `InvalidPotentialParametersError` is
+caught alongside `MGEDeprojectionError` in `_evaluate`, `TypeError` for a
+non-`Quantity` value is left to propagate, and two new tests exercise both
+paths through `_evaluate` rather than `resolved.build()`. Forward-tracing the
+new exception: it is caught at the sole build boundary; a name-set mismatch
+now being a recorded failure rather than a raise is acceptable, since
+config-prep already guards parameter names and the all-first-round-fail stop
+catches a pure plumbing bug.
+
+Low 1: `_check_parameter_set_contract` / `_validate_parameter_constraints` are
+now ~30 / ~10 lines; bound and relationship logic lives on
+`ParameterConstraint.violation()` in `registry.py`; the unreachable
+`RuntimeError` branches and the per-iteration `comparisons` dict are gone.
+Lows 2 and 3: done (the 10 files `ruff format` still flags are pre-existing
+repo drift, none touched by this PR).
+
+Locally: **370 passed**, `ruff check` clean, strict Sphinx clean,
+`git diff --check` clean.
+
+**Verdict: mergeable.** Squash-merge, then remove this audit document in its
+own commit.
