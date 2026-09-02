@@ -33,26 +33,24 @@ from tnt.registry import register_typed_class
 if TYPE_CHECKING:
     from tnt.potential.components import AbstractPotentialComponent
 
-ForwardConverter = Callable[
-    [dict[str, Quantity], Mapping[str, Quantity]],
-    dict[str, Quantity],
-]
-"""`(raw, cosmological_parameters) -> native galax constructor kwargs`.
+ForwardConverter = Callable[..., dict[str, Quantity]]
+"""`(raw, cosmological_parameters, mge) -> native/canonical constructor kwargs`.
 
-No unit system: each result keeps whatever unit its arithmetic produces --
-`to_galax()`'s native constructor converts again regardless (see
-`tnt.potential`'s module docstring).
+`mge` is the component's named `tnt.mge` MGE when it has one (the two triaxial
+MGE composite types), else `None` -- the `pqu` parameterization needs it for
+`qobs = min(component q)`; `concentration_m200` ignores it. No unit system:
+each result keeps whatever unit its arithmetic produces (`to_galax()`'s native
+constructor, or the MGE deprojection, converts again regardless -- see
+`tnt.potential`'s module docstring). See the follow-up in `aidocs/KNOWLEDGE.md`
+about folding `mge`/`cosmological_parameters` into one optional context object.
 """
 
-InverseConverter = Callable[
-    [dict[str, Quantity], Mapping[str, str], Mapping[str, Quantity]],
-    dict[str, Quantity],
-]
-"""`(native, declared_units, cosmological_parameters) -> raw config parameters`.
+InverseConverter = Callable[..., dict[str, Quantity]]
+"""`(native, declared_units, cosmological_parameters, mge) -> raw config parameters`.
 
 `declared_units` maps each raw parameter name to the unit string its
 configuration declares, so a reported value comes back in the parameterization
-*and* the unit the config actually specifies.
+*and* the unit the config actually specifies. `mge` as for `ForwardConverter`.
 """
 
 
@@ -502,28 +500,31 @@ def register_parameterization(
     parameterizations exist, what parameters they take, or which raw domains
     they accept.
 
-    `type_name` must be a curated native `galax` class
-    (`_SUPPORTED_GALAX_TYPES`). A parameterization converts a raw config
-    convention into a component's native `galax` constructor kwargs, and only
-    `GalaxPotentialComponent` runs the inverse converter that reports a model
-    back in its configured parameterization (`AllModels`); a TNT MGE composite
-    type would silently round-trip through its canonical parameters instead.
-    Supporting composite types needs the inverse dispatch moved to a
-    type-independent layer first.
+    `type_name` must be either a curated native `galax` class
+    (`_SUPPORTED_GALAX_TYPES`) or a registered TNT component type
+    (`is_registered_component_type`). A parameterization converts a raw config
+    convention into the component's canonical parameters -- native `galax`
+    constructor kwargs for a curated type, or the type's own native fields for
+    a TNT composite (e.g. `(p, q, u)` -> `(theta, phi, psi)` for the triaxial
+    MGE types). The component that runs the inverse converter to report a model
+    back in its configured parameterization (`AllModels`) is
+    `GalaxPotentialComponent` for native types and each composite type's own
+    `raw_parameters` override.
 
     Constraint names must be a subset of ``raw_dimensions`` so schema and
     domain metadata cannot silently disagree.
 
     Raises:
-        ValueError: If `type_name` is not a curated native `galax` type, or if
-            `(type_name, name)` is already registered, or a constraint names
-            an unknown raw parameter.
+        ValueError: If `type_name` is neither a curated native `galax` type nor
+            a registered TNT component type, if `(type_name, name)` is already
+            registered, or if a constraint names an unknown raw parameter.
     """
-    if type_name not in _SUPPORTED_GALAX_TYPES:
+    if type_name not in _SUPPORTED_GALAX_TYPES and not is_registered_component_type(
+        type_name
+    ):
         raise ValueError(
-            f"Cannot register parameterization {name!r}: {type_name!r} is not a "
-            "curated native galax type. Parameterizations are only supported for "
-            "native galax component types."
+            f"Cannot register parameterization {name!r}: {type_name!r} is neither a "
+            "curated native galax type nor a registered TNT component type."
         )
     _validate_constraint_metadata(
         raw_constraints,
