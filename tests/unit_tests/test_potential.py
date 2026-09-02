@@ -40,7 +40,12 @@ from tnt.potential import (
 )
 from tnt.potential import registry as _registry_module
 from tnt.potential.nfw import _newtonian_gravitational_constant
-from tnt.potential.registry import _COMPONENT_REGISTRY, register_component
+from tnt.potential.registry import (
+    _COMPONENT_REGISTRY,
+    ParameterConstraint,
+    parameter_constraints,
+    register_component,
+)
 
 
 def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
@@ -226,10 +231,9 @@ def test_harmonic_oscillator_rescale_scales_omega_by_sqrt_mass_scale() -> None:
 
 def test_rescale_finds_a_field_inherited_from_an_abstract_parent() -> None:
     # MN3ExponentialPotential doesn't redeclare m_tot itself -- it's a
-    # ParameterField on an abstract parent. Regression guard: an earlier
-    # version looked parameters up via `galax_cls.__dict__.get(name)`,
-    # which only sees a class's own attributes and silently missed
-    # anything declared on a parent class.
+    # ParameterField on an abstract parent. Normal attribute lookup is required
+    # because direct inspection of the subclass's own `__dict__` cannot see
+    # fields declared on a parent class.
     cls = gp.MN3ExponentialPotential
     assert "m_tot" not in cls.__dict__
     assert isinstance(getattr(cls, "m_tot", None), ParameterField)
@@ -317,8 +321,8 @@ def test_from_settings_rejects_a_real_but_uncurated_galax_class() -> None:
     # test_from_settings_rejects_unrecognized_type's made-up name -- but
     # isn't in _SUPPORTED_GALAX_TYPES (its required l_max: int
     # hyperparameter isn't representable by this module's scalar-Quantity
-    # schema). "Any AbstractPotential subclass" would have wrongly
-    # accepted this and failed later, confusingly, at to_galax() instead.
+    # schema). Curating supported classes makes this fail clearly during
+    # resolution instead of deferring the error to to_galax().
     with pytest.raises(
         ValueError, match="Unsupported potential.dh.type 'MultipolePotential'"
     ):
@@ -343,6 +347,168 @@ def test_from_settings_resolves_a_real_galax_class_name() -> None:
     assert component.galax_type == "NFWPotential"
     assert component.parameters["m"].ustrip("Msun") == pytest.approx(1e11)
     assert component.parameters["r_s"].ustrip("kpc") == pytest.approx(10.0)
+
+
+@pytest.mark.parametrize("invalid", [0.0, -1.0, jnp.nan, jnp.inf])
+def test_native_parameter_domain_rejects_nonpositive_or_nonfinite_mass(
+    invalid: float,
+) -> None:
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": "PlummerPotential", "parameters": {}},
+        {},
+        path="potential.bh",
+    )
+    message = "must be finite" if not jnp.isfinite(invalid) else "greater than"
+    with pytest.raises(
+        ValueError, match=rf"potential\.bh\.parameters\.m_tot.*{message}"
+    ):
+        resolved.build(
+            {"m_tot": Quantity(invalid, "Msun"), "r_s": Quantity(1.0, "kpc")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+
+
+def test_runtime_parameter_domain_requires_scalar_quantities_and_exact_names() -> None:
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": "PlummerPotential", "parameters": {}},
+        {},
+        path="potential.bh",
+    )
+    with pytest.raises(ValueError, match=r"expected a scalar, got shape \(1,\)"):
+        resolved.build(
+            {
+                "m_tot": Quantity(jnp.array([1.0]), "Msun"),
+                "r_s": Quantity(1.0, "kpc"),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+    with pytest.raises(ValueError, match=r"missing \['r_s'\].*unexpected \['x'\]"):
+        resolved.build(
+            {"m_tot": Quantity(1.0, "Msun"), "x": Quantity(1.0, "kpc")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+    with pytest.raises(ValueError, match=r"parameters\.r_s must describe length"):
+        resolved.build(
+            {"m_tot": Quantity(1.0, "Msun"), "r_s": Quantity(1.0, "s")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+
+
+@pytest.mark.parametrize(
+    ("galax_type", "parameters", "parameter_name"),
+    [
+        (
+            "PowerLawCutoffPotential",
+            {
+                "m_tot": Quantity(1.0, "Msun"),
+                "alpha": Quantity(3.0, ""),
+                "r_c": Quantity(1.0, "kpc"),
+            },
+            "alpha",
+        ),
+        (
+            "gNFWPotential",
+            {
+                "m": Quantity(1.0, "Msun"),
+                "r_s": Quantity(1.0, "kpc"),
+                "gamma": Quantity(2.0, ""),
+            },
+            "gamma",
+        ),
+        (
+            "Vogelsberger08TriaxialNFWPotential",
+            {
+                "m": Quantity(1.0, "Msun"),
+                "r_s": Quantity(1.0, "kpc"),
+                "q1": Quantity(3**0.5, ""),
+                "a_r": Quantity(1.0, ""),
+            },
+            "q1",
+        ),
+    ],
+)
+def test_analytic_profile_parameter_bounds_are_enforced(
+    galax_type: str,
+    parameters: dict[str, Quantity],
+    parameter_name: str,
+) -> None:
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": galax_type, "parameters": {}},
+        {},
+        path="potential.halo",
+    )
+    with pytest.raises(
+        ValueError,
+        match=rf"potential\.halo\.parameters\.{parameter_name}.*less than",
+    ):
+        resolved.build(parameters, _NO_COSMOLOGICAL_PARAMETERS)
+
+
+def test_same_component_relationship_uses_compatible_declared_units() -> None:
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": "StoneOstriker15Potential", "parameters": {}},
+        {},
+        path="potential.cluster",
+    )
+    with pytest.raises(ValueError, match=r"r_h.*must be >.*r_c"):
+        resolved.build(
+            {
+                "m_tot": Quantity(1.0e6, "Msun"),
+                "r_c": Quantity(1.0, "kpc"),
+                "r_h": Quantity(900.0, "pc"),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+
+
+def test_leesuto_axis_order_is_enforced() -> None:
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": "LeeSutoTriaxialNFWPotential", "parameters": {}},
+        {},
+        path="potential.halo",
+    )
+    with pytest.raises(ValueError, match=r"a1.*must be >=.*a2"):
+        resolved.build(
+            {
+                "m": Quantity(1.0e11, "Msun"),
+                "r_s": Quantity(10.0, "kpc"),
+                "a1": Quantity(0.8, ""),
+                "a2": Quantity(1.0, ""),
+                "a3": Quantity(0.7, ""),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+
+
+def test_frequency_amplitude_domain_and_signed_pattern_speed_are_distinct() -> None:
+    oscillator = AbstractPotentialComponent.resolve(
+        {"type": "HarmonicOscillatorPotential", "parameters": {}},
+        {},
+        path="potential.core",
+    )
+    with pytest.raises(ValueError, match=r"omega.*greater than"):
+        oscillator.build(
+            {"omega": Quantity(0.0, "1 / Myr")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+
+    bar = AbstractPotentialComponent.resolve(
+        {"type": "MonariEtAl2016BarPotential", "parameters": {}},
+        {},
+        path="potential.bar",
+    )
+    component = bar.build(
+        {
+            "alpha": Quantity(-0.02, ""),
+            "R0": Quantity(8.0, "kpc"),
+            "v0": Quantity(220.0, "km / s"),
+            "Rb": Quantity(3.5, "kpc"),
+            "phi_b": Quantity(25.0, "deg"),
+            "Omega": Quantity(-40.0, "km / (s kpc)"),
+        },
+        _NO_COSMOLOGICAL_PARAMETERS,
+    )
+    assert component.parameters["Omega"].ustrip("km / (s kpc)") == -40.0
 
 
 def test_from_settings_rejects_unimplemented_parameterization() -> None:
@@ -395,6 +561,44 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
     rho_crit = 3 * h_bare**2 / (8 * jnp.pi * g)
     mean_density = m200 / (4 / 3 * jnp.pi * r200**3)
     assert float(mean_density / rho_crit) == pytest.approx(200.0, rel=1e-5)
+
+
+@pytest.mark.parametrize("name", ["c", "M_200"])
+def test_nfw_parameterization_rejects_invalid_raw_values_before_conversion(
+    name: str,
+) -> None:
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "NFWPotential",
+            "parameterization": "concentration_m200",
+            "parameters": {},
+        },
+        {},
+        path="potential.halo",
+    )
+    raw = {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")}
+    raw[name] = Quantity(0.0, raw[name].unit)
+    # Empty cosmology proves the raw-domain error occurs before the converter
+    # tries to read its required H value.
+    with pytest.raises(ValueError, match=rf"parameters\.{name}.*greater than"):
+        resolved.build(raw, {})
+
+
+def test_nfw_parameterization_validates_converted_native_values() -> None:
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "NFWPotential",
+            "parameterization": "concentration_m200",
+            "parameters": {},
+        },
+        {},
+        path="potential.halo",
+    )
+    with pytest.raises(ValueError, match=r"converted.*parameters\.r_s.*finite"):
+        resolved.build(
+            {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")},
+            {"H": Quantity(0.0, "km / (s Mpc)")},
+        )
 
 
 @pytest.mark.parametrize(
@@ -476,9 +680,7 @@ def test_nfw_concentration_m200_inverse_round_trips_the_forward_conversion() -> 
     for c, m200 in ((3.0, 1.0e11), (8.0, 1.0e12), (20.0, 5.0e13)):
         raw = {"c": Quantity(c, ""), "M_200": Quantity(m200, "Msun")}
         native = _nfw_concentration_m200(raw, {"H": h})
-        recovered = _nfw_concentration_m200_inverse(
-            native, {"M_200": "Msun"}, {"H": h}
-        )
+        recovered = _nfw_concentration_m200_inverse(native, {"M_200": "Msun"}, {"H": h})
         assert float(recovered["c"].ustrip("")) == pytest.approx(c, rel=1e-5)
         assert float(recovered["M_200"].ustrip("Msun")) == pytest.approx(m200, rel=1e-5)
 
@@ -633,9 +835,7 @@ def test_potential_composes_every_declared_component() -> None:
         "halo": {"m_tot": Quantity(100.0, "Msun"), "r_s": Quantity(1.0, "kpc")},
     }
     resolved = Potential.resolve(settings, {})
-    potential = build_potential(
-        resolved, parameter_values, _NO_COSMOLOGICAL_PARAMETERS
-    )
+    potential = build_potential(resolved, parameter_values, _NO_COSMOLOGICAL_PARAMETERS)
     assert set(potential.components) == {"bh", "halo"}
 
     galax_potential = potential.to_galax(unit_system)
@@ -784,13 +984,17 @@ def test_component_registry_contains_the_four_mge_types() -> None:
 
 
 def test_nfw_concentration_m200_is_registered_with_its_converters_and_schema() -> None:
-    # register_parameterization bundles converters + schema, so resolve() and
-    # _validate_potential can never disagree on what the parameterization takes.
+    # Registration bundles converters, schema, and constraints, so config
+    # validation and runtime resolution cannot drift apart.
     spec = _registry_module.get_parameterization("NFWPotential", "concentration_m200")
     assert spec is not None
     assert spec.convert is _nfw_concentration_m200
     assert spec.invert is _nfw_concentration_m200_inverse
     assert spec.raw_dimensions == {"c": "dimensionless", "M_200": "mass"}
+    assert spec.raw_constraints == {
+        "c": ParameterConstraint(minimum=0.0, minimum_inclusive=False),
+        "M_200": ParameterConstraint(minimum=0.0, minimum_inclusive=False),
+    }
     assert _registry_module.raw_parameter_dimensions(
         "NFWPotential", "concentration_m200"
     ) == {"c": "dimensionless", "M_200": "mass"}
@@ -819,6 +1023,7 @@ def test_register_parameterization_success_and_duplicate(monkeypatch) -> None:
         convert=_identity_forward,
         invert=_identity_inverse,
         raw_dimensions={"a": "mass"},
+        raw_constraints={},
     )
     spec = _registry_module.get_parameterization("PlummerPotential", "scheme")
     assert spec is not None
@@ -835,6 +1040,7 @@ def test_register_parameterization_success_and_duplicate(monkeypatch) -> None:
             convert=_identity_forward,
             invert=_identity_inverse,
             raw_dimensions={"a": "mass"},
+            raw_constraints={},
         )
     assert _registry_module._PARAMETERIZATION_REGISTRY == before
 
@@ -851,8 +1057,39 @@ def test_register_parameterization_rejects_a_non_galax_target_type(monkeypatch) 
             convert=_identity_forward,
             invert=_identity_inverse,
             raw_dimensions={"p": "dimensionless"},
+            raw_constraints={},
         )
     assert _registry_module._PARAMETERIZATION_REGISTRY == {}
+
+
+def test_register_parameterization_rejects_unknown_constraint_name(monkeypatch) -> None:
+    monkeypatch.setattr(_registry_module, "_PARAMETERIZATION_REGISTRY", {})
+    with pytest.raises(ValueError, match=r"constraint.*not present.*missing"):
+        _registry_module.register_parameterization(
+            type_name="PlummerPotential",
+            name="scheme",
+            convert=_identity_forward,
+            invert=_identity_inverse,
+            raw_dimensions={"a": "mass"},
+            raw_constraints={"missing": ParameterConstraint(minimum=0.0)},
+        )
+
+
+def test_constraint_metadata_matches_each_registered_schema() -> None:
+    for galax_type, parameters in _SUPPORTED_GALAX_TYPES.items():
+        constraints = parameter_constraints(galax_type, None)
+        assert set(constraints) <= set(parameters), galax_type
+        for name, constraint in constraints.items():
+            if constraint.other_parameter is not None:
+                assert constraint.other_parameter in parameters, (galax_type, name)
+                assert constraint.relation is not None, (galax_type, name)
+            else:
+                assert constraint.relation is None, (galax_type, name)
+
+    for component_type, component_cls in _COMPONENT_REGISTRY.items():
+        assert set(component_cls._constraints) <= set(component_cls._raw_dimensions), (
+            component_type
+        )
 
 
 def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
@@ -875,6 +1112,26 @@ def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
     assert isinstance(component, TriaxialLightMGEPotential)
     assert component.mge is light_mge
     assert component.parameters["ml"].ustrip("Msun / Lsun") == pytest.approx(5.0)
+
+
+def test_light_mge_mass_to_light_ratio_must_be_positive() -> None:
+    light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
+        Quantity(30.0, "Mpc")
+    )
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "TriaxialLightMGEPotential",
+            "mge": "mge_lum",
+            "parameters": {},
+        },
+        {"mge_lum": light_mge},
+        path="potential.stars",
+    )
+    with pytest.raises(ValueError, match=r"parameters\.ml.*greater than"):
+        resolved.build(
+            {"ml": Quantity(0.0, "Msun / Lsun"), **_VIEWING_ANGLES},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
 
 
 def test_mge_component_build_raises_for_invalid_geometry_not_to_galax() -> None:
@@ -1083,6 +1340,29 @@ def test_oblate_mge_component_resolve_and_build_stores_the_referenced_mge() -> N
     assert isinstance(component, OblateLightMGEPotential)
     assert component.mge is light_mge
     assert component.parameters["ml"].ustrip("Msun / Lsun") == pytest.approx(5.0)
+
+
+def test_oblate_mge_inclination_domain_is_checked_before_deprojection() -> None:
+    light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
+        Quantity(30.0, "Mpc")
+    )
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "OblateLightMGEPotential",
+            "mge": "mge_lum",
+            "parameters": {},
+        },
+        {"mge_lum": light_mge},
+        path="potential.stars",
+    )
+    with pytest.raises(ValueError, match=r"inclination.*at most 90.*deg"):
+        resolved.build(
+            {
+                "ml": Quantity(5.0, "Msun / Lsun"),
+                "inclination": Quantity(jnp.pi, "rad"),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
 
 
 def test_oblate_mge_build_raises_for_impossible_inclination_not_to_galax() -> None:

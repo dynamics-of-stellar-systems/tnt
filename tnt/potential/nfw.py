@@ -8,7 +8,7 @@ from typing import Any
 import jax.numpy as jnp
 from unxt import Quantity
 
-from tnt.potential.registry import register_parameterization
+from tnt.potential.registry import ParameterConstraint, register_parameterization
 
 
 def _newtonian_gravitational_constant() -> Quantity:
@@ -127,4 +127,8 @@ register_parameterization(
     convert=_nfw_concentration_m200,
     invert=_nfw_concentration_m200_inverse,
     raw_dimensions={"c": "dimensionless", "M_200": "mass"},
+    raw_constraints={
+        "c": ParameterConstraint(minimum=0.0, minimum_inclusive=False),
+        "M_200": ParameterConstraint(minimum=0.0, minimum_inclusive=False),
+    },
 )

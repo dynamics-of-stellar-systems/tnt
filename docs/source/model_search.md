@@ -293,11 +293,15 @@ and stopping-criteria settings.
 Its `_evaluate()` step, for one proposed `ParameterSet`, builds a `Potential`,
 integrates its `OrbitLibrary`, and solves orbit weights against the
 kinematic data (plus any `potential_rescalings` variants, reusing that same
-orbit library). A failed orbit integration or weight solve doesn't raise --
-it produces a `Model` with the corresponding flag `False` instead, so the
-failure stays visible in `AllModels`. The search stops if every model in its
-first round fails. After a successful model has been established, failed later
-rounds remain recorded but do not by themselves terminate the search.
+orbit library). A proposed point outside its potential parameters' physical
+domain, or an MGE viewing geometry that cannot be deprojected, produces a
+`Model` with `valid_potential=False`; a failed orbit integration or weight solve
+sets the corresponding later-stage flag to `False`. These candidate-specific
+failures stay visible in `AllModels` instead of terminating the run. Programming
+contract errors, such as a generator returning a non-`Quantity` parameter, are
+not converted into invalid models. The search stops if every model in its first
+round fails. After a successful model has been established, failed later rounds
+remain recorded but do not by themselves terminate the search.
 
 One pattern recurs through `ModelIterator`'s implementation, worth knowing
 before reading the code: the method doing the actual work stays ignorant of
