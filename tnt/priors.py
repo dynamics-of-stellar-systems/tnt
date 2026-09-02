@@ -43,8 +43,11 @@ import numpyro
 import numpyro.distributions
 import numpyro.infer
 from jax import Array
+from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import LightMGE, MassMGE
+from tnt.potential import Potential
+from tnt.potential.components import ResolvedPotentialComponent
 
 
 class PriorContext(eqx.Module):
@@ -71,6 +74,21 @@ class PriorContext(eqx.Module):
         mges: The run's named MGEs (`{name: LightMGE | MassMGE}`), exactly as
             loaded from configuration.
 
+    A plugin that needs a derived quantity of the whole potential (an
+    enclosed mass, a circular velocity) calls `build_potential()`: it
+    assembles this draw's `tnt.potential.Potential` from `candidate` with
+    every eager check skipped (`build`'s `validate=False`), so it runs inside
+    the traced model. Evaluate it with
+    `build_potential().to_galax(context.unit_system)`. The run's `resolved`
+    potential and cosmology are captured when the `Prior` is built -- a
+    plugin never handles those. An invalid geometry yields `nan` rather than
+    raising (see `tnt.mge.AbstractMGE.deproject_triaxial`).
+
+    Attributes (continued):
+        unit_system: The run's internal unit system, for
+            `build_potential().to_galax(...)`; `None` when the `Prior` was
+            built without potential context.
+
     New fields are added here as plugins gain access to more of a run's
     state; because a plugin only ever names this one argument, that stays a
     backward-compatible change.
@@ -78,6 +96,26 @@ class PriorContext(eqx.Module):
 
     candidate: dict[str, dict[str, Any]]
     mges: Mapping[str, LightMGE | MassMGE]
+    unit_system: AbstractUnitSystem | None = None
+    _build_potential: Callable[[Mapping[str, Any]], Potential] | None = eqx.field(
+        default=None, static=True
+    )
+
+    def build_potential(self) -> Potential:
+        """This draw's `Potential`, built with every eager check skipped.
+
+        Raises:
+            RuntimeError: If this `Prior` was constructed without the run's
+                resolved potential, cosmology and unit system (e.g. in a
+                unit test exercising only the sample sites).
+        """
+        if self._build_potential is None:
+            raise RuntimeError(
+                "context.build_potential() needs the run's resolved potential, "
+                "cosmological parameters and unit system; this Prior was built "
+                "without them."
+            )
+        return self._build_potential(self.candidate)
 
 
 PriorPlugin = Callable[[PriorContext], None]
@@ -123,10 +161,56 @@ def load_prior_plugins(
     }
 
 
+def _make_potential_builder(
+    potential_settings: Mapping[str, Mapping[str, Any]],
+    resolved_potential: Mapping[str, ResolvedPotentialComponent],
+    cosmological_parameters: Mapping[str, Quantity],
+    unit_system: AbstractUnitSystem,
+) -> Callable[[Mapping[str, Any]], Potential]:
+    """A closure that turns one draw's bare `candidate` into a `Potential`.
+
+    Mirrors `tnt.parameter_generator._parameter_sets_from_samples`: each
+    value is re-wrapped as a `Quantity` in its parameter's own declared
+    `unit` (absent -> dimensionless), then `Potential.build` runs with
+    `validate=False` so the whole thing is JAX-traceable inside the model.
+    `unit_system` isn't `build`'s concern (it's `Potential.to_galax`'s), but
+    the caller passes it here so `Prior` has one place that gates the whole
+    capability on all three being present.
+    """
+    del unit_system
+    units: dict[str, dict[str, str]] = {
+        name: {
+            parameter_name: parameter.get("unit", "")
+            for parameter_name, parameter in component.get("parameters", {}).items()
+        }
+        for name, component in potential_settings.items()
+    }
+
+    def build(candidate: Mapping[str, Any]) -> Potential:
+        parameter_values = {
+            name: {
+                parameter_name: Quantity(candidate[name][parameter_name], unit)
+                for parameter_name, unit in component_units.items()
+                if parameter_name in candidate.get(name, {})
+            }
+            for name, component_units in units.items()
+        }
+        return Potential.build(
+            resolved_potential,
+            parameter_values,
+            cosmological_parameters,
+            validate=False,
+        )
+
+    return build
+
+
 def _build_model(
     potential_settings: Mapping[str, Mapping[str, Any]],
     prior_plugins: Mapping[str, PriorPlugin],
     mges: Mapping[str, LightMGE | MassMGE],
+    build_potential: Callable[[Mapping[str, Any]], Potential] | None,
+    unit_system: AbstractUnitSystem | None,
 ) -> Callable[[], dict[str, dict[str, Any]]]:
     """Compose one numpyro model from declared parameter priors and plugins.
 
@@ -134,8 +218,8 @@ def _build_model(
     `numpyro.sample` site named `"<component>.<parameter>"`; every fixed
     parameter contributes its bare declared `value` directly (not a sample
     site -- it's the same value on every draw). Plugins run last, each
-    receiving a `PriorContext` over the assembled `candidate` and adding
-    factor terms only.
+    receiving a `PriorContext` over the assembled `candidate` (and, when
+    available, `build_potential`) and adding factor terms only.
     """
 
     def _model() -> dict[str, dict[str, Any]]:
@@ -155,7 +239,12 @@ def _build_model(
                     site, distribution_cls(*prior["args"])
                 )
             candidate[component_name] = component_values
-        context = PriorContext(candidate=candidate, mges=mges)
+        context = PriorContext(
+            candidate=candidate,
+            mges=mges,
+            unit_system=unit_system,
+            _build_potential=build_potential,
+        )
         for prior_fn in prior_plugins.values():
             prior_fn(context)
         return candidate
@@ -170,6 +259,12 @@ class Prior:
     from a resolved configuration's `potential` section, its configured
     prior plugins, and the run's named MGEs -- independent of which
     `AbstractParameterGenerator` ultimately draws from it.
+
+    `resolved_potential` / `cosmological_parameters` / `unit_system` are
+    optional: supplying all three lets a plugin call
+    `PriorContext.build_potential()` (they're captured, never plugin-facing);
+    omitting them -- as a unit test exercising only the sample sites may --
+    just makes that method raise.
     """
 
     def __init__(
@@ -177,8 +272,30 @@ class Prior:
         potential_settings: Mapping[str, Mapping[str, Any]],
         prior_plugins: Mapping[str, PriorPlugin],
         mges: Mapping[str, LightMGE | MassMGE],
+        *,
+        resolved_potential: Mapping[str, ResolvedPotentialComponent] | None = None,
+        cosmological_parameters: Mapping[str, Quantity] | None = None,
+        unit_system: AbstractUnitSystem | None = None,
     ) -> None:
-        self._model = _build_model(potential_settings, prior_plugins, mges)
+        build_potential: Callable[[Mapping[str, Any]], Potential] | None = None
+        if (
+            resolved_potential is not None
+            and cosmological_parameters is not None
+            and unit_system is not None
+        ):
+            build_potential = _make_potential_builder(
+                potential_settings,
+                resolved_potential,
+                cosmological_parameters,
+                unit_system,
+            )
+        self._model = _build_model(
+            potential_settings,
+            prior_plugins,
+            mges,
+            build_potential,
+            unit_system if build_potential is not None else None,
+        )
 
     def has_factors(self) -> bool:
         """Whether the composed model includes any factor (soft-constraint) term.

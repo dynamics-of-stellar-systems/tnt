@@ -289,6 +289,16 @@ bare unit-stripped numbers) and `context.mges` (the run's named MGEs). New
 fields are added there over time; because a plugin only ever names this one
 argument, that stays backward-compatible.
 
+For a preference over a *derived* quantity of the whole potential -- an
+enclosed mass, a circular velocity -- call `context.build_potential()`. It
+assembles this draw's `tnt.potential.Potential` from `context.candidate`
+with every eager check skipped, so it runs inside the traced model;
+`context.build_potential().to_galax(context.unit_system)` then gives a
+`galax` potential to evaluate. The run's resolved potential structure and
+cosmology are captured when the `Prior` is built -- a plugin never handles
+them. An invalid deprojection geometry yields `nan` (hence a rejected NUTS
+step) rather than raising.
+
 ```python
 import jax.numpy as jnp
 import numpyro
@@ -323,6 +333,26 @@ def mass_fraction(context: PriorContext) -> None:
 or derived by the plugin -- NFW's existing `concentration_m200`
 parameterization (see [Potential](potential.md)) is unmodified; the plugin
 only adds a preference on the ratio, never assigns `M_200` directly.
+
+A plugin that needs the assembled potential -- e.g. a preference on the mass
+enclosed within 10 kpc:
+
+```python
+import galax.potential as gp
+
+from unxt import Quantity
+
+
+def m_within_10kpc(context: PriorContext) -> None:
+    potential = context.build_potential().to_galax(context.unit_system)
+    enclosed = gp.spherical_mass_enclosed(
+        potential, Quantity([10.0, 0.0, 0.0], "kpc"), Quantity(0.0, "Myr")
+    ).ustrip("Msun")
+    numpyro.factor(
+        "m_within_10kpc",
+        dist.Normal(4.0e10, 5.0e9).log_prob(jnp.asarray(enclosed)),
+    )
+```
 
 `Prior.sample` (called by `PriorSampler`) traces the composed model once and
 picks how to draw from it automatically: `numpyro.infer.Predictive`

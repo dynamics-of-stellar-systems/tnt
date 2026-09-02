@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import galax.potential as gp
 import jax
 import jax.numpy as jnp
 import numpyro.distributions as dist
 import pytest
+import unxt as u
 from unxt import Quantity
 
 from tnt.mge import LightMGE
-from tnt.priors import Prior, load_prior_plugin, load_prior_plugins
+from tnt.potential import Potential
+from tnt.priors import Prior, PriorContext, load_prior_plugin, load_prior_plugins
 
 _POTENTIAL_SETTINGS = {
     "dh": {
@@ -177,3 +180,128 @@ def test_load_prior_plugins_loads_every_configured_entry(tmp_path: Path) -> None
 
     assert set(plugins) == {"dh_mass_fraction"}
     assert plugins["dh_mass_fraction"].__name__ == "mass_fraction"
+
+
+# ---------------------------------------------------------------------------
+# context.build_potential(): a plugin factor over a derived quantity of the
+# whole (traced) potential, here the enclosed mass M(< 10 kpc).
+# ---------------------------------------------------------------------------
+
+_UNITS = u.unitsystem("kpc", "Myr", "Msun", "rad")
+# A genuinely triaxial 3-Gaussian light MGE, physical sigma, plus the viewing
+# angles it deprojects validly at (0 < q <= p <= 1 for every component).
+_TRIAXIAL_MGE = LightMGE(
+    I=Quantity(jnp.array([1.0e3, 2.0e2, 3.0e1]), "Lsun / pc2"),
+    sigma=Quantity(jnp.array([0.3, 1.2, 4.0]), "kpc"),
+    q=Quantity(jnp.array([0.85, 0.78, 0.90]), ""),
+    PA_twist=Quantity(jnp.zeros(3), "rad"),
+)
+_ANGLES = {
+    "theta": 0.4280191007651427,
+    "phi": 1.0363519257903688,
+    "psi": 2.033205815042,
+}
+_ENCLOSED_TARGET, _ENCLOSED_WIDTH = 4.0e10, 5.0e9
+_R_10_KPC = Quantity(jnp.array([10.0, 0.0, 0.0]), "kpc")
+_T0 = Quantity(0.0, "Myr")
+
+_ENCLOSED_MASS_POTENTIAL = {
+    "dh": {
+        "type": "NFWPotential",
+        "parameters": {
+            "m": {
+                "unit": "Msun",
+                "fixed": False,
+                "value": 1.0e12,
+                "prior": {"distribution": "LogUniform", "args": [1.0e10, 1.0e13]},
+            },
+            "r_s": {"unit": "kpc", "fixed": True, "value": 15.0},
+        },
+    },
+    "stars": {
+        "type": "TriaxialLightMGEPotential",
+        "mge": "stars_mge",
+        "parameters": {
+            "ml": {
+                "unit": "Msun / Lsun",
+                "fixed": False,
+                "value": 5.0,
+                "prior": {"distribution": "Uniform", "args": [1.0, 9.0]},
+            },
+            **{
+                name: {"unit": "rad", "fixed": True, "value": value}
+                for name, value in _ANGLES.items()
+            },
+        },
+    },
+}
+
+
+def _m_within_10kpc_plugin(context: PriorContext) -> None:
+    import numpyro
+
+    galax_potential = context.build_potential().to_galax(context.unit_system)
+    enclosed = gp.spherical_mass_enclosed(
+        galax_potential, _R_10_KPC, _T0
+    ).ustrip("Msun")
+    numpyro.factor(
+        "m_within_10kpc",
+        dist.Normal(_ENCLOSED_TARGET, _ENCLOSED_WIDTH).log_prob(jnp.asarray(enclosed)),
+    )
+
+
+def _enclosed_mass_of(resolved, ml: jnp.ndarray, m_halo: jnp.ndarray) -> jnp.ndarray:
+    parameters = {
+        "dh": {"m": Quantity(m_halo, "Msun"), "r_s": Quantity(15.0, "kpc")},
+        "stars": {
+            "ml": Quantity(ml, "Msun / Lsun"),
+            **{name: Quantity(value, "rad") for name, value in _ANGLES.items()},
+        },
+    }
+    built = Potential.build(resolved, parameters, {}, validate=False)
+    galax_potential = built.to_galax(_UNITS)
+    return gp.spherical_mass_enclosed(galax_potential, _R_10_KPC, _T0).ustrip("Msun")
+
+
+def test_build_potential_is_unavailable_without_potential_context() -> None:
+    context = PriorContext(candidate={"stars": {"ml": 5.0}}, mges={})
+
+    with pytest.raises(RuntimeError, match="build_potential.*needs the run's"):
+        context.build_potential()
+
+
+def test_plugin_factor_on_enclosed_mass_concentrates_the_prior() -> None:
+    mges = {"stars_mge": _TRIAXIAL_MGE}
+    resolved = Potential.resolve(_ENCLOSED_MASS_POTENTIAL, mges)
+
+    prior_only = Prior(_ENCLOSED_MASS_POTENTIAL, {}, mges)
+    assert prior_only.has_factors() is False
+    draws = prior_only.sample(jax.random.PRNGKey(1), num_samples=400)
+    prior_only_enclosed = jax.vmap(lambda a, b: _enclosed_mass_of(resolved, a, b))(
+        draws["stars.ml"], draws["dh.m"]
+    )
+
+    prior = Prior(
+        _ENCLOSED_MASS_POTENTIAL,
+        {"m_within_10kpc": _m_within_10kpc_plugin},
+        mges,
+        resolved_potential=resolved,
+        cosmological_parameters={"H": Quantity(70.0, "km / (s Mpc)")},
+        unit_system=_UNITS,
+    )
+    assert prior.has_factors() is True
+
+    samples = prior.sample(
+        jax.random.PRNGKey(0), num_samples=200, num_warmup=400
+    )
+    assert set(samples) == {"dh.m", "stars.ml"}
+    enclosed = jax.vmap(lambda a, b: _enclosed_mass_of(resolved, a, b))(
+        samples["stars.ml"], samples["dh.m"]
+    )
+
+    # The factor pulls M(< 10 kpc) to its target and sharply narrows it
+    # relative to the unconstrained prior.
+    assert float(jnp.mean(enclosed)) == pytest.approx(
+        _ENCLOSED_TARGET, abs=2 * _ENCLOSED_WIDTH
+    )
+    assert float(jnp.std(enclosed)) < 0.3 * float(jnp.std(prior_only_enclosed))

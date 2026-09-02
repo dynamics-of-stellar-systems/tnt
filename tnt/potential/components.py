@@ -68,6 +68,8 @@ class ResolvedPotentialComponent(NamedTuple):
         self,
         parameter_values: Mapping[str, Quantity],
         cosmological_parameters: Mapping[str, Quantity],
+        *,
+        validate: bool = True,
     ) -> AbstractPotentialComponent:
         """Build this component from one proposed point in parameter space.
 
@@ -80,9 +82,15 @@ class ResolvedPotentialComponent(NamedTuple):
         `tnt.potential`'s module docstring); constraints convert only as needed
         for a comparison. MGE geometry validation remains owned by the eager
         deprojection in the four composite types' `_build` methods.
-        Validation converts scalar values to Python numbers, so `build` is an
-        eager runtime boundary and must remain outside `jax.jit`/`jax.vmap`
-        traces; only the resulting potential enters compiled numerical work.
+        Validation converts scalar values to Python numbers, so with
+        `validate=True` (the default) `build` is an eager runtime boundary
+        and must stay outside `jax.jit`/`jax.vmap`. Pass `validate=False` to
+        skip every eager check -- the contract, the physical-domain
+        constraints, and the MGE deprojection convention check -- so `build`
+        itself becomes traceable, e.g. for a `tnt.priors` prior plugin
+        rebuilding the `Potential` from a draw inside the numpyro model. The
+        caller is then responsible for the parameters being valid (a
+        `numpyro.sample` site's own support usually is that guarantee).
 
         Args:
             parameter_values: This component's current values, e.g. one
@@ -90,32 +98,36 @@ class ResolvedPotentialComponent(NamedTuple):
             cosmological_parameters: Passed through to a registered
                 `parameterization` converter that needs it, e.g. NFW's
                 `concentration_m200` via `H`.
+            validate: If false, skip every eager check so `build` can run
+                under a JAX trace.
         """
         raw = dict(parameter_values)
-        _check_parameter_set_contract(
-            raw, self.raw_dimensions, path=self.path, stage="raw"
-        )
-        _validate_parameter_constraints(
-            raw, self.raw_constraints, path=self.path, stage="raw"
-        )
+        if validate:
+            _check_parameter_set_contract(
+                raw, self.raw_dimensions, path=self.path, stage="raw"
+            )
+            _validate_parameter_constraints(
+                raw, self.raw_constraints, path=self.path, stage="raw"
+            )
         if self.convert is None:
             canonical = raw
         else:
             canonical = self.convert(raw, cosmological_parameters)
-            _check_parameter_set_contract(
-                canonical,
-                self.canonical_dimensions,
-                path=self.path,
-                stage="converted",
-            )
-            _validate_parameter_constraints(
-                canonical,
-                self.canonical_constraints,
-                path=self.path,
-                stage="converted",
-            )
+            if validate:
+                _check_parameter_set_contract(
+                    canonical,
+                    self.canonical_dimensions,
+                    path=self.path,
+                    stage="converted",
+                )
+                _validate_parameter_constraints(
+                    canonical,
+                    self.canonical_constraints,
+                    path=self.path,
+                    stage="converted",
+                )
         return self.component_cls._build(
-            canonical, cosmological_parameters, self.extra_fields
+            canonical, cosmological_parameters, self.extra_fields, validate=validate
         )
 
 
@@ -303,6 +315,8 @@ class AbstractPotentialComponent(eqx.Module):
         parameters: dict[str, Quantity],
         cosmological_parameters: Mapping[str, Quantity],
         extra_fields: dict[str, Any],
+        *,
+        validate: bool = True,
     ) -> Self:
         """Construct this component from its canonical `parameters` and static fields.
 
@@ -323,8 +337,10 @@ class AbstractPotentialComponent(eqx.Module):
                 unused by the default implementation.
             extra_fields: This component's resolved static structure beyond
                 `parameters`, e.g. `galax_type` or `mge` -- see `_extra_fields`.
+            validate: Forwarded to eager MGE deprojection by the composite
+                types; ignored by the default and `GalaxPotentialComponent`.
         """
-        del cosmological_parameters
+        del cosmological_parameters, validate
         return cls(parameters=parameters, **extra_fields)
 
     def to_galax(

@@ -84,12 +84,17 @@ class TriaxialLightMGEPotential(AbstractPotentialComponent):
         parameters: dict[str, Quantity],
         cosmological_parameters: Mapping[str, Quantity],
         extra_fields: dict[str, Any],
+        *,
+        validate: bool = True,
     ) -> Self:
         del cosmological_parameters
         mge = extra_fields["mge"]
         mass_mge = mge.to_mass(parameters["ml"])
         deprojected = mass_mge.deproject_triaxial(
-            parameters["theta"], parameters["phi"], parameters["psi"]
+            parameters["theta"],
+            parameters["phi"],
+            parameters["psi"],
+            validate=validate,
         )
         return cls(parameters=parameters, mge=mge, deprojected=deprojected)
 
@@ -157,12 +162,17 @@ class TriaxialMassMGEPotential(AbstractPotentialComponent):
         parameters: dict[str, Quantity],
         cosmological_parameters: Mapping[str, Quantity],
         extra_fields: dict[str, Any],
+        *,
+        validate: bool = True,
     ) -> Self:
         del cosmological_parameters
         mge = extra_fields["mge"]
         mass_mge = mge.rescaled(parameters["mge_mass_scale"])
         deprojected = mass_mge.deproject_triaxial(
-            parameters["theta"], parameters["phi"], parameters["psi"]
+            parameters["theta"],
+            parameters["phi"],
+            parameters["psi"],
+            validate=validate,
         )
         return cls(parameters=parameters, mge=mge, deprojected=deprojected)
 

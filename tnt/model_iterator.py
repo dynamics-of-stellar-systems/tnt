@@ -176,7 +176,14 @@ class ModelIterator:
         prior_plugins = load_prior_plugins(
             parameter_space_settings["priors"], input_directory
         )
-        prior = Prior(potential_settings, prior_plugins, mges)
+        prior = Prior(
+            potential_settings,
+            prior_plugins,
+            mges,
+            resolved_potential=resolved_potential,
+            cosmological_parameters=cosmological_parameters,
+            unit_system=unit_system,
+        )
 
         return cls(
             potential_settings=potential_settings,

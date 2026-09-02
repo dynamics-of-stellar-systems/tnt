@@ -544,11 +544,24 @@
   `*args` is tolerated but never populated; `load_prior_plugin` rejects any
   other arity).
   `PriorContext` is an `eqx.Module` -- the single, extensible object holding
-  the run state a plugin may read (`context.candidate`, `context.mges`
-  today); adding a field there stays backward-compatible because a plugin
-  only ever names that one argument. It is built once per draw inside the
-  numpyro model, after every `sample` site, and consumed immediately -- never
-  a traced/`jit` argument, so its size costs nothing. A plugin may only call
+  the run state a plugin may read (`context.candidate`, `context.mges`,
+  `context.unit_system` today); adding a field there stays backward-compatible
+  because a plugin only ever names that one argument. It is built once per
+  draw inside the numpyro model, after every `sample` site, and consumed
+  immediately -- never a traced/`jit` argument, so its size costs nothing.
+  `context.build_potential()` assembles this draw's `tnt.potential.Potential`
+  from `candidate` for a factor over a derived quantity (an enclosed mass, a
+  circular velocity): it calls `Potential.build(..., validate=False)`, a mode
+  that skips every eager check -- `_check_parameter_set_contract`'s
+  `float()`, the `ParameterConstraint`s, and `deproject_triaxial`/
+  `deproject_oblate`'s `_check_axial_ratios` -- so `build` is JAX-traceable
+  (an invalid geometry then yields `nan`, hence a rejected NUTS step, not an
+  exception). `Prior` captures the run's `resolved` potential + cosmology +
+  unit system to make this work; a `Prior` built without them (a unit test
+  exercising only sample sites) leaves `build_potential()` raising. The NFW
+  `concentration_m200` forward converter is *not* yet usable this way -- its
+  `(volume Quantity) ** (1/3)` trips quaxed dispatch under NUTS's trace;
+  native-parameter NFW (`m`, `r_s`) is fine. A plugin may only call
   `numpyro.factor` -- never `sample`/`deterministic` -- so it can add a soft
   preference over already-established values but can never independently
   assign or overwrite a parameter, ruling out any collision with that

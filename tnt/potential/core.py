@@ -56,6 +56,8 @@ class Potential(eqx.Module):
         resolved: Mapping[str, ResolvedPotentialComponent],
         parameter_values: ParameterSet,
         cosmological_parameters: Mapping[str, Quantity],
+        *,
+        validate: bool = True,
     ) -> Self:
         """Build a `Potential` from resolved static structure and a proposed point.
 
@@ -67,11 +69,16 @@ class Potential(eqx.Module):
             cosmological_parameters: A resolved configuration's
                 `cosmological_parameters` section -- used only by
                 parameterizations that need it, e.g. NFW's `concentration_m200`.
+            validate: If false, skip every component's eager parameter and
+                deprojection checks so `build` runs under a JAX trace (see
+                `ResolvedPotentialComponent.build`).
         """
         return cls(
             components={
                 name: component.build(
-                    parameter_values.get(name, {}), cosmological_parameters
+                    parameter_values.get(name, {}),
+                    cosmological_parameters,
+                    validate=validate,
                 )
                 for name, component in resolved.items()
             }
@@ -148,6 +155,8 @@ def build_potential(
     resolved: Mapping[str, ResolvedPotentialComponent],
     parameter_values: ParameterSet,
     cosmological_parameters: Mapping[str, Quantity],
+    *,
+    validate: bool = True,
 ) -> Potential:
     """Build the `Potential` from pre-resolved static structure and a proposed point.
 
@@ -160,11 +169,15 @@ def build_potential(
         cosmological_parameters: A resolved configuration's
             `cosmological_parameters` section -- used only by
             parameterizations that need it, e.g. NFW's `concentration_m200`.
+        validate: If false, skip every eager check so this runs under a JAX
+            trace (see `ResolvedPotentialComponent.build`).
 
     Returns:
         A `Potential` assembled from every component.
     """
-    return Potential.build(resolved, parameter_values, cosmological_parameters)
+    return Potential.build(
+        resolved, parameter_values, cosmological_parameters, validate=validate
+    )
 
 
 def _declared_parameter_units(
