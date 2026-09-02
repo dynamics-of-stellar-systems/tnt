@@ -42,15 +42,19 @@ potential:
     parameters:
       theta:
         unit: "rad"
+        fixed: true
         value: 1.0
       phi:
         unit: "rad"
+        fixed: true
         value: 0.5
       psi:
         unit: "rad"
+        fixed: true
         value: 0.0
       ml:
         unit: "Msun / Lsun"
+        prior: {{distribution: "Uniform", args: [1.0, 9.0]}}
         value: 5.0
 kinematic_data:
   observed:
@@ -126,8 +130,10 @@ def test_read_resolves_defaults_without_allocating_a_run(tmp_path: Path) -> None
     assert written["io_settings"]["output_directory"] == "output"
     assert config.data["io_settings"]["input_directory"] == str(tmp_path / "input")
     assert config.data["io_settings"]["output_directory"] == str(output_directory)
-    parameter = written["potential"]["stars"]["parameters"]["theta"]
-    assert parameter["fixed"] is False
+    # `ml` sets no `fixed`, so the packaged dynamic_object_defaults.parameter
+    # default (false) is applied; `theta` overrides it to true.
+    assert written["potential"]["stars"]["parameters"]["ml"]["fixed"] is False
+    assert written["potential"]["stars"]["parameters"]["theta"]["fixed"] is True
     kinematics = written["kinematic_data"]["observed"]
     assert kinematics["binning"] == "observed"
     assert kinematics["mge"] == "light"
@@ -676,6 +682,39 @@ def test_validate_prior_rejects_missing_args() -> None:
         )
 
 
+def test_read_rejects_a_non_fixed_parameter_without_a_prior(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    # `theta` is fixed in the base fixture; drop that so it inherits the
+    # packaged `fixed: false` default with no `prior` alongside it.
+    del user_data["potential"]["stars"]["parameters"]["theta"]["fixed"]
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=r"potential\.stars\.parameters\.theta is not fixed and so must "
+        r"declare a prior",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_accepts_a_non_fixed_parameter_that_declares_a_prior(
+    tmp_path: Path,
+) -> None:
+    # The base fixture's `ml` sets no `fixed` (inherits false) but declares a
+    # Uniform prior; preparation resolves it without complaint.
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    ml = config.data["potential"]["stars"]["parameters"]["ml"]
+    assert ml["fixed"] is False
+    assert ml["prior"] == {"distribution": "Uniform", "args": [1.0, 9.0]}
+
+
 def test_read_rejects_malformed_prior_plugin_reference(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"
@@ -1038,6 +1077,7 @@ def test_mass_mge_potential_rejects_ml_parameter(tmp_path: Path) -> None:
     user_data["potential"]["stars"]["parameters"]["mge_mass_scale"] = {
         "value": 1.0,
         "unit": "",
+        "fixed": True,
     }
     user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
 
@@ -1128,7 +1168,7 @@ def test_oblate_mge_potential_resolves_with_inclination(tmp_path: Path) -> None:
     parameters = _oblate_stars(user_data)["parameters"]
     for angle in ("theta", "phi", "psi"):
         del parameters[angle]
-    parameters["inclination"] = {"unit": "deg", "value": 90.0}
+    parameters["inclination"] = {"unit": "deg", "value": 90.0, "fixed": True}
     user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
 
     config = Configuration().read(user_path, workspace_root=tmp_path)
@@ -1144,6 +1184,10 @@ def _native_stars(user_data: dict, type_name: str, parameters: dict) -> dict:
     stars["type"] = type_name
     stars.pop("mge", None)
     stars.pop("parameterization", None)
+    for parameter in parameters.values():
+        # These schema tests evaluate one nominal point; a non-fixed
+        # parameter would need a `prior` (see _validate_parameters).
+        parameter.setdefault("fixed", True)
     stars["parameters"] = parameters
     return stars
 

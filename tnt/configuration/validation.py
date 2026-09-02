@@ -385,7 +385,7 @@ def _validate_parameters(
             {"fixed", "value"},
             parameter_path,
         )
-        _boolean(parameter["fixed"], f"{parameter_path}.fixed")
+        is_fixed = _boolean(parameter["fixed"], f"{parameter_path}.fixed")
         _number(parameter["value"], f"{parameter_path}.value")
         if "latex_label" in parameter:
             _string(parameter["latex_label"], f"{parameter_path}.latex_label")
@@ -393,6 +393,15 @@ def _validate_parameters(
             _validate_prior(
                 _required_mapping(parameter, "prior", parameter_path),
                 f"{parameter_path}.prior",
+            )
+        elif not is_fixed:
+            # A non-fixed parameter is one the search varies; its `prior` is
+            # how it varies. Without one, `tnt.priors._build_model` silently
+            # skips it -- neither a sample site nor a fixed value -- which
+            # only surfaces much later as a missing-parameter error at
+            # `Potential.build`. Require the declaration up front.
+            raise ValueError(
+                f"{parameter_path} is not fixed and so must declare a prior."
             )
 
 

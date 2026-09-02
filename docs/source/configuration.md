@@ -469,9 +469,11 @@ the later execution phase. Unsupported fields are reported as errors.
 
 ## Priors
 
-A potential parameter's optional `prior` field (`{distribution: "<numpyro.distributions
+A potential parameter's `prior` field (`{distribution: "<numpyro.distributions
 class>", args: [...]}`, sibling to `value`/`unit`/`fixed`) declares its
-search-space distribution. `parameter_space_settings.priors` names any
+search-space distribution. It is required for every non-fixed parameter -- a
+parameter with `fixed: false` is one the search varies, and its `prior` is
+how. `parameter_space_settings.priors` names any
 cross-component/custom prior plugins -- Python functions in their own `.py`
 file, resolved relative to `io_settings.input_directory`:
 
@@ -483,7 +485,8 @@ parameter_space_settings:
 ```
 
 Preparation validates this structurally only -- that `plugin` has the shape
-`<path>:<function_name>` and that a declared `prior` has a `distribution`
+`<path>:<function_name>`, that every non-fixed parameter declares a `prior`,
+and that a declared `prior` has a `distribution`
 string and numeric `args`. It does not check that `distribution` names a
 real `numpyro.distributions` class, or load and inspect the plugin file
 itself; both are the plugin author's responsibility. Neither a parameter's

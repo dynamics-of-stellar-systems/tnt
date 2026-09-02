@@ -291,6 +291,13 @@
   `step`/`minimum_step` -- `step`/`minimum_step` had no consumer and were
   dropped rather than carried forward, matching how `logarithmic` was
   removed for the same reason, see below); display labels use `latex_label`.
+  A `prior` is required whenever `fixed` is false: `_validate_parameters`
+  (`tnt.configuration.validation`) raises if a `fixed: false` parameter has
+  no `prior`, since `tnt.priors._build_model` would otherwise silently skip
+  it (neither a sample site nor a fixed value), surfacing only as a
+  missing-parameter error at `Potential.build`. The packaged
+  `dynamic_object_defaults.parameter.fixed` default stays `false`, so a user
+  profile declares `fixed: true` or a `prior` on every parameter.
 - Scientific inputs use independent named registries: `MGEs` maps MGE names to
   files; `spatial_binnings` maps names to inline rectangular aperture geometry
   (`min_x`, `min_y`, `x_extent`, `y_extent`, and `PA`) plus a `bins_file`

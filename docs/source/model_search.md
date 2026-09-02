@@ -251,8 +251,10 @@ configuration-selectable generator:
 A `prior` on a potential parameter (`{distribution: "<numpyro.distributions
 class>", args: [...]}`, sibling to `value`/`unit`/`fixed`) declares its
 search-space distribution and compiles to one `numpyro.sample` site, keyed by
-`"<component>.<parameter>"`. `PriorSampler` composes every non-fixed,
-prior-bearing parameter across the whole `potential` section, plus every
+`"<component>.<parameter>"`. Every non-fixed parameter must declare one;
+configuration preparation rejects a `fixed: false` parameter with no `prior`.
+`PriorSampler` composes every non-fixed
+parameter across the whole `potential` section, plus every
 configured `parameter_space_settings.priors` plugin, into one numpyro model
 per run (`tnt.priors.Prior`) and draws candidates from it.
 
