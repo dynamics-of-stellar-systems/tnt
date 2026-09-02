@@ -58,9 +58,7 @@ potential:
         fixed: true
         # Verified against the committed mge_lum.ecsv fixture to deproject
         # to physically valid (0 < q <= p <= 1) intrinsic axial ratios for
-        # every Gaussian component -- unlike this value's predecessor
-        # (theta=1.0, phi=0.5, psi=0.0), which produced q > 1 (see PR #32
-        # audit, aidocs/pr-32-mge-to-galax-audit.md).
+        # every Gaussian component.
         value: 0.4280191007651427
         latex_label: "$\\theta$"
       phi:

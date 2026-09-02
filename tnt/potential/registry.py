@@ -10,7 +10,8 @@ of three registries:
   its `_raw_dimensions` from the registered class;
 - `_PARAMETERIZATION_REGISTRY` -- non-native parameterizations (e.g. NFW's
   `concentration_m200`), each registered by `register_parameterization`,
-  which bundles the converters *and* the raw schema in one call.
+  which bundles the converters, raw schema, and raw domain constraints in
+  one call.
 
 Each has exactly one declaration site per entry. Normal `tnt.potential`
 initialization explicitly imports each concrete component and parameterization
@@ -21,8 +22,9 @@ scientific input data.
 
 from __future__ import annotations
 
+import operator
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from unxt import Quantity
 
@@ -54,11 +56,100 @@ configuration declares, so a reported value comes back in the parameterization
 """
 
 
-class ParameterizationSpec(NamedTuple):
-    """A registered non-native parameterization: both converters and its raw schema.
+class InvalidPotentialParametersError(ValueError):
+    """A proposed parameter set cannot define a physically valid potential."""
 
-    One `register_parameterization` call bundles all three, so the
-    convert/invert functions and the config parameter schema
+
+_RELATION_OPERATORS: dict[str, Callable[[float, float], bool]] = {
+    ">": operator.gt,
+    ">=": operator.ge,
+    "<": operator.lt,
+    "<=": operator.le,
+}
+
+
+class ParameterConstraint(NamedTuple):
+    """Bounds and an optional same-component parameter relationship.
+
+    Numeric bounds are interpreted in ``unit`` when supplied, or in the
+    parameter value's own unit otherwise. Runtime validation independently
+    requires every potential parameter to be scalar and finite, including
+    parameters with no additional constraint entry. When both
+    ``other_parameter`` and ``relation`` are supplied, the rule is interpreted
+    as ``this parameter relation other_parameter`` after compatible-unit
+    conversion.
+    """
+
+    minimum: float | None = None
+    minimum_inclusive: bool = True
+    maximum: float | None = None
+    maximum_inclusive: bool = True
+    unit: str | None = None
+    other_parameter: str | None = None
+    relation: Literal[">", ">=", "<", "<="] | None = None
+
+    def violation(
+        self,
+        value: Quantity,
+        siblings: Mapping[str, Quantity],
+    ) -> str | None:
+        """Return why ``value`` violates this constraint, or ``None``.
+
+        Constraint metadata has already been checked by registration, and the
+        caller must first verify the parameter mapping's names, types,
+        dimensions, scalar shapes, and finite values.
+        """
+        unit = self.unit or value.unit
+        try:
+            number = float(value.ustrip(unit))
+        except (TypeError, ValueError):
+            return f"{value} cannot be compared in constraint unit {unit!s}."
+
+        if self.minimum is not None:
+            valid = (
+                number >= self.minimum
+                if self.minimum_inclusive
+                else number > self.minimum
+            )
+            if not valid:
+                relation = "at least" if self.minimum_inclusive else "greater than"
+                suffix = f" {unit}" if str(unit) else ""
+                return f"{value} must be {relation} {self.minimum}{suffix}."
+
+        if self.maximum is not None:
+            valid = (
+                number <= self.maximum
+                if self.maximum_inclusive
+                else number < self.maximum
+            )
+            if not valid:
+                relation = "at most" if self.maximum_inclusive else "less than"
+                suffix = f" {unit}" if str(unit) else ""
+                return f"{value} must be {relation} {self.maximum}{suffix}."
+
+        if self.other_parameter is None:
+            return None
+        other_value = siblings[self.other_parameter]
+        try:
+            other = float(other_value.ustrip(unit))
+        except (TypeError, ValueError):
+            return (
+                f"{value} and parameter {self.other_parameter!r} "
+                f"({other_value}) do not have compatible units."
+            )
+        if not _RELATION_OPERATORS[self.relation](number, other):
+            return (
+                f"{value} must be {self.relation} parameter "
+                f"{self.other_parameter!r} ({other_value})."
+            )
+        return None
+
+
+class ParameterizationSpec(NamedTuple):
+    """A non-native parameterization's converters, raw schema, and constraints.
+
+    One `register_parameterization` call bundles all of this metadata, so the
+    convert/invert functions, config parameter schema, and runtime domain rules
     `tnt.configuration.validation._validate_potential` checks against can
     never be registered apart or drift out of step. `AllModels` relies on
     `invert` existing for every `parameterization` a config can specify (see
@@ -71,29 +162,37 @@ class ParameterizationSpec(NamedTuple):
     """Native `galax` constructor kwargs -> raw config parameters."""
     raw_dimensions: dict[str, str]
     """Each raw config parameter's physical dimension, for schema validation."""
+    raw_constraints: dict[str, ParameterConstraint]
+    """Physical-domain constraints on raw configuration parameters."""
 
 
 class NativeParameter(NamedTuple):
-    """A native constructor parameter's physical dimension and mass-rescale exponent."""
+    """A native parameter's dimension, mass-rescale exponent, and domain."""
 
     dimension: str
     exponent: float
+    constraint: ParameterConstraint | None = None
+
+
+_POSITIVE = ParameterConstraint(minimum=0.0, minimum_inclusive=False)
 
 
 def _mass(exponent: float = 1.0) -> NativeParameter:
-    return NativeParameter("mass", exponent)
+    return NativeParameter("mass", exponent, _POSITIVE)
 
 
 def _length() -> NativeParameter:
-    return NativeParameter("length", 0.0)
+    return NativeParameter("length", 0.0, _POSITIVE)
 
 
-def _angle() -> NativeParameter:
-    return NativeParameter("angle", 0.0)
+def _angle(constraint: ParameterConstraint | None = None) -> NativeParameter:
+    return NativeParameter("angle", 0.0, constraint)
 
 
-def _dimensionless() -> NativeParameter:
-    return NativeParameter("dimensionless", 0.0)
+def _dimensionless(
+    constraint: ParameterConstraint | None = None,
+) -> NativeParameter:
+    return NativeParameter("dimensionless", 0.0, constraint)
 
 
 # `_SUPPORTED_GALAX_TYPES`: every galax.potential class TNT supports as
@@ -120,28 +219,47 @@ def _dimensionless() -> NativeParameter:
 _SUPPORTED_GALAX_TYPES: dict[str, dict[str, NativeParameter]] = {
     "BurkertPotential": {"m": _mass(), "r_s": _length()},
     "HardCutoffNFWPotential": {"m": _mass(), "r_s": _length(), "r_t": _length()},
-    "HarmonicOscillatorPotential": {"omega": NativeParameter("frequency", 0.5)},
+    "HarmonicOscillatorPotential": {
+        "omega": NativeParameter("frequency", 0.5, _POSITIVE)
+    },
     "HernquistPotential": {"m_tot": _mass(), "r_s": _length()},
     "IsochronePotential": {"m_tot": _mass(), "r_s": _length()},
     "JaffePotential": {"m_tot": _mass(), "r_s": _length()},
     "KeplerPotential": {"m_tot": _mass()},
     "KuzminPotential": {"m_tot": _mass(), "r_s": _length()},
     "LMJ09LogarithmicPotential": {
-        "v_c": NativeParameter("speed", 0.5),
+        "v_c": NativeParameter("speed", 0.5, _POSITIVE),
         "r_s": _length(),
-        "q1": _dimensionless(),
-        "q2": _dimensionless(),
-        "q3": _dimensionless(),
+        "q1": _dimensionless(_POSITIVE),
+        "q2": _dimensionless(_POSITIVE),
+        "q3": _dimensionless(_POSITIVE),
         "phi": _angle(),
     },
     "LeeSutoTriaxialNFWPotential": {
         "m": _mass(),
         "r_s": _length(),
-        "a1": _dimensionless(),
-        "a2": _dimensionless(),
-        "a3": _dimensionless(),
+        "a1": _dimensionless(
+            ParameterConstraint(
+                minimum=0.0,
+                minimum_inclusive=False,
+                other_parameter="a2",
+                relation=">=",
+            )
+        ),
+        "a2": _dimensionless(
+            ParameterConstraint(
+                minimum=0.0,
+                minimum_inclusive=False,
+                other_parameter="a3",
+                relation=">=",
+            )
+        ),
+        "a3": _dimensionless(_POSITIVE),
     },
-    "LogarithmicPotential": {"v_c": NativeParameter("speed", 0.5), "r_s": _length()},
+    "LogarithmicPotential": {
+        "v_c": NativeParameter("speed", 0.5, _POSITIVE),
+        "r_s": _length(),
+    },
     "LongMuraliBarPotential": {
         "m_tot": _mass(),
         "a": _length(),
@@ -155,7 +273,7 @@ _SUPPORTED_GALAX_TYPES: dict[str, dict[str, NativeParameter]] = {
     "MonariEtAl2016BarPotential": {
         "alpha": _dimensionless(),
         "R0": _length(),
-        "v0": NativeParameter("speed", 0.5),
+        "v0": NativeParameter("speed", 0.5, _POSITIVE),
         "Rb": _length(),
         "phi_b": _angle(),
         "Omega": NativeParameter("frequency", 0.0),
@@ -164,30 +282,66 @@ _SUPPORTED_GALAX_TYPES: dict[str, dict[str, NativeParameter]] = {
     "PlummerPotential": {"m_tot": _mass(), "r_s": _length()},
     "PowerLawCutoffPotential": {
         "m_tot": _mass(),
-        "alpha": _dimensionless(),
+        "alpha": _dimensionless(
+            ParameterConstraint(
+                minimum=0.0,
+                maximum=3.0,
+                maximum_inclusive=False,
+            )
+        ),
         "r_c": _length(),
     },
     "SatohPotential": {"m_tot": _mass(), "a": _length(), "b": _length()},
-    "StoneOstriker15Potential": {"m_tot": _mass(), "r_c": _length(), "r_h": _length()},
+    "StoneOstriker15Potential": {
+        "m_tot": _mass(),
+        "r_c": _length(),
+        "r_h": NativeParameter(
+            "length",
+            0.0,
+            ParameterConstraint(
+                minimum=0.0,
+                minimum_inclusive=False,
+                other_parameter="r_c",
+                relation=">",
+            ),
+        ),
+    },
     "TriaxialHernquistPotential": {
         "m_tot": _mass(),
         "r_s": _length(),
-        "q1": _dimensionless(),
-        "q2": _dimensionless(),
+        "q1": _dimensionless(_POSITIVE),
+        "q2": _dimensionless(_POSITIVE),
     },
     "TriaxialNFWPotential": {
         "m": _mass(),
         "r_s": _length(),
-        "q1": _dimensionless(),
-        "q2": _dimensionless(),
+        "q1": _dimensionless(_POSITIVE),
+        "q2": _dimensionless(_POSITIVE),
     },
     "Vogelsberger08TriaxialNFWPotential": {
         "m": _mass(),
         "r_s": _length(),
-        "q1": _dimensionless(),
-        "a_r": _dimensionless(),
+        "q1": _dimensionless(
+            ParameterConstraint(
+                minimum=0.0,
+                minimum_inclusive=False,
+                maximum=3**0.5,
+                maximum_inclusive=False,
+            )
+        ),
+        "a_r": _dimensionless(_POSITIVE),
     },
-    "gNFWPotential": {"m": _mass(), "r_s": _length(), "gamma": _dimensionless()},
+    "gNFWPotential": {
+        "m": _mass(),
+        "r_s": _length(),
+        "gamma": _dimensionless(
+            ParameterConstraint(
+                minimum=0.0,
+                maximum=2.0,
+                maximum_inclusive=False,
+            )
+        ),
+    },
 }
 
 
@@ -208,6 +362,74 @@ _VIEWING_ANGLES: dict[str, str] = {"theta": "angle", "phi": "angle", "psi": "ang
 _COMPONENT_REGISTRY: dict[str, type[AbstractPotentialComponent]] = {}
 
 
+def _validate_constraint_metadata(
+    constraints: Mapping[str, ParameterConstraint],
+    parameter_names: set[str],
+    *,
+    context: str,
+) -> None:
+    """Reject constraint metadata that disagrees with its parameter schema."""
+    unknown = set(constraints) - parameter_names
+    if unknown:
+        names = ", ".join(sorted(unknown))
+        raise ValueError(f"{context}: constraint(s) not present in schema: {names}.")
+    for name, constraint in constraints.items():
+        if not isinstance(constraint, ParameterConstraint):
+            raise TypeError(
+                f"{context}: constraint for {name!r} must be a ParameterConstraint."
+            )
+        if constraint.relation not in {None, ">", ">=", "<", "<="}:
+            raise ValueError(
+                f"{context}: constraint for {name!r} has unsupported relation "
+                f"{constraint.relation!r}."
+            )
+        relationship_is_complete = (constraint.other_parameter is None) == (
+            constraint.relation is None
+        )
+        if not relationship_is_complete:
+            raise ValueError(
+                f"{context}: constraint for {name!r} must specify both "
+                "other_parameter and relation."
+            )
+        if constraint.other_parameter is not None:
+            if constraint.other_parameter not in parameter_names:
+                raise ValueError(
+                    f"{context}: constraint for {name!r} refers to unknown "
+                    f"parameter {constraint.other_parameter!r}."
+                )
+            if constraint.other_parameter == name:
+                raise ValueError(
+                    f"{context}: constraint for {name!r} cannot compare the "
+                    "parameter with itself."
+                )
+        if (
+            constraint.minimum is not None
+            and constraint.maximum is not None
+            and (
+                constraint.minimum > constraint.maximum
+                or (
+                    constraint.minimum == constraint.maximum
+                    and not (
+                        constraint.minimum_inclusive and constraint.maximum_inclusive
+                    )
+                )
+            )
+        ):
+            raise ValueError(f"{context}: constraint for {name!r} has empty bounds.")
+
+
+for _native_type, _native_parameters in _SUPPORTED_GALAX_TYPES.items():
+    _validate_constraint_metadata(
+        {
+            name: parameter.constraint
+            for name, parameter in _native_parameters.items()
+            if parameter.constraint is not None
+        },
+        set(_native_parameters),
+        context=f"Invalid native potential metadata for {_native_type!r}",
+    )
+
+
 def register_component(
     cls: type[AbstractPotentialComponent],
 ) -> type[AbstractPotentialComponent]:
@@ -216,15 +438,23 @@ def register_component(
     Applied directly to a concrete `AbstractPotentialComponent` subclass's
     definition, e.g. `@register_component` above `class
     TriaxialLightMGEPotential(AbstractPotentialComponent): ...`. The registry
-    stores the class itself; schema access subsequently reads that class's
-    `_raw_dimensions`, so neither the type name nor dimensions are repeated.
+    stores the class itself; schema/domain access subsequently reads that
+    class's `_raw_dimensions` and `_constraints`, so the type name, dimensions,
+    and physical rules are not repeated in a separate registry.
 
     Raises:
         TypeError: If the class does not declare its own non-empty string
             `_type`.
         ValueError: If another registered class already declared the same
-            `_type`.
+            `_type`, or if its constraint metadata disagrees with its schema.
     """
+    constraints = getattr(cls, "_constraints", {})
+    dimensions = getattr(cls, "_raw_dimensions", {})
+    _validate_constraint_metadata(
+        constraints,
+        set(dimensions),
+        context=f"Cannot register potential component {getattr(cls, '_type', None)!r}",
+    )
     return register_typed_class(_COMPONENT_REGISTRY, cls, family="potential")
 
 
@@ -250,7 +480,8 @@ def is_registered_component_type(type_name: str) -> bool:
 # that owns each parameterization's numerics (e.g. `tnt.potential.nfw`) --
 # `tnt/potential/__init__.py`'s explicit imports are what run those, exactly
 # as for `_COMPONENT_REGISTRY`. One entry per parameterization is the single
-# place its converters *and* its config parameter schema are declared.
+# place its converters, config parameter schema, and raw constraints are
+# declared.
 _PARAMETERIZATION_REGISTRY: dict[tuple[str, str], ParameterizationSpec] = {}
 
 
@@ -261,13 +492,15 @@ def register_parameterization(
     convert: ForwardConverter,
     invert: InverseConverter,
     raw_dimensions: Mapping[str, str],
+    raw_constraints: Mapping[str, ParameterConstraint],
 ) -> None:
     """Register a non-native `parameterization` for `type_name` under `name`.
 
     Bundles the forward/inverse converters with the raw config parameter
-    schema so config validation (`_validate_potential`) and runtime
-    resolution can never disagree on which parameterizations exist or what
-    parameters they take.
+    schema and its domain constraints so config validation
+    (`_validate_potential`) and runtime resolution can never disagree on which
+    parameterizations exist, what parameters they take, or which raw domains
+    they accept.
 
     `type_name` must be a curated native `galax` class
     (`_SUPPORTED_GALAX_TYPES`). A parameterization converts a raw config
@@ -278,9 +511,13 @@ def register_parameterization(
     Supporting composite types needs the inverse dispatch moved to a
     type-independent layer first.
 
+    Constraint names must be a subset of ``raw_dimensions`` so schema and
+    domain metadata cannot silently disagree.
+
     Raises:
         ValueError: If `type_name` is not a curated native `galax` type, or if
-            `(type_name, name)` is already registered.
+            `(type_name, name)` is already registered, or a constraint names
+            an unknown raw parameter.
     """
     if type_name not in _SUPPORTED_GALAX_TYPES:
         raise ValueError(
@@ -288,11 +525,19 @@ def register_parameterization(
             "curated native galax type. Parameterizations are only supported for "
             "native galax component types."
         )
+    _validate_constraint_metadata(
+        raw_constraints,
+        set(raw_dimensions),
+        context=f"Cannot register parameterization {name!r}",
+    )
     key = (type_name, name)
     if key in _PARAMETERIZATION_REGISTRY:
         raise ValueError(f"Duplicate parameterization {name!r} for type {type_name!r}.")
     _PARAMETERIZATION_REGISTRY[key] = ParameterizationSpec(
-        convert, invert, dict(raw_dimensions)
+        convert,
+        invert,
+        dict(raw_dimensions),
+        dict(raw_constraints),
     )
 
 
@@ -329,6 +574,23 @@ def raw_parameter_dimensions(kind: str, parameterization: str | None) -> dict[st
     return {
         name: parameter.dimension
         for name, parameter in _SUPPORTED_GALAX_TYPES.get(kind, {}).items()
+    }
+
+
+def parameter_constraints(
+    kind: str, parameterization: str | None
+) -> dict[str, ParameterConstraint]:
+    """Physical-domain constraints for one raw type/parameterization schema."""
+    if parameterization is not None:
+        spec = _PARAMETERIZATION_REGISTRY.get((kind, parameterization))
+        return dict(spec.raw_constraints) if spec is not None else {}
+    component_cls = get_component_class(kind)
+    if component_cls is not None:
+        return dict(component_cls._constraints)
+    return {
+        name: parameter.constraint
+        for name, parameter in _SUPPORTED_GALAX_TYPES.get(kind, {}).items()
+        if parameter.constraint is not None
     }
 
 

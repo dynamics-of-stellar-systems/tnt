@@ -28,13 +28,19 @@ from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE
 from tnt.potential.components import AbstractPotentialComponent
-from tnt.potential.registry import register_component
+from tnt.potential.registry import ParameterConstraint, register_component
 from tnt.validation import _required_string, _resolve_typed_reference
 
 # The single viewing angle an oblate axisymmetric MGE is deprojected under
 # (`tnt.mge.AbstractMGE.deproject_oblate`), in place of the triaxial module's
 # `theta`/`phi`/`psi` -- required regardless of light vs. mass.
 _INCLINATION: dict[str, str] = {"inclination": "angle"}
+_INCLINATION_CONSTRAINT = ParameterConstraint(
+    minimum=0.0,
+    minimum_inclusive=False,
+    maximum=90.0,
+    unit="deg",
+)
 
 
 @register_component
@@ -53,6 +59,10 @@ class OblateLightMGEPotential(AbstractPotentialComponent):
     _raw_dimensions: ClassVar[dict[str, str]] = {
         "ml": "mass_to_light",
         **_INCLINATION,
+    }
+    _constraints: ClassVar[dict[str, ParameterConstraint]] = {
+        "ml": ParameterConstraint(minimum=0.0, minimum_inclusive=False),
+        "inclination": _INCLINATION_CONSTRAINT,
     }
     mge: LightMGE
     deprojected: Deprojected3DMGE
@@ -121,6 +131,10 @@ class OblateMassMGEPotential(AbstractPotentialComponent):
     _raw_dimensions: ClassVar[dict[str, str]] = {
         "mge_mass_scale": "dimensionless",
         **_INCLINATION,
+    }
+    _constraints: ClassVar[dict[str, ParameterConstraint]] = {
+        "mge_mass_scale": ParameterConstraint(minimum=0.0, minimum_inclusive=False),
+        "inclination": _INCLINATION_CONSTRAINT,
     }
     mge: MassMGE
     deprojected: Deprojected3DMGE

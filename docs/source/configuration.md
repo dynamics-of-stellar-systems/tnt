@@ -208,6 +208,11 @@ Triaxial MGE types also require `theta`/`phi`/`psi`, the global viewing
 angles the named MGE is deprojected under; oblate axisymmetric MGE types
 require a single `inclination` instead. MGE contents and their physical
 units are inspected only in the later object-construction phase.
+Potential parameter values also retain their declared units through
+preparation. Their scalar/finite and physical-domain constraints are checked
+when each proposed runtime potential is constructed, both before and after a
+registered parameterization conversion. These runtime comparisons may convert
+compatible units locally, but they do not rewrite the preserved declaration.
 
 ## Loading configured MGEs
 
@@ -405,8 +410,10 @@ identifiers owned by the preparation schema, and inconsistent tagged
 thresholds. A potential component's curated `galax` class name and optional
 parameterization are resolved later by `tnt.potential` during runtime-object
 construction. Preparation also checks non-kinematics data-only numerical
-constraints, including parameter bounds, positive worker counts, and orbit-grid
-limits. Concrete kinematics and population constructors
+constraints, including generic search-parameter bounds, positive worker
+counts, and orbit-grid limits. Potential-type-specific physical domains are
+checked later, when a proposed potential component is constructed. Concrete
+kinematics and population constructors
 check explicit histogram bin counts, Gauss-Hermite order and
 systematic-uncertainty mappings, Bayesian LOSVD policies, proper-motion
 variance scaling and warning thresholds, population value/uncertainty pairs,

@@ -67,7 +67,7 @@ def _multi_component_light_mge() -> LightMGE:
     Same values as `_LIGHT_ROWS`, converted to radians up front and
     constructed directly rather than read from a file -- for tests that just
     need some realistic LightMGE to operate on, as opposed to testing
-    file-reading behaviour itself. (`LightMGE.read` now keeps each column's
+    file-reading behaviour itself. (`LightMGE.read` keeps each column's
     declared unit, so a real MGE would carry arcsec/deg here; radians keep
     these fixtures' expected values unchanged.)
     """
@@ -161,9 +161,7 @@ def test_build_mges_reads_each_named_file(tmp_path):
 
 
 def test_build_mges_without_entries_returns_empty_dict(tmp_path):
-    assert (
-        build_mges({}, tmp_path, u.Quantity(30.5, "Mpc")) == {}
-    )
+    assert build_mges({}, tmp_path, u.Quantity(30.5, "Mpc")) == {}
 
 
 @pytest.mark.parametrize("bad_q", [0.0, -0.5, 1.5])
@@ -316,9 +314,7 @@ def test_deproject_oblate_rejects_inclination_outside_0_90():
     # i and 180 deg - i give the same projection and i = 0 is singular, so the
     # domain is (0, 90] deg -- out-of-range angles are rejected, not folded
     # through the squared trigonometry (120 deg would otherwise act as 60).
-    physical = _multi_component_light_mge().angular_to_physical(
-        u.Quantity(30.5, "Mpc")
-    )
+    physical = _multi_component_light_mge().angular_to_physical(u.Quantity(30.5, "Mpc"))
 
     for bad in (0.0, -15.0, 90.001, 120.0):
         with pytest.raises(ValueError, match=r"inclination in \(0, 90\] degrees"):
@@ -378,9 +374,7 @@ def test_deproject_triaxial_conserves_total_flux():
     )
 
     sigma_obs = mge.sigma.ustrip("kpc")
-    flux_2d = (
-        2 * jnp.pi * sigma_obs**2 * mge.q.ustrip("") * mge.I.ustrip("Lsun / kpc2")
-    )
+    flux_2d = 2 * jnp.pi * sigma_obs**2 * mge.q.ustrip("") * mge.I.ustrip("Lsun / kpc2")
 
     p, q = deprojected.p.ustrip(""), deprojected.q.ustrip("")
     sigma_intr = deprojected.sigma.ustrip("kpc")
@@ -574,9 +568,7 @@ def test_angular_to_physical_leaves_q_and_pa_twist_unchanged():
     physical = mge.angular_to_physical(distance)
 
     assert jnp.allclose(physical.q.ustrip(""), mge.q.ustrip(""))
-    assert jnp.allclose(
-        physical.PA_twist.ustrip("rad"), mge.PA_twist.ustrip("rad")
-    )
+    assert jnp.allclose(physical.PA_twist.ustrip("rad"), mge.PA_twist.ustrip("rad"))
 
 
 _PROJECTED_MASS_QUAD_ORDER = 10
@@ -598,9 +590,7 @@ def _projected_binning(
     )
 
 
-def _brute_force_aperture_mass(
-    I, sigma, q, pa_twist, pa, x_edges, y_edges
-):
+def _brute_force_aperture_mass(I, sigma, q, pa_twist, pa, x_edges, y_edges):
     """Independently integrate a multi-component MGE over a pixel grid.
 
     Uses `scipy.integrate.dblquad` directly on each component's surface

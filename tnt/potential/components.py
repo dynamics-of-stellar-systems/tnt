@@ -21,8 +21,9 @@ reused across every proposed point in parameter space; see
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
-from typing import Any, NamedTuple, Self
+from typing import Any, ClassVar, NamedTuple, Self
 
 import equinox as eqx
 import galax.potential
@@ -32,12 +33,16 @@ from tnt.mge import LightMGE, MassMGE
 from tnt.potential.registry import (
     _SUPPORTED_GALAX_TYPES,
     ForwardConverter,
+    InvalidPotentialParametersError,
+    ParameterConstraint,
     component_type_names,
     get_component_class,
     get_parameterization,
+    parameter_constraints,
     parameterization_names,
     raw_parameter_dimensions,
 )
+from tnt.units import validate_dimension
 from tnt.validation import _required_string, _string
 
 
@@ -52,8 +57,12 @@ class ResolvedPotentialComponent(NamedTuple):
 
     component_cls: type[AbstractPotentialComponent]
     raw_dimensions: dict[str, str]
+    raw_constraints: dict[str, ParameterConstraint]
+    canonical_dimensions: dict[str, str]
+    canonical_constraints: dict[str, ParameterConstraint]
     convert: ForwardConverter | None
     extra_fields: dict[str, Any]
+    path: str
 
     def build(
         self,
@@ -62,22 +71,18 @@ class ResolvedPotentialComponent(NamedTuple):
     ) -> AbstractPotentialComponent:
         """Build this component from one proposed point in parameter space.
 
-        `parameter_values` should have this component's raw parameter names
-        (native, or under a `parameterization`), each already a `Quantity`
-        in whatever unit it was declared/proposed in -- no unit-system
-        conversion happens here (see `tnt.potential`'s module docstring for
-        why). Passed straight through as-is -- a missing or otherwise wrong
-        parameter surfaces at construction (a native `galax` constructor
-        error, or `AbstractMGE.deproject_triaxial`/`deproject_oblate` for the
-        four MGE composite types, via `AbstractPotentialComponent._build`) or a
-        registered
-        `parameterization` converter, not here. Exact-name parameter-schema
-        validation -- for TNT's own registered component types, curated native
-        `galax` types, and registered parameterizations alike -- already
-        happens earlier, at configuration-prep time
-        (`tnt.configuration.validation._validate_potential`). Value/domain
-        validation (positivity, physical bounds, ...) isn't implemented
-        anywhere yet (GitHub issue #30).
+        `parameter_values` must have this component's exact raw parameter names
+        (native, or under a `parameterization`), each as a scalar, finite
+        `Quantity` in whatever unit it was declared/proposed in. Physical-domain
+        constraints are checked before a registered converter runs, then the
+        converter's canonical output is checked again against the native
+        component constraints. No unit-system normalization happens here (see
+        `tnt.potential`'s module docstring); constraints convert only as needed
+        for a comparison. MGE geometry validation remains owned by the eager
+        deprojection in the four composite types' `_build` methods.
+        Validation converts scalar values to Python numbers, so `build` is an
+        eager runtime boundary and must remain outside `jax.jit`/`jax.vmap`
+        traces; only the resulting potential enters compiled numerical work.
 
         Args:
             parameter_values: This component's current values, e.g. one
@@ -87,14 +92,94 @@ class ResolvedPotentialComponent(NamedTuple):
                 `concentration_m200` via `H`.
         """
         raw = dict(parameter_values)
-        canonical = (
-            self.convert(raw, cosmological_parameters)
-            if self.convert is not None
-            else raw
+        _check_parameter_set_contract(
+            raw, self.raw_dimensions, path=self.path, stage="raw"
         )
+        _validate_parameter_constraints(
+            raw, self.raw_constraints, path=self.path, stage="raw"
+        )
+        if self.convert is None:
+            canonical = raw
+        else:
+            canonical = self.convert(raw, cosmological_parameters)
+            _check_parameter_set_contract(
+                canonical,
+                self.canonical_dimensions,
+                path=self.path,
+                stage="converted",
+            )
+            _validate_parameter_constraints(
+                canonical,
+                self.canonical_constraints,
+                path=self.path,
+                stage="converted",
+            )
         return self.component_cls._build(
             canonical, cosmological_parameters, self.extra_fields
         )
+
+
+def _check_parameter_set_contract(
+    values: Mapping[str, Quantity],
+    dimensions: Mapping[str, str],
+    *,
+    path: str,
+    stage: str,
+) -> None:
+    """Check the generator/converter contract for one parameter mapping."""
+    expected = set(dimensions)
+    actual = set(values)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        details = []
+        if missing:
+            details.append(f"missing {missing}")
+        if extra:
+            details.append(f"unexpected {extra}")
+        raise InvalidPotentialParametersError(
+            f"Invalid {stage} parameters for {path}: {', '.join(details)}."
+        )
+
+    for name, value in values.items():
+        label = f"{path}.parameters.{name}"
+        if not isinstance(value, Quantity):
+            raise TypeError(
+                f"Invalid {stage} value for {label}: expected a Quantity, "
+                f"got {type(value).__name__}."
+            )
+        try:
+            validate_dimension(value.unit, dimensions[name], label)
+        except ValueError as error:
+            raise InvalidPotentialParametersError(
+                f"Invalid {stage} value: {error}"
+            ) from error
+        stripped = value.ustrip(value.unit)
+        if getattr(stripped, "shape", ()) != ():
+            raise InvalidPotentialParametersError(
+                f"Invalid {stage} value for {label}: expected a scalar, "
+                f"got shape {getattr(stripped, 'shape', None)}."
+            )
+        if not math.isfinite(float(stripped)):
+            raise InvalidPotentialParametersError(
+                f"Invalid {stage} value for {label}: {value} must be finite."
+            )
+
+
+def _validate_parameter_constraints(
+    values: Mapping[str, Quantity],
+    constraints: Mapping[str, ParameterConstraint],
+    *,
+    path: str,
+    stage: str,
+) -> None:
+    """Apply registered physical-domain constraints to checked parameters."""
+    for name, constraint in constraints.items():
+        violation = constraint.violation(values[name], values)
+        if violation is not None:
+            raise InvalidPotentialParametersError(
+                f"Invalid {stage} value for {path}.parameters.{name}: {violation}"
+            )
 
 
 class AbstractPotentialComponent(eqx.Module):
@@ -113,6 +198,8 @@ class AbstractPotentialComponent(eqx.Module):
     constructor kwarg names; for the four MGE composite types, TNT's own
     `ml`/`mge_mass_scale`.
     """
+
+    _constraints: ClassVar[dict[str, ParameterConstraint]] = {}
 
     parameters: dict[str, Quantity]
 
@@ -190,8 +277,12 @@ class AbstractPotentialComponent(eqx.Module):
         return ResolvedPotentialComponent(
             component_cls=component_cls,
             raw_dimensions=raw_parameter_dimensions(kind, parameterization_name),
+            raw_constraints=parameter_constraints(kind, parameterization_name),
+            canonical_dimensions=raw_parameter_dimensions(kind, None),
+            canonical_constraints=parameter_constraints(kind, None),
             convert=convert,
             extra_fields=component_cls._extra_fields(kind, settings, mges, path=path),
+            path=path,
         )
 
     @classmethod

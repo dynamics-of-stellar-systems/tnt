@@ -43,12 +43,14 @@ _INTERNAL_DIMENSIONS = ("length", "time", "mass", "angle")
 # units (see this module's docstring and `docs/source/units.md`).
 _DISPLAY_DIMENSIONS = frozenset((*_INTERNAL_DIMENSIONS, "speed", "power"))
 _REFERENCE_UNITS = {
+    "dimensionless": "",
     "length": "m",
     "time": "s",
     "mass": "kg",
     "angle": "rad",
     "power": "W",
     "speed": "m / s",
+    "frequency": "1 / s",
     "inverse_time": "1 / s",
     "mass_to_light": "kg / W",
     "light_surface_brightness": "W / rad2",
@@ -238,9 +240,8 @@ def validate_dimension(unit: Any, dimension: str, path: str) -> None:
 def declared_quantity(value: Any, dimension: str, path: str) -> Quantity:
     """Validate an explicit ``{value, unit}`` mapping, keeping its declared unit.
 
-    The unconverted counterpart of the old eager normalization: returns a
-    `Quantity` in the unit the configuration declares, leaving any
-    conversion to whatever consumer later needs one.
+    Returns a `Quantity` in the unit the configuration declares, leaving any
+    conversion to the runtime consumer that needs one.
     """
     numeric, source = _declared_quantity(value, dimension, path)
     return Quantity(numeric, source)
