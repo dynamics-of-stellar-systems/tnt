@@ -207,10 +207,10 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
 
     # SinglePoint proposes ml as a Quantity in its declared unit.
     # ModelIterator passes proposed values separately, so resolved config keeps
-    # fixed/generator_settings unmodified (see tnt.potential's module docstring).
+    # fixed/prior unmodified (see tnt.potential's module docstring).
     stars_ml_settings = resolved["potential"]["stars"]["parameters"]["ml"]
     assert stars_ml_settings["fixed"] is False
-    assert stars_ml_settings["generator_settings"]["upper_bound"] == pytest.approx(9.0)
+    assert stars_ml_settings["prior"]["args"][1] == pytest.approx(9.0)
     stars_ml_value = captured_parameter_values[0]["stars"]["ml"]
     assert stars_ml_value.ustrip("Msun / Lsun") == pytest.approx(5.0)
 

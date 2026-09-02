@@ -9,6 +9,7 @@ dependencies = [
     "equinox>=0.13.8",
     "galax",
     "jax>=0.4.30",
+    "numpyro>=0.21.0",
     "pyyaml>=6.0.3",
     "unxt>=1.11.4,<2",
 ]

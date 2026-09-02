@@ -90,11 +90,15 @@ class OblateLightMGEPotential(AbstractPotentialComponent):
         parameters: dict[str, Quantity],
         cosmological_parameters: Mapping[str, Quantity],
         extra_fields: dict[str, Any],
+        *,
+        validate: bool = True,
     ) -> Self:
         del cosmological_parameters
         mge = extra_fields["mge"]
         mass_mge = mge.to_mass(parameters["ml"])
-        deprojected = mass_mge.deproject_oblate(parameters["inclination"])
+        deprojected = mass_mge.deproject_oblate(
+            parameters["inclination"], validate=validate
+        )
         return cls(parameters=parameters, mge=mge, deprojected=deprojected)
 
     def to_galax(
@@ -162,11 +166,15 @@ class OblateMassMGEPotential(AbstractPotentialComponent):
         parameters: dict[str, Quantity],
         cosmological_parameters: Mapping[str, Quantity],
         extra_fields: dict[str, Any],
+        *,
+        validate: bool = True,
     ) -> Self:
         del cosmological_parameters
         mge = extra_fields["mge"]
         mass_mge = mge.rescaled(parameters["mge_mass_scale"])
-        deprojected = mass_mge.deproject_oblate(parameters["inclination"])
+        deprojected = mass_mge.deproject_oblate(
+            parameters["inclination"], validate=validate
+        )
         return cls(parameters=parameters, mge=mge, deprojected=deprojected)
 
     def to_galax(

@@ -33,9 +33,7 @@ def _config(input_directory: Path) -> dict[str, object]:
             },
             "display": {"angle": "arcsec"},
         },
-        "cosmological_parameters": {
-            "H": {"value": 0.1, "unit": "1 / Myr"}
-        },
+        "cosmological_parameters": {"H": {"value": 0.1, "unit": "1 / Myr"}},
         "system_attributes": {
             "name": "galaxy",
             "distance": {"value": 10.0, "unit": "kpc"},
@@ -73,7 +71,7 @@ def _config(input_directory: Path) -> dict[str, object]:
                         "value": 0.8,
                         "fixed": False,
                         "latex_label": "q",
-                        "generator_settings": {"lower_bound": 0.5},
+                        "prior": {"distribution": "Uniform", "args": [0.5, 0.99]},
                     },
                     "ml": {
                         "value": 5.0,
@@ -157,7 +155,7 @@ def test_operational_and_search_changes_are_compatible(tmp_path: Path) -> None:
             "value": 0.7,
             "fixed": True,
             "latex_label": "changed",
-            "generator_settings": {"lower_bound": 0.2},
+            "prior": {"distribution": "Uniform", "args": [0.2, 0.99]},
         }
     )
     changed["parameter_space_settings"] = {"generator_type": "SinglePoint"}
@@ -170,10 +168,38 @@ def test_operational_and_search_changes_are_compatible(tmp_path: Path) -> None:
         "all_models_file": "renamed.ecsv",
     }
 
-    assert _different_paths(
-        _critical_configuration(baseline),
-        _critical_configuration(changed),
-    ) == []
+    assert (
+        _different_paths(
+            _critical_configuration(baseline),
+            _critical_configuration(changed),
+        )
+        == []
+    )
+
+
+def test_prior_plugins_are_search_controls_not_critical(tmp_path: Path) -> None:
+    # `parameter_space_settings.priors` -- like `generator_type`/
+    # `generator_settings`/`stopping_criteria`/`potential_rescalings` --
+    # governs how a run searches, not what the model is, so adding or
+    # changing a prior plugin must not trip resume-compatibility.
+    first_inputs = tmp_path / "input-one"
+    _write_inputs(first_inputs)
+    baseline = _config(first_inputs)
+    changed = deepcopy(baseline)
+    changed["parameter_space_settings"] = {
+        **baseline["parameter_space_settings"],
+        "priors": {
+            "dh_mass_fraction": {"plugin": "priors/mass_fraction.py:mass_fraction"}
+        },
+    }
+
+    assert (
+        _different_paths(
+            _critical_configuration(baseline),
+            _critical_configuration(changed),
+        )
+        == []
+    )
 
 
 def test_equivalent_declared_units_are_compatible(tmp_path: Path) -> None:
@@ -216,19 +242,20 @@ def test_equivalent_declared_units_are_compatible(tmp_path: Path) -> None:
             "center": {"value": 0.0, "unit": "m / s"},
         }
     )
-    systematics = equivalent["kinematic_data"]["observed"][
-        "observational_errors"
-    ]["systematic_uncertainties"]
+    systematics = equivalent["kinematic_data"]["observed"]["observational_errors"][
+        "systematic_uncertainties"
+    ]
     systematics["v"] = {"value": 0.0, "unit": "m / s"}
     systematics["sigma"] = {"value": 0.0, "unit": "m / s"}
-    equivalent["potential"]["stars"]["parameters"]["ml"]["unit"] = (
-        "solMass / solLum"
-    )
+    equivalent["potential"]["stars"]["parameters"]["ml"]["unit"] = "solMass / solLum"
 
-    assert _different_paths(
-        _critical_configuration(baseline),
-        _critical_configuration(equivalent),
-    ) == []
+    assert (
+        _different_paths(
+            _critical_configuration(baseline),
+            _critical_configuration(equivalent),
+        )
+        == []
+    )
 
 
 def test_quantity_comparison_handles_nested_arrays_and_exact_values() -> None:

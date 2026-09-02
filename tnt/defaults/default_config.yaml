@@ -150,6 +150,10 @@ weight_solver_settings:
 parameter_space_settings:
   generator_type: "GridSearch"
   which_chi2: "kinchi2"
+  # Cross-component/custom priors, each a plugin function ("<path>:<function_name>",
+  # resolved relative to io_settings.input_directory) contributing numpyro
+  # factor terms -- see tnt.priors. Empty by default.
+  priors: {}
   potential_rescalings:
     # Scale the fully assembled potential independently of its ordinary
     # component parameters. Disabled settings remain present and validated.
@@ -179,6 +183,9 @@ parameter_space_settings:
     target_model_count: 3
     # Maximum number of additional iterations performed by the current run.
     n_new_iter: 10
+    # Caps how many ParameterSets any generator_type proposes per call to
+    # generate_parameters -- shared/generic, not any one generator's own setting.
+    max_new_mods_per_iter: 10
 
 analysis_settings:
   orbit_decomposition:

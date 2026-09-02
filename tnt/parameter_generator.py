@@ -2,7 +2,7 @@
 
 Mostly a signature-only scaffold -- `GridSearchParameterGenerator` still
 raises `NotImplementedError` -- except `SinglePointParameterGenerator` and
-`build_parameter_generator`, which are fully implemented.
+`PriorSampler`, which are fully implemented.
 """
 
 from __future__ import annotations
@@ -11,10 +11,12 @@ from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
 import equinox as eqx
+import jax.random
 from unxt import Quantity
 
 from tnt.all_models import AllModels
 from tnt.potential import raw_parameter_dimensions
+from tnt.priors import Prior
 from tnt.registry import register_typed_class
 from tnt.validation import _mapping, _number, _required
 
@@ -69,7 +71,7 @@ class AbstractParameterGenerator(eqx.Module):
 
     `potential_settings` (a resolved configuration's `potential` section,
     as declared -- every parameter's value, unit, and, for a search, its
-    allowed range/step) is common to every generator, since even a fixed
+    declared `prior`) is common to every generator, since even a fixed
     single point is drawn from it.
     `generator_settings` is
     `parameter_space_settings.generator_settings`; not every generator type
@@ -78,6 +80,11 @@ class AbstractParameterGenerator(eqx.Module):
     mirrors this set (it can't import this module -- see its own note)
     to validate `generator_settings` against whichever `generator_type`
     is configured.
+    `max_new_mods_per_iter` (from `parameter_space_settings.stopping_criteria`,
+    shared and generic -- not any one generator's own setting) caps how many
+    candidates `generate_parameters` returns per call, uniformly across
+    every generator regardless of how many its own `_propose_free_parameters`
+    happens to produce.
     """
 
     _type: ClassVar[str]
@@ -85,9 +92,21 @@ class AbstractParameterGenerator(eqx.Module):
 
     potential_settings: Mapping[str, Mapping[str, Any]]
     generator_settings: Mapping[str, Any]
+    max_new_mods_per_iter: int
 
     def generate_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
-        """Propose the next round of `ParameterSet`s.
+        """Propose the next round of `ParameterSet`s, capped at `max_new_mods_per_iter`.
+
+        Args:
+            all_models: Every model evaluated so far (empty on the first
+                iteration).
+        """
+        return list(self._propose_free_parameters(all_models))[
+            : self.max_new_mods_per_iter
+        ]
+
+    def _propose_free_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
+        """This generator's own proposal logic, before the shared size cap.
 
         Args:
             all_models: Every model evaluated so far (empty on the first
@@ -100,10 +119,11 @@ class AbstractParameterGenerator(eqx.Module):
     ) -> dict[str, Quantity]:
         """This component's parameters, as declared, each as a `Quantity`.
 
-        Every `AbstractParameterGenerator` subclass proposing values reads
-        them through here, so "every generator returns unit-ful
-        `Quantity`s in their own declared unit" is a property of this base
-        class, not something each subclass has to remember to do itself.
+        Every `AbstractParameterGenerator` subclass proposing fixed/declared
+        (rather than sampled) values reads them through here, so "every such
+        generator returns unit-ful `Quantity`s in their own declared unit"
+        is a property of this base class, not something each subclass has
+        to remember to do itself.
         """
         dimensions = raw_parameter_dimensions(
             component.get("type"), component.get("parameterization")
@@ -157,14 +177,14 @@ def parameter_generator_required_settings() -> dict[str, frozenset[str]]:
 
 @register_parameter_generator
 class GridSearchParameterGenerator(AbstractParameterGenerator):
-    """Proposes parameters on a grid, per each parameter's `generator_settings`."""
+    """Proposes parameters on a grid, per each parameter's declared `prior`."""
 
     _type: ClassVar[str] = "GridSearch"
     _required_generator_settings: ClassVar[frozenset[str]] = frozenset(
         {"delta_chi2_threshold"}
     )
 
-    def generate_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
+    def _propose_free_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
         raise NotImplementedError
 
 
@@ -176,11 +196,13 @@ class SinglePointParameterGenerator(AbstractParameterGenerator):
     evaluating one nominal potential rather than searching parameter space.
     `parameter_space_settings.stopping_criteria` (e.g. `n_new_iter: 1`) is
     what stops the search after it's evaluated. Needs no `generator_settings`.
+    Never looks at `priors:` -- a single fixed point needs every parameter
+    fully declared directly (`value`/`fixed`), not sampled.
     """
 
     _type: ClassVar[str] = "SinglePoint"
 
-    def generate_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
+    def _propose_free_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
         return [
             {
                 component_name: self._declared_component_values(
@@ -191,9 +213,71 @@ class SinglePointParameterGenerator(AbstractParameterGenerator):
         ]
 
 
+def _parameter_sets_from_samples(
+    samples: Mapping[str, Any],
+    potential_settings: Mapping[str, Mapping[str, Any]],
+) -> list[ParameterSet]:
+    """Convert `tnt.priors.Prior.sample`'s output into `ParameterSet`s.
+
+    `samples` holds one array per non-fixed, prior-bearing parameter (dotted
+    `"component.parameter"` site names -> bare, unit-stripped draws, see
+    `Prior.sample`); fixed parameters aren't sample sites at all, so their
+    declared `value` is filled in directly here instead. Every value is
+    re-wrapped as a `Quantity` in its parameter's own declared `unit`
+    (absent means dimensionless), matching `_declared_parameter_quantity`'s
+    convention -- nothing here converts into a shared internal unit system.
+    """
+    num_samples = len(next(iter(samples.values()))) if samples else 1
+    parameter_sets: list[ParameterSet] = []
+    for index in range(num_samples):
+        candidate: ParameterSet = {}
+        for component_name, component in potential_settings.items():
+            component_values: dict[str, Quantity] = {}
+            for parameter_name, parameter in component.get("parameters", {}).items():
+                site = f"{component_name}.{parameter_name}"
+                value = samples[site][index] if site in samples else parameter["value"]
+                component_values[parameter_name] = Quantity(
+                    value, parameter.get("unit", "")
+                )
+            candidate[component_name] = component_values
+        parameter_sets.append(candidate)
+    return parameter_sets
+
+
+@register_parameter_generator
+class PriorSampler(AbstractParameterGenerator):
+    """Proposes parameters by sampling from a `tnt.priors.Prior`.
+
+    Ignores `all_models` -- `Prior.sample` doesn't condition on anything
+    data-dependent this round; that's a future chi2-conditioned generator's
+    job. A thin adapter: all model composition, factor detection, and the
+    `Predictive`-vs-`MCMC` choice live on `Prior` itself, reusable by
+    whatever generator needs them next -- this class only derives a PRNG
+    key, calls `Prior.sample`, and converts the result into `ParameterSet`s.
+    """
+
+    _type: ClassVar[str] = "PriorSampler"
+    _required_generator_settings: ClassVar[frozenset[str]] = frozenset(
+        {"num_warmup", "seed"}
+    )
+
+    prior: Prior
+    seed: int
+    num_warmup: int
+
+    def _propose_free_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
+        del all_models
+        key = jax.random.PRNGKey(self.seed)
+        samples = self.prior.sample(
+            key, num_samples=self.max_new_mods_per_iter, num_warmup=self.num_warmup
+        )
+        return _parameter_sets_from_samples(samples, self.potential_settings)
+
+
 def build_parameter_generator(
     parameter_space_settings: Mapping[str, Any],
     potential_settings: Mapping[str, Mapping[str, Any]],
+    prior: Prior | None = None,
 ) -> AbstractParameterGenerator:
     """Build the `AbstractParameterGenerator` named by a resolved configuration.
 
@@ -202,6 +286,9 @@ def build_parameter_generator(
             `parameter_space_settings` section.
         potential_settings: A resolved configuration's `potential` section,
             as declared.
+        prior: This run's composed `tnt.priors.Prior`, e.g. from
+            `tnt.model_iterator.ModelIterator.from_configuration` -- only
+            required when `generator_type` is `"PriorSampler"`.
 
     Returns:
         The `AbstractParameterGenerator` matching
@@ -215,7 +302,26 @@ def build_parameter_generator(
             "Unknown parameter_space_settings.generator_type: "
             f"{generator_type!r}; expected one of: {allowed}."
         )
+    generator_settings = parameter_space_settings["generator_settings"]
+    max_new_mods_per_iter = parameter_space_settings["stopping_criteria"][
+        "max_new_mods_per_iter"
+    ]
+    if generator_cls is PriorSampler:
+        if prior is None:
+            raise ValueError(
+                "build_parameter_generator: generator_type 'PriorSampler' "
+                "requires a built Prior."
+            )
+        return PriorSampler(
+            potential_settings=potential_settings,
+            generator_settings=generator_settings,
+            max_new_mods_per_iter=max_new_mods_per_iter,
+            prior=prior,
+            seed=generator_settings["seed"],
+            num_warmup=generator_settings["num_warmup"],
+        )
     return generator_cls(
         potential_settings=potential_settings,
-        generator_settings=parameter_space_settings["generator_settings"],
+        generator_settings=generator_settings,
+        max_new_mods_per_iter=max_new_mods_per_iter,
     )

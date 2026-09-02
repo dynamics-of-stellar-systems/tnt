@@ -67,26 +67,25 @@ YAML sequence such as `[39.96, Mpc]` is deliberately not supported: naming
 `value` and `unit` makes the schema clearer and permits precise validation
 errors.
 
-Unitful parameters require one sibling `unit` applying to their value and
-search range:
+Unitful parameters require one sibling `unit` applying to their value and, if
+declared, their search-space `prior` (see [Model search](model_search.md) for
+`prior` and `PriorSampler`):
 
 ```yaml
 parameters:
   a:
     unit: "pc"
     value: 500.0
-    generator_settings:
-      lower_bound: 100.0
-      upper_bound: 1000.0
-      step: 100.0
-      minimum_step: 10.0
+    fixed: false
+    prior: {distribution: "Uniform", args: [100.0, 1000.0]}
 ```
 
-For a potential parameter, `value`, bounds, `step`, and `minimum_step` are all
-coordinates in its declared unit. Parameter generators retain that unit, and
+For a potential parameter, `value` and a declared `prior`'s `args` are all
+coordinates in its declared unit. Parameter generators retain that unit rather
+than eagerly converting the coordinates into the internal unit system;
 potential construction transforms a proposed `Quantity` only when a registered
-parameterization needs it; the value first reaches a shared unit system inside
-`Potential.to_galax()`, where `galax`'s own constructor converts it.
+parameterization needs it, and the value first reaches a shared unit system
+inside `Potential.to_galax()`, where `galax`'s own constructor converts it.
 
 Dimensionless fields remain plain numbers and must not add a `unit`. Examples
 include axial ratios, Gauss-Hermite coefficients, relative error factors, and

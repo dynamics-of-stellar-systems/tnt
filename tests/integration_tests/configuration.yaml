@@ -26,11 +26,6 @@ potential:
     parameters:
       m_tot:
         unit: "Msun"
-        generator_settings:
-          lower_bound: 1.0e+4
-          upper_bound: 1.0e+6
-          step: 1.0e+4
-          minimum_step: 0.0
         fixed: true
         value: 1.0e+5
         latex_label: "$M_\\mathrm{BH}/M_\\odot$"
@@ -45,21 +40,11 @@ potential:
     parameterization: "concentration_m200"
     parameters:
       c:
-        generator_settings:
-          lower_bound: 2.0
-          upper_bound: 4.0
-          step: 1.0
-          minimum_step: 0.1
         fixed: true
         value: 3.0
         latex_label: "$C$"
       M_200:
         unit: "Msun"
-        generator_settings:
-          lower_bound: 1.0e+11
-          upper_bound: 1.0e+13
-          step: 1.0
-          minimum_step: 0.1
         fixed: true
         value: 1.0e+12
         latex_label: "$M_{200}/M_\\odot$"
@@ -70,11 +55,6 @@ potential:
     parameters:
       theta:
         unit: "rad"
-        generator_settings:
-          lower_bound: 0.01
-          upper_bound: 3.141592653589793
-          step: 0.1
-          minimum_step: 0.01
         fixed: true
         # Verified against the committed mge_lum.ecsv fixture to deproject
         # to physically valid (0 < q <= p <= 1) intrinsic axial ratios for
@@ -83,31 +63,17 @@ potential:
         latex_label: "$\\theta$"
       phi:
         unit: "rad"
-        generator_settings:
-          lower_bound: 0.01
-          upper_bound: 1.5707963267948966
-          step: 0.1
-          minimum_step: 0.01
         fixed: true
         value: 1.0363519257903688
         latex_label: "$\\phi$"
       psi:
         unit: "rad"
-        generator_settings:
-          lower_bound: 0.0
-          upper_bound: 3.141592653589793
-          step: 0.1
-          minimum_step: 0.01
         fixed: true
         value: 2.0332058150420305
         latex_label: "$\\psi$"
       ml:
         unit: "Msun / Lsun"
-        generator_settings:
-          lower_bound: 1.0
-          upper_bound: 9.0
-          step: 4.0
-          minimum_step: 0.5
+        prior: {distribution: "Uniform", args: [1.0, 9.0]}
         fixed: false
         value: 5.0
         latex_label: "$Y_\\mathrm{r}$"
@@ -168,6 +134,7 @@ weight_solver_settings:
 parameter_space_settings:
   generator_type: "SinglePoint"
   which_chi2: "kinchi2"
+  priors: {}
   potential_rescalings:
     enabled: true
     range_count: 10
@@ -183,6 +150,7 @@ parameter_space_settings:
       value: 0.5
     target_model_count: 3
     n_new_iter: 10
+    max_new_mods_per_iter: 10
 
 io_settings:
   input_directory: "NGC6278_input/"

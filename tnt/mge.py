@@ -23,9 +23,10 @@ class MGEDeprojectionError(ValueError):
     """A deprojection has no solution, or violates TNT's ``0 < q <= p <= 1`` convention.
 
     Raised eagerly, in plain Python -- not `jax.jit`/`jax.vmap`-traceable.
-    Fine today since nothing calls this under a trace; see
-    `aidocs/KNOWLEDGE.md` for the durable limitation and the trigger for
-    revisiting it.
+    `deproject_triaxial`/`deproject_oblate` take `validate=False` to skip the
+    check entirely (an invalid geometry then yields `nan`), which is how a
+    `Potential` gets built inside a traced model -- see
+    `tnt.priors.PriorContext.build_potential`.
     """
 
 
@@ -254,7 +255,9 @@ class AbstractMGE(eqx.Module):
         mass_unit = self.I.unit * coord_unit**2
         return Quantity(binned[1:], mass_unit)
 
-    def deproject_oblate(self, inclination: Quantity) -> Deprojected3DMGE:
+    def deproject_oblate(
+        self, inclination: Quantity, *, validate: bool = True
+    ) -> Deprojected3DMGE:
         """Deproject to an intrinsic 3D MGE, assuming oblate axisymmetry.
 
         Oblate axisymmetric MGE deprojection (Monnet, Bacon & Emsellem 1992; Cappellari
@@ -291,20 +294,26 @@ class AbstractMGE(eqx.Module):
             MGEDeprojectionError: If any component has no real solution at this
                 inclination (``q' < cos(i)``), or an intrinsic `q` outside
                 TNT's ``0 < q <= 1`` convention (``p`` is always 1 here).
+
+        Pass `validate=False` to skip the eager range and convention checks
+        so the deprojection runs under `jax.jit`/`jax.vmap` (see
+        `deproject_triaxial`).
         """
-        inclination_deg = float(inclination.ustrip("deg"))
-        if not 0.0 < inclination_deg <= 90.0:
-            raise ValueError(
-                "deproject_oblate requires an inclination in (0, 90] degrees "
-                f"(got {inclination_deg} deg); i and 180 deg - i give the same "
-                "projection, and i = 0 deg (face-on) carries no shape information."
-            )
+        if validate:
+            inclination_deg = float(inclination.ustrip("deg"))
+            if not 0.0 < inclination_deg <= 90.0:
+                raise ValueError(
+                    "deproject_oblate requires an inclination in (0, 90] degrees "
+                    f"(got {inclination_deg} deg); i and 180 deg - i give the same "
+                    "projection, and i = 0 deg (face-on) carries no shape "
+                    "information."
+                )
         if not self.sigma.unit.is_equivalent(au.m):
             raise ValueError(
                 "deproject_oblate requires physical (length) sigma; "
                 "call angular_to_physical(distance) first."
             )
-        if not bool(jnp.allclose(self.PA_twist.ustrip("rad"), 0.0)):
+        if validate and not bool(jnp.allclose(self.PA_twist.ustrip("rad"), 0.0)):
             raise ValueError(
                 "deproject_oblate requires PA_twist == 0 for every "
                 "component (an axisymmetric system has no isophote twist)."
@@ -315,7 +324,8 @@ class AbstractMGE(eqx.Module):
         q_obs = self.q.ustrip("")
         q_intr = jnp.sqrt(q_obs**2 - cos_i**2) / sin_i
 
-        _check_axial_ratios(p=jnp.ones_like(q_intr), q=q_intr)
+        if validate:
+            _check_axial_ratios(p=jnp.ones_like(q_intr), q=q_intr)
 
         I_3d = self.I * (q_obs / (jnp.sqrt(2 * jnp.pi) * q_intr)) / self.sigma
 
@@ -327,7 +337,12 @@ class AbstractMGE(eqx.Module):
         )
 
     def deproject_triaxial(
-        self, theta: Quantity, phi: Quantity, psi: Quantity
+        self,
+        theta: Quantity,
+        phi: Quantity,
+        psi: Quantity,
+        *,
+        validate: bool = True,
     ) -> Deprojected3DMGE:
         """Deproject to an intrinsic 3D MGE, assuming triaxiality.
 
@@ -349,14 +364,18 @@ class AbstractMGE(eqx.Module):
         A solution isn't guaranteed to exist for arbitrary viewing angles (Cappellari
         2002 sec. 2.2.1), and a solution that exists isn't guaranteed to respect TNT's
         ``0 < q <= p <= 1`` intrinsic-axis convention (``p = B/A``, ``q = C/A``) --
-        both cases raise `MGEDeprojectionError` (this is an eager Python check, not
-        JAX-traceable; see that exception's own note if `theta`/`phi`/`psi` are ever
-        evaluated under `jax.jit`/`jax.vmap`).
+        both cases raise `MGEDeprojectionError` -- an eager Python check. Pass
+        `validate=False` to skip it and make the whole deprojection
+        JAX-traceable (an invalid geometry then yields `nan`s rather than an
+        exception): used when building a `Potential` inside a traced model,
+        e.g. a `tnt.priors` prior plugin's `context.build_potential()`.
 
         Args:
             theta: Global polar viewing angle, relative to the principal axes.
             phi: Global azimuthal viewing angle, relative to the principal axes.
             psi: Global rotation of the object around the line of sight.
+            validate: If false, skip the eager `MGEDeprojectionError` check so
+                the deprojection can run under `jax.jit`/`jax.vmap`.
 
         Returns:
             A `Deprojected3DMGE` with intrinsic axial ratios `p`, `q`, and intrinsic
@@ -403,7 +422,8 @@ class AbstractMGE(eqx.Module):
 
         q_intr = jnp.sqrt(1 - one_minus_q2)
         p_intr = jnp.sqrt(q_intr**2 + p2_minus_q2)
-        _check_axial_ratios(p=p_intr, q=q_intr)
+        if validate:
+            _check_axial_ratios(p=p_intr, q=q_intr)
 
         q_obs = self.q.ustrip("")
         cos_phi, sin_phi = jnp.cos(phi_r), jnp.sin(phi_r)

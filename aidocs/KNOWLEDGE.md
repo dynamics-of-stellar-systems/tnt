@@ -285,9 +285,19 @@
   potential components and parameters, input directory, and output directory.
 - TNT user profiles generally use snake-case type identifiers and field names.
   The established `MGEs` registry name and projected-binning `PA` field are
-  current schema exceptions. Parameter search bounds belong under
-  `generator_settings` as `lower_bound`, `upper_bound`, `step`, and
-  `minimum_step`; display labels use `latex_label`.
+  current schema exceptions. A parameter's search-space declaration belongs
+  under `prior` as `{distribution: "<numpyro.distributions class>", args:
+  [...]}` (replaced `generator_settings`'s `lower_bound`/`upper_bound`/
+  `step`/`minimum_step` -- `step`/`minimum_step` had no consumer and were
+  dropped rather than carried forward, matching how `logarithmic` was
+  removed for the same reason, see below); display labels use `latex_label`.
+  A `prior` is required whenever `fixed` is false: `_validate_parameters`
+  (`tnt.configuration.validation`) raises if a `fixed: false` parameter has
+  no `prior`, since `tnt.priors._build_model` would otherwise silently skip
+  it (neither a sample site nor a fixed value), surfacing only as a
+  missing-parameter error at `Potential.build`. The packaged
+  `dynamic_object_defaults.parameter.fixed` default stays `false`, so a user
+  profile declares `fixed: true` or a `prior` on every parameter.
 - Scientific inputs use independent named registries: `MGEs` maps MGE names to
   files; `spatial_binnings` maps names to inline rectangular aperture geometry
   (`min_x`, `min_y`, `x_extent`, `y_extent`, and `PA`) plus a `bins_file`
@@ -518,13 +528,52 @@
   resolved state. TNT does not support an NFW
   `(c, f) -> (m, r_s)` "concentration + mass fraction" parameterization
   (`f = M_200 / M*_TOT`, `M*_TOT` derived from the stellar MGE component)
-  because `Potential.from_settings` resolves each component independently in
-  one pass, so no component-local converter can see another component's
-  resolved mass. That kind of cross-component
-  relationship belongs to a separate, not-yet-designed "prior" concept,
-  consumed by the parameter generator/search space rather than by potential
-  construction -- deliberately deferred rather than shoehorned into
-  `parameterization`.
+  was removed for exactly this reason: `Potential.from_settings` resolves
+  each component independently in one pass, so no component-local converter
+  can see another component's resolved mass. That kind of cross-component
+  relationship is now `tnt.priors`: consumed by the parameter generator
+  (`PriorSampler`) rather than potential construction, never by
+  `parameterization`. TNT ships no built-in priors, including a
+  mass-fraction one -- only the mechanism (`tnt.priors.Prior`, the
+  `sample`/`factor` plugin contract) and a documented worked example (see
+  `docs/source/model_search.md`'s "Priors" section). A plugin is a plain
+  Python function loaded from its own `.py` file (file-path-only, resolved
+  relative to `io_settings.input_directory`, not an installed package) with a
+  fixed signature: `def fn(context: tnt.priors.PriorContext) -> None`,
+  callable with one positional argument (a trailing default parameter or
+  `*args` is tolerated but never populated; `load_prior_plugin` rejects any
+  other arity).
+  `PriorContext` is an `eqx.Module` -- the single, extensible object holding
+  the run state a plugin may read (`context.candidate`, `context.mges`,
+  `context.unit_system` today); adding a field there stays backward-compatible
+  because a plugin only ever names that one argument. It is built once per
+  draw inside the numpyro model, after every `sample` site, and consumed
+  immediately -- never a traced/`jit` argument, so its size costs nothing.
+  `context.build_potential()` assembles this draw's `tnt.potential.Potential`
+  from `candidate` for a factor over a derived quantity (an enclosed mass, a
+  circular velocity): it calls `Potential.build(..., validate=False)`, a mode
+  that skips every eager check -- `_check_parameter_set_contract`'s
+  `float()`, the `ParameterConstraint`s, and `deproject_triaxial`/
+  `deproject_oblate`'s `_check_axial_ratios` -- so `build` is JAX-traceable
+  (an invalid geometry then yields `nan`, hence a rejected NUTS step, not an
+  exception). `Prior` captures the run's `resolved` potential + cosmology +
+  unit system to make this work; a `Prior` built without them (a unit test
+  exercising only sample sites) leaves `build_potential()` raising. The NFW
+  `concentration_m200` forward converter is *not* yet usable this way -- its
+  `(volume Quantity) ** (1/3)` trips quaxed dispatch under NUTS's trace;
+  native-parameter NFW (`m`, `r_s`) is fine. A plugin may only call
+  `numpyro.factor` -- never `sample`/`deterministic` -- so it can add a soft
+  preference over already-established values but can never independently
+  assign or overwrite a parameter, ruling out any collision with that
+  parameter's own ordinary `prior` by construction, not validation. `Prior.sample` auto-selects `numpyro.infer.Predictive` (no
+  factor sites) or `numpyro.infer.MCMC`/`NUTS` (any factor sites present) --
+  a hard `Uniform.log_prob` factor does not work well with NUTS (flat
+  interior gradient, discontinuous boundary; verified empirically, not just
+  reasoned about) -- use a smooth distribution (`Normal`, `TruncatedNormal`,
+  ...) for factor terms instead. Genuine posterior sampling (conditioning on
+  a `Model`'s real chi2) needs a further bridge -- turning chi2 into a
+  `numpyro.factor` -- that doesn't exist yet; deliberately out of scope,
+  real future work reusing the same composed-model machinery.
 - Every registered parameterization converts both ways: a
   `register_parameterization` call takes `convert` *and* `invert` (bundled in
   its `ParameterizationSpec`), so one direction can never be registered without

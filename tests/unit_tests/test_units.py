@@ -112,9 +112,7 @@ def test_validate_dimension_rejects_wrong_dimension() -> None:
 
 def test_configuration_quantity_validation_does_not_modify_declarations() -> None:
     config = {
-        "cosmological_parameters": {
-            "H": {"value": 70.0, "unit": "km / (s Mpc)"}
-        },
+        "cosmological_parameters": {"H": {"value": 70.0, "unit": "km / (s Mpc)"}},
         "system_attributes": {
             "distance": {"value": 2.0, "unit": "Mpc"},
         },
