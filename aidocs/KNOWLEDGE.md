@@ -426,17 +426,34 @@
 - Non-native parameterizations register via `registry.register_parameterization(
   type_name=, name=, convert=, invert=, raw_dimensions=, raw_constraints=)` --
   one call, from the module owning the numerics (`tnt.potential.nfw` for
-  `concentration_m200`), mirroring `register_component`. It bundles the
-  forward/inverse converters, config parameter schema, and raw domain rules in
-  a single `ParameterizationSpec`, so validation and runtime resolution can't
-  disagree on which parameterizations exist. Read
-  back via `get_parameterization(type, name)` / `parameterization_names(type)`.
-  `type_name` must be a curated native `galax` type: a parameterization
-  converts a raw config convention into that class's native constructor kwargs,
-  and only `GalaxPotentialComponent` runs the inverse converter (`AllModels`
-  reporting). A TNT MGE composite type is rejected -- supporting one needs the
-  inverse dispatch lifted to a type-independent layer first (the `(p, q, u)`
-  shape scheme `triaxial_mge` mentions would be the first such case).
+  `concentration_m200`, `tnt.potential.triaxial_mge` for `pqu`), mirroring
+  `register_component`. It bundles the forward/inverse converters, config
+  parameter schema, and raw domain rules in a single `ParameterizationSpec`,
+  so validation and runtime resolution can't disagree on which
+  parameterizations exist. Read back via `get_parameterization(type, name)` /
+  `parameterization_names(type)`. `type_name` may be a curated native `galax`
+  type OR a registered TNT component type (`is_registered_component_type`).
+  Config validation and `resolve()` were already generic (they key
+  `_PARAMETERIZATION_REGISTRY` by `(type, name)` with no galax assumption);
+  the inverse dispatch is not centralised -- `GalaxPotentialComponent` and
+  each MGE composite type carry their own `raw_parameters` override (the
+  `raw_potential_parameters` call site was always type-independent). Both
+  `ForwardConverter` and `InverseConverter` gained a trailing optional `mge`
+  arg (`ResolvedPotentialComponent.build` passes `extra_fields.get("mge")`);
+  `pqu` uses it for `qobs = min(component q)`, `concentration_m200` ignores
+  it. Follow-up: fold `mge` + `cosmological_parameters` into one optional
+  context object a converter reads what it needs from (neither then
+  "required"), and lift `raw_parameters` to `AbstractPotentialComponent`.
+- `pqu` (the two triaxial MGE types): `(p, q, u)` intrinsic axis ratios /
+  compression <-> `(theta, phi, psi)` viewing angles, van den Bosch et al.
+  2008 MNRAS 385, 647 (= DYNAMITE `triax_pqu2tpp`). Anchor `q' = min` of the
+  MGE's component `q`, zero twist. Forward `_pqu_to_tpp`; inverse `_tpp_to_pqu`
+  reuses `tnt.mge._triaxial_intrinsic_axis_ratios` -- the same vdB2008 math
+  `deproject_triaxial` already runs -- so a `pqu` config and its equivalent
+  `(theta, phi, psi)` config build an identical potential. Data-independent
+  bounds (`0 < q <= p <= 1`, `p < u <= 1`) are `ParameterConstraint`s;
+  `max(q/q', p) < u <= min(p/q', 1)` and degenerate weights are checked in
+  `_pqu_to_tpp` -> `InvalidPotentialParametersError`.
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`
@@ -474,8 +491,9 @@
   200x the critical density) into native `(m, r_s)` via
   `rho_crit = 3*H**2 / (8*pi*G)`, `r200 = (3*M200 / (4*pi*200*rho_crit))**(1/3)`,
   `r_s = r200 / c`, `m = M200 / (ln(1+c) - c/(1+c))`. A registered
-  `ForwardConverter` receives the component's raw parameters and the resolved
-  configuration's `cosmological_parameters`; an `InverseConverter` additionally
+  `ForwardConverter` receives the component's raw parameters, the resolved
+  configuration's `cosmological_parameters`, and the component's `mge` (or
+  `None`); an `InverseConverter` additionally
   receives the raw parameters' declared units so reported values can be
   restored to the configured representation. Parameterizations like this one
   can therefore use `H` without depending on `units.internal`.
@@ -514,8 +532,8 @@
   composite type declares its own `_raw_dimensions`, while curated native
   `galax` types use `_SUPPORTED_GALAX_TYPES`. A parameterization is deliberately
   scoped to one component's own raw parameters and, where needed,
-  `cosmological_parameters` -- it cannot depend on another component's
-  resolved state. TNT does not support an NFW
+  `cosmological_parameters` or its own `mge` -- it cannot depend on another
+  component's resolved state. TNT does not support an NFW
   `(c, f) -> (m, r_s)` "concentration + mass fraction" parameterization
   (`f = M_200 / M*_TOT`, `M*_TOT` derived from the stellar MGE component)
   because `Potential.from_settings` resolves each component independently in

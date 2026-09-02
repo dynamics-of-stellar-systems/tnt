@@ -205,9 +205,12 @@ complete and reproducible). A light-MGE
 potential requires an `ml` mass-to-light parameter. A mass-MGE potential
 must not declare `ml`, because its input MGE already represents mass.
 Triaxial MGE types also require `theta`/`phi`/`psi`, the global viewing
-angles the named MGE is deprojected under; oblate axisymmetric MGE types
-require a single `inclination` instead. MGE contents and their physical
-units are inspected only in the later object-construction phase.
+angles the named MGE is deprojected under -- or, with
+`parameterization: "pqu"`, the intrinsic axis ratios `p`/`q`/`u` instead
+(converted to viewing angles at runtime; see [Potential](potential.md)).
+Oblate axisymmetric MGE types require a single `inclination` instead. MGE
+contents and their physical units are inspected only in the later
+object-construction phase.
 Potential parameter values also retain their declared units through
 preparation. Their scalar/finite and physical-domain constraints are checked
 when each proposed runtime potential is constructed, both before and after a

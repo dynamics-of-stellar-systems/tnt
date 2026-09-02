@@ -25,6 +25,7 @@ def _newtonian_gravitational_constant() -> Quantity:
 def _nfw_concentration_m200(
     raw: dict[str, Quantity],
     cosmological_parameters: Mapping[str, Quantity],
+    mge: Any = None,
 ) -> dict[str, Quantity]:
     """Convert NFW's `(c, M_200)` parameterization to native `(m, r_s)`.
 
@@ -40,6 +41,7 @@ def _nfw_concentration_m200(
     `mass_enclosed` at the configured precision, and that the resulting `r_200`
     truly encloses a mean density of exactly `200 * rho_crit`.
     """
+    del mge  # this parameterization needs no MGE (see ForwardConverter)
     c = raw["c"]
     m200 = raw["M_200"]
     h = cosmological_parameters["H"]
@@ -90,6 +92,7 @@ def _nfw_concentration_m200_inverse(
     native: dict[str, Quantity],
     declared_units: Mapping[str, str],
     cosmological_parameters: Mapping[str, Quantity],
+    mge: Any = None,
 ) -> dict[str, Quantity]:
     """Convert NFW's native `(m, r_s)` back to `(c, M_200)`.
 
@@ -110,6 +113,7 @@ def _nfw_concentration_m200_inverse(
     rescaled `(c, M_200)` genuinely differs from the original and must be
     recomputed here, not just carried through unchanged.
     """
+    del mge  # this parameterization needs no MGE (see ForwardConverter)
     m = native["m"]
     r_s = native["r_s"]
     h = cosmological_parameters["H"]

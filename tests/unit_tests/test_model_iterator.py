@@ -280,6 +280,49 @@ def test_evaluate_records_domain_invalid_oblate_inclination(
     assert "at most 90" in record.message
 
 
+def test_evaluate_records_domain_invalid_pqu_deprojection(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # (p, q, u) valid on their own (0 < q <= p <= 1, p < u <= 1) but with no
+    # triaxial deprojection for this MGE's q' -- `_pqu_to_tpp` raises
+    # InvalidPotentialParametersError, which `_evaluate` records rather than
+    # letting it crash the run.
+    light_mge = LightMGE(
+        I=u.Quantity(jnp.array([1.0]), "Lsun / rad2"),
+        sigma=u.Quantity(jnp.array([1.0]), "rad"),
+        q=u.Quantity(jnp.array([0.9]), ""),
+        PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+    ).angular_to_physical(u.Quantity(30.0, "Mpc"))
+    resolved = Potential.resolve(
+        {
+            "stars": {
+                "type": "TriaxialLightMGEPotential",
+                "parameterization": "pqu",
+                "mge": "mge_lum",
+                "parameters": {},
+            }
+        },
+        {"mge_lum": light_mge},
+    )
+    iterator = _make_iterator(resolved_potential=resolved)
+    parameters = {
+        "stars": {
+            "ml": u.Quantity(5.0, "Msun / Lsun"),
+            "p": u.Quantity(0.85, ""),
+            "q": u.Quantity(0.80, ""),
+            "u": u.Quantity(0.999, ""),  # > min(p/q', 1) = 0.944...
+        }
+    }
+
+    with caplog.at_level(logging.WARNING, logger="tnt.model_iterator"):
+        (model,) = iterator._evaluate(parameters)
+
+    assert model.valid_potential is False
+    assert model.orblib_done is False
+    [record] = caplog.records
+    assert "invalid potential" in record.message.lower()
+
+
 def test_evaluate_does_not_record_a_non_quantity_programming_error() -> None:
     resolved = Potential.resolve(
         {"bh": {"type": "PlummerPotential", "parameters": {}}},

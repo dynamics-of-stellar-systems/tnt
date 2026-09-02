@@ -101,7 +101,9 @@ class ResolvedPotentialComponent(NamedTuple):
         if self.convert is None:
             canonical = raw
         else:
-            canonical = self.convert(raw, cosmological_parameters)
+            canonical = self.convert(
+                raw, cosmological_parameters, self.extra_fields.get("mge")
+            )
             _check_parameter_set_contract(
                 canonical,
                 self.canonical_dimensions,
@@ -440,4 +442,7 @@ class GalaxPotentialComponent(AbstractPotentialComponent):
                 f"{self.galax_type}.{parameterization!r} is not a registered "
                 "parameterization."
             )
-        return spec.invert(self.parameters, declared_units, cosmological_parameters)
+        # A curated galax type never carries an MGE; the trailing arg is `None`.
+        return spec.invert(
+            self.parameters, declared_units, cosmological_parameters, None
+        )

@@ -64,6 +64,65 @@ def _check_axial_ratios(p: jnp.ndarray, q: jnp.ndarray) -> None:
     )
 
 
+def _triaxial_intrinsic_axis_ratios(
+    theta_r: jnp.ndarray,
+    phi_r: jnp.ndarray,
+    psi_r: jnp.ndarray,
+    q_obs: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Intrinsic axial ratios ``(p, q)`` and compression ``u`` from viewing angles.
+
+    The general triaxial relation of de Zeeuw & Franx (1989) / Cappellari (2002)
+    eqs. 6-8 / van den Bosch et al. (2008) eqs. 6-9: given the observed axial
+    ratio ``q_obs`` of an ellipse and the three viewing angles (already in
+    radians, with ``psi_r`` already including any component ``PA_twist``), solve
+    for the intrinsic ``p = B/A``, ``q = C/A`` and the scale-length compression
+    ``u = sigma_observed / sigma_intrinsic`` (``= a'/a``, the projected-to-intrinsic
+    major-axis ratio). ``u`` is only 1 at special viewing angles.
+
+    Every argument may be a scalar or an array (one entry per Gaussian). No
+    validity check here -- ``p``/``q`` can come back ``nan`` for a viewing
+    geometry with no real solution; the caller checks (`_check_axial_ratios`,
+    or the ``pqu`` converter's own bounds).
+    """
+    delta = 1 - q_obs**2
+
+    cos_theta, sin_theta = jnp.cos(theta_r), jnp.sin(theta_r)
+    sec_theta = 1 / cos_theta
+    cot_phi = 1 / jnp.tan(phi_r)
+    tan_phi = jnp.tan(phi_r)
+    cos_phi, sin_phi = jnp.cos(phi_r), jnp.sin(phi_r)
+    cos_psi, sin_psi = jnp.cos(psi_r), jnp.sin(psi_r)
+    cos_2psi, sin_2psi = jnp.cos(2 * psi_r), jnp.sin(2 * psi_r)
+
+    denom = (
+        2
+        * sin_theta**2
+        * (delta * cos_psi * (cos_psi + cot_phi * sec_theta * sin_psi) - 1)
+    )
+    one_minus_q2 = (
+        delta
+        * (2 * cos_2psi + sin_2psi * (sec_theta * cot_phi - cos_theta * tan_phi))
+        / denom
+    )
+    p2_minus_q2 = (
+        delta
+        * (2 * cos_2psi + sin_2psi * (cos_theta * cot_phi - sec_theta * tan_phi))
+        / denom
+    )
+
+    q_intr = jnp.sqrt(1 - one_minus_q2)
+    p_intr = jnp.sqrt(q_intr**2 + p2_minus_q2)
+    u = jnp.sqrt(
+        jnp.sqrt(
+            p_intr**2 * cos_theta**2
+            + q_intr**2 * sin_theta**2 * (p_intr**2 * cos_phi**2 + sin_phi**2)
+        )
+        / q_obs
+    )
+    return p_intr, q_intr, u
+
+
 class AbstractMGE(eqx.Module):
     """Shared structure and behaviour for MGE models.
 
@@ -378,42 +437,13 @@ class AbstractMGE(eqx.Module):
         theta_r = theta.ustrip("rad")
         phi_r = phi.ustrip("rad")
         psi_r = psi.ustrip("rad") + self.PA_twist.ustrip("rad")
-        delta = 1 - self.q.ustrip("") ** 2
+        q_obs = self.q.ustrip("")
 
-        cos_theta, sin_theta = jnp.cos(theta_r), jnp.sin(theta_r)
-        sec_theta = 1 / cos_theta
-        cot_phi = 1 / jnp.tan(phi_r)
-        tan_phi = jnp.tan(phi_r)
-        cos_psi, sin_psi = jnp.cos(psi_r), jnp.sin(psi_r)
-        cos_2psi, sin_2psi = jnp.cos(2 * psi_r), jnp.sin(2 * psi_r)
-
-        denom = 2 * sin_theta**2 * (
-            delta * cos_psi * (cos_psi + cot_phi * sec_theta * sin_psi) - 1
+        p_intr, q_intr, u = _triaxial_intrinsic_axis_ratios(
+            theta_r, phi_r, psi_r, q_obs
         )
-        one_minus_q2 = (
-            delta
-            * (2 * cos_2psi + sin_2psi * (sec_theta * cot_phi - cos_theta * tan_phi))
-            / denom
-        )
-        p2_minus_q2 = (
-            delta
-            * (2 * cos_2psi + sin_2psi * (cos_theta * cot_phi - sec_theta * tan_phi))
-            / denom
-        )
-
-        q_intr = jnp.sqrt(1 - one_minus_q2)
-        p_intr = jnp.sqrt(q_intr**2 + p2_minus_q2)
         _check_axial_ratios(p=p_intr, q=q_intr)
 
-        q_obs = self.q.ustrip("")
-        cos_phi, sin_phi = jnp.cos(phi_r), jnp.sin(phi_r)
-        u = jnp.sqrt(
-            jnp.sqrt(
-                p_intr**2 * cos_theta**2
-                + q_intr**2 * sin_theta**2 * (p_intr**2 * cos_phi**2 + sin_phi**2)
-            )
-            / q_obs
-        )
         sigma_intr = self.sigma / u
 
         I_3d = (
@@ -479,9 +509,9 @@ def _gaussian_radial_antiderivative(a: jnp.ndarray, r: jnp.ndarray) -> jnp.ndarr
         constant of integration -- i.e. valid for computing definite integrals
         between finite radii, or between a finite radius and 0.
     """
-    return -r / (2 * a) * jnp.exp(-a * r**2) + jnp.sqrt(jnp.pi) / (
-        4 * a**1.5
-    ) * erf(jnp.sqrt(a) * r)
+    return -r / (2 * a) * jnp.exp(-a * r**2) + jnp.sqrt(jnp.pi) / (4 * a**1.5) * erf(
+        jnp.sqrt(a) * r
+    )
 
 
 class Deprojected3DMGE(eqx.Module):
@@ -538,9 +568,9 @@ class Deprojected3DMGE(eqx.Module):
 
         # Add a leading components axis: (G, n_theta, Q, n_phi, Q).
         shape = (-1, 1, 1, 1, 1)
-        a = (
-            x2 + y2 / p.reshape(shape) ** 2 + z2 / q.reshape(shape) ** 2
-        ) / (2 * sigma.reshape(shape) ** 2)
+        a = (x2 + y2 / p.reshape(shape) ** 2 + z2 / q.reshape(shape) ** 2) / (
+            2 * sigma.reshape(shape) ** 2
+        )
 
         # Radial integral per component and direction, for every finite edge,
         # then differenced into per-bin integrals; the last bin runs to infinity.

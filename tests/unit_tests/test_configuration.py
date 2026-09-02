@@ -552,9 +552,7 @@ def test_read_rejects_orbit_grid_with_too_few_i2_values(
         orbit_body="    nI2: 3\n",
     )
 
-    with pytest.raises(
-        ValueError, match=r"orbit_library_settings\.orbit_sampler\.nI2"
-    ):
+    with pytest.raises(ValueError, match=r"orbit_library_settings\.orbit_sampler\.nI2"):
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
@@ -798,9 +796,9 @@ def test_read_defers_gauss_hermite_systematics_completeness_to_runtime(
 
     config = Configuration().read(user_path, workspace_root=tmp_path)
 
-    systematics = config.data["kinematic_data"]["observed"][
-        "observational_errors"
-    ]["systematic_uncertainties"]
+    systematics = config.data["kinematic_data"]["observed"]["observational_errors"][
+        "systematic_uncertainties"
+    ]
     assert "h5" not in systematics
 
 
@@ -966,6 +964,68 @@ def test_mass_mge_potential_rejects_ml_parameter(tmp_path: Path) -> None:
         match=r"parameters has invalid field\(s\) for TriaxialMassMGEPotential: ml",
     ):
         Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def _pqu_stars(user_data: dict) -> dict:
+    """Retarget the default `stars` component at the `pqu` parameterization."""
+    stars = user_data["potential"]["stars"]
+    stars["parameterization"] = "pqu"
+    stars["parameters"] = {
+        "ml": {"unit": "Msun / Lsun", "value": 5.0},
+        "p": {"value": 0.85},
+        "q": {"value": 0.6},
+        "u": {"value": 0.93},
+    }
+    return stars
+
+
+def test_triaxial_mge_pqu_parameterization_resolves(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    _pqu_stars(user_data)
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    stars = config.data["potential"]["stars"]
+    assert stars["parameterization"] == "pqu"
+    assert set(stars["parameters"]) == {"ml", "p", "q", "u"}
+
+
+def test_triaxial_mge_pqu_rejects_a_missing_shape_parameter(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    del _pqu_stars(user_data)["parameters"]["u"]
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError, match=r"parameters is missing required field\(s\): u"
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_triaxial_mge_pqu_rejects_a_native_viewing_angle(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    _pqu_stars(user_data)["parameters"]["theta"] = {"unit": "rad", "value": 1.0}
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"parameters has invalid field\(s\) for TriaxialLightMGEPotential "
+            r"with parameterization 'pqu': theta"
+        ),
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+# NB: an out-of-domain static value (e.g. q > p) is not rejected at config-prep
+# -- ParameterConstraints are enforced at ResolvedPotentialComponent.build,
+# see test_potential.py::test_pqu_domain_invalid_value_is_rejected_at_build_time.
 
 
 def test_potential_component_rejects_the_removed_include_key(tmp_path: Path) -> None:

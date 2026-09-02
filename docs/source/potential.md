@@ -96,7 +96,10 @@ potential:
 - `type` (required): a `galax.potential` class name, or one of the four MGE
   composite type names.
 - `parameterization` (optional): a named conversion registered for `type`.
-  Omit it to use `type`'s native parameters directly.
+  Omit it to use `type`'s native parameters directly. Registered:
+  `concentration_m200` for `NFWPotential` (`(c, M_200)` -> `(m, r_s)`), and
+  `pqu` for `TriaxialLightMGEPotential` / `TriaxialMassMGEPotential`
+  (intrinsic axis ratios `(p, q, u)` -> viewing angles `(theta, phi, psi)`).
 - `parameters` (required): one entry per parameter the resolved
   `type`/`parameterization` pair expects -- every native field, including
   ones with a `galax` constructor default (e.g. `TriaxialHernquistPotential`'s
@@ -143,7 +146,9 @@ split along two independent axes:
   component, an axisymmetric system having no isophote twist). The
   axisymmetric deprojection is the oblate convention only (`p = B/A = 1`,
   `q = C/A <= 1`); a prolate spheroid needs a different relation and would
-  get its own `Prolate...` types.
+  get its own `Prolate...` types. The triaxial types also accept
+  `parameterization: "pqu"`, taking the intrinsic axis ratios `(p, q, u)` in
+  place of `(theta, phi, psi)` -- see "What's implemented today" below.
 
 ```yaml
 potential:
@@ -155,6 +160,17 @@ potential:
       theta: {value: 1.0, unit: "rad"}
       phi: {value: 0.5, unit: "rad"}
       psi: {value: 0.0, unit: "rad"}
+
+  # or, with the intrinsic-shape parameterization:
+  stars_pqu:
+    type: "TriaxialLightMGEPotential"
+    parameterization: "pqu"
+    mge: "mge_lum"
+    parameters:
+      ml: {value: 5.0, unit: "Msun / Lsun"}
+      p: {value: 0.85}   # B/A,   0 < q <= p <= 1
+      q: {value: 0.60}   # C/A
+      u: {value: 0.93}   # compression, p < u <= 1
 
   bulge:
     type: "OblateLightMGEPotential"
@@ -216,10 +232,24 @@ potential:
   `Deprojected3DMGE` counterpart term for term (`r_s <-> sigma`,
   `q1 <-> p`, `q2 <-> q`; an oblate axisymmetric deprojection's `p` is always 1),
   giving a direct, verified `m_tot = I * p * q * (2*pi)**1.5 * sigma**3`
-  conversion per component. `(theta, phi, psi)` / `inclination` are native;
-  the alternative `(p, q, u)` shape/compression parameterization closer to
-  the triaxial-Schwarzschild-modeling / DYNAMITE-successor literature isn't
-  registered yet -- converting it to `(theta, phi, psi)` needs a formula
-  that hasn't been confirmed.
+  conversion per component. `(theta, phi, psi)` / `inclination` are native.
+- **The triaxial MGE types' `pqu` parameterization**: implemented. Replaces
+  `(theta, phi, psi)` with the intrinsic axis ratios `p = B/A`, `q = C/A` and
+  the scale-length compression `u` of the triaxial-Schwarzschild /
+  DYNAMITE-successor literature (van den Bosch et al. 2008, MNRAS 385, 647;
+  the same equations DYNAMITE's `triax_pqu2tpp` uses). The conversion is
+  anchored at `q' = min(component q)` with zero twist -- the standard
+  reference frame; each `(p, q, u)` corresponds to exactly one
+  `(theta, phi, psi)`, which then deprojects every Gaussian as usual.
+  `(p, q, u)` must satisfy `0 < q <= p <= 1`, `p < u <= 1` (data-independent,
+  checked as parameter constraints) and, against the MGE,
+  `max(q/q', p) < u <= min(p/q', 1)` -- outside that range there is no
+  triaxial deprojection, and the build raises
+  `InvalidPotentialParametersError` (recorded as an invalid model, not a
+  crash). The reverse conversion for `AllModels`' columns is the same van den
+  Bosch relation `deproject_triaxial` already uses, so a `(p, q, u)` config
+  and its equivalent `(theta, phi, psi)` config build an identical potential.
+  This is TNT's first non-native parameterization on one of its own component
+  types (`register_parameterization` was previously native-`galax`-only).
 - **`Potential.generate_orbit_library`**: not implemented -- blocked on
   `tnt.orbit_library`, itself still a full scaffold.
