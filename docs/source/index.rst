@@ -15,6 +15,7 @@ documentation for details.
    :maxdepth: 2
 
    configuration
+   data_preparation
    units
    potential
    logging

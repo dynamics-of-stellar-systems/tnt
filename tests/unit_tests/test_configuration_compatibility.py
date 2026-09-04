@@ -53,14 +53,19 @@ def _config(input_directory: Path) -> dict[str, object]:
                 "intrinsic_mass": 1.0e-16,
             },
         },
-        "MGEs": {"light": "light.ecsv"},
+        "MGEs": {
+            "light": {
+                "file": "light.ecsv",
+                "major_axis_pa": {"value": 0.0, "unit": "rad"},
+            }
+        },
         "spatial_binnings": {
             "observed": {
                 "min_x": {"value": -1.0, "unit": "rad"},
                 "min_y": {"value": -1.0, "unit": "rad"},
                 "x_extent": {"value": 2.0, "unit": "rad"},
                 "y_extent": {"value": 2.0, "unit": "rad"},
-                "PA": {"value": 0.0, "unit": "rad"},
+                "y_axis_pa": {"value": 0.0, "unit": "rad"},
                 "bins_file": "bins.npy",
             }
         },
@@ -324,8 +329,8 @@ def test_critical_projection_preserves_declarations_but_excludes_parameter_units
         ),
         (
             "MGEs",
-            lambda value: value.update(light="different-light.ecsv"),
-            "critical_configuration.MGEs.light",
+            lambda value: value["light"].update(file="different-light.ecsv"),
+            "critical_configuration.MGEs.light.file",
         ),
         (
             "numerics_settings",
@@ -349,8 +354,8 @@ def test_critical_projection_preserves_declarations_but_excludes_parameter_units
         ),
         (
             "spatial_binnings",
-            lambda value: value["observed"]["PA"].update(value=1.0),
-            "critical_configuration.spatial_binnings.observed.PA",
+            lambda value: value["observed"]["y_axis_pa"].update(value=1.0),
+            "critical_configuration.spatial_binnings.observed.y_axis_pa",
         ),
         (
             "kinematic_data",

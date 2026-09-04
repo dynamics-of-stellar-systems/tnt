@@ -254,9 +254,16 @@ def _validate_mges(mges: ConfigDict) -> set[str]:
     """Validate the named Multi-Gaussian Expansion (MGE) file registry."""
     path = "MGEs"
     names: set[str] = set()
-    for name, filename in mges.items():
+    for name, entry in mges.items():
         name = _dynamic_name(name, path)
-        _string(filename, f"{path}.{name}")
+        entry_path = f"{path}.{name}"
+        entry = _mapping(entry, entry_path)
+        _reject_unknown_keys(entry, {"file", "major_axis_pa"}, entry_path)
+        _require_keys(entry, {"file", "major_axis_pa"}, entry_path)
+        _string(entry["file"], f"{entry_path}.file")
+        declared_quantity_value(
+            entry["major_axis_pa"], "angle", f"{entry_path}.major_axis_pa"
+        )
         names.add(name)
     return names
 
