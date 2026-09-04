@@ -25,14 +25,16 @@ system_attributes:
   distance: {{value: 10.0, unit: "kpc"}}
   name: test_system
 MGEs:
-  light: luminosity.ecsv
+  light:
+    file: luminosity.ecsv
+    major_axis_pa: {{value: 126.0, unit: "deg"}}
 spatial_binnings:
   observed:
     min_x: {{value: -29.5, unit: "arcsec"}}
     min_y: {{value: -26.5, unit: "arcsec"}}
     x_extent: {{value: 58.0, unit: "arcsec"}}
     y_extent: {{value: 52.0, unit: "arcsec"}}
-    PA: {{value: 126.0, unit: "deg"}}
+    y_axis_pa: {{value: 0.0, unit: "deg"}}
     bins_file: bins.npy
 potential:
   stars:

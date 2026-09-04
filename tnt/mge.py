@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import ClassVar, Self
+from typing import Any, ClassVar, Self
 
 import astropy.units as au
 import equinox as eqx
@@ -73,6 +73,9 @@ class AbstractMGE(eqx.Module):
     `_intensity_dimension` to the corresponding `tnt.units._REFERENCE_UNITS` key
     (`light_surface_brightness` or `mass_surface_density`). Not meant to be
     instantiated directly -- use `LightMGE` or `MassMGE`.
+
+    ``major_axis_pa`` is the on-sky position angle of the MGE's major axis --
+    a standard astronomical PA, measured from north through east.
     """
 
     _intensity_dimension: ClassVar[str]
@@ -81,9 +84,10 @@ class AbstractMGE(eqx.Module):
     sigma: Quantity
     q: Quantity
     PA_twist: Quantity
+    major_axis_pa: Quantity
 
     @classmethod
-    def from_qtable(cls, table: QTable) -> Self:
+    def from_qtable(cls, table: QTable, major_axis_pa: Quantity) -> Self:
         """Build an MGE from a table, validating its columns and keeping their units.
 
         Each column's declared unit is checked for dimensional correctness
@@ -93,6 +97,9 @@ class AbstractMGE(eqx.Module):
         Args:
             table: A table with columns ``I``, ``sigma``, ``q``, and ``PA_twist``, each
                 carrying an astropy unit.
+            major_axis_pa: The MGE major-axis PA the ``PA_twist`` column is
+                measured from (see the class docstring). Not stored in the
+                ECSV; supplied by configuration.
 
         Returns:
             An MGE with each column in its own declared unit.
@@ -115,20 +122,23 @@ class AbstractMGE(eqx.Module):
         if not bool(jnp.all((q > 0) & (q <= 1))):
             raise ValueError(f"q must satisfy 0 < q <= 1 for all components, got {q}")
 
-        return cls(**columns)
+        return cls(**columns, major_axis_pa=major_axis_pa)
 
     @classmethod
-    def read(cls, path: str | Path) -> Self:
+    def read(cls, path: str | Path, major_axis_pa: Quantity) -> Self:
         """Read an MGE from an ECSV file, keeping each column's declared unit.
 
         Args:
             path: Path to the ECSV file.
+            major_axis_pa: The MGE major-axis PA the ``PA_twist`` column is
+                measured from (see the class docstring). Not stored in the
+                ECSV; supplied by configuration.
 
         Returns:
             An MGE with each column in its own declared unit.
         """
         table = QTable.read(path, format="ascii.ecsv")
-        return cls.from_qtable(table)
+        return cls.from_qtable(table, major_axis_pa)
 
     def rescaled(self, factor: Quantity) -> Self:
         """Multiply `I` by a dimensionless factor, keeping every other field.
@@ -146,7 +156,11 @@ class AbstractMGE(eqx.Module):
             An MGE of the same kind with ``I = self.I * factor``.
         """
         return type(self)(
-            I=self.I * factor, sigma=self.sigma, q=self.q, PA_twist=self.PA_twist
+            I=self.I * factor,
+            sigma=self.sigma,
+            q=self.q,
+            PA_twist=self.PA_twist,
+            major_axis_pa=self.major_axis_pa,
         )
 
     def angular_to_physical(self, distance: Quantity) -> Self:
@@ -171,7 +185,11 @@ class AbstractMGE(eqx.Module):
         I_physical = I_per_steradian * Quantity(1.0, "rad2") / distance**2
 
         return type(self)(
-            I=I_physical, sigma=sigma_physical, q=self.q, PA_twist=self.PA_twist
+            I=I_physical,
+            sigma=sigma_physical,
+            q=self.q,
+            PA_twist=self.PA_twist,
+            major_axis_pa=self.major_axis_pa,
         )
 
     def get_projected_mass(self, binning: ProjectedBinning) -> Quantity:
@@ -186,11 +204,11 @@ class AbstractMGE(eqx.Module):
         into their assigned bins. Pixels with bin ID 0 (unbinned, see
         `ProjectedBinning`) don't contribute to any bin.
 
-        `binning`'s `PA` is measured counterclockwise from the aperture
-        grid's y-axis to each component's own major axis, in the
-        Cappellari/van den Bosch convention used elsewhere in this module for
-        `psi` and `PA_twist` (opposite handedness to the "mathematical" angle
-        from the x-axis) -- `PA_twist` away from a reference component.
+        Each Gaussian's on-sky major-axis PA is ``major_axis_pa + PA_twist``
+        (north through east); it is placed in `binning`'s own grid relative to
+        `binning`'s `y_axis_pa`, using the fixed parity `ProjectedBinning`
+        assumes (its positive x-axis is 90 degrees east of its positive
+        y-axis -- see its docstring).
 
         Args:
             binning: The projected-plane aperture grid and pixel-to-bin
@@ -217,14 +235,18 @@ class AbstractMGE(eqx.Module):
         sigma = self.sigma.ustrip(coord_unit).reshape(shape)
         q = self.q.ustrip("").reshape(shape)
         I = self.I.ustrip(self.I.unit).reshape(shape)
-        # PA is measured from the y-axis (Cappellari/van den Bosch convention);
-        # the -pi/2 converts it to alpha, the "mathematical" angle from the
-        # x-axis that the integral below is expressed in.
-        alpha = (
-            binning.PA.ustrip("rad")
-            - jnp.pi / 2
-            + self.PA_twist.ustrip("rad").reshape(shape)
-        )
+
+        # alpha: each Gaussian's major axis, as the "mathematical" angle
+        # (counterclockwise in the grid's own (x, y) plane) the quadrature
+        # below is expressed in. Derived from ProjectedBinning's fixed
+        # parity (positive x is 90 degrees east of positive y): the sky PA
+        # of the grid's own x-axis is `y_axis_pa + 90 deg`, and PA increases
+        # in the opposite rotational sense to alpha (north-through-east vs.
+        # counterclockwise-from-x), so alpha = (grid x-axis PA) - (sky PA).
+        sky_pa = self.major_axis_pa.ustrip("rad") + self.PA_twist.ustrip(
+            "rad"
+        ).reshape(shape)
+        alpha = binning.y_axis_pa.ustrip("rad") + jnp.pi / 2 - sky_pa
 
         # Cappellari (2002) appendix B3's "p" -- unrelated to `Deprojected3DMGE`'s
         # intrinsic axial ratio `p`, just reusing the paper's own notation.
@@ -435,8 +457,8 @@ class LightMGE(AbstractMGE):
     def to_mass(self, m_over_l: Quantity) -> MassMGE:
         """Convert to a MassMGE given a mass-to-light ratio.
 
-        `sigma`, `q`, and `PA_twist` are unaffected and carried over unchanged -- only
-        `I` (and hence what it represents) changes.
+        `sigma`, `q`, `PA_twist`, and `major_axis_pa` are unaffected and carried over
+        unchanged -- only `I` (and hence what it represents) changes.
 
         Args:
             m_over_l: The mass-to-light ratio (e.g. in Msun/Lsun), either a single value
@@ -457,7 +479,11 @@ class LightMGE(AbstractMGE):
             )
 
         return MassMGE(
-            I=self.I * m_over_l, sigma=self.sigma, q=self.q, PA_twist=self.PA_twist
+            I=self.I * m_over_l,
+            sigma=self.sigma,
+            q=self.q,
+            PA_twist=self.PA_twist,
+            major_axis_pa=self.major_axis_pa,
         )
 
 
@@ -566,7 +592,7 @@ class Deprojected3DMGE(eqx.Module):
 _MGE_CLASSES: tuple[type[AbstractMGE], ...] = (LightMGE, MassMGE)
 
 
-def read_mge(path: str | Path) -> AbstractMGE:
+def read_mge(path: str | Path, major_axis_pa: Quantity) -> AbstractMGE:
     """Read an MGE from an ECSV file, inferring whether it's light or mass.
 
     The kind is inferred from the declared unit of the file's ``I`` column: whichever of
@@ -575,6 +601,8 @@ def read_mge(path: str | Path) -> AbstractMGE:
 
     Args:
         path: Path to the ECSV file.
+        major_axis_pa: The MGE major-axis PA the ``PA_twist`` column is
+            measured from; supplied by configuration, not the ECSV.
 
     Returns:
         A `LightMGE` or `MassMGE`, whichever matches the file's ``I`` column.
@@ -588,7 +616,7 @@ def read_mge(path: str | Path) -> AbstractMGE:
     for cls in _MGE_CLASSES:
         target_unit = reference_unit(cls._intensity_dimension)
         if intensity_unit is not None and intensity_unit.is_equivalent(target_unit):
-            return cls.from_qtable(table)
+            return cls.from_qtable(table, major_axis_pa)
 
     expected = [reference_unit(cls._intensity_dimension) for cls in _MGE_CLASSES]
     raise ValueError(
@@ -598,7 +626,7 @@ def read_mge(path: str | Path) -> AbstractMGE:
 
 
 def build_mges(
-    mges: Mapping[str, str],
+    mges: Mapping[str, Mapping[str, Any]],
     input_directory: str | Path,
     distance: Quantity,
 ) -> dict[str, AbstractMGE]:
@@ -617,8 +645,11 @@ def build_mges(
     instantiated runtime objects.
 
     Args:
-        mges: Mapping of unique identifiers to ECSV filenames, e.g. a
-            resolved configuration's ``MGEs`` section.
+        mges: Mapping of unique identifiers to ``{file, major_axis_pa}``
+            entries, e.g. a resolved configuration's ``MGEs`` section.
+            ``major_axis_pa`` is an explicit ``{value, unit}`` angle -- the
+            on-sky PA (north through east) of the MGE major axis, which the
+            ECSV's ``PA_twist`` column is measured relative to.
         input_directory: Directory that each filename is resolved against,
             e.g. a resolved configuration's ``io_settings.input_directory``.
         distance: The distance to the object, e.g. a resolved
@@ -629,7 +660,10 @@ def build_mges(
         `MassMGE`.
     """
     directory = Path(input_directory)
-    return {
-        name: read_mge(directory / filename).angular_to_physical(distance)
-        for name, filename in mges.items()
-    }
+    built: dict[str, AbstractMGE] = {}
+    for name, entry in mges.items():
+        declared_pa = entry["major_axis_pa"]
+        major_axis_pa = Quantity(declared_pa["value"], declared_pa["unit"])
+        mge = read_mge(directory / entry["file"], major_axis_pa)
+        built[name] = mge.angular_to_physical(distance)
+    return built

@@ -53,6 +53,31 @@
   scientific objects, load scientific input data, or begin scientific
   execution.
 
+## Angular reference frames
+
+- An MGE's photometric orientation and an observational data grid's
+  orientation are independently measurable and frequently different
+  (kinematic/photometric misalignment is a real triaxiality signature, not
+  noise) -- see issue #62. TNT keeps them as separate config fields rather
+  than one shared position angle: `MGEs.<name>.major_axis_pa` (the on-sky PA
+  `PA_twist` is measured from) and `spatial_binnings.<name>.y_axis_pa` (the
+  on-sky PA of the grid's +y axis). See `docs/source/data_preparation.md` for
+  the full geometric picture.
+- `ProjectedBinning` declares only `y_axis_pa`, not an x-axis PA too: TNT
+  fixes the grid's parity by convention instead of asking for it -- the
+  positive x-axis is always 90 degrees east of positive y
+  (`AbstractMGE.get_projected_mass`'s `alpha = y_axis_pa + pi/2 -
+  major_axis_pa - PA_twist`). Data with the opposite parity (x pointing west
+  of y -- the traditional FITS-display convention, north up/east left) must
+  be flipped along that axis before use; this was a deliberate simplification
+  over an earlier design that declared both axes' PAs explicitly.
+- `AbstractMGE.major_axis_pa` is a required field, not optional: `PA_twist`
+  is defined as a twist *away from* `major_axis_pa`, so an MGE without one has
+  no absolute orientation, the same way it wouldn't make sense to construct
+  one without `sigma`. `LightMGE.read`/`MassMGE.read`/`read_mge` all require
+  it as an explicit argument too (it isn't read from the ECSV); only
+  `tnt.mge.build_mges` reads it from configuration.
+
 ## Linux development container
 
 - `Dockerfile` and `compose.yaml` provide the reproducible Linux `x86_64`

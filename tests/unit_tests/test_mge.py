@@ -80,6 +80,7 @@ def _multi_component_light_mge() -> LightMGE:
         sigma=u.Quantity(sigma_arcsec.ustrip("rad"), "rad"),
         q=u.Quantity(jnp.array(q), ""),
         PA_twist=u.Quantity(pa_twist_deg.ustrip("rad"), "rad"),
+        major_axis_pa=u.Quantity(20.0, "deg"),
     )
 
 
@@ -87,7 +88,7 @@ def test_read_keeps_declared_light_column_units(tmp_path):
     path = tmp_path / "mge_lum.ecsv"
     _write_ecsv(path, intensity_unit="Lsun / arcsec2", rows=_LIGHT_ROWS)
 
-    mge = LightMGE.read(path)
+    mge = LightMGE.read(path, u.Quantity(20.0, "deg"))
 
     assert mge.I.unit == u.unit("Lsun / arcsec2")
     assert mge.sigma.unit == u.unit("arcsec")
@@ -103,7 +104,7 @@ def test_read_keeps_declared_mass_column_units(tmp_path):
     path = tmp_path / "mge_mass.ecsv"
     _write_ecsv(path, intensity_unit="Msun / arcsec2", rows=_MASS_ROWS)
 
-    mge = MassMGE.read(path)
+    mge = MassMGE.read(path, u.Quantity(20.0, "deg"))
 
     assert mge.I.unit == u.unit("Msun / arcsec2")
     assert mge.sigma.unit == u.unit("arcsec")
@@ -119,7 +120,7 @@ def test_read_mge_infers_light_kind(tmp_path):
     path = tmp_path / "mge.ecsv"
     _write_ecsv(path, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, 0.9, 0.0)])
 
-    mge = read_mge(path)
+    mge = read_mge(path, u.Quantity(20.0, "deg"))
 
     assert isinstance(mge, LightMGE)
     assert mge.I.unit == u.unit("Lsun / arcsec2")
@@ -129,7 +130,7 @@ def test_read_mge_infers_mass_kind(tmp_path):
     path = tmp_path / "mge.ecsv"
     _write_ecsv(path, intensity_unit="Msun / arcsec2", rows=[(1.0, 1.0, 0.9, 0.0)])
 
-    mge = read_mge(path)
+    mge = read_mge(path, u.Quantity(20.0, "deg"))
 
     assert isinstance(mge, MassMGE)
     assert mge.I.unit == u.unit("Msun / arcsec2")
@@ -148,7 +149,16 @@ def test_build_mges_reads_each_named_file(tmp_path):
     )
 
     mges = build_mges(
-        {"light": "light.ecsv", "mass": "mass.ecsv"},
+        {
+            "light": {
+                "file": "light.ecsv",
+                "major_axis_pa": {"value": 30.0, "unit": "deg"},
+            },
+            "mass": {
+                "file": "mass.ecsv",
+                "major_axis_pa": {"value": 60.0, "unit": "deg"},
+            },
+        },
         tmp_path,
         u.Quantity(30.5, "Mpc"),
     )
@@ -158,6 +168,8 @@ def test_build_mges_reads_each_named_file(tmp_path):
     # angular_to_physical already applied -- sigma is length-like, not angular.
     mges["light"].sigma.ustrip("Mpc")
     mges["mass"].sigma.ustrip("Mpc")
+    assert mges["light"].major_axis_pa.ustrip("deg") == pytest.approx(30.0)
+    assert mges["mass"].major_axis_pa.ustrip("deg") == pytest.approx(60.0)
 
 
 def test_build_mges_without_entries_returns_empty_dict(tmp_path):
@@ -172,14 +184,14 @@ def test_read_rejects_q_out_of_range(tmp_path, bad_q):
     )
 
     with pytest.raises(ValueError, match="q must satisfy 0 < q <= 1"):
-        LightMGE.read(bad_file)
+        LightMGE.read(bad_file, u.Quantity(0.0, "deg"))
 
 
 def test_read_accepts_q_equal_to_one(tmp_path):
     ok_file = tmp_path / "q_one.ecsv"
     _write_ecsv(ok_file, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, 1.0, 0.0)])
 
-    mge = LightMGE.read(ok_file)
+    mge = LightMGE.read(ok_file, u.Quantity(0.0, "deg"))
 
     assert jnp.allclose(mge.q.ustrip(""), 1.0)
 
@@ -189,7 +201,7 @@ def test_read_mge_rejects_unrecognized_units(tmp_path):
     _write_ecsv(bad_file, intensity_unit="s", rows=[(1.0, 1.0, 1.0, 0.0)])
 
     with pytest.raises(ValueError, match="Could not infer MGE kind"):
-        read_mge(bad_file)
+        read_mge(bad_file, u.Quantity(0.0, "deg"))
 
 
 def test_to_mass_with_constant_ratio():
@@ -293,6 +305,7 @@ def test_deproject_oblate_requires_zero_pa_twist():
         sigma=physical.sigma,
         q=physical.q,
         PA_twist=u.Quantity(jnp.full(physical.q.shape, 0.1), "rad"),
+        major_axis_pa=physical.major_axis_pa,
     )
 
     with pytest.raises(ValueError, match="PA_twist == 0"):
@@ -327,6 +340,7 @@ def _single_component_light_mge(q_obs: float, psi: float) -> LightMGE:
         sigma=u.Quantity(jnp.array([2.0]), "kpc"),
         q=u.Quantity(jnp.array([q_obs]), ""),
         PA_twist=u.Quantity(jnp.array([psi]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "deg"),
     )
 
 
@@ -472,6 +486,7 @@ def test_deproject_triaxial_recovers_independent_forward_projection(
         sigma=u.Quantity(jnp.array([sigma_obs]), "kpc"),
         q=u.Quantity(jnp.array([q_obs]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "deg"),
     )
 
     deprojected = mge.deproject_triaxial(
@@ -545,6 +560,7 @@ def test_angular_to_physical_is_invariant_to_the_declared_angular_unit():
         sigma=u.Quantity(rad.sigma.ustrip("arcsec"), "arcsec"),
         q=rad.q,
         PA_twist=u.Quantity(rad.PA_twist.ustrip("deg"), "deg"),
+        major_axis_pa=rad.major_axis_pa,
     )
     distance = u.Quantity(30.5, "Mpc")
 
@@ -575,7 +591,7 @@ _PROJECTED_MASS_QUAD_ORDER = 10
 
 
 def _projected_binning(
-    *, min_x, min_y, x_extent, y_extent, pa, bins
+    *, min_x, min_y, x_extent, y_extent, y_axis_pa, bins
 ) -> ProjectedBinning:
     return ProjectedBinning.from_settings(
         {
@@ -583,24 +599,29 @@ def _projected_binning(
             "min_y": {"value": min_y, "unit": "rad"},
             "x_extent": {"value": x_extent, "unit": "rad"},
             "y_extent": {"value": y_extent, "unit": "rad"},
-            "PA": {"value": pa, "unit": "rad"},
+            "y_axis_pa": {"value": y_axis_pa, "unit": "rad"},
         },
         bins,
         _PROJECTED_MASS_QUAD_ORDER,
     )
 
 
-def _brute_force_aperture_mass(I, sigma, q, pa_twist, pa, x_edges, y_edges):
+def _brute_force_aperture_mass(
+    I, sigma, q, pa_twist, major_axis_pa, y_axis_pa, x_edges, y_edges
+):
     """Independently integrate a multi-component MGE over a pixel grid.
 
     Uses `scipy.integrate.dblquad` directly on each component's surface
     density, rotated into the pixel grid's frame by hand (no tnt code
-    involved), as ground truth for `AbstractMGE.get_projected_mass`.
+    involved), as ground truth for `AbstractMGE.get_projected_mass`'s
+    erf/quadrature integral -- `alpha` itself is computed the same way as
+    `get_projected_mass` (that composition is checked independently by
+    `test_get_projected_mass_pa_convention_matches_documented_axis`).
     """
     n_x, n_y = len(x_edges) - 1, len(y_edges) - 1
     mass = np.zeros((n_x, n_y))
     for k in range(len(I)):
-        alpha = pa - np.pi / 2 + pa_twist[k]
+        alpha = y_axis_pa + np.pi / 2 - major_axis_pa - pa_twist[k]
 
         def surface_density(x, y, k=k, alpha=alpha):
             x_major = x * np.cos(alpha) + y * np.sin(alpha)
@@ -625,21 +646,22 @@ def _brute_force_aperture_mass(I, sigma, q, pa_twist, pa, x_edges, y_edges):
 
 
 @pytest.mark.parametrize(
-    ("I", "sigma", "q", "pa_twist", "pa"),
+    ("I", "sigma", "q", "pa_twist", "major_axis_pa", "y_axis_pa"),
     [
-        ([3.0], [0.02], [0.4], [0.3], 1.1),
-        ([3.0], [0.02], [1.0], [0.0], 0.0),
-        ([2.0, 4.0], [0.015, 0.03], [0.6, 0.3], [0.0, 0.5], 0.7),
+        ([3.0], [0.02], [0.4], [0.3], 0.2, 1.1),
+        ([3.0], [0.02], [0.5], [0.0], 0.0, 0.0),
+        ([2.0, 4.0], [0.015, 0.03], [0.6, 0.3], [0.0, 0.5], -0.3, 0.7),
     ],
 )
 def test_get_projected_mass_matches_independent_numeric_integral(
-    I, sigma, q, pa_twist, pa
+    I, sigma, q, pa_twist, major_axis_pa, y_axis_pa
 ):
     mge = LightMGE(
         I=u.Quantity(jnp.array(I), "Lsun / rad2"),
         sigma=u.Quantity(jnp.array(sigma), "rad"),
         q=u.Quantity(jnp.array(q), ""),
         PA_twist=u.Quantity(jnp.array(pa_twist), "rad"),
+        major_axis_pa=u.Quantity(major_axis_pa, "rad"),
     )
     n_x, n_y = 4, 3
     min_x, min_y = -0.05, -0.04
@@ -652,14 +674,14 @@ def test_get_projected_mass_matches_independent_numeric_integral(
         min_y=min_y,
         x_extent=x_extent,
         y_extent=y_extent,
-        pa=pa,
+        y_axis_pa=y_axis_pa,
         bins=bins,
     )
 
     mass = mge.get_projected_mass(binning)
 
     expected_grid = _brute_force_aperture_mass(
-        I, sigma, q, pa_twist, pa, x_edges, y_edges
+        I, sigma, q, pa_twist, major_axis_pa, y_axis_pa, x_edges, y_edges
     )
     expected = expected_grid.ravel()[np.argsort(bins.ravel())]
     assert mass.unit == u.unit("Lsun")
@@ -667,25 +689,31 @@ def test_get_projected_mass_matches_independent_numeric_integral(
 
 
 @pytest.mark.parametrize(
-    ("pa", "aligned_bin_idx"),
+    ("major_axis_pa", "aligned_bin_idx"),
     [
-        (0.0, 0),  # PA=0 -> major axis along y -> the y-strip bin gets more mass.
-        (np.pi / 2, 1),  # PA=90deg -> major axis along x -> the x-strip bin does.
+        (90.0, 0),  # Aligned with the grid's y-axis -> the y-strip bin gets more mass.
+        (0.0, 1),  # Aligned with the grid's x-axis -> the x-strip bin does.
     ],
 )
-def test_get_projected_mass_pa_convention_matches_documented_axis(pa, aligned_bin_idx):
-    """PA is measured counterclockwise from the y-axis (docstring/configuration.md).
+def test_get_projected_mass_pa_convention_matches_documented_axis(
+    major_axis_pa, aligned_bin_idx
+):
+    """A component's on-sky major axis is `major_axis_pa + PA_twist`.
 
-    An elongated component (small `q`) with no twist should therefore have its
-    major axis along y at PA=0 and along x at PA=90deg -- checked here by
-    comparing the mass caught by a thin strip along each axis, independently
-    of the erf/quadrature integration formula itself.
+    With no twist and a grid whose y-axis PA is 90deg (so, by
+    `ProjectedBinning`'s fixed parity, its x-axis PA is 180deg), an elongated
+    component (small `q`) should therefore have its major axis along the
+    grid's y-axis at `major_axis_pa=90deg` and along its x-axis at
+    `major_axis_pa=0deg` -- checked here by comparing the mass caught by a
+    thin strip along each axis, independently of the erf/quadrature
+    integration formula itself.
     """
     mge = LightMGE(
         I=u.Quantity(jnp.array([1.0]), "Lsun / rad2"),
         sigma=u.Quantity(jnp.array([1.0]), "rad"),
         q=u.Quantity(jnp.array([0.2]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=u.Quantity(major_axis_pa, "deg"),
     )
     n_x, n_y = 40, 40
     min_x, min_y = -4.0, -4.0
@@ -697,7 +725,12 @@ def test_get_projected_mass_pa_convention_matches_documented_axis(pa, aligned_bi
     x_strip = np.abs(y_centers)[None, :] < half_width  # bin 2: thin in y, wide in x
     bins = np.where(y_strip, 1, np.where(x_strip & ~y_strip, 2, 0))
     binning = _projected_binning(
-        min_x=min_x, min_y=min_y, x_extent=x_extent, y_extent=y_extent, pa=pa, bins=bins
+        min_x=min_x,
+        min_y=min_y,
+        x_extent=x_extent,
+        y_extent=y_extent,
+        y_axis_pa=np.pi / 2,
+        bins=bins,
     )
 
     mass = mge.get_projected_mass(binning).ustrip("Lsun")
@@ -711,10 +744,16 @@ def test_get_projected_mass_conserves_total_flux_for_circular_component():
         sigma=u.Quantity(jnp.array([0.01]), "rad"),
         q=u.Quantity(jnp.array([1.0]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "rad"),
     )
     bins = np.ones((60, 60), dtype=int)
     binning = _projected_binning(
-        min_x=-1.0, min_y=-1.0, x_extent=2.0, y_extent=2.0, pa=0.3, bins=bins
+        min_x=-1.0,
+        min_y=-1.0,
+        x_extent=2.0,
+        y_extent=2.0,
+        y_axis_pa=0.3,
+        bins=bins,
     )
 
     mass = mge.get_projected_mass(binning)
@@ -729,10 +768,16 @@ def test_get_projected_mass_excludes_unbinned_pixels():
         sigma=u.Quantity(jnp.array([0.01]), "rad"),
         q=u.Quantity(jnp.array([1.0]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "rad"),
     )
     bins = np.array([[0, 1], [1, 0]])
     binning = _projected_binning(
-        min_x=-0.02, min_y=-0.02, x_extent=0.04, y_extent=0.04, pa=0.0, bins=bins
+        min_x=-0.02,
+        min_y=-0.02,
+        x_extent=0.04,
+        y_extent=0.04,
+        y_axis_pa=np.pi / 2,
+        bins=bins,
     )
 
     mass = mge.get_projected_mass(binning)
@@ -746,6 +791,7 @@ def test_get_projected_mass_aggregates_multiple_pixels_per_bin():
         sigma=u.Quantity(jnp.array([0.01]), "rad"),
         q=u.Quantity(jnp.array([0.7]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "rad"),
     )
     single_bin = np.ones((4, 4), dtype=int)
     per_pixel_bins = 1 + np.arange(16).reshape(4, 4)
@@ -754,7 +800,7 @@ def test_get_projected_mass_aggregates_multiple_pixels_per_bin():
         "min_y": -0.02,
         "x_extent": 0.04,
         "y_extent": 0.04,
-        "pa": 0.2,
+        "y_axis_pa": 0.2,
     }
 
     combined = mge.get_projected_mass(
@@ -773,13 +819,14 @@ def test_get_projected_mass_requires_consistent_units():
         sigma=u.Quantity(jnp.array([0.01]), "rad"),
         q=u.Quantity(jnp.array([1.0]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "rad"),
     )
     binning = _projected_binning(
         min_x=-1.0,
         min_y=-1.0,
         x_extent=2.0,
         y_extent=2.0,
-        pa=0.0,
+        y_axis_pa=np.pi / 2,
         bins=np.ones((3, 3), dtype=int),
     ).angular_to_physical(u.Quantity(30.5, "Mpc"))
 
@@ -793,10 +840,16 @@ def test_get_projected_mass_invariant_under_matching_physical_conversion():
         sigma=u.Quantity(jnp.array([0.01, 0.02]), "rad"),
         q=u.Quantity(jnp.array([0.6, 0.9]), ""),
         PA_twist=u.Quantity(jnp.array([0.0, 0.4]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "rad"),
     )
     bins = 1 + np.arange(9).reshape(3, 3)
     binning = _projected_binning(
-        min_x=-0.05, min_y=-0.05, x_extent=0.1, y_extent=0.1, pa=0.5, bins=bins
+        min_x=-0.05,
+        min_y=-0.05,
+        x_extent=0.1,
+        y_extent=0.1,
+        y_axis_pa=0.5,
+        bins=bins,
     )
     distance = u.Quantity(30.5, "Mpc")
 
@@ -823,13 +876,14 @@ def test_get_projected_mass_is_jit_compatible():
         sigma=u.Quantity(jnp.array([0.01, 0.02]), "rad"),
         q=u.Quantity(jnp.array([0.7, 0.9]), ""),
         PA_twist=u.Quantity(jnp.array([0.0, 0.3]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "rad"),
     )
     binning = _projected_binning(
         min_x=-0.02,
         min_y=-0.02,
         x_extent=0.04,
         y_extent=0.04,
-        pa=0.2,
+        y_axis_pa=0.2,
         bins=np.array([[1, 2], [2, 1]]),
     )
 

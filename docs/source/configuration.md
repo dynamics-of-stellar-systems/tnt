@@ -137,7 +137,9 @@ refer to one another by name:
 
 ```yaml
 MGEs:
-  stellar_light: "mge_lum.ecsv"
+  stellar_light:
+    file: "mge_lum.ecsv"
+    major_axis_pa: {value: 126.0, unit: "deg"}
 
 spatial_binnings:
   central_bins:
@@ -145,7 +147,7 @@ spatial_binnings:
     min_y: {value: -26.5, unit: "arcsec"}
     x_extent: {value: 58.0, unit: "arcsec"}
     y_extent: {value: 52.0, unit: "arcsec"}
-    PA: {value: 126.0, unit: "deg"}
+    y_axis_pa: {value: 0.0, unit: "deg"}
     bins_file: "bins.npy"
 
 potential:
@@ -173,20 +175,23 @@ population_data:
     binning: "central_bins"
 ```
 
-`MGEs` is the named multi-Gaussian expansion file registry.
+`MGEs` is the named multi-Gaussian expansion file registry. Each entry gives
+the MGE's `file` and its `major_axis_pa` -- the on-sky position angle (north
+through east) that the file's `PA_twist` column is measured from.
 `spatial_binnings` lets kinematic and population data share one projected
 aperture definition. The four coordinate fields define a regular rectangular
-pixel grid, while `PA` gives the galaxy major-axis position angle measured
-counterclockwise from the grid's y-axis (the Cappellari/van den Bosch
-convention also used by an MGE's `PA_twist`), not the grid's x-axis. Each is
-an explicit angular
-`{value, unit}` quantity. `bins_file` is resolved relative to
-`io_settings.input_directory` and must contain a two-dimensional NumPy array
-with shape `(npix_x, npix_y)`. Its non-negative integers assign pixels to bins;
-ID 0 marks pixels that are not assigned to a bin, and the positive IDs must be
-contiguous, running `1, 2, ..., n_bins` with no gaps. The pixel counts are
-inferred from the array shape. A kinematic data set may optionally reference
-an MGE; this is not required for proper-motion data.
+pixel grid; `y_axis_pa` gives the on-sky position angle of the grid's own +y
+axis. TNT fixes the grid's positive x-axis to be 90 degrees east of that (data
+with the opposite handedness must be flipped before use -- see
+[Data preparation](data_preparation.md)). Both `major_axis_pa` and
+`y_axis_pa` are explicit angular `{value, unit}` quantities. `bins_file` is
+resolved relative to `io_settings.input_directory` and must contain a
+two-dimensional NumPy array with shape `(npix_x, npix_y)`. Its non-negative
+integers assign pixels to bins; ID 0 marks pixels that are not assigned to a
+bin, and the positive IDs must be contiguous, running `1, 2, ..., n_bins`
+with no gaps. The pixel counts are inferred from the array shape. A
+kinematic data set may optionally reference an MGE; this is not required for
+proper-motion data.
 
 Population observations must always be supplied through their own
 `population_data.<name>.data_file`. TNT does not support population columns

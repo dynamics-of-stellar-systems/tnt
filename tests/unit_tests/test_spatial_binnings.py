@@ -18,7 +18,7 @@ def _settings(**overrides):
         "min_y": {"value": -2.0, "unit": "rad"},
         "x_extent": {"value": 3.0, "unit": "rad"},
         "y_extent": {"value": 4.0, "unit": "rad"},
-        "PA": {"value": 0.5, "unit": "rad"},
+        "y_axis_pa": {"value": 0.5, "unit": "rad"},
         "bins_file": "bins.npy",
     }
     settings.update(overrides)
@@ -40,9 +40,10 @@ def test_build_spatial_binnings_reads_each_named_binning(tmp_path):
     assert isinstance(binning, ProjectedBinning)
     # Converted to physical units (see
     # test_build_spatial_binnings_returns_physical_units below for the
-    # conversion itself) -- PA (an orientation, not a size) stays angular.
+    # conversion itself) -- y_axis_pa (an orientation, not a size) stays
+    # angular.
     assert binning.min_x.unit.is_equivalent("kpc")
-    assert binning.PA == u.Quantity(0.5, "rad")
+    assert binning.y_axis_pa == u.Quantity(0.5, "rad")
     assert np.array_equal(binning.bins, bins)
 
 
@@ -66,7 +67,7 @@ def test_build_spatial_binnings_returns_physical_units(tmp_path):
     assert binning.min_y == expected.min_y
     assert binning.x_extent == expected.x_extent
     assert binning.y_extent == expected.y_extent
-    assert binning.PA == expected.PA
+    assert binning.y_axis_pa == expected.y_axis_pa
 
 
 def test_build_spatial_binnings_without_entries_returns_empty_dict(tmp_path):
@@ -119,9 +120,9 @@ def test_build_spatial_binnings_rejects_invalid_bins_file(tmp_path, bins_file):
 
 def test_build_spatial_binnings_validates_geometry_before_opening_file(tmp_path):
     settings = _settings(bins_file="missing.npy")
-    del settings["PA"]
+    del settings["y_axis_pa"]
 
-    with pytest.raises(ValueError, match="missing required field: PA"):
+    with pytest.raises(ValueError, match="missing required field: y_axis_pa"):
         build_spatial_binnings(
             {"observed": settings},
             tmp_path,
@@ -162,15 +163,15 @@ def test_from_settings_keeps_declared_units(tmp_path):
     bins = np.zeros((2, 2), dtype=int)
     settings = _settings(
         min_x={"value": -3600.0, "unit": "arcsec"},
-        PA={"value": 90.0, "unit": "deg"},
+        y_axis_pa={"value": 90.0, "unit": "deg"},
     )
 
     binning = ProjectedBinning.from_settings(settings, bins, _QUAD_ORDER)
 
     assert binning.min_x.unit == u.unit("arcsec")
     assert binning.min_x.ustrip("arcsec") == pytest.approx(-3600.0)
-    assert binning.PA.unit == u.unit("deg")
-    assert binning.PA.ustrip("rad") == pytest.approx(np.pi / 2)
+    assert binning.y_axis_pa.unit == u.unit("deg")
+    assert binning.y_axis_pa.ustrip("rad") == pytest.approx(np.pi / 2)
 
 
 def test_from_settings_rejects_non_angle_unit(tmp_path):
@@ -183,7 +184,7 @@ def test_from_settings_rejects_non_angle_unit(tmp_path):
 
 def test_from_settings_rejects_unparseable_unit():
     bins = np.zeros((2, 2), dtype=int)
-    settings = _settings(PA={"value": 1.0, "unit": "notaunit"})
+    settings = _settings(y_axis_pa={"value": 1.0, "unit": "notaunit"})
 
     with pytest.raises(ValueError, match="invalid unit"):
         ProjectedBinning.from_settings(settings, bins, _QUAD_ORDER)
@@ -192,9 +193,9 @@ def test_from_settings_rejects_unparseable_unit():
 def test_from_settings_rejects_missing_field():
     bins = np.zeros((2, 2), dtype=int)
     settings = _settings()
-    del settings["PA"]
+    del settings["y_axis_pa"]
 
-    with pytest.raises(ValueError, match="missing required field: PA"):
+    with pytest.raises(ValueError, match="missing required field: y_axis_pa"):
         ProjectedBinning.from_settings(
             settings, bins, _QUAD_ORDER
         )
@@ -225,7 +226,7 @@ def test_from_settings_rejects_unknown_field():
 )
 def test_from_settings_rejects_malformed_quantity_mapping(malformed, error, match):
     bins = np.zeros((2, 2), dtype=int)
-    settings = _settings(PA=malformed)
+    settings = _settings(y_axis_pa=malformed)
 
     with pytest.raises(error, match=match):
         ProjectedBinning.from_settings(settings, bins, _QUAD_ORDER)
@@ -233,9 +234,9 @@ def test_from_settings_rejects_malformed_quantity_mapping(malformed, error, matc
 
 def test_from_settings_rejects_non_numeric_value():
     bins = np.zeros((2, 2), dtype=int)
-    settings = _settings(PA={"value": "not a number", "unit": "rad"})
+    settings = _settings(y_axis_pa={"value": "not a number", "unit": "rad"})
 
-    with pytest.raises(TypeError, match="PA.value must be a number"):
+    with pytest.raises(TypeError, match="y_axis_pa.value must be a number"):
         ProjectedBinning.from_settings(
             settings, bins, _QUAD_ORDER
         )
@@ -243,9 +244,9 @@ def test_from_settings_rejects_non_numeric_value():
 
 def test_from_settings_rejects_non_finite_value():
     bins = np.zeros((2, 2), dtype=int)
-    settings = _settings(PA={"value": float("nan"), "unit": "rad"})
+    settings = _settings(y_axis_pa={"value": float("nan"), "unit": "rad"})
 
-    with pytest.raises(ValueError, match="PA.value must be finite"):
+    with pytest.raises(ValueError, match="y_axis_pa.value must be finite"):
         ProjectedBinning.from_settings(
             settings, bins, _QUAD_ORDER
         )
@@ -406,5 +407,5 @@ def test_angular_to_physical_leaves_pa_and_bins_unchanged():
 
     physical = binning.angular_to_physical(distance)
 
-    assert physical.PA == binning.PA
+    assert physical.y_axis_pa == binning.y_axis_pa
     assert np.array_equal(physical.bins, binning.bins)
