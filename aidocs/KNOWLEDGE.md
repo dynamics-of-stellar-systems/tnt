@@ -193,9 +193,10 @@
   construction owns its complete entry schema. Kinematics histogram and
   systematic-uncertainty fields are checked independently at preparation and
   construction time. Potential-parameter dimensions are checked during
-  preparation by `validate_configuration_quantities`; parameter generation and
-  potential construction then preserve the declared unit. No one of these
-  construction paths normalizes values into `units.internal`.
+  preparation by
+  `tnt.configuration.validation.validate_configuration_quantities`; parameter
+  generation and potential construction then preserve the declared unit. No
+  one of these construction paths normalizes values into `units.internal`.
 - MGE contents and quantities inside observational files are deliberately
   deferred to the object-construction/data-loading phase. Configuration
   preparation does not open those files. `tnt.kinematics.build_kinematics`
@@ -533,12 +534,14 @@
   `tnt.units.resolve_cosmological_parameters` -- in `tnt.units`, not
   `tnt.potential`, since it's generic declared-quantity conversion with no
   potential-specific knowledge, matching the other declared-quantity helpers'
-  home in `tnt.units` (`declared_quantity`, `validate_dimension`). `tnt.units`
-  needs `raw_parameter_dimensions` from `tnt.potential` for config validation
-  and imports it lazily inside the one function that uses it.
-  `tnt.mge`/`tnt.kinematics`/`tnt.spatial_binnings` import `tnt.units` for
-  `validate_dimension`/`declared_quantity`, while `tnt.potential` imports those
-  modules, so a module-level import would close the cycle.
+  home in `tnt.units` (`declared_quantity`, `validate_dimension`). Whole-config
+  quantity validation lives in `tnt.configuration.validation`, which already
+  consumes the potential registry's authoritative parameter dimensions.
+  `tnt.units` therefore remains a low-level unit primitive with no imports from
+  runtime-family packages. Configuration validation may still import runtime
+  family registries to obtain their authoritative schemas; TNT does not promise
+  that importing the configuration package avoids loading JAX, Equinox, or
+  galax.
   `_nfw_concentration_m200`/its inverse do their entire calculation in
   `Quantity` arithmetic rather than eagerly stripping every input to a bare
   float in one specific unit -- `unxt` composes/converts units automatically
