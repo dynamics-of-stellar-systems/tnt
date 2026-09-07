@@ -370,3 +370,167 @@ and unrelated to PR #63.
 3. Confirm that all spatial-binning coordinates are relative to the same sky
    centre as the referenced MGE. The current projection mathematics assumes
    this and the documentation should say so.
+
+---
+
+## Response (2026-09-07, addressed at 4447c63's head + fixes)
+
+Thanks -- the audit is accurate; every claim checked out against the code. All
+five findings are now addressed on the branch.
+
+### Decisions
+
+1. **Reject out-of-domain angles.** Confirmed. `major_axis_pa` is enforced to
+   `[0, 180)` degrees and `y_axis_pa` to `[0, 360)` degrees, by rejection, not
+   normalization.
+2. **Opposite-handed inputs: explicit pre-ingestion transform.** Confirmed for
+   this fixed-parity design. The data-preparation page now gives the exact
+   recipe (below); no runtime parity field.
+3. **Common sky centre: yes, and now documented.** `data_preparation.md` was
+   restructured around the three preparation criteria; its opening list and a
+   dedicated "Common origin" section state that every spatial input shares one
+   origin at the galaxy centre, while orientation may differ per data set.
+
+### M1 -- position-angle domains
+
+- New shared helper `tnt.units.validate_position_angle(angle, *, minimum_deg,
+  maximum_deg, path)` (a unit-aware peer of `validate_dimension`): rejects a
+  non-finite, non-scalar, non-angular, or out-of-domain value. The domains
+  themselves are semantic facts about the owning fields, so they live with
+  those fields: `tnt.mge.MAJOR_AXIS_PA_DOMAIN_DEG` and
+  `tnt.spatial_binnings._Y_AXIS_PA_DOMAIN_DEG`.
+- `major_axis_pa` `[0, 180)` enforced at the config boundary
+  (`_validate_mges`, now via `declared_quantity` + `validate_position_angle`)
+  and at runtime construction (`AbstractMGE.from_qtable`).
+- `y_axis_pa` `[0, 360)` enforced in `_declared_quantities`, i.e. for both
+  `ProjectedBinning.from_settings()` and `build_spatial_binnings()`.
+- Domains documented in `configuration.md`, `units.md`, `data_preparation.md`,
+  the `AbstractMGE`/`ProjectedBinning` docstrings, and `KNOWLEDGE.md`.
+- Tests: endpoint acceptance/rejection (0, excluded upper, negative) and
+  radian-equivalent declarations, in `test_mge.py`, `test_spatial_binnings.py`,
+  and `test_configuration.py`.
+
+### M2 -- public MGE readers
+
+`from_qtable()` (and therefore `read()` / `read_mge()`) now runs
+`validate_position_angle` on `major_axis_pa` before construction: rejects a
+non-angle unit, NaN/infinity, a non-scalar array, and out-of-domain values,
+with `Raises` docs updated. Tests added in `test_mge.py`. Bare
+`LightMGE(...)`/`MassMGE(...)` construction is deliberately left unchecked
+(no `__check_init__`) -- it is the low-level "trust the caller" path, and a
+Python-level check there would break tracing when an MGE is reconstructed
+under `jax.jit`.
+
+### M3 -- opposite-handed conversion
+
+`data_preparation.md` now gives the exact transformation: reverse the bin
+array along its first (`npix_x`) axis (`bins = bins[::-1, :]`), set `min_x`
+to `-(min_x + x_extent)`, and negate every x-directed vector quantity --
+naming proper-motion `vx` explicitly. The common-centre rule is stated in the
+new opening section. `KNOWLEDGE.md` carries the same recipe.
+
+### L1 -- stale schema docs
+
+- `KNOWLEDGE.md`: the "current schema exceptions" bullet and the registry
+  description now say `{file, major_axis_pa}` and `y_axis_pa` (no `PA`).
+- `units.md`: the MGE bullet now covers `major_axis_pa`; the spatial-binning
+  bullet says `y_axis_pa`, both with their domains.
+- The "earlier design" development-history clause is removed from the new
+  `KNOWLEDGE.md` entry.
+
+### L2 -- test independence
+
+- `_brute_force_aperture_mass` no longer copies the production `alpha`
+  formula: it builds the geometry from explicit `(east, north)` unit vectors
+  (`PA -> (sin, cos)`), so the existing non-right-angle, asymmetric-aperture
+  parametrized cases now independently check the sky-to-grid composition.
+- New `test_get_projected_mass_invariant_under_global_frame_rotation`: adding
+  the same angle to `major_axis_pa` and `y_axis_pa` (canonicalized mod 180 /
+  mod 360) leaves every bin mass unchanged.
+- `major_axis_pa` preservation asserts added to the `to_mass`, `rescaled`,
+  and `angular_to_physical` tests.
+- `test_configuration_compatibility.py`: a `MGEs.<name>.major_axis_pa` change
+  is now an explicit case in `test_critical_configuration_changes_are_rejected`.
+
+### PR #60 interaction
+
+Agreed: land #63 first, then rebase #60 and apply the paired
+`major_axis_pa += delta` / `PA_twist_j -= delta` transform in the twist
+re-anchoring, canonicalizing the shifted `major_axis_pa` mod 180, with a
+nonzero-twist invariant test.
+
+### Verification (local, macOS)
+
+```text
+uv run pytest -q            -> 395 passed, 1 dependency warning
+uv run ruff check .         -> All checks passed!
+uv run sphinx-build -E -b html -W docs/source ...  -> build succeeded
+```
+
+(395 = 370 previously + 25 new tests for the findings above.)
+
+---
+
+## Second-pass review (2026-09-07)
+
+A fresh full-diff review turned up no code defects; the fixes above hold. A
+few follow-ups were applied on top:
+
+### Semantic redefinition of the old `PA` (no releases affected)
+
+`PA` -> `(major_axis_pa, y_axis_pa)` is a redefinition, not a rename. The old
+single `ProjectedBinning.PA` was documented as measured *counterclockwise
+from the grid y-axis* with no declared on-sky parity, and consumed as
+`alpha = PA - pi/2 + PA_twist`. The new fields are absolute astronomical PAs
+(north through east) with the grid parity fixed, giving
+`alpha = y_axis_pa + pi/2 - major_axis_pa - PA_twist`. Copying an old `PA`
+value into either new field does **not** reproduce the previous projected
+geometry (with `y_axis_pa = 0`, `major_axis_pa = PA` the new `alpha` is the
+negation of the old, i.e. a mirror image). TNT has no tagged releases, so no
+existing configuration or run is affected; noting it so the change isn't
+mistaken for a field rename.
+
+### `data_preparation.md` MGE section
+
+Rewritten against `mgefit` 6.2.6 (docstrings + shipped `mge_fit_example.py`):
+- corrected the fitting snippet to the real flat API (`import mgefit as mge`;
+  `sectors_photometry(image, f.eps, f.theta, ...)` returning `.radius/.angle/
+  .counts`; `mge.fit_sectors`);
+- `f.pa` is mgefit's documented astronomical PA (north through east, y-axis =
+  north) -> use as `major_axis_pa`; `f.theta` (`f.pa = 270 - f.theta`) is the
+  image-frame angle `sectors_photometry` consumes;
+- plain `fit_sectors` fits one PA (no twist); `fit_sectors_twist`'s per-
+  Gaussian `sol[3]` is in the image-frame sense, opposite to astronomical PA,
+  so those angles must be negated to become `PA_twist`. Replaces the earlier
+  vague "check against a component whose orientation you know";
+- added: do not substitute the kinematic PA for a missing photometric one;
+- removed the "rejected, not wrapped" paragraph (already in
+  `configuration.md`).
+
+### Minor hardening
+
+- `validate_position_angle` now rejects a non-`Quantity` argument with a
+  `ValueError` (was an opaque `AttributeError` on `.unit`); test added.
+- `ProjectedBinning` docstring: "must be flipped before use" -> "must be
+  converted before use -- see the data-preparation guide".
+
+### Open (not blocking)
+
+- The example configs (`configuration.md`, `tests/integration_tests/
+  configuration.yaml`) pair `y_axis_pa: 0` with `major_axis_pa: 126`.
+  Investigated: DYNAMITE stores the bin map in the input-data frame (grid +y
+  ~ north, consistent with the legacy `90 - PA` aperture convention), so the
+  `0` is plausible for the angle -- but CALIFA DR3 cubes are north-up/
+  east-left (opposite parity to TNT), so `bins.npy` may need the
+  `bins[::-1, :]` + `min_x` conversion and doesn't have it. Undeterminable
+  from the repo (depends on the map-building sign convention). Inert today (no
+  projected-mass assertion); recorded in `aidocs/KNOWLEDGE.md` as a fixture to
+  check when first cross-checking TNT projections against DYNAMITE.
+
+### Re-verification (local, macOS)
+
+```text
+uv run pytest -q            -> 396 passed, 1 dependency warning
+uv run ruff check .         -> All checks passed!
+uv run sphinx-build -E -b html -W docs/source ...  -> build succeeded
+```

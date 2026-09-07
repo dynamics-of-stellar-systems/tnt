@@ -12,13 +12,19 @@ from pathlib import Path
 from typing import Any
 
 from tnt.kinematics.registry import kinematics_type_names
+from tnt.mge import MAJOR_AXIS_PA_DOMAIN_DEG
 from tnt.parameter_generator import parameter_generator_required_settings
 from tnt.potential.registry import (
     is_registered_component_type,
     parameter_schema_is_known,
     raw_parameter_dimensions,
 )
-from tnt.units import declared_quantity_value, validate_configuration_quantities
+from tnt.units import (
+    declared_quantity,
+    declared_quantity_value,
+    validate_configuration_quantities,
+    validate_position_angle,
+)
 from tnt.validation import (
     _integer,
     _mapping,
@@ -261,8 +267,12 @@ def _validate_mges(mges: ConfigDict) -> set[str]:
         _reject_unknown_keys(entry, {"file", "major_axis_pa"}, entry_path)
         _require_keys(entry, {"file", "major_axis_pa"}, entry_path)
         _string(entry["file"], f"{entry_path}.file")
-        declared_quantity_value(
-            entry["major_axis_pa"], "angle", f"{entry_path}.major_axis_pa"
+        pa_path = f"{entry_path}.major_axis_pa"
+        validate_position_angle(
+            declared_quantity(entry["major_axis_pa"], "angle", pa_path),
+            minimum_deg=MAJOR_AXIS_PA_DOMAIN_DEG[0],
+            maximum_deg=MAJOR_AXIS_PA_DOMAIN_DEG[1],
+            path=pa_path,
         )
         names.add(name)
     return names

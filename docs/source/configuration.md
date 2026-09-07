@@ -177,14 +177,16 @@ population_data:
 
 `MGEs` is the named multi-Gaussian expansion file registry. Each entry gives
 the MGE's `file` and its `major_axis_pa` -- the on-sky position angle (north
-through east) that the file's `PA_twist` column is measured from.
+through east) that the file's `PA_twist` column is measured from, in
+`[0, 180)` degrees (a major axis is an undirected line).
 `spatial_binnings` lets kinematic and population data share one projected
 aperture definition. The four coordinate fields define a regular rectangular
 pixel grid; `y_axis_pa` gives the on-sky position angle of the grid's own +y
-axis. TNT fixes the grid's positive x-axis to be 90 degrees east of that (data
-with the opposite handedness must be flipped before use -- see
-[Data preparation](data_preparation.md)). Both `major_axis_pa` and
-`y_axis_pa` are explicit angular `{value, unit}` quantities. `bins_file` is
+axis, in `[0, 360)` degrees. TNT fixes the grid's positive x-axis to be 90
+degrees east of that (data with the opposite handedness must be converted
+before use -- see [Data preparation](data_preparation.md)). Both
+`major_axis_pa` and `y_axis_pa` are explicit angular `{value, unit}`
+quantities, and values outside their domains are rejected. `bins_file` is
 resolved relative to `io_settings.input_directory` and must contain a
 two-dimensional NumPy array with shape `(npix_x, npix_y)`. Its non-negative
 integers assign pixels to bins; ID 0 marks pixels that are not assigned to a

@@ -253,6 +253,39 @@ def declared_quantity_value(value: Any, dimension: str, path: str) -> float:
     return numeric
 
 
+def validate_position_angle(
+    angle: Quantity, *, minimum_deg: float, maximum_deg: float, path: str
+) -> None:
+    """Reject a position angle that isn't a finite scalar in ``[lo, hi)`` degrees.
+
+    A unit-aware peer of `validate_dimension`; the two owning modules supply
+    the ``[minimum_deg, maximum_deg)`` domain (`tnt.mge.MAJOR_AXIS_PA_DOMAIN_DEG`,
+    `tnt.spatial_binnings`'s y-axis domain). Out-of-domain values are
+    rejected, not normalized: TNT preserves configuration declarations
+    verbatim and compares them exactly for resume compatibility, so
+    physically identical declarations (e.g. 0 and 360 degrees for a directed
+    axis) must not both be accepted.
+    """
+    if getattr(angle, "unit", None) is None or getattr(angle, "shape", None) is None:
+        raise ValueError(
+            f"{path} must be an angular Quantity, got {type(angle).__name__}."
+        )
+    if angle.shape != ():
+        raise ValueError(
+            f"{path} must be a scalar angle, got shape {tuple(angle.shape)}."
+        )
+    if not angle.unit.is_equivalent(reference_unit("angle")):
+        raise ValueError(f"{path} must describe angle, got unit '{angle.unit}'.")
+    degrees = float(angle.ustrip("deg"))
+    if not math.isfinite(degrees):
+        raise ValueError(f"{path} must be finite, got {degrees}.")
+    if not minimum_deg <= degrees < maximum_deg:
+        raise ValueError(
+            f"{path} must be in [{minimum_deg:g}, {maximum_deg:g}) degrees, "
+            f"got {degrees:g}."
+        )
+
+
 def _declared_quantity(value: Any, dimension: str, path: str) -> tuple[float, Any]:
     """Return one validated declared value and unit without converting it."""
     if not isinstance(value, Mapping):

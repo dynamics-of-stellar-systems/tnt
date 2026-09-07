@@ -252,6 +252,42 @@ def test_from_settings_rejects_non_finite_value():
         )
 
 
+@pytest.mark.parametrize(
+    "bad_pa",
+    [
+        {"value": 360.0, "unit": "deg"},  # excluded upper endpoint
+        {"value": 720.0, "unit": "deg"},
+        {"value": -30.0, "unit": "deg"},
+        {"value": 2 * np.pi, "unit": "rad"},  # 360 deg, via a different unit
+    ],
+)
+def test_from_settings_rejects_y_axis_pa_out_of_domain(bad_pa):
+    bins = np.zeros((2, 2), dtype=int)
+    settings = _settings(y_axis_pa=bad_pa)
+
+    with pytest.raises(ValueError, match=r"y_axis_pa must be in \[0, 360\) degrees"):
+        ProjectedBinning.from_settings(settings, bins, _QUAD_ORDER)
+
+
+@pytest.mark.parametrize(
+    "ok_pa",
+    [
+        {"value": 0.0, "unit": "deg"},  # included lower endpoint
+        {"value": 359.999, "unit": "deg"},
+        {"value": 2 * np.pi - 1e-3, "unit": "rad"},  # just under 360 deg
+    ],
+)
+def test_from_settings_accepts_y_axis_pa_domain_endpoints(ok_pa):
+    bins = np.zeros((2, 2), dtype=int)
+    settings = _settings(y_axis_pa=ok_pa)
+
+    binning = ProjectedBinning.from_settings(settings, bins, _QUAD_ORDER)
+
+    assert binning.y_axis_pa.ustrip("deg") == pytest.approx(
+        u.Quantity(ok_pa["value"], ok_pa["unit"]).ustrip("deg")
+    )
+
+
 @pytest.mark.parametrize("key", ["x_extent", "y_extent"])
 @pytest.mark.parametrize("bad_value", [0.0, -1.0])
 def test_from_settings_rejects_non_positive_extent(key, bad_value):

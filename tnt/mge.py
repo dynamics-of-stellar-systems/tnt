@@ -16,7 +16,12 @@ from unxt import Quantity
 
 from tnt import quantity_conversions
 from tnt.spatial_binnings import ProjectedBinning, SphericalGrid
-from tnt.units import reference_unit, validate_dimension
+from tnt.units import reference_unit, validate_dimension, validate_position_angle
+
+# Half-open on-sky domain (degrees) of an MGE's ``major_axis_pa``: a major
+# axis is an undirected line, so it is only defined mod 180 (issue #62). Read
+# by `tnt.configuration.validation` as static schema metadata.
+MAJOR_AXIS_PA_DOMAIN_DEG: tuple[float, float] = (0.0, 180.0)
 
 
 class MGEDeprojectionError(ValueError):
@@ -75,7 +80,8 @@ class AbstractMGE(eqx.Module):
     instantiated directly -- use `LightMGE` or `MassMGE`.
 
     ``major_axis_pa`` is the on-sky position angle of the MGE's major axis --
-    a standard astronomical PA, measured from north through east.
+    a standard astronomical PA, measured from north through east, in
+    ``[0, 180)`` degrees (a major axis is an undirected line).
     """
 
     _intensity_dimension: ClassVar[str]
@@ -99,7 +105,8 @@ class AbstractMGE(eqx.Module):
                 carrying an astropy unit.
             major_axis_pa: The MGE major-axis PA the ``PA_twist`` column is
                 measured from (see the class docstring). Not stored in the
-                ECSV; supplied by configuration.
+                ECSV; supplied by configuration. A finite scalar angle in
+                ``[0, 180)`` degrees (a major axis is an undirected line).
 
         Returns:
             An MGE with each column in its own declared unit.
@@ -107,11 +114,19 @@ class AbstractMGE(eqx.Module):
         Raises:
             ValueError: If the ``I`` column's unit isn't this MGE kind's
                 surface-intensity dimension, a ``sigma``/``PA_twist`` unit
-                isn't an angle, or any ``q`` value is outside ``(0, 1]``.
+                isn't an angle, any ``q`` value is outside ``(0, 1]``, or
+                `major_axis_pa` isn't a finite scalar angle in ``[0, 180)``
+                degrees.
         """
         validate_dimension(table["I"].unit, cls._intensity_dimension, "MGE I column")
         validate_dimension(table["sigma"].unit, "angle", "MGE sigma column")
         validate_dimension(table["PA_twist"].unit, "angle", "MGE PA_twist column")
+        validate_position_angle(
+            major_axis_pa,
+            minimum_deg=MAJOR_AXIS_PA_DOMAIN_DEG[0],
+            maximum_deg=MAJOR_AXIS_PA_DOMAIN_DEG[1],
+            path="MGE major_axis_pa",
+        )
 
         columns = {
             name: Quantity.from_(table[name])
@@ -132,10 +147,15 @@ class AbstractMGE(eqx.Module):
             path: Path to the ECSV file.
             major_axis_pa: The MGE major-axis PA the ``PA_twist`` column is
                 measured from (see the class docstring). Not stored in the
-                ECSV; supplied by configuration.
+                ECSV; supplied by configuration. A finite scalar angle in
+                ``[0, 180)`` degrees.
 
         Returns:
             An MGE with each column in its own declared unit.
+
+        Raises:
+            ValueError: As for `from_qtable`, including if `major_axis_pa`
+                isn't a finite scalar angle in ``[0, 180)`` degrees.
         """
         table = QTable.read(path, format="ascii.ecsv")
         return cls.from_qtable(table, major_axis_pa)
@@ -602,13 +622,16 @@ def read_mge(path: str | Path, major_axis_pa: Quantity) -> AbstractMGE:
     Args:
         path: Path to the ECSV file.
         major_axis_pa: The MGE major-axis PA the ``PA_twist`` column is
-            measured from; supplied by configuration, not the ECSV.
+            measured from; supplied by configuration, not the ECSV. A finite
+            scalar angle in ``[0, 180)`` degrees.
 
     Returns:
         A `LightMGE` or `MassMGE`, whichever matches the file's ``I`` column.
 
     Raises:
-        ValueError: If the ``I`` column's unit doesn't match any known MGE kind.
+        ValueError: If the ``I`` column's unit doesn't match any known MGE
+            kind, or (via `from_qtable`) `major_axis_pa` isn't a finite scalar
+            angle in ``[0, 180)`` degrees.
     """
     table = QTable.read(path, format="ascii.ecsv")
     intensity_unit = table["I"].unit

@@ -204,6 +204,64 @@ def test_read_mge_rejects_unrecognized_units(tmp_path):
         read_mge(bad_file, u.Quantity(0.0, "deg"))
 
 
+def _write_simple_light_ecsv(path):
+    _write_ecsv(path, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, 0.9, 0.0)])
+
+
+@pytest.mark.parametrize(
+    "bad_pa",
+    [
+        u.Quantity(180.0, "deg"),  # excluded upper endpoint
+        u.Quantity(200.0, "deg"),
+        u.Quantity(-10.0, "deg"),
+        u.Quantity(jnp.pi, "rad"),  # 180 deg, via a different unit
+    ],
+)
+def test_read_rejects_major_axis_pa_out_of_domain(tmp_path, bad_pa):
+    path = tmp_path / "mge.ecsv"
+    _write_simple_light_ecsv(path)
+
+    with pytest.raises(
+        ValueError, match=r"major_axis_pa must be in \[0, 180\) degrees"
+    ):
+        LightMGE.read(path, bad_pa)
+
+
+@pytest.mark.parametrize(
+    "ok_pa",
+    [
+        u.Quantity(0.0, "deg"),  # included lower endpoint
+        u.Quantity(179.999, "deg"),
+        u.Quantity(jnp.pi - 1e-3, "rad"),  # just under 180 deg, via a different unit
+    ],
+)
+def test_read_accepts_major_axis_pa_domain_endpoints(tmp_path, ok_pa):
+    path = tmp_path / "mge.ecsv"
+    _write_simple_light_ecsv(path)
+
+    mge = LightMGE.read(path, ok_pa)
+
+    assert mge.major_axis_pa is ok_pa
+
+
+@pytest.mark.parametrize(
+    ("bad_pa", "match"),
+    [
+        (126.0, "must be an angular Quantity"),
+        (u.Quantity(3.0, "km"), "must describe angle"),
+        (u.Quantity(float("nan"), "deg"), "must be finite"),
+        (u.Quantity(float("inf"), "deg"), "must be finite"),
+        (u.Quantity(jnp.array([10.0, 20.0]), "deg"), "must be a scalar angle"),
+    ],
+)
+def test_read_rejects_invalid_major_axis_pa(tmp_path, bad_pa, match):
+    path = tmp_path / "mge.ecsv"
+    _write_simple_light_ecsv(path)
+
+    with pytest.raises(ValueError, match=match):
+        LightMGE.read(path, bad_pa)
+
+
 def test_to_mass_with_constant_ratio():
     light = _multi_component_light_mge()
     m_over_l = u.Quantity(2.5, "Msun / Lsun")
@@ -218,6 +276,7 @@ def test_to_mass_with_constant_ratio():
     assert jnp.allclose(mass.sigma.ustrip("rad"), light.sigma.ustrip("rad"))
     assert jnp.allclose(mass.q.ustrip(""), light.q.ustrip(""))
     assert jnp.allclose(mass.PA_twist.ustrip("rad"), light.PA_twist.ustrip("rad"))
+    assert mass.major_axis_pa == light.major_axis_pa
 
 
 def test_to_mass_with_per_component_ratio():
@@ -246,6 +305,7 @@ def test_rescaled_multiplies_intensity_and_keeps_everything_else():
     assert jnp.allclose(rescaled.sigma.ustrip("rad"), light.sigma.ustrip("rad"))
     assert jnp.allclose(rescaled.q.ustrip(""), light.q.ustrip(""))
     assert jnp.allclose(rescaled.PA_twist.ustrip("rad"), light.PA_twist.ustrip("rad"))
+    assert rescaled.major_axis_pa == light.major_axis_pa
 
 
 def test_to_mass_rejects_mismatched_component_count():
@@ -577,7 +637,7 @@ def test_angular_to_physical_is_invariant_to_the_declared_angular_unit():
     )
 
 
-def test_angular_to_physical_leaves_q_and_pa_twist_unchanged():
+def test_angular_to_physical_leaves_q_pa_twist_and_major_axis_pa_unchanged():
     mge = _multi_component_light_mge()
     distance = u.Quantity(30.5, "Mpc")
 
@@ -585,6 +645,7 @@ def test_angular_to_physical_leaves_q_and_pa_twist_unchanged():
 
     assert jnp.allclose(physical.q.ustrip(""), mge.q.ustrip(""))
     assert jnp.allclose(physical.PA_twist.ustrip("rad"), mge.PA_twist.ustrip("rad"))
+    assert physical.major_axis_pa == mge.major_axis_pa
 
 
 _PROJECTED_MASS_QUAD_ORDER = 10
@@ -612,22 +673,33 @@ def _brute_force_aperture_mass(
     """Independently integrate a multi-component MGE over a pixel grid.
 
     Uses `scipy.integrate.dblquad` directly on each component's surface
-    density, rotated into the pixel grid's frame by hand (no tnt code
-    involved), as ground truth for `AbstractMGE.get_projected_mass`'s
-    erf/quadrature integral -- `alpha` itself is computed the same way as
-    `get_projected_mass` (that composition is checked independently by
-    `test_get_projected_mass_pa_convention_matches_documented_axis`).
+    density, as ground truth for `AbstractMGE.get_projected_mass`. The
+    geometry is built from sky basis vectors rather than the production
+    `alpha` formula: a direction at PA ``p`` (north through east) is the unit
+    vector ``(sin p, cos p)`` in (east, north) coordinates. The grid's +y
+    axis is at PA ``y_axis_pa`` and, by TNT's fixed parity, its +x axis is at
+    PA ``y_axis_pa + 90 deg``; each Gaussian's major axis is at PA
+    ``major_axis_pa + pa_twist[k]``. This gives an independent check of the
+    sky-to-grid composition as well as the Gaussian integral itself.
     """
     n_x, n_y = len(x_edges) - 1, len(y_edges) - 1
     mass = np.zeros((n_x, n_y))
+    # (east, north) unit vectors of the grid's +x and +y axes.
+    x_hat = np.array([np.sin(y_axis_pa + np.pi / 2), np.cos(y_axis_pa + np.pi / 2)])
+    y_hat = np.array([np.sin(y_axis_pa), np.cos(y_axis_pa)])
     for k in range(len(I)):
-        alpha = y_axis_pa + np.pi / 2 - major_axis_pa - pa_twist[k]
+        pa_k = major_axis_pa + pa_twist[k]
+        major_hat = np.array([np.sin(pa_k), np.cos(pa_k)])
+        minor_hat = np.array([np.cos(pa_k), -np.sin(pa_k)])
 
-        def surface_density(x, y, k=k, alpha=alpha):
-            x_major = x * np.cos(alpha) + y * np.sin(alpha)
-            y_minor = -x * np.sin(alpha) + y * np.cos(alpha)
+        def surface_density(
+            x, y, k=k, major_hat=major_hat, minor_hat=minor_hat
+        ):
+            sky = x * x_hat + y * y_hat
+            s_major = sky @ major_hat
+            s_minor = sky @ minor_hat
             return I[k] * np.exp(
-                -(x_major**2 + (y_minor / q[k]) ** 2) / (2 * sigma[k] ** 2)
+                -(s_major**2 + (s_minor / q[k]) ** 2) / (2 * sigma[k] ** 2)
             )
 
         for i in range(n_x):
@@ -736,6 +808,43 @@ def test_get_projected_mass_pa_convention_matches_documented_axis(
     mass = mge.get_projected_mass(binning).ustrip("Lsun")
 
     assert mass[aligned_bin_idx] > mass[1 - aligned_bin_idx]
+
+
+@pytest.mark.parametrize("rotation_deg", [37.0, -110.0, 213.0])
+def test_get_projected_mass_invariant_under_global_frame_rotation(rotation_deg):
+    """Only `y_axis_pa - major_axis_pa` (and `PA_twist`) enters the projection.
+
+    Rotating the whole sky frame -- adding the same angle to `major_axis_pa`
+    and `y_axis_pa` -- rotates the MGE and the grid together, so every bin's
+    mass must be unchanged. This is independent of the `alpha` formula: it
+    only assumes the projection depends on the two angles solely through
+    their difference.
+    """
+    base_major, base_y = 20.0, 300.0
+
+    def masses(major_deg, y_deg):
+        mge = LightMGE(
+            I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / rad2"),
+            sigma=u.Quantity(jnp.array([0.01, 0.02]), "rad"),
+            q=u.Quantity(jnp.array([0.5, 0.8]), ""),
+            PA_twist=u.Quantity(jnp.array([0.0, 0.35]), "rad"),
+            major_axis_pa=u.Quantity(major_deg, "deg"),
+        )
+        binning = _projected_binning(
+            min_x=-0.05,
+            min_y=-0.04,
+            x_extent=0.1,
+            y_extent=0.08,
+            y_axis_pa=np.radians(y_deg),
+            bins=1 + np.arange(12).reshape(4, 3),
+        )
+        return mge.get_projected_mass(binning).ustrip("Lsun")
+
+    rotated_major = (base_major + rotation_deg) % 180.0
+    rotated_y = (base_y + rotation_deg) % 360.0
+    assert jnp.allclose(
+        masses(base_major, base_y), masses(rotated_major, rotated_y), rtol=1e-6
+    )
 
 
 def test_get_projected_mass_conserves_total_flux_for_circular_component():

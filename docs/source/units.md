@@ -145,9 +145,11 @@ objects are built either. Each constructor checks its columns' or metadata's
 declared units for the right dimension and then keeps them:
 
 - **MGE** (`tnt.mge`): the `I`, `sigma`, `q`, and `PA_twist` columns are read
-  in the units the ECSV file declares. `build_mges()` still projects each MGE
-  to physical units with `AbstractMGE.angular_to_physical()`, which works for
-  any angular unit `sigma`/`I` were declared in.
+  in the units the ECSV file declares, and the configuration-supplied
+  `major_axis_pa` (validated as an angle in `[0, 180)` degrees) keeps its
+  own declared unit. `build_mges()` still projects each MGE to physical units
+  with `AbstractMGE.angular_to_physical()`, which works for any angular unit
+  `sigma`/`I` were declared in.
 - **Gauss-Hermite kinematics**: the `v`/`dv`/`sigma`/`dsigma` columns keep
   their ECSV units; the velocity column's unit is the local reference the
   quadrature errors and the auto-sized histogram are computed in.
@@ -160,10 +162,11 @@ declared units for the right dimension and then keeps them:
   uncertainty is converted into the *value column's* declared unit and that
   unit is kept. A pair without declared units is treated as dimensionless.
 - **Projected spatial binning**: `min_x`, `min_y`, `x_extent`, `y_extent`,
-  and `PA` are validated as angular quantities and kept in their declared
-  units; `ProjectedBinning` does its grid geometry on demand in `min_x`'s
-  unit, and `build_spatial_binnings()` then projects to physical units the
-  same way `build_mges()` does.
+  and `y_axis_pa` are validated as angular quantities (with `y_axis_pa` in
+  `[0, 360)` degrees) and kept in their declared units; `ProjectedBinning`
+  does its grid geometry on demand in `min_x`'s unit, and
+  `build_spatial_binnings()` then projects to physical units the same way
+  `build_mges()` does.
 
 Dimensionless moments, distributions, and relative uncertainties never carry
 a unit.

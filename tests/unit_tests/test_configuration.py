@@ -386,6 +386,28 @@ def test_read_rejects_incompatible_quantity_unit_before_writing(
     assert not output_directory.exists()
 
 
+@pytest.mark.parametrize("bad_value", [180.0, 200.0, -10.0])
+def test_read_rejects_major_axis_pa_outside_domain(
+    tmp_path: Path, bad_value: float
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    invalid = user_path.read_text(encoding="utf-8").replace(
+        'major_axis_pa: {value: 126.0, unit: "deg"}',
+        f'major_axis_pa: {{value: {bad_value}, unit: "deg"}}',
+    )
+    user_path.write_text(invalid, encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=r"MGEs\.light\.major_axis_pa must be in \[0, 180\) degrees",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert not output_directory.exists()
+
+
 def test_read_rejects_unitful_bare_number_before_writing(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"

@@ -333,6 +333,11 @@ def test_critical_projection_preserves_declarations_but_excludes_parameter_units
             "critical_configuration.MGEs.light.file",
         ),
         (
+            "MGEs",
+            lambda value: value["light"]["major_axis_pa"].update(value=1.0),
+            "critical_configuration.MGEs.light.major_axis_pa",
+        ),
+        (
             "numerics_settings",
             lambda value: value.update(jax_enable_x64=False),
             "critical_configuration.numerics_settings.jax_enable_x64",
