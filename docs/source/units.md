@@ -4,9 +4,8 @@ TNT uses [`unxt`](https://unxt.readthedocs.io/) to validate units and define
 two related unit systems:
 
 - `units.internal` names the base units of the unit system TNT hands to
-  `galax` when it constructs a real potential object for orbit integration
-  (and for prior plugins that need one) -- see
-  `Potential.to_galax()`. It is *not* a normalization applied to declared
+  `galax` when it constructs a real potential object for orbit integration --
+  see `Potential.to_galax()`. It is *not* a normalization applied to declared
   configuration values or to data read from files: those keep the units they
   are declared in.
 - `units.display` controls presentation preferences. Any dimension not

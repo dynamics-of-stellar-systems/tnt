@@ -58,8 +58,8 @@
 - An MGE's photometric orientation and an observational data grid's
   orientation are independently measurable and frequently different
   (kinematic/photometric misalignment is a real triaxiality signature, not
-  noise) -- see issue #62. TNT keeps them as separate config fields rather
-  than one shared position angle: `MGEs.<name>.major_axis_pa` (the on-sky PA
+  noise). TNT keeps them as separate config fields rather than one shared
+  position angle: `MGEs.<name>.major_axis_pa` (the on-sky PA
   `PA_twist` is measured from, in `[0, 180)` degrees -- an axis, not a
   direction) and `spatial_binnings.<name>.y_axis_pa` (the on-sky PA of the
   grid's +y axis, in `[0, 360)` degrees). Both domains are half-open and
@@ -538,10 +538,9 @@
   quantity validation lives in `tnt.configuration.validation`, which already
   consumes the potential registry's authoritative parameter dimensions.
   `tnt.units` therefore remains a low-level unit primitive with no imports from
-  runtime-family packages. Configuration validation may still import runtime
-  family registries to obtain their authoritative schemas; TNT does not promise
-  that importing the configuration package avoids loading JAX, Equinox, or
-  galax.
+  runtime-family packages. Configuration validation imports runtime-family
+  registries to obtain their authoritative schemas, so importing the
+  configuration package can load JAX, Equinox, and galax.
   `_nfw_concentration_m200`/its inverse do their entire calculation in
   `Quantity` arithmetic rather than eagerly stripping every input to a bare
   float in one specific unit -- `unxt` composes/converts units automatically
@@ -567,10 +566,8 @@
   because `Potential.from_settings` resolves each component independently in
   one pass, so no component-local converter can see another component's
   resolved mass. That kind of cross-component
-  relationship belongs to a separate, not-yet-designed "prior" concept,
-  consumed by the parameter generator/search space rather than by potential
-  construction -- deliberately deferred rather than shoehorned into
-  `parameterization`.
+  relationship belongs to the parameter generator/search space rather than
+  potential construction; it must not be shoehorned into `parameterization`.
 - Every registered parameterization converts both ways: a
   `register_parameterization` call takes `convert` *and* `invert` (bundled in
   its `ParameterizationSpec`), so one direction can never be registered without
