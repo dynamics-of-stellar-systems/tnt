@@ -12,7 +12,12 @@ import numpy as np
 from unxt import Quantity
 
 from tnt import quantity_conversions
-from tnt.units import declared_quantity
+from tnt.units import declared_quantity, validate_position_angle
+
+# Half-open on-sky domain (degrees) of a binning grid's ``y_axis_pa``: the
+# positive y-axis is a directed axis, so 0 and 360 are the same direction and
+# only one is canonical (issue #62).
+_Y_AXIS_PA_DOMAIN_DEG: tuple[float, float] = (0.0, 360.0)
 
 
 def _gauss_legendre(quad_order: int) -> tuple[jnp.ndarray, jnp.ndarray]:
@@ -133,7 +138,7 @@ _QUANTITY_FIELDS = {
     "min_y": False,
     "x_extent": True,
     "y_extent": True,
-    "PA": False,
+    "y_axis_pa": False,
 }
 _SETTINGS_FIELDS = set(_QUANTITY_FIELDS) | {"bins_file"}
 
@@ -143,8 +148,14 @@ class ProjectedBinning(eqx.Module):
 
     `min_x`/`min_y` locate the grid's lower corner and `x_extent`/`y_extent`
     give its extent, so pixels span ``(min_x, min_x + x_extent)`` by ``(min_y,
-    min_y + y_extent)``. `PA` is the position angle of the galaxy's major
-    axis. `bins` is a ``(npix_x, npix_y)`` array of integer bin IDs, one per
+    min_y + y_extent)``. `y_axis_pa` is the on-sky position angle (standard
+    astronomical PA, from north through east, in ``[0, 360)`` degrees) of the
+    grid's positive y-axis. The positive x-axis is fixed to be 90 degrees
+    east of the positive y-axis (e.g. x points east when y points north).
+    Data with the opposite handedness (positive x pointing west of positive y)
+    must be converted before use -- see the data-preparation guide for the
+    exact array and coordinate transformation.
+    `bins` is a ``(npix_x, npix_y)`` array of integer bin IDs, one per
     pixel; a value of 0 marks a pixel with no associated bin, and the positive
     IDs must be contiguous, running ``1, 2, ..., n_bins`` with no gaps.
     Observational files referencing this binning must use `bin_id` to cover
@@ -168,7 +179,7 @@ class ProjectedBinning(eqx.Module):
     min_y: Quantity
     x_extent: Quantity
     y_extent: Quantity
-    PA: Quantity
+    y_axis_pa: Quantity
     bins: jnp.ndarray
     n_bins: int = eqx.field(static=True)
     x_lo: jnp.ndarray
@@ -185,7 +196,7 @@ class ProjectedBinning(eqx.Module):
         min_y: Quantity,
         x_extent: Quantity,
         y_extent: Quantity,
-        PA: Quantity,
+        y_axis_pa: Quantity,
         bins: jnp.ndarray,
         quad_order: int,
     ) -> None:
@@ -196,7 +207,9 @@ class ProjectedBinning(eqx.Module):
             min_y: Lower y edge of the aperture grid.
             x_extent: Extent of the aperture grid along x.
             y_extent: Extent of the aperture grid along y.
-            PA: Position angle of the galaxy's major axis.
+            y_axis_pa: On-sky position angle (north through east) of the
+                grid's positive y-axis. The positive x-axis is always taken
+                to be 90 degrees east of it (see the class docstring).
             bins: A 2D ``(npix_x, npix_y)`` array of integer bin IDs.
             quad_order: Order of the fixed Gauss-Legendre quadrature used for
                 the x integral within each pixel (see
@@ -206,7 +219,7 @@ class ProjectedBinning(eqx.Module):
         self.min_y = min_y
         self.x_extent = x_extent
         self.y_extent = y_extent
-        self.PA = PA
+        self.y_axis_pa = y_axis_pa
         self.bins = bins
         self.n_bins = int(jnp.max(bins))
 
@@ -241,7 +254,7 @@ class ProjectedBinning(eqx.Module):
 
         Args:
             settings: A resolved ``spatial_binnings`` entry: `min_x`, `min_y`,
-                `x_extent`, `y_extent`, and `PA`, each an explicit
+                `x_extent`, `y_extent`, and `y_axis_pa`, each an explicit
                 ``{value, unit}`` mapping.
             bins: The entry's already-loaded 2D ``(npix_x, npix_y)`` array of
                 integer bin IDs.
@@ -259,8 +272,9 @@ class ProjectedBinning(eqx.Module):
                 missing, an unknown field is present, a declared value is
                 malformed, non-finite, or (for `x_extent`/`y_extent`) not
                 positive, a declared unit string doesn't parse or isn't
-                dimensionally an angle, or `bins` is not a non-empty 2D array
-                of non-negative, contiguous IDs.
+                dimensionally an angle, `y_axis_pa` is outside ``[0, 360)``
+                degrees, or `bins` is not a non-empty 2D array of
+                non-negative, contiguous IDs.
         """
         settings = _validated_settings(settings, require_bins_file=False)
         quantities = _declared_quantities(settings)
@@ -279,7 +293,7 @@ class ProjectedBinning(eqx.Module):
     def angular_to_physical(self, distance: Quantity) -> ProjectedBinning:
         """Convert `min_x`, `min_y`, `x_extent`, and `y_extent` to physical units.
 
-        `PA` (an orientation angle, not a spatial size) and `bins` are
+        `y_axis_pa` (an orientation angle, not a spatial size) and `bins` are
         unaffected and carried over unchanged.
 
         Args:
@@ -298,7 +312,7 @@ class ProjectedBinning(eqx.Module):
             y_extent=quantity_conversions.angular_to_physical(
                 self.y_extent, distance
             ),
-            PA=self.PA,
+            y_axis_pa=self.y_axis_pa,
             bins=self.bins,
             quad_order=self.x_nodes.shape[1],
         )
@@ -341,10 +355,17 @@ def _declared_quantities(
     settings: Mapping[str, Any], *, path: str = "ProjectedBinning"
 ) -> dict[str, Quantity]:
     """Validate all declared spatial-binning quantities, keeping their units."""
-    return {
+    quantities = {
         key: _declared_angle_quantity(settings, key, positive=positive, path=path)
         for key, positive in _QUANTITY_FIELDS.items()
     }
+    validate_position_angle(
+        quantities["y_axis_pa"],
+        minimum_deg=_Y_AXIS_PA_DOMAIN_DEG[0],
+        maximum_deg=_Y_AXIS_PA_DOMAIN_DEG[1],
+        path=f"{path}.y_axis_pa",
+    )
+    return quantities
 
 
 def _declared_angle_quantity(
@@ -433,8 +454,8 @@ def build_spatial_binnings(
     """Build the named `ProjectedBinning`s from a resolved configuration.
 
     Each binning's aperture geometry (`min_x`, `min_y`, `x_extent`,
-    `y_extent`, `PA`) comes from the configuration itself rather than a data
-    file. The same schema and quantity validators as
+    `y_extent`, `y_axis_pa`) comes from the configuration itself rather than a
+    data file. The same schema and quantity validators as
     `ProjectedBinning.from_settings` run before its ``bins_file`` is read.
     Every binning is converted to physical units via `angular_to_physical`
     before being returned, matching `tnt.mge.build_mges` -- so that MGEs and

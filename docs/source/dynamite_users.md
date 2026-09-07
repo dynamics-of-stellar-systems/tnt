@@ -38,6 +38,18 @@ particular:
 The TNT forms are per data set, so different observations can use different
 orders or error policies.
 
+## Position angles
+
+DYNAMITE's `aperture.dat` records a single position angle per kinematic
+aperture, often filled in from a kinematic PA fit (`pafit.fit_kinematic_pa`)
+rather than a measured photometric one -- conflating an MGE's photometric
+orientation with the aperture's own orientation, even though the two can
+genuinely differ (e.g. under triaxiality). TNT declares them as two
+independent fields instead: `MGEs.<name>.major_axis_pa` (the MGE's own
+photometric PA) and `spatial_binnings.<name>.y_axis_pa` (the aperture grid's
+own orientation). See [Data preparation](data_preparation.md) for what to
+set them to.
+
 ## Model-search settings
 
 | DYNAMITE setting or pattern | TNT setting and behavior |

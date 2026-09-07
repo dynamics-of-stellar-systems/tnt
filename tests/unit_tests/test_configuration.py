@@ -25,14 +25,16 @@ system_attributes:
   distance: {{value: 10.0, unit: "kpc"}}
   name: test_system
 MGEs:
-  light: luminosity.ecsv
+  light:
+    file: luminosity.ecsv
+    major_axis_pa: {{value: 126.0, unit: "deg"}}
 spatial_binnings:
   observed:
     min_x: {{value: -29.5, unit: "arcsec"}}
     min_y: {{value: -26.5, unit: "arcsec"}}
     x_extent: {{value: 58.0, unit: "arcsec"}}
     y_extent: {{value: 52.0, unit: "arcsec"}}
-    PA: {{value: 126.0, unit: "deg"}}
+    y_axis_pa: {{value: 0.0, unit: "deg"}}
     bins_file: bins.npy
 potential:
   stars:
@@ -379,6 +381,28 @@ def test_read_rejects_incompatible_quantity_unit_before_writing(
     user_path.write_text(invalid, encoding="utf-8")
 
     with pytest.raises(ValueError, match=r"system_attributes\.distance\.unit"):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert not output_directory.exists()
+
+
+@pytest.mark.parametrize("bad_value", [180.0, 200.0, -10.0])
+def test_read_rejects_major_axis_pa_outside_domain(
+    tmp_path: Path, bad_value: float
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    invalid = user_path.read_text(encoding="utf-8").replace(
+        'major_axis_pa: {value: 126.0, unit: "deg"}',
+        f'major_axis_pa: {{value: {bad_value}, unit: "deg"}}',
+    )
+    user_path.write_text(invalid, encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=r"MGEs\.light\.major_axis_pa must be in \[0, 180\) degrees",
+    ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
     assert not output_directory.exists()

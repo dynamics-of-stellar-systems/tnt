@@ -53,6 +53,50 @@
   scientific objects, load scientific input data, or begin scientific
   execution.
 
+## Angular reference frames
+
+- An MGE's photometric orientation and an observational data grid's
+  orientation are independently measurable and frequently different
+  (kinematic/photometric misalignment is a real triaxiality signature, not
+  noise) -- see issue #62. TNT keeps them as separate config fields rather
+  than one shared position angle: `MGEs.<name>.major_axis_pa` (the on-sky PA
+  `PA_twist` is measured from, in `[0, 180)` degrees -- an axis, not a
+  direction) and `spatial_binnings.<name>.y_axis_pa` (the on-sky PA of the
+  grid's +y axis, in `[0, 360)` degrees). Both domains are half-open and
+  enforced by rejection (not normalization -- declarations are preserved
+  verbatim for resume compatibility) via `tnt.units.validate_position_angle`,
+  at the config boundary (`_validate_mges`, `ProjectedBinning.from_settings`)
+  and at runtime construction (`AbstractMGE.from_qtable`). See
+  `docs/source/data_preparation.md` for the full geometric picture.
+- `ProjectedBinning` declares only `y_axis_pa` (in `[0, 360)` degrees), not
+  an x-axis PA too: TNT fixes the grid's parity by convention -- the positive
+  x-axis is always 90 degrees east of positive y
+  (`AbstractMGE.get_projected_mass`'s `alpha = y_axis_pa + pi/2 -
+  major_axis_pa - PA_twist`). Data with the opposite parity (x pointing west
+  of y -- the traditional FITS-display convention, north up/east left) must
+  be converted before use: reverse `bins` along axis 0, set `min_x` to
+  `-(min_x + x_extent)`, and negate every x-directed vector quantity (e.g.
+  proper-motion `vx`). See `docs/source/data_preparation.md`.
+- `AbstractMGE.major_axis_pa` is a required field, not optional: `PA_twist`
+  is defined as a twist *away from* `major_axis_pa`, so an MGE without one has
+  no absolute orientation, the same way it wouldn't make sense to construct
+  one without `sigma`. `LightMGE.read`/`MassMGE.read`/`read_mge` all require
+  it as an explicit argument too (it isn't read from the ECSV); only
+  `tnt.mge.build_mges` reads it from configuration.
+- UNVERIFIED: the NGC6278 integration fixture
+  (`tests/integration_tests/fixtures/bins.npy`, with `y_axis_pa: 0`) has an
+  unconfirmed on-sky parity. It was rasterised from DYNAMITE
+  `aperture.dat`/`bins.dat`, and DYNAMITE stores the bin map in the input-data
+  frame without derotation (the aperture `angle` records only the major-axis
+  PA; the legacy `90 - PA` relation implies grid +y is north). CALIFA DR3
+  cubes are delivered north-up/east-left (Sanchez et al. 2016, Fig. 5), i.e.
+  the *opposite* parity to TNT -- so if the map kept the cube's native pixel
+  grid it needs the `bins[::-1, :]` + `min_x` conversion and currently does
+  not have it. Whether it does depends on the sign convention chosen when the
+  kinematic map was built, which isn't recorded. No current test asserts
+  projected masses, so this is inert today; check the fixture as a possible
+  error source when first comparing TNT projections against DYNAMITE output.
+
 ## Linux development container
 
 - `Dockerfile` and `compose.yaml` provide the reproducible Linux `x86_64`
@@ -284,17 +328,16 @@
 - The user profile must define the physical system, dynamically named
   potential components and parameters, input directory, and output directory.
 - TNT user profiles generally use snake-case type identifiers and field names.
-  The established `MGEs` registry name and projected-binning `PA` field are
-  current schema exceptions. Parameter search bounds belong under
-  `generator_settings` as `lower_bound`, `upper_bound`, `step`, and
-  `minimum_step`; display labels use `latex_label`.
-- Scientific inputs use independent named registries: `MGEs` maps MGE names to
-  files; `spatial_binnings` maps names to inline rectangular aperture geometry
-  (`min_x`, `min_y`, `x_extent`, `y_extent`, and `PA`) plus a `bins_file`
-  containing a 2D NumPy pixel-to-bin map; `potential` defines potential
-  components; `kinematic_data` references a binning and optionally an MGE; and
-  `population_data` references a binning. Preparation validates all
-  cross-references without opening the files.
+  The established `MGEs` registry name is a current schema exception. Parameter
+  search bounds belong under `generator_settings` as `lower_bound`,
+  `upper_bound`, `step`, and `minimum_step`; display labels use `latex_label`.
+- Scientific inputs use independent named registries: `MGEs` maps names to
+  `{file, major_axis_pa}` entries; `spatial_binnings` maps names to inline
+  rectangular aperture geometry (`min_x`, `min_y`, `x_extent`, `y_extent`, and
+  `y_axis_pa`) plus a `bins_file` containing a 2D NumPy pixel-to-bin map;
+  `potential` defines potential components; `kinematic_data` references a
+  binning and optionally an MGE; and `population_data` references a binning.
+  Preparation validates all cross-references without opening the files.
 - Population observations always use a separate
   `population_data.<name>.data_file`, even when the population and kinematics
   data share a spatial binning.

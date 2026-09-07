@@ -898,6 +898,7 @@ def _circular_light_mge(I: list[float], sigma: list[float]) -> LightMGE:
         sigma=Quantity(jnp.array(sigma), "rad"),
         q=Quantity(jnp.ones(len(I)), ""),
         PA_twist=Quantity(jnp.zeros(len(I)), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     )
 
 
@@ -1144,6 +1145,7 @@ def test_mge_component_build_raises_for_invalid_geometry_not_to_galax() -> None:
         sigma=Quantity(jnp.array([1.5]), "rad"),
         q=Quantity(jnp.array([0.9]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(Quantity(30.0, "Mpc"))
     resolved = AbstractPotentialComponent.resolve(
         {
@@ -1271,6 +1273,7 @@ def test_triaxial_mass_mge_to_galax_uses_mge_mass_scale() -> None:
         sigma=Quantity(jnp.array([1.5]), "rad"),
         q=Quantity(jnp.array([1.0]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(distance)
     mge_mass_scale = Quantity(3.0, "")
     component = TriaxialMassMGEPotential._build(
@@ -1373,6 +1376,7 @@ def test_oblate_mge_build_raises_for_impossible_inclination_not_to_galax() -> No
         sigma=Quantity(jnp.array([1.5]), "rad"),
         q=Quantity(jnp.array([0.5]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(Quantity(30.0, "Mpc"))
     resolved = AbstractPotentialComponent.resolve(
         {
@@ -1446,6 +1450,7 @@ def test_oblate_light_mge_to_galax_sums_every_component() -> None:
         sigma=Quantity(jnp.array([1.5, 4.0]), "rad"),
         q=Quantity(jnp.array([0.6, 0.4]), ""),
         PA_twist=Quantity(jnp.array([0.0, 0.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(distance)
     ml = Quantity(5.0, "Msun / Lsun")
     component = OblateLightMGEPotential._build(
@@ -1489,6 +1494,7 @@ def test_oblate_mass_mge_to_galax_uses_mge_mass_scale() -> None:
         sigma=Quantity(jnp.array([1.5]), "rad"),
         q=Quantity(jnp.array([1.0]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(distance)
     mge_mass_scale = Quantity(3.0, "")
     component = OblateMassMGEPotential._build(
@@ -1565,6 +1571,7 @@ def test_oblate_light_mge_to_galax_flattened_cross_checks() -> None:
         sigma=Quantity(jnp.array([2.0]), "kpc"),
         q=Quantity(jnp.array([0.7]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     )
     ml = Quantity(5.0, "Msun / Lsun")
     component = OblateLightMGEPotential._build(
@@ -1636,6 +1643,7 @@ def test_triaxial_light_mge_to_galax_density_matches_analytic_along_each_axis() 
         sigma=Quantity(jnp.array([2.0]), "kpc"),
         q=Quantity(jnp.array([0.9]), ""),
         PA_twist=Quantity(jnp.array([-1.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     )
     angles = {
         "theta": Quantity(0.3, "rad"),

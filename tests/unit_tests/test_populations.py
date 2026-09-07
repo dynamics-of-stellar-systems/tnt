@@ -17,7 +17,7 @@ def _binning() -> ProjectedBinning:
         min_y=u.Quantity(0.0, "rad"),
         x_extent=u.Quantity(1.0, "rad"),
         y_extent=u.Quantity(1.0, "rad"),
-        PA=u.Quantity(0.0, "rad"),
+        y_axis_pa=u.Quantity(0.0, "rad"),
         bins=jnp.array([[1, 2], [0, 2]]),
         quad_order=2,
     )
