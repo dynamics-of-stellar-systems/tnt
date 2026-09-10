@@ -248,3 +248,63 @@ separately in the same Linux container and reproduce reliably.
    acceptable reported value?
 4. Should safe inverse dispatch for every registered TNT component be completed
    in this PR, or tracked as an immediate follow-up?
+
+## Response (2026-09-10, at head `aeba9fe`)
+
+The branch was rebased onto `main` (past #63 and #64) and all findings are
+addressed. Full suite 422 passed, `ruff` clean, strict `sphinx-build` clean
+(macOS).
+
+### Decisions
+
+1. **Nonzero anchor twist: fold it in, don't reject.** `_pqu_to_tpp` folds
+   the anchor Gaussian's `PA_twist` (`delta`) out of the global `psi`
+   (`psi -> psi - delta`); `deproject_triaxial`'s per-component
+   `psi + PA_twist` then hands the anchor exactly the van den Bosch angle, so
+   `(p, q, u)` name the anchor's intrinsic shape whatever the MGE's twist
+   profile. `_tpp_to_pqu` folds it back (`+ delta`) -- an exact inverse.
+2. **Tied minimum `q'`: first by component order** (`jnp.argmin`), documented
+   in `_mge_pqu_anchor` and `KNOWLEDGE.md`.
+3. **`u = 1` reporting:** no artificial snapping. Forward evaluates `u` a hair
+   inside the domain; the inverse recovers `u = 1` to within roundoff
+   (`~1e-8`), and that is what `AllModels` reports. Preserving an exact `1.0`
+   would need a matching special case in the inverse and was not judged worth
+   it; revisit if resume-compatibility on a declared `u = 1` proves noisy.
+4. **Inverse dispatch: follow-up.** Issue #65 tracks centralizing it on
+   `AbstractPotentialComponent` (and the `mge`/`cosmological_parameters`
+   converter-context fold). `register_parameterization`'s docstring and
+   `KNOWLEDGE.md` now state that a parameterization on any other TNT component
+   type would silently report canonical parameters until then.
+
+### High 1 -- boundary geometries
+
+The de Zeeuw & Franx weights are singular exactly on every `u` boundary
+(`u` in `{p, q/q', p/q', 1}`), each a valid limiting geometry. Rather than
+special-casing `u == 1` to the exactly-singular `phi = psi = pi/2` (which the
+audit showed deprojects to `NaN`), `_pqu_to_tpp` now clamps `u` into the open
+interval `(lo, hi)` by a relative `1e-9` margin -- interior values untouched,
+DYNAMITE's `u == 1` nudge generalized. A `1e-9` noise floor on the weights
+absorbs residual roundoff; larger excursions still raise. New tests
+`test_pqu_u_equal_to_one_builds_and_inverts` and
+`test_pqu_accepts_the_upper_boundary_u_equals_p_over_qprime` cover
+forward + build + inverse; the domain-rejection cases gained a real
+`u > min(p/q', 1)` case and their stale comments were fixed.
+
+### High 2 -- anchor twist
+
+New `_mge_pqu_anchor` returns `(q', pa_twist)`. Tests:
+`test_pqu_folds_a_non_zero_anchor_twist_into_psi` (anchor deprojected on its
+own with its real twist recovers the requested `(p, q)`, and the round trip
+holds) and `test_pqu_ignores_twist_on_non_anchor_gaussians`.
+
+### Low / Medium docs
+
+`potential.md` (twist folding, `q < p` for a triaxial solution, inclusive `u`
+endpoints valid, dropped "previously native-galax-only"), `components.py`
+`raw_parameters` docstring (no longer "four MGE composite types don't support
+one"), `registry.py` + `KNOWLEDGE.md` (issue #65 limitation), and the
+converter/module docstrings all updated.
+
+The converter type-alias / `_identity_*` test-helper signature mismatch noted
+under Medium is left as-is: those helpers exercise registry storage only, and
+issue #65's centralization will settle the converter protocol.
