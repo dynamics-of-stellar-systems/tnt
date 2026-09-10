@@ -614,3 +614,123 @@ types: `test_pqu_u_equal_to_one_builds_and_inverts[Light|Mass]`,
   (`get_projected_mass`) is inherited from `main`.
 - The `_identity_*` / `Callable[..., ...]` converter-protocol point stays with
   issue #65.
+
+---
+
+## Second re-audit — 2026-09-10
+
+### Reviewed state
+
+Reviewed and tested commit `8e768659c492116d2176e488249303eebb014559`,
+the remote `origin/pqu-parameterization` and GitHub PR 60 head for this
+review. The remote was fetched before validation; the local
+`pqu-parameterization` branch matched that commit with a clean worktree.
+The comparison base is `origin/main` at `d51fe2c`. This review covers the
+new boundary-fix commit, the response immediately above, and regression
+checks of the existing PQU behavior. Earlier findings refer to their stated
+reviewed commits; the assessment below applies to this head.
+
+### Assessment
+
+**Decision: ready to merge under the documented numerical-precision policy.**
+
+The remaining numerical blockers are resolved in the checks performed.
+The conversion explicitly rejects domains that are too narrow for its
+precision-dependent safety margin and guards denominators before division.
+Its boundary adjustment is sized for the active JAX precision, and inverse
+reporting returns the shape and compression actually used by the potential.
+This is a documented approximation near a boundary, not exact endpoint
+evaluation. No new architectural or numerical merge blocker was found.
+
+| Finding | Current assessment |
+| --- | --- |
+| High 1a: uncaught division by zero | Resolved. The original float64 case is rejected as an invalid potential, and the iterator records it without crashing, for both component types. |
+| High 1b: float32 shape corruption | Resolved in all prior reproductions, including coincident upper boundaries. Full construction and reporting preserve `p` and `q` to a few millionths; `u` follows the documented margin. |
+| High 2: anchor twist | Remains resolved. Shared twist handling and the added first-component tie-selection test are consistent. |
+| Medium: inverse dispatch/converter protocol | Remains an explicit, non-blocking follow-up under issue 65. |
+
+### Independent numerical verification
+
+An additional Linux-container probe exercised `Potential.from_settings`,
+the built deprojection, `raw_potential_parameters`, and reporting after
+`Potential.rescale(3)`, for both light and mass types at both precisions.
+All **24 construction/reporting/rescaling combinations passed**. The six
+`(q',p,q,u)` inputs were:
+
+- `(0.76, 0.85, 0.60, 1.0)`;
+- `(0.90, 0.85, 0.60, 0.85/0.90)`;
+- `(0.80, 0.70, 0.55, 0.70/0.80)`;
+- `(0.76, 0.76, 0.60, 1.0)`;
+- `(0.80, 0.80, 0.50, 1.0)`;
+- `(0.76, 0.85, 0.60, 0.93)`.
+
+Each used a single Gaussian with zero twist, physical sigma of 1 kpc and
+positive normalization. The probe checked finite reported values, agreement
+with the built `p`, `q` and observed/intrinsic sigma ratio, and preservation
+of shape while the normalization triples under rescaling.
+
+Representative recovered `(p,q,u)` values, identical for the two types:
+
+| Input case | Float64 | Float32 |
+| --- | --- | --- |
+| `q'=0.76`, `(0.85,0.60,1)` | `(0.8500000000001, 0.5999999999999, 0.9999999403954)` | `(0.8500000834, 0.5999999046, 0.9986189604)` |
+| `q'=0.76`, `(0.76,0.60,1)` | `(0.7599999999527, 0.5999999995135, 0.9999999403643)` | `(0.7599981427, 0.6000025868, 0.9986177087)` |
+| `q'=0.80`, `(0.80,0.50,1)` | `(0.7999999999556, 0.4999999991311, 0.9999999403676)` | `(0.8000020385, 0.4999982715, 0.9986202121)` |
+
+The maximum absolute `p`/`q` error in these probes was below `9e-10` at
+float64 and `2.6e-6` at float32. The boundary compression adjustment was
+below `6e-8` and `1.4e-3`, respectively. This confirms the documented
+float32 limitation; it does not establish accuracy for every possible MGE.
+
+All **four additional iterator cases passed**: for each component type,
+`ModelIterator._evaluate` recorded the original float64 narrow-domain input
+`(q',p,q,u)=(0.76,0.99999999,0.60,1)` with `valid_potential=False` and
+`orblib_done=False`. The corresponding float32 check used `p=0.9999`, which
+remains distinct from one at that precision, and produced the same flags.
+Neither precision leaked an arithmetic exception.
+
+### Coverage and documentation notes
+
+The author response overstates the committed float32 tests: those call the
+MGE conversion methods, while the parameterized full-build tests use default
+precision. The independent checks above cover full construction, inverse
+reporting and rescaling for both types at float32, plus the iterator path.
+Making that complete matrix a permanent regression test would strengthen
+coverage, but no behavioral defect was found in those paths.
+
+The boundary margin also adjusts values close to the excluded lower
+endpoints: the implementation clamps to `[u_lo,u_hi]`. The public prose
+focuses on the upper endpoints and could state this more explicitly.
+Likewise, the rejection means that the interval cannot accommodate the
+chosen safety margins, not literally that it contains no representable
+floating-point numbers. These are non-blocking wording refinements.
+
+### Validation and merge recommendation
+
+- `docker compose run --rm dev pytest -q`: **441 passed** in 362.51 seconds,
+  in a single run. One dependency-owned TensorFlow Probability/JAX
+  deprecation warning; no timeouts or failed tests.
+- `ruff check .`: passed.
+- Strict Sphinx, `sphinx-build -E -b html -W docs/source
+  /tmp/pr60-second-review-sphinx`: passed.
+- `git diff --check origin/main...HEAD` and the audit-only diff check: passed.
+- Formatting check of the nine changed Python files: eight pass; only the
+  existing `get_projected_mass` block in `tnt/mge.py`, inherited from `main`,
+  is reported. The PR's new blocks are formatted.
+- Independent checks: 24 construction/reporting/rescaling combinations and
+  four iterator invalid-domain cases passed, as detailed above.
+- Native macOS tests were not rerun during this review.
+
+GitHub was checked again after validation and still reports PR head
+`8e768659c492116d2176e488249303eebb014559`, technically mergeable, with no
+status checks and the prior `CHANGES_REQUESTED` review still present.
+
+**Recommendation: approve and merge.** The documented boundary approximation
+and explicit rejection of numerically unsafe geometries are acceptable;
+the previously identified blockers are closed. The coverage and wording
+suggestions above do not require another numerical-fix cycle. Issue 65
+remains a scoped follow-up. The existing requested-changes review still
+needs to be resolved through the normal GitHub review process, and the
+project workflow calls for removing this audit before merging. This task
+records the assessment only: no review approval, commit, push or merge was
+performed.
