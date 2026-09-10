@@ -249,29 +249,54 @@ separately in the same Linux container and reproduce reliably.
 4. Should safe inverse dispatch for every registered TNT component be completed
    in this PR, or tracked as an immediate follow-up?
 
-## Response (2026-09-10, at head `aeba9fe`)
+## Response (2026-09-10, at head `f7afa64`)
 
 The branch was rebased onto `main` (past #63 and #64) and all findings are
-addressed. Full suite 422 passed, `ruff` clean, strict `sphinx-build` clean
+addressed. Full suite 429 passed, `ruff` clean, strict `sphinx-build` clean
 (macOS).
+
+Line references below are to the current branch head, not the audited head.
+
+### Where the conversion now lives
+
+Both directions of the van den Bosch relation are now `AbstractMGE` methods,
+sharing one core:
+
+- `_triaxial_component_ratios(theta, phi, psi) -> (p[], q[], u[])` -- each
+  Gaussian's line-of-sight angle `psi + PA_twist` (vdB eq. 6), then
+  `_triaxial_intrinsic_axis_ratios`. `deproject_triaxial` and
+  `triaxial_intrinsic_shape` both call it, so that convention has one home.
+- `triaxial_viewing_angles(p, q, u) -> (theta, phi, psi)` -- the vdB
+  `triax_pqu2tpp` math, anchor selection (`_triaxial_anchor`), `u`-boundary
+  nudge, weight noise-floor, and the anchor-twist fold; raises
+  `MGEDeprojectionError`.
+- `triaxial_intrinsic_shape(theta, phi, psi) -> (p, q, u)` -- the
+  anchor-component slice of `_triaxial_component_ratios`, the exact inverse.
+
+`_pqu_to_tpp` / `_tpp_to_pqu` in `tnt.potential.triaxial_mge` are now
+~10-line registry adapters: call the method, package the result, and
+translate `MGEDeprojectionError` -> `InvalidPotentialParametersError`.
+`_triaxial_intrinsic_axis_ratios` is no longer imported outside `tnt.mge`, so
+the potential layer no longer reverse-engineers `deproject_triaxial`'s
+`psi + PA_twist` to invert it (raised in review, not in the audit).
 
 ### Decisions
 
-1. **Nonzero anchor twist: fold it in, don't reject.** `_pqu_to_tpp` folds
-   the anchor Gaussian's `PA_twist` (`delta`) out of the global `psi`
-   (`psi -> psi - delta`); `deproject_triaxial`'s per-component
-   `psi + PA_twist` then hands the anchor exactly the van den Bosch angle, so
-   `(p, q, u)` name the anchor's intrinsic shape whatever the MGE's twist
-   profile. `_tpp_to_pqu` folds it back (`+ delta`) -- an exact inverse.
+1. **Nonzero anchor twist (High 2): fold it in, don't reject.**
+   `triaxial_viewing_angles` subtracts the anchor Gaussian's `PA_twist`
+   (`delta`) from the global `psi` it returns; `_triaxial_component_ratios`
+   adds `delta` straight back for the anchor, so `(p, q, u)` name the
+   anchor's intrinsic shape whatever the MGE's twist profile.
+   `triaxial_intrinsic_shape` is the exact inverse.
 2. **Tied minimum `q'`: first by component order** (`jnp.argmin`), documented
-   in `_mge_pqu_anchor` and `KNOWLEDGE.md`.
-3. **`u = 1` reporting:** no artificial snapping. Forward evaluates `u` a hair
+   on `AbstractMGE._triaxial_anchor` and in `KNOWLEDGE.md`.
+3. **`u = 1` reporting: no artificial snapping.** Forward evaluates `u` a hair
    inside the domain; the inverse recovers `u = 1` to within roundoff
    (`~1e-8`), and that is what `AllModels` reports. Preserving an exact `1.0`
    would need a matching special case in the inverse and was not judged worth
    it; revisit if resume-compatibility on a declared `u = 1` proves noisy.
-4. **Inverse dispatch: follow-up.** Issue #65 tracks centralizing it on
-   `AbstractPotentialComponent` (and the `mge`/`cosmological_parameters`
+4. **Inverse dispatch (Medium): follow-up.** Issue #65 tracks centralizing it
+   on `AbstractPotentialComponent` (and the `mge`/`cosmological_parameters`
    converter-context fold). `register_parameterization`'s docstring and
    `KNOWLEDGE.md` now state that a parameterization on any other TNT component
    type would silently report canonical parameters until then.
@@ -281,21 +306,23 @@ addressed. Full suite 422 passed, `ruff` clean, strict `sphinx-build` clean
 The de Zeeuw & Franx weights are singular exactly on every `u` boundary
 (`u` in `{p, q/q', p/q', 1}`), each a valid limiting geometry. Rather than
 special-casing `u == 1` to the exactly-singular `phi = psi = pi/2` (which the
-audit showed deprojects to `NaN`), `_pqu_to_tpp` now clamps `u` into the open
-interval `(lo, hi)` by a relative `1e-9` margin -- interior values untouched,
-DYNAMITE's `u == 1` nudge generalized. A `1e-9` noise floor on the weights
-absorbs residual roundoff; larger excursions still raise. New tests
-`test_pqu_u_equal_to_one_builds_and_inverts` and
+audit showed deprojects to `NaN`), `triaxial_viewing_angles` clamps `u` into
+the open interval `(lo, hi)` by a relative `1e-9` margin -- interior values
+untouched, DYNAMITE's `u == 1` nudge generalized. `_TRIAXIAL_WEIGHT_ATOL`
+(`1e-9`) absorbs any residual roundoff on the weights; larger excursions
+still raise. New tests `test_pqu_u_equal_to_one_builds_and_inverts` and
 `test_pqu_accepts_the_upper_boundary_u_equals_p_over_qprime` cover
-forward + build + inverse; the domain-rejection cases gained a real
-`u > min(p/q', 1)` case and their stale comments were fixed.
+forward + build + inverse, plus `test_mge.py` method-level coverage; the
+domain-rejection cases gained a real `u > min(p/q', 1)` case and their stale
+comments were fixed.
 
 ### High 2 -- anchor twist
 
-New `_mge_pqu_anchor` returns `(q', pa_twist)`. Tests:
-`test_pqu_folds_a_non_zero_anchor_twist_into_psi` (anchor deprojected on its
-own with its real twist recovers the requested `(p, q)`, and the round trip
-holds) and `test_pqu_ignores_twist_on_non_anchor_gaussians`.
+`_triaxial_anchor` returns `(q', PA_twist)`. Tests:
+`test_pqu_folds_a_non_zero_anchor_twist_into_psi` and
+`test_pqu_ignores_twist_on_non_anchor_gaussians` in `test_potential.py`;
+`test_triaxial_viewing_angles_fold_the_anchor_pa_twist` and the
+round-trip / `deproject_triaxial`-agreement tests in `test_mge.py`.
 
 ### Low / Medium docs
 
@@ -308,24 +335,3 @@ converter/module docstrings all updated.
 The converter type-alias / `_identity_*` test-helper signature mismatch noted
 under Medium is left as-is: those helpers exercise registry storage only, and
 issue #65's centralization will settle the converter protocol.
-
-### Structural: the van den Bosch relation is now one owner
-
-Review raised that the relation had ended up split across layers -- the
-forward (`_triaxial_intrinsic_axis_ratios`) in `tnt.mge`, the inverse
-(`_pqu_to_tpp`) in the potential layer, with the inverse re-deriving
-`deproject_triaxial`'s `psi + PA_twist` convention to invert it. Both
-directions now live on `AbstractMGE`:
-
-- `triaxial_viewing_angles(p, q, u) -> (theta, phi, psi)` -- the vdB
-  `triax_pqu2tpp` math, anchor selection, `u`-boundary nudge, weight floor,
-  and the anchor-twist fold; raises `MGEDeprojectionError`.
-- `triaxial_intrinsic_shape(theta, phi, psi) -> (p, q, u)` -- the
-  anchor-component slice of `deproject_triaxial`, its exact inverse.
-
-`_pqu_to_tpp` / `_tpp_to_pqu` are now ~10-line registry adapters that call
-those and translate the exception. `_triaxial_intrinsic_axis_ratios` is no
-longer imported outside `tnt.mge`. Direct method coverage added in
-`test_mge.py` (round trip, agreement with `deproject_triaxial` at the anchor,
-twist fold, degenerate/circular rejection); the potential-layer tests stay as
-end-to-end coverage.
