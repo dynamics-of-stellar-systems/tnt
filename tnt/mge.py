@@ -485,21 +485,14 @@ class AbstractMGE(eqx.Module):
                 "call angular_to_physical(distance) first."
             )
 
-        theta_r = theta.ustrip("rad")
-        phi_r = phi.ustrip("rad")
-        psi_r = psi.ustrip("rad") + self.PA_twist.ustrip("rad")
-        q_obs = self.q.ustrip("")
-
-        p_intr, q_intr, u = _triaxial_intrinsic_axis_ratios(
-            theta_r, phi_r, psi_r, q_obs
-        )
+        p_intr, q_intr, u = self._triaxial_component_ratios(theta, phi, psi)
         _check_axial_ratios(p=p_intr, q=q_intr)
 
         sigma_intr = self.sigma / u
 
         I_3d = (
             self.I
-            * (u**3 * q_obs / (jnp.sqrt(2 * jnp.pi) * p_intr * q_intr))
+            * (u**3 * self.q.ustrip("") / (jnp.sqrt(2 * jnp.pi) * p_intr * q_intr))
             / self.sigma
         )
 
@@ -507,14 +500,30 @@ class AbstractMGE(eqx.Module):
             I=I_3d, sigma=sigma_intr, p=Quantity(p_intr, ""), q=Quantity(q_intr, "")
         )
 
+    def _triaxial_component_ratios(
+        self, theta: Quantity, phi: Quantity, psi: Quantity
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        """Per-Gaussian intrinsic ``(p, q, u)`` at global viewing angles.
+
+        The shared core of `deproject_triaxial` and `triaxial_intrinsic_shape`:
+        each Gaussian's own line-of-sight angle is ``psi + PA_twist`` (van den
+        Bosch et al. 2008 eq. 6). No validity check -- the callers decide (see
+        `_triaxial_intrinsic_axis_ratios`).
+        """
+        psi_r = psi.ustrip("rad") + self.PA_twist.ustrip("rad")
+        return _triaxial_intrinsic_axis_ratios(
+            theta.ustrip("rad"), phi.ustrip("rad"), psi_r, self.q.ustrip("")
+        )
+
     def _triaxial_anchor(self) -> tuple[float, float]:
         """``(q', PA_twist)`` of the flattest Gaussian -- the ``(p, q, u)`` anchor.
 
         The van den Bosch relations pin the triaxial viewing geometry to one
         reference ellipse; TNT uses the component with the smallest observed
-        axial ratio. Ties break by component order. ``PA_twist`` is returned
-        in radians so `triaxial_viewing_angles`/`triaxial_intrinsic_shape` can
-        fold it in or out of the global ``psi``.
+        axial ratio. Ties break by component order. `triaxial_viewing_angles`
+        subtracts this ``PA_twist`` (radians) from the global ``psi`` it
+        returns, so `_triaxial_component_ratios` adds it straight back for the
+        anchor.
         """
         q = self.q.ustrip("")
         anchor = int(jnp.argmin(q))
@@ -611,17 +620,13 @@ class AbstractMGE(eqx.Module):
         """The flattest Gaussian's intrinsic ``(p, q, u)`` at these viewing angles.
 
         The anchor-component slice of `deproject_triaxial`, and the exact
-        inverse of `triaxial_viewing_angles` -- the anchor's ``PA_twist`` is
-        folded back into ``psi``.
+        inverse of `triaxial_viewing_angles`. The anchor's ``PA_twist`` is
+        folded back into ``psi`` by `_triaxial_component_ratios`, same as for
+        every other Gaussian.
         """
-        q_obs, anchor_twist = self._triaxial_anchor()
-        p, q, u = _triaxial_intrinsic_axis_ratios(
-            theta.ustrip("rad"),
-            phi.ustrip("rad"),
-            psi.ustrip("rad") + anchor_twist,
-            q_obs,
-        )
-        return float(p), float(q), float(u)
+        p, q, u = self._triaxial_component_ratios(theta, phi, psi)
+        anchor = int(jnp.argmin(self.q.ustrip("")))
+        return float(p[anchor]), float(q[anchor]), float(u[anchor])
 
 
 class LightMGE(AbstractMGE):
