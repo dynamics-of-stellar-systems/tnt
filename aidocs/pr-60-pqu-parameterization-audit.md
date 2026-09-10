@@ -303,18 +303,15 @@ the potential layer no longer reverse-engineers `deproject_triaxial`'s
 
 ### High 1 -- boundary geometries
 
+*(Superseded -- the relative `1e-9` margin described here had the two holes
+the re-audit found; see "Response to the re-audit" below for the actual fix.)*
+
 The de Zeeuw & Franx weights are singular exactly on every `u` boundary
 (`u` in `{p, q/q', p/q', 1}`), each a valid limiting geometry. Rather than
 special-casing `u == 1` to the exactly-singular `phi = psi = pi/2` (which the
 audit showed deprojects to `NaN`), `triaxial_viewing_angles` clamps `u` into
-the open interval `(lo, hi)` by a relative `1e-9` margin -- interior values
-untouched, DYNAMITE's `u == 1` nudge generalized. `_TRIAXIAL_WEIGHT_ATOL`
-(`1e-9`) absorbs any residual roundoff on the weights; larger excursions
-still raise. New tests `test_pqu_u_equal_to_one_builds_and_inverts` and
-`test_pqu_accepts_the_upper_boundary_u_equals_p_over_qprime` cover
-forward + build + inverse, plus `test_mge.py` method-level coverage; the
-domain-rejection cases gained a real `u > min(p/q', 1)` case and their stale
-comments were fixed.
+the open interval `(lo, hi)`, with new build + inverse tests at the `u = 1`
+and `u = p/q'` endpoints.
 
 ### High 2 -- anchor twist
 
@@ -552,3 +549,68 @@ The twist finding can remain closed and issue 65 can remain a scoped
 follow-up. Keep this audit available for the next review; do not treat the
 author response's "all findings are addressed" statement as the current
 merge decision.
+
+---
+
+## Response to the re-audit (2026-09-10)
+
+Both High 1 sub-findings reproduced exactly as described and are now fixed in
+`AbstractMGE.triaxial_viewing_angles`. Full suite 437 passed, `ruff check`
+clean, `ruff format` clean on the PR's files, strict `sphinx-build` clean
+(macOS).
+
+### High 1a -- ZeroDivisionError on a narrow domain
+
+Root cause confirmed: the old margin was `1e-9 * (hi - lo)`, which underflows
+below the ULP when `hi - lo` is tiny, so `hi - margin` rounded back to `hi`
+and `u_calc` landed on a hard-zero denominator. Fixes:
+
+- The margin is now `4 * sqrt(eps)` where `eps` is the working JAX float
+  type's epsilon (`jnp.finfo(jnp.result_type(float)).eps`) -- an absolute
+  scale, not interval-relative.
+- `u_lo = lo + max(lo, 1) * margin`, `u_hi = hi * (1 - margin)`; if
+  `u_lo >= u_hi` the domain has no representable interior point at this
+  precision and the method raises `MGEDeprojectionError` ("too narrow ...").
+- Every de Zeeuw & Franx denominator is checked against `eps` before the
+  division; a near-singular geometry that slipped the domain checks is an
+  explicit `MGEDeprojectionError`, structurally never a `ZeroDivisionError`.
+- The inclusive-upper-bound check tolerates `eps`-scale overshoot so a
+  declared `u == 1` still passes when float32 rounds `p/q'` just below 1.
+
+New tests: `test_pqu_rejects_a_domain_too_narrow_to_deproject` (full build ->
+`InvalidPotentialParametersError`) and
+`test_triaxial_viewing_angles_reject_a_too_narrow_domain`.
+
+### High 1b -- reduced-precision reliability
+
+The margin is now sized by the *working* precision, so at float32 it is
+`~1.4e-3` rather than a float64-scale nudge that is noise there. At that
+margin the recovered `(p, q)` is within float32 roundoff (`~1e-6`) for the
+`u = 1` and coincident `u = 1 = p/q'` cases (was `~1.3e-4` drift or `NaN`);
+`u` itself comes back as `~1 - margin`, and `triaxial_intrinsic_shape`
+reports that recovered value.
+
+New tests run the full build + inverse at both precisions and both component
+types: `test_pqu_u_equal_to_one_builds_and_inverts[Light|Mass]`,
+`test_pqu_accepts_the_upper_boundary_u_equals_p_over_qprime[Light|Mass]`,
+`test_pqu_u_equal_to_one_is_reliable_at_reduced_precision`,
+`test_triaxial_viewing_angles_round_trip_at_both_precisions[True|False]`.
+
+### Documentation / coverage notes
+
+- `test_pqu_to_tpp_accepts_u_equal_to_one` comment corrected ("largest float
+  below 1" -> precision-scaled margin).
+- `triaxial_intrinsic_shape` / `_tpp_to_pqu` docstrings: "numerical inverse",
+  with the boundary-nudge caveat.
+- `KNOWLEDGE.md` and `potential.md`: lower `u` endpoints excluded vs. upper
+  inclusive; the `4 * sqrt(eps)` margin and its float32 size; "values
+  violating the inequality are rejected"; dropped the "first non-native
+  parameterization" chronology; `pqu` is registered only for the two triaxial
+  MGE types.
+- Added `test_pqu_tied_minimum_q_breaks_by_component_order` (two Gaussians at
+  min `q'` with different twists -> first is the anchor).
+- `ruff format` applied to this PR's blocks in `test_potential.py` and
+  `test_mge.py`. The remaining `ruff format` drift in `tnt/mge.py`
+  (`get_projected_mass`) is inherited from `main`.
+- The `_identity_*` / `Callable[..., ...]` converter-protocol point stays with
+  issue #65.

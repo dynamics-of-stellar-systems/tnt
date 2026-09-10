@@ -503,11 +503,16 @@
   `InvalidPotentialParametersError`. A `pqu` config and its equivalent
   `(theta, phi, psi)` config build an identical potential. Data-independent
   bounds (`0 < q <= p <= 1`, `p < u <= 1`) are `ParameterConstraint`s;
-  `q == p` (prolate), `max(q/q', p) < u <= min(p/q', 1)` and degenerate
-  weights are rejected by `triaxial_viewing_angles`. The de Zeeuw & Franx
-  weights are singular exactly on the `u` boundaries
-  (`u` in `{p, q/q', p/q', 1}`), all valid limiting geometries, so `u` is
-  evaluated a hair inside the open interval (as DYNAMITE nudges `u == 1`).
+  `triaxial_viewing_angles` additionally rejects a value violating `q < p`
+  (prolate) or `max(q/q', p) < u <= min(p/q', 1)`, a degenerate weight, and a
+  domain so narrow it has no representable interior point. The de Zeeuw &
+  Franx weights are singular exactly on the `u` boundaries; the *lower*
+  endpoints (`u = p`, `u = q/q'`) are excluded, the *upper* endpoints
+  (`u = 1`, `u = p/q'`) are inclusive limiting geometries evaluated one
+  margin of `4*sqrt(eps)` inside `min(p/q', 1)` -- `eps` for the working JAX
+  float type. At float32 that margin is `~1.4e-3`, so a declared `u = 1` is
+  honoured only to about that and `triaxial_intrinsic_shape` reports the
+  recovered value, not an exact `1`.
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`

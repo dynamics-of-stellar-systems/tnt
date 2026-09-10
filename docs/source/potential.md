@@ -245,14 +245,19 @@ potential:
   `(p, q, u)` must satisfy `0 < q <= p <= 1` and `p < u <= 1` as
   data-independent parameter constraints; a genuine triaxial deprojection
   additionally needs `q < p` (`q == p` is the prolate limit) and, against the
-  MGE, `max(q/q', p) < u <= min(p/q', 1)`. Outside that range there is no
-  triaxial deprojection and the build raises `InvalidPotentialParametersError`
-  (recorded as an invalid model, not a crash); the inclusive `u` endpoints
-  are valid limiting geometries. Both directions are `AbstractMGE` methods
-  (`triaxial_viewing_angles` and its inverse `triaxial_intrinsic_shape`, the
-  anchor slice of `deproject_triaxial`), so a `(p, q, u)` config and its
-  equivalent `(theta, phi, psi)` config build an identical potential and
-  `AllModels` reports either faithfully. This is TNT's first non-native
-  parameterization on one of its own component types.
+  MGE, `max(q/q', p) < u <= min(p/q', 1)` (lower endpoints excluded, upper
+  endpoints `u = 1` and `u = p/q'` are valid limiting geometries). Anything
+  outside that -- or a domain so narrow no interior geometry is representable
+  at the active JAX precision -- makes the build raise
+  `InvalidPotentialParametersError` (recorded as an invalid model, not a
+  crash). Near the upper endpoints `u` is evaluated a small margin inside the
+  domain (`~1.4e-3` at float32, negligible at float64), so a declared `u = 1`
+  is honoured to that margin and `AllModels` reports the recovered value.
+  Both directions are `AbstractMGE` methods (`triaxial_viewing_angles` and its
+  inverse `triaxial_intrinsic_shape`, the anchor slice of
+  `deproject_triaxial`), so a `(p, q, u)` config and its equivalent
+  `(theta, phi, psi)` config build an identical potential and `AllModels`
+  reports either faithfully. `pqu` is registered only for
+  `TriaxialLightMGEPotential` and `TriaxialMassMGEPotential`.
 - **`Potential.generate_orbit_library`**: not implemented -- blocked on
   `tnt.orbit_library`, itself still a full scaffold.

@@ -70,11 +70,12 @@ def _check_axial_ratios(p: jnp.ndarray, q: jnp.ndarray) -> None:
     )
 
 
-# Float noise floor for the de Zeeuw & Franx weights `w1`/`w2`/`w3` in
-# `AbstractMGE.triaxial_viewing_angles`: non-negative in exact arithmetic
-# inside the valid domain, and `u` is already nudged off the singular
-# boundaries, so a residual excursion this small is roundoff and is clamped;
-# a larger one is a genuinely degenerate geometry and is rejected.
+# float64 noise floor for the de Zeeuw & Franx weights `w1`/`w2`/`w3` in
+# `AbstractMGE.triaxial_viewing_angles` (widened there to `16 * eps` at lower
+# precision): non-negative in exact arithmetic inside the valid domain, and
+# `u` is nudged off the singular boundaries, so a residual excursion this
+# small is roundoff and is clamped; a larger one is a genuinely degenerate
+# geometry and is rejected.
 _TRIAXIAL_WEIGHT_ATOL = 1e-9
 
 
@@ -544,16 +545,23 @@ class AbstractMGE(eqx.Module):
         the anchor whatever the MGE's twist profile.
 
         ``(p, q, u)`` must describe a genuine triaxial figure (``0 < q < p <= 1``)
-        with, against this MGE, ``max(q/q', p) < u <= min(p/q', 1)``. The
-        inclusive ``u`` endpoints are valid limiting geometries: the de Zeeuw &
-        Franx weights are singular exactly on every ``u`` boundary
-        (``u`` in ``{p, q/q', p/q', 1}``), so ``u`` is evaluated a hair inside
-        the open interval, as DYNAMITE nudges ``u == 1``.
+        with, against this MGE, ``max(q/q', p) < u <= min(p/q', 1)``. The lower
+        endpoints are excluded; the *inclusive upper* endpoints ``u == 1`` and
+        ``u == p/q'`` are valid limiting geometries. The de Zeeuw & Franx
+        weights are singular exactly there, so ``u`` is evaluated one margin
+        inside ``min(p/q', 1)`` -- ``4 * sqrt(eps)`` for the working JAX float
+        precision, since below ``sqrt(eps)`` the ``u -> 1`` deprojection loses
+        more than half its digits. At reduced precision this margin is wider
+        (``~1.4e-3`` for float32): a declared ``u == 1`` is then honoured only
+        to about that, and `triaxial_intrinsic_shape` reports the value it
+        recovers rather than an exact ``1``.
 
         Raises:
             MGEDeprojectionError: If this MGE is circular (``q' == 1``), if
                 ``q >= p`` (the prolate limit has no unique triaxial geometry),
-                or if ``(p, q, u)`` has no triaxial deprojection for this MGE.
+                if ``(p, q, u)`` is outside the MGE-dependent domain, or if
+                that domain is too narrow to deproject reliably at the working
+                precision.
         """
         q_obs, anchor_twist = self._triaxial_anchor()
         if not q_obs < 1.0:
@@ -568,38 +576,55 @@ class AbstractMGE(eqx.Module):
                 "unique triaxial viewing geometry."
             )
 
+        eps = float(jnp.finfo(jnp.result_type(float)).eps)
         lo = max(q / q_obs, p)
         hi = min(p / q_obs, 1.0)
-        if not lo < u <= hi:
+        # The upper bound is inclusive; tolerate eps-scale overshoot so a
+        # declared u == 1 still passes when `q_obs` (hence `p/q'`) rounds just
+        # below 1 at reduced precision. `u` is clamped back inside below.
+        if not lo < u <= hi + max(1.0, hi) * eps:
             raise MGEDeprojectionError(
                 f"(p, q, u) = ({p:g}, {q:g}, {u:g}) has no triaxial deprojection "
                 f"for this MGE (min observed q' = {q_obs:g}): requires "
                 f"max(q/q', p) = {lo:g} < u <= min(p/q', 1) = {hi:g}."
             )
 
-        # Evaluate u a hair inside (lo, hi); interior values are untouched.
-        margin = 1e-9 * max(hi - lo, 1e-12)
-        u_calc = min(max(u, lo + margin), hi - margin)
+        # Keep u one precision-scaled margin clear of the singular endpoints.
+        # The margin is set by the working JAX float type, not float64, since
+        # the weights below feed a JAX-precision inverse.
+        margin = 4.0 * math.sqrt(eps)
+        u_lo = lo + max(lo, 1.0) * margin
+        u_hi = hi * (1.0 - margin)
+        if u_lo >= u_hi:
+            raise MGEDeprojectionError(
+                f"(p, q, u) = ({p:g}, {q:g}, {u:g}), q' = {q_obs:g}: the "
+                f"triaxial domain (max(q/q', p), min(p/q', 1)) = ({lo:g}, {hi:g}) "
+                "is too narrow to deproject reliably at this numerical precision."
+            )
+        u_calc = min(max(u, u_lo), u_hi)
 
         p2, q2, u2, o2 = p * p, q * q, u_calc * u_calc, q_obs * q_obs
-        w1 = (u2 - q2) * (o2 * u2 - q2) / ((1.0 - q2) * (p2 - q2))
-        w2 = (
-            (u2 - p2)
-            * (p2 - o2 * u2)
-            * (1.0 - q2)
-            / ((1.0 - u2) * (1.0 - o2 * u2) * (p2 - q2))
-        )
-        w3 = (
-            (1.0 - o2 * u2)
-            * (p2 - o2 * u2)
-            * (u2 - q2)
-            / ((1.0 - u2) * (u2 - p2) * (o2 * u2 - q2))
-        )
+        # Guard every de Zeeuw & Franx denominator before dividing, so a
+        # near-singular geometry that slipped through the domain checks is an
+        # explicit MGEDeprojectionError, never a ZeroDivisionError.
+        d_theta = (1.0 - q2) * (p2 - q2)
+        d_phi = (1.0 - u2) * (1.0 - o2 * u2) * (p2 - q2)
+        d_psi = (1.0 - u2) * (u2 - p2) * (o2 * u2 - q2)
+        if min(abs(d_theta), abs(d_phi), abs(d_psi)) < eps:
+            raise MGEDeprojectionError(
+                f"(p, q, u) = ({p:g}, {q:g}, {u:g}), q' = {q_obs:g}: viewing "
+                "geometry too close to a coordinate singularity to deproject."
+            )
+        w1 = (u2 - q2) * (o2 * u2 - q2) / d_theta
+        w2 = (u2 - p2) * (p2 - o2 * u2) * (1.0 - q2) / d_phi
+        w3 = (1.0 - o2 * u2) * (p2 - o2 * u2) * (u2 - q2) / d_psi
+
+        weight_atol = max(_TRIAXIAL_WEIGHT_ATOL, 16.0 * eps)
         if (
-            w1 < -_TRIAXIAL_WEIGHT_ATOL
-            or w1 > 1.0 + _TRIAXIAL_WEIGHT_ATOL
-            or w2 < -_TRIAXIAL_WEIGHT_ATOL
-            or w3 < -_TRIAXIAL_WEIGHT_ATOL
+            w1 < -weight_atol
+            or w1 > 1.0 + weight_atol
+            or w2 < -weight_atol
+            or w3 < -weight_atol
         ):
             raise MGEDeprojectionError(
                 f"(p, q, u) = ({p:g}, {q:g}, {u:g}), q' = {q_obs:g}: degenerate "
@@ -619,10 +644,13 @@ class AbstractMGE(eqx.Module):
     ) -> tuple[float, float, float]:
         """The flattest Gaussian's intrinsic ``(p, q, u)`` at these viewing angles.
 
-        The anchor-component slice of `deproject_triaxial`, and the exact
-        inverse of `triaxial_viewing_angles`. The anchor's ``PA_twist`` is
-        folded back into ``psi`` by `_triaxial_component_ratios`, same as for
-        every other Gaussian.
+        The anchor-component slice of `deproject_triaxial`, and the numerical
+        inverse of `triaxial_viewing_angles` -- exact for an interior geometry,
+        but a boundary ``u`` was nudged inside the domain by the forward call,
+        so it comes back as the nudged value rather than the exact endpoint
+        (more so at reduced JAX precision -- see `triaxial_viewing_angles`).
+        The anchor's ``PA_twist`` is folded back into ``psi`` by
+        `_triaxial_component_ratios`, same as for every other Gaussian.
         """
         p, q, u = self._triaxial_component_ratios(theta, phi, psi)
         anchor = int(jnp.argmin(self.q.ustrip("")))

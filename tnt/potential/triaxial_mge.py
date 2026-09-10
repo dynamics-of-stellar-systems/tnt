@@ -320,7 +320,8 @@ def _tpp_to_pqu(
     """Report native `(theta, phi, psi)` back as `(p, q, u)` for `AllModels`.
 
     `AbstractMGE.triaxial_intrinsic_shape` -- the anchor-component slice of
-    `deproject_triaxial`, the exact inverse of `triaxial_viewing_angles`.
+    `deproject_triaxial`, the numerical inverse of `triaxial_viewing_angles`
+    (a boundary `u` comes back as the nudged value; see that method).
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register `pqu`

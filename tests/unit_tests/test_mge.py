@@ -639,6 +639,38 @@ def test_triaxial_viewing_angles_reject_a_circular_mge():
         circular.triaxial_viewing_angles(0.85, 0.60, 0.93)
 
 
+def test_triaxial_viewing_angles_reject_a_too_narrow_domain():
+    # lo = p = 0.99999999, hi = 1: no interior point one margin from both ends.
+    with pytest.raises(MGEDeprojectionError, match="too narrow"):
+        _triaxial_anchor_mge().triaxial_viewing_angles(0.99999999, 0.60, 1.0)
+
+
+@pytest.mark.parametrize("x64", [True, False])
+@pytest.mark.parametrize(
+    ("q_obs", "p", "q", "u_in"),
+    [
+        (0.76, 0.85, 0.60, 1.0),  # u = 1
+        (0.60, 0.55, 0.40, 0.55 / 0.60),  # u = p/q' < 1
+        (0.76, 0.85, 0.60, 0.93),  # interior, for contrast
+    ],
+)
+def test_triaxial_viewing_angles_round_trip_at_both_precisions(x64, q_obs, p, q, u_in):
+    with jax.enable_x64(x64):
+        mge = LightMGE(
+            I=u.Quantity(jnp.array([1.0]), "Lsun / pc2"),
+            sigma=u.Quantity(jnp.array([1.0]), "kpc"),
+            q=u.Quantity(jnp.array([q_obs]), ""),
+            PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+            major_axis_pa=u.Quantity(0.0, "deg"),
+        )
+        theta, phi, psi = mge.triaxial_viewing_angles(p, q, u_in)
+        p_r, q_r, u_r = mge.triaxial_intrinsic_shape(theta, phi, psi)
+    tol = 1e-9 if x64 else 1e-4
+    assert (p_r, q_r) == pytest.approx((p, q), abs=tol)
+    # a boundary u is honoured only to the precision-scaled margin
+    assert u_r == pytest.approx(u_in, abs=1e-6 if x64 else 3e-3)
+
+
 def test_mge_is_frozen():
     mge = _multi_component_light_mge()
 
@@ -754,9 +786,7 @@ def _brute_force_aperture_mass(
         major_hat = np.array([np.sin(pa_k), np.cos(pa_k)])
         minor_hat = np.array([np.cos(pa_k), -np.sin(pa_k)])
 
-        def surface_density(
-            x, y, k=k, major_hat=major_hat, minor_hat=minor_hat
-        ):
+        def surface_density(x, y, k=k, major_hat=major_hat, minor_hat=minor_hat):
             sky = x * x_hat + y * y_hat
             s_major = sky @ major_hat
             s_minor = sky @ minor_hat
