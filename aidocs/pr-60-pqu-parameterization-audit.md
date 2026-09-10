@@ -335,3 +335,220 @@ converter/module docstrings all updated.
 The converter type-alias / `_identity_*` test-helper signature mismatch noted
 under Medium is left as-is: those helpers exercise registry storage only, and
 issue #65's centralization will settle the converter protocol.
+
+---
+
+## Re-audit — 2026-09-10
+
+**Decision: not ready to merge.** The anchor-twist correction and shared MGE
+conversion design are sound. The boundary correction fixes the original
+default-precision examples, but still permits an uncaught division by zero
+and does not reliably preserve the requested shape at 32-bit precision.
+These are reproducible numerical correctness findings, independent of the
+test-run timing limitation described below.
+
+The re-audit reviewed and tested commit
+`f2f9a1394262e63fab88c831fcbb47398196d901`, the latest remote
+`origin/pqu-parameterization` commit and GitHub PR 60 head as of this review
+on 2026-09-10. The remote was fetched before review, and GitHub was checked
+again at the end to confirm that the PR head had not changed. All code
+findings and validation results in this section refer to that exact commit,
+not the outdated local branch. The comparison base was `origin/main` at
+`d51fe2c`, which is an ancestor of the reviewed commit.
+
+No project `AGENTS.md`, `CLAUDE.md`, or `aidocs/INDEX.md` was present;
+the supplied user instructions, `README.md`, relevant sections of
+`aidocs/KNOWLEDGE.md`, this audit and the author response guided the review.
+
+This section is the current merge assessment. The earlier audit and author
+response above are retained as review evidence, not TNT version-compatibility
+or migration documentation.
+
+### Status of the existing findings
+
+| Finding | Assessment at the reviewed head |
+| --- | --- |
+| High 1: upper boundaries | Partially addressed; remains merge-blocking for the cases below. |
+| High 2: anchor twist | Addressed. Forward subtracts the selected anchor twist; the shared per-component calculation adds it back. Existing regression tests pass. |
+| Medium: inverse dispatch | Acceptable as an explicit follow-up under the original audit's deferral option. [Issue 65](https://github.com/dynamics-of-stellar-systems/tnt/issues/65) is open and covers centralized inverse dispatch or registration restrictions, plus converter context. The limitation is documented. |
+| Low: documentation | Mostly addressed; remaining accuracy and formatting notes appear below. |
+
+Both conversion directions belong to `AbstractMGE` and share
+`_triaxial_component_ratios` with `deproject_triaxial`. The minimum observed
+axis ratio selects the anchor, with the first component winning ties.
+Only that anchor's twist enters the forward conversion; every component's
+twist still enters its own deprojection and physical validity check.
+The two triaxial potential classes share `_mge_raw_parameters` for inverse
+reporting. This review found no additional architectural blocker.
+
+### High 1a: the boundary adjustment can round away and crash model evaluation
+
+Location: `tnt/mge.py:580-596`, `AbstractMGE.triaxial_viewing_angles`.
+
+With default 64-bit precision, a one-Gaussian MGE with `q'=0.76`, zero twist,
+and requested `(p,q,u)=(0.99999999,0.60,1.0)` satisfies the declared domain.
+Full `ResolvedPotentialComponent.build()` raises
+`ZeroDivisionError: float division by zero` for **both**
+`TriaxialLightMGEPotential` and `TriaxialMassMGEPotential`.
+
+Here `lo=0.99999999`, `hi=1`, and the margin is approximately `1e-17`.
+`hi - margin` rounds back to exactly `1.0`, leaving `u_calc=1` and a zero
+`1-u_calc**2` denominator in `w2`. The weight tolerance is applied after
+the division and cannot prevent this failure. `_pqu_to_tpp` translates only
+`MGEDeprojectionError`; `ModelIterator._evaluate` catches only that exception
+and `InvalidPotentialParametersError` around potential construction
+(`tnt/model_iterator.py:451-461`). Therefore this arithmetic exception escapes
+instead of producing an invalid-model record. The build failure was executed;
+the iterator consequence follows directly from that exception boundary.
+
+Required correction: ensure the evaluated geometry is representably inside
+the supported domain, including narrow intervals. Handle an interval that
+cannot be evaluated reliably with an explicit domain error, and regression-test
+the full build plus iterator behavior for both component types. Do not merely
+hide the division error or return unchecked angles.
+
+### High 1b: the boundary treatment is unreliable with 32-bit precision
+
+Locations: `tnt/mge.py:580-615` and the shared intrinsic-shape calculation.
+
+In a fresh process, set `jax_enable_x64=False` before constructing any probe
+quantities. With one Gaussian and zero twist, full construction gives these
+results for **both** light and mass types:
+
+| Observed `q'` | Requested `(p,q,u)` | Actual result |
+| --- | --- | --- |
+| `0.76` | `(0.85, 0.60, 1.0)` | Build succeeds but the anchor has `p=0.8501268625`, `q=0.5997300744`, recovered `u=1.0`. |
+| `0.76` | `(0.76, 0.60, 1.0)` | Build raises `MGEDeprojectionError`; recovered `p` and `q` are `NaN`. |
+| `0.80` | `(0.80, 0.50, 1.0)` | Build raises `MGEDeprojectionError`; calculated `p≈0.9999981`, `q≈7.423384`. |
+
+The first row silently changes the requested intrinsic shape by approximately
+`1.27e-4` in `p` and `2.70e-4` in `q`, much larger than ordinary float32
+roundoff. For comparison, the interior point `(0.85,0.60,0.93)` recovers
+`(0.8500000238,0.6000000834,0.9300000668)` in the same process.
+The coincident upper boundaries `u=1=p/q'` are particularly ill-conditioned.
+The domain-width margin is calculated with Python floats, but the resulting
+angles and inverse calculation use the configured JAX precision; the current
+margin does not control error through that complete calculation.
+
+Required correction: use a boundary evaluation strategy with verified accuracy
+at each supported precision, including coincident boundaries. Regression tests
+must inspect the built anchor shape, compression and inverse reporting, not
+just angle finiteness. If a geometry cannot be represented reliably, reject it
+explicitly and document the actual supported domain rather than silently
+constructing a materially different model. Include both component types.
+
+### Reproducing the blocking cases
+
+Run this in the Linux development container with `python -` (standard input),
+once with `ENABLE_X64=True` and once with `False`. The flag must be set before
+constructing the MGE and parameter quantities. Each probe uses a physical
+sigma of 1 kpc and intensity of 1 solar luminosity per square parsec.
+
+```python
+import tnt
+import jax
+import jax.numpy as jnp
+from unxt import Quantity as Q
+from tnt.mge import LightMGE
+from tnt.potential.components import AbstractPotentialComponent
+
+ENABLE_X64 = True
+jax.config.update("jax_enable_x64", ENABLE_X64)
+cases = [(0.76, 0.99999999, 0.60, 1.0)] if ENABLE_X64 else [
+    (0.76, 0.85, 0.60, 1.0),
+    (0.76, 0.76, 0.60, 1.0),
+    (0.80, 0.80, 0.50, 1.0),
+]
+for observed_q, p, q, u in cases:
+    for kind in ("Light", "Mass"):
+        mge = LightMGE(
+            I=Q(jnp.array([1.0]), "Lsun / pc2"),
+            sigma=Q(jnp.array([1.0]), "kpc"),
+            q=Q(jnp.array([observed_q]), ""),
+            PA_twist=Q(jnp.array([0.0]), "rad"),
+            major_axis_pa=Q(0.0, "deg"),
+        )
+        mass_name, mass_unit = "ml", "Msun / Lsun"
+        if kind == "Mass":
+            mge = mge.to_mass(Q(1.0, mass_unit))
+            mass_name, mass_unit = "mge_mass_scale", ""
+        resolved = AbstractPotentialComponent.resolve(
+            {"type": f"Triaxial{kind}MGEPotential",
+             "parameterization": "pqu", "mge": "m", "parameters": {}},
+            {"m": mge}, path="potential.stars",
+        )
+        try:
+            component = resolved.build(
+                {mass_name: Q(1.0, mass_unit), "p": Q(p, ""),
+                 "q": Q(q, ""), "u": Q(u, "")}, {},
+            )
+            print(kind, (p, q, u), mge.triaxial_intrinsic_shape(
+                *(component.parameters[k] for k in ("theta", "phi", "psi"))
+            ))
+        except Exception as error:
+            print(kind, (p, q, u), type(error).__name__, str(error))
+```
+
+### Coverage and documentation accuracy
+
+- The original default-precision cases now pass independent full-build and
+  inverse probes for both types: `(q',p,q,u)=(0.76,0.85,0.60,1)` and
+  `(0.90,0.85,0.60,0.85/0.90)`. The added upper-boundary test's point
+  `(0.80,0.70,0.55,0.70/0.80)` also passes a full one-Gaussian build.
+- `test_pqu_accepts_the_upper_boundary_u_equals_p_over_qprime` itself calls
+  only forward and inverse converters, despite the response's claim of
+  forward/build/inverse coverage. The `u=1` build test covers only the light
+  type. Add full boundary coverage for both types and both precisions.
+- First-component tie selection is clear from `jnp.argmin`, but there is no
+  dedicated tied-minimum/different-twist regression test. The short
+  `_identity_*` registry test signatures and broad `Callable[..., ...]`
+  aliases remain a non-blocking API/testing concern.
+- `test_pqu_to_tpp_accepts_u_equal_to_one` still says the calculation uses
+  the largest float below one; it actually uses a domain-width-dependent
+  margin. The comment that interior values are untouched is also too broad:
+  values within the margin of either boundary are adjusted.
+- `triaxial_intrinsic_shape` is a numerical inverse, not an "exact inverse"
+  at adjusted boundary points. Describe the adjustment, actual precision
+  limits and recovered-value reporting explicitly in current-behavior docs.
+  `aidocs/KNOWLEDGE.md` should say that violations of the MGE-dependent
+  inequality are rejected, rather than saying the inequality is rejected.
+  Lower endpoints remain excluded by `lo < u`, despite prose about all
+  boundary geometries. Remove the incidental "first non-native
+  parameterization" chronology in `docs/source/potential.md`; describe the
+  supported component types directly. No TNT version migration or
+  backward-compatibility narrative is needed.
+
+### Validation at the reviewed head
+
+- Linux/amd64, Colima, documented Compose development environment:
+  `pytest -q` completed with **427 passed, 2 failed** in 365.11 seconds.
+  Both failures are the existing parameterized
+  `test_read_applies_jax_precision_policy_in_isolated_process` tests
+  (`False` and `True`), each reaching its 30-second subprocess timeout.
+  They are not failed scientific assertions. Rerunning those two cases alone
+  passed: **2 passed** in 56.84 seconds. Thus all 429 collected tests passed
+  across the initial run and focused rerun, but the single full-suite run
+  was not clean. One dependency-owned TensorFlow Probability/JAX deprecation
+  warning was emitted in each run.
+- `ruff check .`: passed.
+- `sphinx-build -E -b html -W docs/source /tmp/pr60-sphinx`: passed.
+- `git diff --check origin/main...HEAD`: passed.
+- `git diff --check` after the audit-only edit: passed.
+- Formatting check of the nine changed Python files: three files would be
+  reformatted. The new unformatted blocks are in `test_potential.py`;
+  the reported blocks in `test_mge.py` and `tnt/mge.py` are inherited from
+  `main`. This is a cleanup item, not the numerical merge blocker.
+- The separate 64-bit and 32-bit construction/inverse probes above were
+  executed for both component types. Native macOS validation was not rerun.
+- GitHub reports no status checks for this head. The prior
+  `CHANGES_REQUESTED` review remains present. This re-audit records its
+  findings in this document; no GitHub review, comment or merge was submitted.
+
+### Required before approval
+
+Correct and regression-test the remaining boundary failures, accurately
+document the precision/domain behavior, and rerun the relevant checks.
+The twist finding can remain closed and issue 65 can remain a scoped
+follow-up. Keep this audit available for the next review; do not treat the
+author response's "all findings are addressed" statement as the current
+merge decision.
