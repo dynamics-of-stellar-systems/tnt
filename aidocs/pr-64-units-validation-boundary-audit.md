@@ -124,9 +124,15 @@ M1 and L1 addressed on the branch.
 - **L1** -- `validate_declared_unit`'s docstring now names it the string-input
   peer of `validate_dimension` and says which to use where.
 
-L2 (a fresh-process `import tnt.units` isolation assertion) and the
-prior-mechanism doc observation are left for the PR author's discretion; both
-are optional.
+- **L2** -- added `test_units_module_imports_no_runtime_family` in
+  `test_units.py`. A `sys.modules` check turned out unworkable (importing any
+  `tnt` submodule first runs `tnt/__init__.py`, which imports the whole
+  package), so the test parses `tnt/units.py`'s own import statements and
+  asserts none reference `tnt.potential` / `tnt.mge` / `tnt.kinematics` /
+  `tnt.spatial_binnings` -- module-level or lazy. Confirmed it currently sees
+  only `tnt.validation` + stdlib + `unxt`.
 
-Re-verified locally (macOS): `pytest -q` 398 passed, `ruff check .` clean,
+The prior-mechanism doc observation is left for the PR author's discretion.
+
+Re-verified locally (macOS): `pytest -q` 399 passed, `ruff check .` clean,
 strict `sphinx-build` succeeded.

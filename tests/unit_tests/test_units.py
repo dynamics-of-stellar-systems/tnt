@@ -1,6 +1,10 @@
+import ast
+from pathlib import Path
+
 import pytest
 import unxt as u
 
+import tnt.units
 from tnt.units import (
     build_unit_systems,
     declared_quantity,
@@ -105,3 +109,34 @@ def test_validate_dimension_accepts_equivalent_unit() -> None:
 def test_validate_dimension_rejects_wrong_dimension() -> None:
     with pytest.raises(ValueError, match="must describe speed"):
         validate_dimension(u.unit("kpc"), "speed", "kinematic_data.x")
+
+
+def test_units_module_imports_no_runtime_family() -> None:
+    """`tnt.units` is a low-level primitive: it must not import a TNT
+    runtime-family package.
+
+    `tnt.mge` / `tnt.kinematics` / `tnt.spatial_binnings` / `tnt.potential`
+    all import `tnt.units`, so an import the other way -- at module level or
+    lazily inside a function -- is a cycle. It is the reason whole-config
+    quantity validation lives in `tnt.configuration.validation`, not here.
+    Checked by parsing this module's own import statements rather than
+    `sys.modules`, since importing any `tnt` submodule first runs
+    `tnt/__init__.py`, which pulls in the whole package.
+    """
+    forbidden = ("tnt.potential", "tnt.mge", "tnt.kinematics", "tnt.spatial_binnings")
+    tree = ast.parse(Path(tnt.units.__file__).read_text(encoding="utf-8"))
+
+    imported: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported += [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            imported.append(node.module)
+
+    offending = [
+        name
+        for name in imported
+        for family in forbidden
+        if name == family or name.startswith(f"{family}.")
+    ]
+    assert not offending, offending
