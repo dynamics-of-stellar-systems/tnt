@@ -57,8 +57,8 @@ field can be used to specify alternatives:
   parameters; it can't depend on another component's resolved state (e.g. a
   mass ratio to another component's total mass) -- components are resolved
   independently of each other. That kind of cross-component relationship
-  belongs to a separate, not-yet-designed "prior" concept, consumed by the
-  parameter generator/search space rather than by potential construction.
+  belongs to the parameter generator/search space rather than to potential
+  construction; parameterization remains component-local.
 
 Every registered parameterization also converts back: `AllModels`' table
 always reports a component's parameters the way its configuration actually

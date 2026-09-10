@@ -19,8 +19,8 @@ from tnt.spatial_binnings import ProjectedBinning, SphericalGrid
 from tnt.units import reference_unit, validate_dimension, validate_position_angle
 
 # Half-open on-sky domain (degrees) of an MGE's ``major_axis_pa``: a major
-# axis is an undirected line, so it is only defined mod 180 (issue #62). Read
-# by `tnt.configuration.validation` as static schema metadata.
+# axis is an undirected line, so it is only defined modulo 180 degrees. Read by
+# `tnt.configuration.validation` as static schema metadata.
 MAJOR_AXIS_PA_DOMAIN_DEG: tuple[float, float] = (0.0, 180.0)
 
 

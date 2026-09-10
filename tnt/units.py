@@ -1,4 +1,4 @@
-"""Unit systems and unit-aware configuration validation.
+"""Unit systems and generic unit-aware primitives.
 
 Dimension validation and conversion into orbit-integration units are
 deliberately separate concerns. Declared units are validated for
@@ -32,7 +32,6 @@ from unxt import Quantity
 
 from tnt.validation import (
     _mapping,
-    _optional_mapping,
     _reject_unknown_keys,
     _require_keys,
 )
@@ -79,7 +78,7 @@ def build_unit_systems(settings: Mapping[str, Any]) -> UnitSystems:
     )
     _require_keys(internal_settings, set(_INTERNAL_DIMENSIONS), f"{path}.internal")
     internal_units = [
-        _validated_declared_unit(
+        validate_declared_unit(
             internal_settings[dimension],
             dimension,
             f"{path}.internal.{dimension}",
@@ -91,7 +90,7 @@ def build_unit_systems(settings: Mapping[str, Any]) -> UnitSystems:
     display_settings = _mapping(settings["display"], f"{path}.display")
     _reject_unknown_keys(display_settings, _DISPLAY_DIMENSIONS, f"{path}.display")
     display_units = [
-        _validated_declared_unit(
+        validate_declared_unit(
             unit_name,
             dimension,
             f"{path}.display.{dimension}",
@@ -100,88 +99,6 @@ def build_unit_systems(settings: Mapping[str, Any]) -> UnitSystems:
     ]
     display = u.unitsystem(internal, *display_units)
     return UnitSystems(internal=internal, display=display)
-
-
-def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
-    """Validate declared configuration quantities without converting them."""
-    config = _mapping(config, "configuration")
-
-    cosmology = _optional_mapping(config, "cosmological_parameters", "configuration")
-    _validate_field(cosmology, "H", "inverse_time", "cosmological_parameters")
-
-    attributes = _optional_mapping(config, "system_attributes", "configuration")
-    _validate_field(attributes, "distance", "length", "system_attributes")
-
-    potential = _optional_mapping(config, "potential", "configuration")
-    for potential_name, potential_value in potential.items():
-        potential_path = f"potential.{potential_name}"
-        settings = _mapping(potential_value, potential_path)
-        dimensions = _potential_parameter_dimensions(settings)
-        parameters = settings.get("parameters")
-        if parameters is not None and dimensions is not None:
-            _validate_parameter_units(
-                _mapping(parameters, f"{potential_path}.parameters"),
-                dimensions,
-                f"{potential_path}.parameters",
-            )
-
-    kinematics = _optional_mapping(config, "kinematic_data", "configuration")
-    for name, settings_value in kinematics.items():
-        settings_path = f"kinematic_data.{name}"
-        settings = _mapping(settings_value, settings_path)
-        histogram = settings.get("histogram")
-        if histogram is not None:
-            histogram = _mapping(histogram, f"{settings_path}.histogram")
-            histogram_path = f"{settings_path}.histogram"
-            _validate_field(histogram, "width", "speed", histogram_path)
-            _validate_field(histogram, "center", "speed", histogram_path)
-
-        errors = settings.get("observational_errors")
-        if settings.get("type") == "gauss_hermite" and errors is not None:
-            errors = _mapping(errors, f"{settings_path}.observational_errors")
-            systematics = errors.get("systematic_uncertainties")
-            if systematics is not None:
-                systematics_path = (
-                    f"{settings_path}.observational_errors.systematic_uncertainties"
-                )
-                systematics = _mapping(systematics, systematics_path)
-                _validate_field(systematics, "v", "speed", systematics_path)
-                _validate_field(systematics, "sigma", "speed", systematics_path)
-
-
-def _potential_parameter_dimensions(
-    settings: Mapping[str, Any],
-) -> Mapping[str, str] | None:
-    """One potential component's raw parameter dimensions, from `tnt.potential`.
-
-    Returns `None` when the resolved `type`/`parameterization` has no known
-    parameter schema -- a malformed value (already rejected by
-    `_validate_potential`, which runs first), an unrecognized `type`, or an
-    unimplemented `parameterization`. The caller then skips unit validation
-    for this component, leaving the type/parameterization error to
-    `AbstractPotentialComponent.resolve` rather than reporting a misleading
-    "unit not supported for this parameter".
-    """
-    # Imported lazily: `tnt.mge`/`tnt.kinematics`/`tnt.spatial_binnings` import
-    # this module for `validate_dimension`/`declared_quantity`, and
-    # `tnt.potential` imports those -- a module-level import here would close
-    # that cycle. Config validation, this function's only caller, always runs
-    # well after every module is loaded.
-    from tnt.potential.registry import (
-        parameter_schema_is_known,
-        raw_parameter_dimensions,
-    )
-
-    potential_type = settings.get("type")
-    parameterization = settings.get("parameterization")
-    if not (
-        isinstance(potential_type, str)
-        and (parameterization is None or isinstance(parameterization, str))
-    ):
-        return None
-    if not parameter_schema_is_known(potential_type, parameterization):
-        return None
-    return raw_parameter_dimensions(potential_type, parameterization)
 
 
 def resolve_cosmological_parameters(
@@ -302,38 +219,18 @@ def _declared_quantity(value: Any, dimension: str, path: str) -> tuple[float, An
         raise TypeError(f"{path}.value must be a number.")
     numeric = float(numeric_value)
     _require_finite(numeric, f"{path}.value")
-    source = _validated_declared_unit(explicit["unit"], dimension, f"{path}.unit")
+    source = validate_declared_unit(explicit["unit"], dimension, f"{path}.unit")
     return numeric, source
 
 
-def _validate_field(
-    mapping: Mapping[str, Any], key: str, dimension: str, path: str
-) -> None:
-    if key in mapping:
-        declared_quantity_value(mapping[key], dimension, f"{path}.{key}")
+def validate_declared_unit(value: Any, dimension: str, path: str) -> Any:
+    """Parse a declared unit *string* and check its dimension, returning the unit.
 
-
-def _validate_parameter_units(
-    parameters: Mapping[str, Any], dimensions: Mapping[str, str], path: str
-) -> None:
-    for name, parameter_value in parameters.items():
-        parameter_path = f"{path}.{name}"
-        parameter = _mapping(parameter_value, parameter_path)
-        dimension = dimensions.get(name)
-        if dimension is None or dimension == "dimensionless":
-            if "unit" in parameter:
-                raise ValueError(
-                    f"{parameter_path}.unit is not supported because this "
-                    "parameter is dimensionless or does not yet have a declared "
-                    "dimension."
-                )
-            continue
-        if "unit" not in parameter:
-            raise ValueError(f"{parameter_path} is missing required field: unit.")
-        _validated_declared_unit(parameter["unit"], dimension, f"{parameter_path}.unit")
-
-
-def _validated_declared_unit(value: Any, dimension: str, path: str) -> Any:
+    The string-input peer of `validate_dimension`, which takes an already
+    parsed unit object and returns nothing. Use this at a configuration
+    boundary where the unit arrives as a declared string; use
+    `validate_dimension` once you hold a unit object.
+    """
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{path} must be a non-empty unit string.")
     try:

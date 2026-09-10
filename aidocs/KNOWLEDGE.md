@@ -58,8 +58,8 @@
 - An MGE's photometric orientation and an observational data grid's
   orientation are independently measurable and frequently different
   (kinematic/photometric misalignment is a real triaxiality signature, not
-  noise) -- see issue #62. TNT keeps them as separate config fields rather
-  than one shared position angle: `MGEs.<name>.major_axis_pa` (the on-sky PA
+  noise). TNT keeps them as separate config fields rather than one shared
+  position angle: `MGEs.<name>.major_axis_pa` (the on-sky PA
   `PA_twist` is measured from, in `[0, 180)` degrees -- an axis, not a
   direction) and `spatial_binnings.<name>.y_axis_pa` (the on-sky PA of the
   grid's +y axis, in `[0, 360)` degrees). Both domains are half-open and
@@ -193,9 +193,10 @@
   construction owns its complete entry schema. Kinematics histogram and
   systematic-uncertainty fields are checked independently at preparation and
   construction time. Potential-parameter dimensions are checked during
-  preparation by `validate_configuration_quantities`; parameter generation and
-  potential construction then preserve the declared unit. No one of these
-  construction paths normalizes values into `units.internal`.
+  preparation by
+  `tnt.configuration.validation.validate_configuration_quantities`; parameter
+  generation and potential construction then preserve the declared unit. No
+  one of these construction paths normalizes values into `units.internal`.
 - MGE contents and quantities inside observational files are deliberately
   deferred to the object-construction/data-loading phase. Configuration
   preparation does not open those files. `tnt.kinematics.build_kinematics`
@@ -533,12 +534,13 @@
   `tnt.units.resolve_cosmological_parameters` -- in `tnt.units`, not
   `tnt.potential`, since it's generic declared-quantity conversion with no
   potential-specific knowledge, matching the other declared-quantity helpers'
-  home in `tnt.units` (`declared_quantity`, `validate_dimension`). `tnt.units`
-  needs `raw_parameter_dimensions` from `tnt.potential` for config validation
-  and imports it lazily inside the one function that uses it.
-  `tnt.mge`/`tnt.kinematics`/`tnt.spatial_binnings` import `tnt.units` for
-  `validate_dimension`/`declared_quantity`, while `tnt.potential` imports those
-  modules, so a module-level import would close the cycle.
+  home in `tnt.units` (`declared_quantity`, `validate_dimension`). Whole-config
+  quantity validation lives in `tnt.configuration.validation`, which already
+  consumes the potential registry's authoritative parameter dimensions.
+  `tnt.units` therefore remains a low-level unit primitive with no imports from
+  runtime-family packages. Configuration validation imports runtime-family
+  registries to obtain their authoritative schemas, so importing the
+  configuration package can load JAX, Equinox, and galax.
   `_nfw_concentration_m200`/its inverse do their entire calculation in
   `Quantity` arithmetic rather than eagerly stripping every input to a bare
   float in one specific unit -- `unxt` composes/converts units automatically
@@ -564,10 +566,8 @@
   because `Potential.from_settings` resolves each component independently in
   one pass, so no component-local converter can see another component's
   resolved mass. That kind of cross-component
-  relationship belongs to a separate, not-yet-designed "prior" concept,
-  consumed by the parameter generator/search space rather than by potential
-  construction -- deliberately deferred rather than shoehorned into
-  `parameterization`.
+  relationship belongs to the parameter generator/search space rather than
+  potential construction; it must not be shoehorned into `parameterization`.
 - Every registered parameterization converts both ways: a
   `register_parameterization` call takes `convert` *and* `invert` (bundled in
   its `ParameterizationSpec`), so one direction can never be registered without

@@ -16,7 +16,7 @@ from tnt.units import declared_quantity, validate_position_angle
 
 # Half-open on-sky domain (degrees) of a binning grid's ``y_axis_pa``: the
 # positive y-axis is a directed axis, so 0 and 360 are the same direction and
-# only one is canonical (issue #62).
+# only one is canonical.
 _Y_AXIS_PA_DOMAIN_DEG: tuple[float, float] = (0.0, 360.0)
 
 
