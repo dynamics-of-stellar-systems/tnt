@@ -46,6 +46,7 @@ from tnt.potential.registry import (
     parameter_constraints,
     register_component,
 )
+from tnt.potential.triaxial_mge import _pqu_to_tpp, _tpp_to_pqu
 
 
 def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
@@ -1046,14 +1047,17 @@ def test_register_parameterization_success_and_duplicate(monkeypatch) -> None:
     assert _registry_module._PARAMETERIZATION_REGISTRY == before
 
 
-def test_register_parameterization_rejects_a_non_galax_target_type(monkeypatch) -> None:
-    # Parameterizations convert to a component's native galax constructor
-    # kwargs and only GalaxPotentialComponent runs the inverse -- a TNT MGE
-    # composite type would silently round-trip through canonical parameters.
+def test_register_parameterization_rejects_a_fully_unknown_target_type(
+    monkeypatch,
+) -> None:
+    # A parameterization target must be a curated native galax type OR a
+    # registered TNT component type -- a typo / made-up name is neither.
     monkeypatch.setattr(_registry_module, "_PARAMETERIZATION_REGISTRY", {})
-    with pytest.raises(ValueError, match=r"not a curated native galax type"):
+    with pytest.raises(
+        ValueError, match=r"neither a curated native galax type nor a registered"
+    ):
         _registry_module.register_parameterization(
-            type_name="TriaxialLightMGEPotential",
+            type_name="NotAPotential",
             name="shape",
             convert=_identity_forward,
             invert=_identity_inverse,
@@ -1061,6 +1065,25 @@ def test_register_parameterization_rejects_a_non_galax_target_type(monkeypatch) 
             raw_constraints={},
         )
     assert _registry_module._PARAMETERIZATION_REGISTRY == {}
+
+
+def test_register_parameterization_accepts_a_registered_tnt_component_type(
+    monkeypatch,
+) -> None:
+    # A TNT composite type (in _COMPONENT_REGISTRY) is a valid target: its own
+    # `raw_parameters` override runs the inverse converter.
+    monkeypatch.setattr(_registry_module, "_PARAMETERIZATION_REGISTRY", {})
+    _registry_module.register_parameterization(
+        type_name="TriaxialLightMGEPotential",
+        name="shape",
+        convert=_identity_forward,
+        invert=_identity_inverse,
+        raw_dimensions={"p": "dimensionless"},
+        raw_constraints={},
+    )
+    assert ("TriaxialLightMGEPotential", "shape") in (
+        _registry_module._PARAMETERIZATION_REGISTRY
+    )
 
 
 def test_register_parameterization_rejects_unknown_constraint_name(monkeypatch) -> None:
@@ -1708,3 +1731,469 @@ def test_triaxial_light_mge_rescale_scales_to_galax_without_ml_recompute() -> No
     assert rescaled_potential.ustrip(speed2) == pytest.approx(
         original_potential.ustrip(speed2) * mass_scale, rel=1e-5
     )
+
+
+# ---------------------------------------------------------------------------
+# The `pqu` parameterization for the triaxial MGE composite types:
+# intrinsic axis ratios (p, q, u) <-> viewing angles (theta, phi, psi),
+# anchored at q' = min(component q) (van den Bosch et al. 2008 / DYNAMITE
+# triax_pqu2tpp). A non-zero anchor PA_twist is folded into psi.
+# ---------------------------------------------------------------------------
+
+
+def _triaxial_light_mge() -> LightMGE:
+    return LightMGE(
+        I=Quantity(jnp.array([120.0, 45.0, 18.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([0.4, 1.8, 6.0]), "kpc"),
+        q=Quantity(jnp.array([0.88, 0.82, 0.76]), ""),  # min observed q' = 0.76
+        PA_twist=Quantity(jnp.zeros(3), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+
+
+# A (p, q, u) triple valid against _triaxial_light_mge()'s q' = 0.76:
+#   0 < q <= p <= 1  and  max(q/q', p) < u <= min(p/q', 1)
+_PQU = {"p": Quantity(0.85, ""), "q": Quantity(0.60, ""), "u": Quantity(0.93, "")}
+
+
+def test_pqu_to_tpp_round_trips_through_tpp_to_pqu() -> None:
+    mge = _triaxial_light_mge()
+    raw = {"ml": Quantity(4.0, "Msun / Lsun"), **_PQU}
+
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+    assert set(native) == {"ml", "theta", "phi", "psi"}
+    recovered = _tpp_to_pqu(
+        native, {"ml": "Msun / Lsun"}, _NO_COSMOLOGICAL_PARAMETERS, mge
+    )
+
+    for name, value in _PQU.items():
+        assert recovered[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-10)
+    assert recovered["ml"].ustrip("Msun / Lsun") == pytest.approx(4.0)
+
+
+def test_pqu_to_tpp_matches_deproject_triaxial_at_the_anchor_component() -> None:
+    # Deprojecting a single Gaussian whose observed q equals the anchor q'
+    # at the converted angles must return exactly the input (p, q).
+    mge = _triaxial_light_mge()
+    native = _pqu_to_tpp(
+        {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        mge,
+    )
+    anchor = LightMGE(
+        I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([6.0]), "kpc"),
+        q=Quantity(jnp.array([0.76]), ""),
+        PA_twist=Quantity(jnp.zeros(1), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    deprojected = anchor.deproject_triaxial(
+        native["theta"], native["phi"], native["psi"]
+    )
+    assert deprojected.p[0].ustrip("") == pytest.approx(_PQU["p"].ustrip(""), abs=1e-10)
+    assert deprojected.q[0].ustrip("") == pytest.approx(_PQU["q"].ustrip(""), abs=1e-10)
+
+
+def test_pqu_to_tpp_matches_dynamite_triax_pqu2tpp_at_a_known_point() -> None:
+    # (p, q, u, q') = (0.85, 0.6, 0.93, 0.76) run through DYNAMITE's
+    # dynamite.physical_system.TriaxialVisibleComponent.triax_pqu2tpp
+    # (van den Bosch et al. 2008); it returns (theta, psi, phi) in degrees.
+    mge = _triaxial_light_mge()  # min observed q' = 0.76
+    native = _pqu_to_tpp(
+        {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        mge,
+    )
+    deg = 180.0 / jnp.pi
+    assert float(native["theta"].ustrip("rad")) * deg == pytest.approx(
+        56.5558802, abs=1e-6
+    )
+    assert float(native["phi"].ustrip("rad")) * deg == pytest.approx(
+        42.3177283, abs=1e-6
+    )
+    assert float(native["psi"].ustrip("rad")) * deg == pytest.approx(
+        102.3159975, abs=1e-6
+    )
+
+
+def test_pqu_to_tpp_accepts_u_equal_to_one() -> None:
+    # u = 1 (major axis in the sky plane) is a valid limiting geometry; u is
+    # evaluated one precision-scaled margin inside the domain.
+    mge = _triaxial_light_mge()
+    raw = {
+        "ml": Quantity(1.0, "Msun / Lsun"),
+        "p": Quantity(0.85, ""),
+        "q": Quantity(0.60, ""),
+        "u": Quantity(1.0, ""),
+    }
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+    for angle in ("theta", "phi", "psi"):
+        assert jnp.isfinite(native[angle].ustrip("rad"))
+
+
+def _build_pqu_component(
+    type_name: str, mge: LightMGE, p: float, q: float, u: float
+) -> AbstractPotentialComponent:
+    if type_name == "TriaxialMassMGEPotential":
+        mge = mge.to_mass(Quantity(1.0, "Msun / Lsun"))
+    mass_name = "ml" if type_name == "TriaxialLightMGEPotential" else "mge_mass_scale"
+    mass_unit = "Msun / Lsun" if mass_name == "ml" else ""
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": type_name,
+            "parameterization": "pqu",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    return resolved.build(
+        {
+            mass_name: Quantity(1.0, mass_unit),
+            "p": Quantity(p, ""),
+            "q": Quantity(q, ""),
+            "u": Quantity(u, ""),
+        },
+        _NO_COSMOLOGICAL_PARAMETERS,
+    )
+
+
+@pytest.mark.parametrize(
+    "type_name", ["TriaxialLightMGEPotential", "TriaxialMassMGEPotential"]
+)
+def test_pqu_u_equal_to_one_builds_and_inverts(type_name: str) -> None:
+    # High 1: u = 1 must survive full construction and report back through the
+    # inverse -- not just return finite angles -- for both component types.
+    mge = _triaxial_light_mge()  # anchor q' = 0.76, component 2
+    component = _build_pqu_component(type_name, mge, 0.85, 0.60, 1.0)
+
+    anchor_mge = (
+        mge.to_mass(Quantity(1.0, "Msun / Lsun")) if "Mass" in type_name else mge
+    )
+    p_a, q_a, u_a = anchor_mge.triaxial_intrinsic_shape(
+        *(component.parameters[k] for k in ("theta", "phi", "psi"))
+    )
+    assert (p_a, q_a) == pytest.approx((0.85, 0.60), abs=1e-6)
+    assert u_a == pytest.approx(1.0, abs=1e-6)
+
+    raw = {
+        "ml": Quantity(1.0, "Msun / Lsun"),
+        "p": Quantity(0.85, ""),
+        "q": Quantity(0.60, ""),
+        "u": Quantity(1.0, ""),
+    }
+    recovered = _tpp_to_pqu(
+        _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge),
+        {"ml": "Msun / Lsun"},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        mge,
+    )
+    assert recovered["p"].ustrip("") == pytest.approx(0.85, abs=1e-6)
+    assert recovered["q"].ustrip("") == pytest.approx(0.60, abs=1e-6)
+    assert recovered["u"].ustrip("") == pytest.approx(1.0, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    "type_name", ["TriaxialLightMGEPotential", "TriaxialMassMGEPotential"]
+)
+def test_pqu_accepts_the_upper_boundary_u_equals_p_over_qprime(type_name: str) -> None:
+    # High 1: at u = min(p/q', 1) the phi/psi weights are zero in exact
+    # arithmetic; roundoff must not push the point out of the domain, through
+    # a full build for both component types.
+    flat = LightMGE(
+        I=Quantity(jnp.array([1.0, 1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([1.0, 4.0]), "kpc"),
+        q=Quantity(jnp.array([0.90, 0.80]), ""),  # q' = 0.80
+        PA_twist=Quantity(jnp.zeros(2), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    p, q, u = 0.70, 0.55, 0.70 / 0.80  # p < q' so hi = p/q' = 0.875 < 1
+    component = _build_pqu_component(type_name, flat, p, q, u)
+
+    anchor_mge = (
+        flat.to_mass(Quantity(1.0, "Msun / Lsun")) if "Mass" in type_name else flat
+    )
+    p_a, q_a, u_a = anchor_mge.triaxial_intrinsic_shape(
+        *(component.parameters[k] for k in ("theta", "phi", "psi"))
+    )
+    assert (p_a, q_a, u_a) == pytest.approx((p, q, u), abs=1e-6)
+
+
+def test_pqu_rejects_a_domain_too_narrow_to_deproject() -> None:
+    # High 1a: when (max(q/q', p), min(p/q', 1)) has no representable interior
+    # point at the working precision, the build must reject explicitly rather
+    # than divide by zero.
+    mge = _triaxial_light_mge()  # anchor q' = 0.76
+    with pytest.raises(
+        _registry_module.InvalidPotentialParametersError, match="too narrow"
+    ):
+        _build_pqu_component("TriaxialLightMGEPotential", mge, 0.99999999, 0.60, 1.0)
+
+
+def test_pqu_u_equal_to_one_is_reliable_at_reduced_precision() -> None:
+    # High 1b: under jax_enable_x64=False the u=1 boundary must still recover
+    # the requested (p, q) to float32 tolerance, not drift by ~1e-4.
+    with jax.enable_x64(False):
+        mge = LightMGE(
+            I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+            sigma=Quantity(jnp.array([1.0]), "kpc"),
+            q=Quantity(jnp.array([0.76]), ""),
+            PA_twist=Quantity(jnp.array([0.0]), "rad"),
+            major_axis_pa=Quantity(0.0, "deg"),
+        )
+        theta, phi, psi = mge.triaxial_viewing_angles(0.85, 0.60, 1.0)
+        p_a, q_a, u_a = mge.triaxial_intrinsic_shape(theta, phi, psi)
+
+    assert (p_a, q_a) == pytest.approx((0.85, 0.60), abs=1e-4)
+    # u is honoured only to the (wider) float32 margin, ~4*sqrt(eps) ~ 1.4e-3.
+    assert u_a == pytest.approx(1.0, abs=3e-3)
+
+
+def test_pqu_tied_minimum_q_breaks_by_component_order() -> None:
+    # Two Gaussians share the minimum q' with different twists: the first one
+    # (component order) is the anchor, deterministically.
+    tied = LightMGE(
+        I=Quantity(jnp.array([1.0, 1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([1.0, 4.0]), "kpc"),
+        q=Quantity(jnp.array([0.80, 0.80]), ""),  # tie at q' = 0.80
+        PA_twist=Quantity(jnp.array([0.2, -0.3]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    first_anchor = LightMGE(
+        I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([1.0]), "kpc"),
+        q=Quantity(jnp.array([0.80]), ""),
+        PA_twist=Quantity(jnp.array([0.2]), "rad"),  # component 0's twist
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    raw = {
+        "ml": Quantity(1.0, "Msun / Lsun"),
+        "p": Quantity(0.88, ""),
+        "q": Quantity(0.70, ""),
+        "u": Quantity(0.95, ""),
+    }
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, tied)
+    deprojected = first_anchor.deproject_triaxial(
+        native["theta"], native["phi"], native["psi"]
+    )
+    assert deprojected.p[0].ustrip("") == pytest.approx(0.88, abs=1e-9)
+    assert deprojected.q[0].ustrip("") == pytest.approx(0.70, abs=1e-9)
+
+
+def test_pqu_folds_a_non_zero_anchor_twist_into_psi() -> None:
+    # High 2: when the min-q' Gaussian has PA_twist != 0, the built anchor
+    # component must still have exactly the requested (p, q), and the round
+    # trip must still recover (p, q, u).
+    twisted = LightMGE(
+        I=Quantity(jnp.array([120.0, 45.0, 18.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([0.4, 1.8, 6.0]), "kpc"),
+        q=Quantity(jnp.array([0.88, 0.82, 0.76]), ""),  # anchor = component 2
+        PA_twist=Quantity(jnp.array([0.0, 0.1, 0.3]), "rad"),  # anchor twist = 0.3
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    raw = {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU}
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, twisted)
+
+    # Deproject the anchor Gaussian on its own, with its real twist, at the
+    # converted global angles: it must come back as the requested (p, q).
+    anchor = LightMGE(
+        I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([6.0]), "kpc"),
+        q=Quantity(jnp.array([0.76]), ""),
+        PA_twist=Quantity(jnp.array([0.3]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    deprojected = anchor.deproject_triaxial(
+        native["theta"], native["phi"], native["psi"]
+    )
+    assert deprojected.p[0].ustrip("") == pytest.approx(_PQU["p"].ustrip(""), abs=1e-9)
+    assert deprojected.q[0].ustrip("") == pytest.approx(_PQU["q"].ustrip(""), abs=1e-9)
+
+    recovered = _tpp_to_pqu(
+        native, {"ml": "Msun / Lsun"}, _NO_COSMOLOGICAL_PARAMETERS, twisted
+    )
+    for name, value in _PQU.items():
+        assert recovered[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+
+
+def test_pqu_ignores_twist_on_non_anchor_gaussians() -> None:
+    # Only the anchor's twist enters the conversion; twist on other
+    # components does not change the global angles.
+    base = _triaxial_light_mge()  # zero twist, anchor q' = 0.76 (component 2)
+    other_twist = LightMGE(
+        I=base.I,
+        sigma=base.sigma,
+        q=base.q,
+        PA_twist=Quantity(jnp.array([0.4, -0.2, 0.0]), "rad"),  # anchor still 0
+        major_axis_pa=base.major_axis_pa,
+    )
+    raw = {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU}
+    a = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, base)
+    b = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, other_twist)
+    for angle in ("theta", "phi", "psi"):
+        assert a[angle].ustrip("rad") == pytest.approx(b[angle].ustrip("rad"))
+
+
+@pytest.mark.parametrize(
+    ("bad", "reason"),
+    [
+        # q/q' = 0.80/0.76 = 1.05, so lo = max(q/q', p) = 1.05 > u
+        ({"p": 0.85, "q": 0.80, "u": 0.98}, "max.*u"),
+        # lo = max(q/q', p) = max(0.79, 0.85) = 0.85 > u
+        ({"p": 0.85, "q": 0.60, "u": 0.65}, "max.*u"),
+        # hi = min(p/q', 1) = min(0.70/0.76, 1) = 0.921 < u
+        ({"p": 0.70, "q": 0.55, "u": 0.95}, r"u <= min"),
+        ({"p": 0.80, "q": 0.80, "u": 0.90}, "prolate"),  # q == p (allowed by q <= p)
+    ],
+)
+def test_pqu_to_tpp_rejects_geometries_outside_the_mge_dependent_domain(
+    bad: dict[str, float], reason: str
+) -> None:
+    mge = _triaxial_light_mge()
+    raw = {
+        "ml": Quantity(1.0, "Msun / Lsun"),
+        **{k: Quantity(v, "") for k, v in bad.items()},
+    }
+    with pytest.raises(_registry_module.InvalidPotentialParametersError, match=reason):
+        _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+
+
+def test_pqu_to_tpp_rejects_a_circular_mge() -> None:
+    circular = LightMGE(
+        I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([1.0]), "kpc"),
+        q=Quantity(jnp.array([1.0]), ""),
+        PA_twist=Quantity(jnp.zeros(1), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    with pytest.raises(
+        _registry_module.InvalidPotentialParametersError, match="circular MGE"
+    ):
+        _pqu_to_tpp(
+            {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU},
+            _NO_COSMOLOGICAL_PARAMETERS,
+            circular,
+        )
+
+
+def test_pqu_parameterization_is_registered_for_both_triaxial_mge_types() -> None:
+    for type_name, mass_name, mass_dim in (
+        ("TriaxialLightMGEPotential", "ml", "mass_to_light"),
+        ("TriaxialMassMGEPotential", "mge_mass_scale", "dimensionless"),
+    ):
+        spec = _registry_module.get_parameterization(type_name, "pqu")
+        assert spec is not None
+        assert spec.convert is _pqu_to_tpp
+        assert spec.invert is _tpp_to_pqu
+        assert spec.raw_dimensions == {
+            mass_name: mass_dim,
+            "p": "dimensionless",
+            "q": "dimensionless",
+            "u": "dimensionless",
+        }
+        assert raw_parameter_dimensions(type_name, "pqu") == spec.raw_dimensions
+        constraints = parameter_constraints(type_name, "pqu")
+        assert set(constraints) == {mass_name, "p", "q", "u"}
+        assert constraints["q"].other_parameter == "p"
+        assert constraints["q"].relation == "<="
+        assert constraints["u"].other_parameter == "p"
+        assert constraints["u"].relation == ">"
+        assert constraints["u"].maximum == 1.0
+
+
+@pytest.mark.parametrize(
+    "type_name", ["TriaxialLightMGEPotential", "TriaxialMassMGEPotential"]
+)
+def test_pqu_config_builds_the_same_deprojection_as_the_equivalent_angles(
+    type_name: str,
+) -> None:
+    mge = _triaxial_light_mge()
+    if type_name == "TriaxialMassMGEPotential":
+        mge = mge.to_mass(Quantity(1.0, "Msun / Lsun"))
+    mass_name = "ml" if type_name == "TriaxialLightMGEPotential" else "mge_mass_scale"
+    mass_unit = "Msun / Lsun" if mass_name == "ml" else ""
+    mass_value = Quantity(3.5, mass_unit)
+
+    pqu_resolved = AbstractPotentialComponent.resolve(
+        {"type": type_name, "parameterization": "pqu", "mge": "m", "parameters": {}},
+        {"m": mge},
+        path="potential.stars",
+    )
+    pqu_component = pqu_resolved.build(
+        {mass_name: mass_value, **_PQU}, _NO_COSMOLOGICAL_PARAMETERS
+    )
+
+    angles = _pqu_to_tpp(
+        {mass_name: mass_value, **_PQU}, _NO_COSMOLOGICAL_PARAMETERS, mge
+    )
+    tpp_resolved = AbstractPotentialComponent.resolve(
+        {"type": type_name, "mge": "m", "parameters": {}},
+        {"m": mge},
+        path="potential.stars",
+    )
+    tpp_component = tpp_resolved.build(
+        {mass_name: mass_value, **{k: angles[k] for k in ("theta", "phi", "psi")}},
+        _NO_COSMOLOGICAL_PARAMETERS,
+    )
+
+    for attr in ("I", "sigma", "p", "q"):
+        assert jnp.allclose(
+            getattr(pqu_component.deprojected, attr).ustrip(
+                getattr(pqu_component.deprojected, attr).unit
+            ),
+            getattr(tpp_component.deprojected, attr).ustrip(
+                getattr(tpp_component.deprojected, attr).unit
+            ),
+        ), attr
+
+
+def test_pqu_raw_potential_parameters_round_trips_and_survives_rescale() -> None:
+    mge = _triaxial_light_mge()
+    settings = {
+        "stars": {
+            "type": "TriaxialLightMGEPotential",
+            "parameterization": "pqu",
+            "mge": "m",
+            "parameters": {"ml": {"unit": "Msun / Lsun"}},
+        }
+    }
+    values = {"stars": {"ml": Quantity(4.0, "Msun / Lsun"), **_PQU}}
+    potential = Potential.from_settings(settings, values, {"m": mge}, {})
+
+    raw = raw_potential_parameters(settings, potential, {})["stars"]
+    assert set(raw) == {"ml", "p", "q", "u"}
+    for name, value in _PQU.items():
+        assert raw[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+    assert raw["ml"].ustrip("Msun / Lsun") == pytest.approx(4.0)
+
+    rescaled = raw_potential_parameters(settings, potential.rescale(3.0), {})["stars"]
+    assert rescaled["ml"].ustrip("Msun / Lsun") == pytest.approx(12.0)
+    for name, value in _PQU.items():
+        assert rescaled[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+
+
+def test_pqu_domain_invalid_value_is_rejected_at_build_time() -> None:
+    # q > p violates the data-independent ParameterConstraint, caught before
+    # the converter (and before any MGE is consulted).
+    mge = _triaxial_light_mge()
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "TriaxialLightMGEPotential",
+            "parameterization": "pqu",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    with pytest.raises(ValueError, match=r"parameters\.q"):
+        resolved.build(
+            {
+                "ml": Quantity(1.0, "Msun / Lsun"),
+                "p": Quantity(0.6, ""),
+                "q": Quantity(0.8, ""),
+                "u": Quantity(0.9, ""),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )

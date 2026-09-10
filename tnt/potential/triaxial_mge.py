@@ -11,6 +11,14 @@ attempted. The oblate axisymmetric counterparts, built on
 `galax.potential.AxisymmetricGaussianPotential`, live in the sibling
 `tnt.potential.oblate_mge` module, so this one stays specifically about the
 triaxial case.
+
+Both types also accept `parameterization: "pqu"`, replacing `theta/phi/psi`
+with the intrinsic axis ratios `p = B/A`, `q = C/A` and the compression `u`
+of the triaxial-Schwarzschild / DYNAMITE-successor literature (van den Bosch
+et al. 2008, MNRAS 385, 647). `_pqu_to_tpp` / `_tpp_to_pqu` are thin adapters
+over `AbstractMGE.triaxial_viewing_angles` / `triaxial_intrinsic_shape`,
+which own the conversion (anchored at `q' = min(component q)`) and its
+inverse.
 """
 
 from __future__ import annotations
@@ -23,12 +31,20 @@ import galax.potential
 import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE
+from tnt.mge import (
+    Deprojected3DMGE,
+    LightMGE,
+    MassMGE,
+    MGEDeprojectionError,
+)
 from tnt.potential.components import AbstractPotentialComponent
 from tnt.potential.registry import (
     _VIEWING_ANGLES,
+    InvalidPotentialParametersError,
     ParameterConstraint,
+    get_parameterization,
     register_component,
+    register_parameterization,
 )
 from tnt.validation import _required_string, _resolve_typed_reference
 
@@ -43,11 +59,10 @@ class TriaxialLightMGEPotential(AbstractPotentialComponent):
     `deprojected`; `to_galax` sums one
     `galax.potential.TriaxialGaussianPotential` per Gaussian component from
     it (see `_galax_potential_from_deprojected`). `(theta, phi, psi)` are
-    this component's native viewing-geometry parameters; the
-    shape/compression `(p, q, u)` parameterization closer to the
-    triaxial-Schwarzschild-modeling literature isn't registered yet --
-    converting it to `(theta, phi, psi)` needs a formula that hasn't been
-    confirmed (see `docs/source/potential.md`).
+    this component's native viewing-geometry parameters;
+    `parameterization: "pqu"` accepts the intrinsic shape/compression
+    `(p, q, u)` instead (see this module's docstring and
+    `docs/source/potential.md`).
     """
 
     _type: ClassVar[str] = "TriaxialLightMGEPotential"
@@ -98,6 +113,16 @@ class TriaxialLightMGEPotential(AbstractPotentialComponent):
     ) -> galax.potential.AbstractPotential:
         return _galax_potential_from_deprojected(self.deprojected, unit_system)
 
+    def raw_parameters(
+        self,
+        parameterization: str | None,
+        declared_units: Mapping[str, str],
+        cosmological_parameters: Mapping[str, Quantity],
+    ) -> dict[str, Quantity]:
+        return _mge_raw_parameters(
+            self, parameterization, declared_units, cosmological_parameters
+        )
+
     def rescale(self, mass_scale: float) -> Self:
         rescaled_parameters = dict(self.parameters)
         rescaled_parameters["ml"] = rescaled_parameters["ml"] * mass_scale
@@ -118,9 +143,9 @@ class TriaxialMassMGEPotential(AbstractPotentialComponent):
     `mge_mass_scale` is the analogue of a light MGE's `ml` for a component
     whose shape template is already in mass units: a normalization on top
     of an otherwise-fixed mass map, typically left `fixed` (see `rescale`'s
-    docstring for why it can still move regardless). `_build`/`to_galax`
-    otherwise follow the same path as `TriaxialLightMGEPotential` -- see its
-    docstring.
+    docstring for why it can still move regardless). `_build`/`to_galax`,
+    and `parameterization: "pqu"`, otherwise follow the same path as
+    `TriaxialLightMGEPotential` -- see its docstring.
     """
 
     _type: ClassVar[str] = "TriaxialMassMGEPotential"
@@ -171,6 +196,16 @@ class TriaxialMassMGEPotential(AbstractPotentialComponent):
     ) -> galax.potential.AbstractPotential:
         return _galax_potential_from_deprojected(self.deprojected, unit_system)
 
+    def raw_parameters(
+        self,
+        parameterization: str | None,
+        declared_units: Mapping[str, str],
+        cosmological_parameters: Mapping[str, Quantity],
+    ) -> dict[str, Quantity]:
+        return _mge_raw_parameters(
+            self, parameterization, declared_units, cosmological_parameters
+        )
+
     def rescale(self, mass_scale: float) -> Self:
         rescaled_parameters = dict(self.parameters)
         rescaled_parameters["mge_mass_scale"] = (
@@ -217,3 +252,138 @@ def _galax_potential_from_deprojected(
         for i in range(n_components)
     }
     return galax.potential.CompositePotential(components, units=unit_system)
+
+
+# ==========================================================================
+# The `pqu` parameterization: intrinsic axis ratios `(p, q, u)` of the MGE's
+# flattest Gaussian <-> global viewing angles `(theta, phi, psi)`, matching
+# DYNAMITE `triax_pqu2tpp` (van den Bosch et al. 2008, MNRAS 385, 647). Both
+# directions -- including the anchor-twist bookkeeping -- live on
+# `AbstractMGE` (`triaxial_viewing_angles` / `triaxial_intrinsic_shape`);
+# these converters are just the parameterization-registry adapters.
+
+_PQU_SHAPE_CONSTRAINTS: dict[str, ParameterConstraint] = {
+    "p": ParameterConstraint(minimum=0.0, minimum_inclusive=False, maximum=1.0),
+    # 0 < q <= p
+    "q": ParameterConstraint(
+        minimum=0.0, minimum_inclusive=False, other_parameter="p", relation="<="
+    ),
+    # p < u <= 1 (data-independent floor of DYNAMITE's
+    # max(q/q', p) < u <= min(p/q', 1); the q'-dependent parts are checked
+    # against the MGE in `AbstractMGE.triaxial_viewing_angles`)
+    "u": ParameterConstraint(maximum=1.0, other_parameter="p", relation=">"),
+}
+
+
+def _mass_parameter_name(parameters: Mapping[str, Any]) -> str:
+    """`"ml"` for the light type, `"mge_mass_scale"` for the mass type."""
+    return "ml" if "ml" in parameters else "mge_mass_scale"
+
+
+def _pqu_to_tpp(
+    raw: dict[str, Quantity],
+    cosmological_parameters: Mapping[str, Quantity],
+    mge: LightMGE | MassMGE | None,
+) -> dict[str, Quantity]:
+    """Adapt `(p, q, u)` -> `(theta, phi, psi)` via `triaxial_viewing_angles`.
+
+    The data-independent `(p, q, u)` bounds (`0 < q <= p <= 1`, `p < u <= 1`)
+    are enforced by the parameterization's `raw_constraints` before this runs;
+    the MGE-dependent domain and every singular geometry are the MGE method's
+    business, re-raised here as `InvalidPotentialParametersError` so
+    `ModelIterator` records an invalid model rather than crashing.
+    """
+    del cosmological_parameters
+    if mge is None:  # unreachable: only the MGE composite types register `pqu`
+        raise InvalidPotentialParametersError(
+            "The 'pqu' parameterization requires an MGE component."
+        )
+    try:
+        theta, phi, psi = mge.triaxial_viewing_angles(
+            float(raw["p"].ustrip("")),
+            float(raw["q"].ustrip("")),
+            float(raw["u"].ustrip("")),
+        )
+    except MGEDeprojectionError as error:
+        raise InvalidPotentialParametersError(str(error)) from error
+
+    mass = _mass_parameter_name(raw)
+    return {mass: raw[mass], "theta": theta, "phi": phi, "psi": psi}
+
+
+def _tpp_to_pqu(
+    native: dict[str, Quantity],
+    declared_units: Mapping[str, str],
+    cosmological_parameters: Mapping[str, Quantity],
+    mge: LightMGE | MassMGE | None,
+) -> dict[str, Quantity]:
+    """Report native `(theta, phi, psi)` back as `(p, q, u)` for `AllModels`.
+
+    `AbstractMGE.triaxial_intrinsic_shape` -- the anchor-component slice of
+    `deproject_triaxial`, the numerical inverse of `triaxial_viewing_angles`
+    (a boundary `u` comes back as the nudged value; see that method).
+    """
+    del cosmological_parameters
+    if mge is None:  # unreachable: only the MGE composite types register `pqu`
+        raise InvalidPotentialParametersError(
+            "The 'pqu' parameterization requires an MGE component."
+        )
+    p, q, u = mge.triaxial_intrinsic_shape(
+        native["theta"], native["phi"], native["psi"]
+    )
+    mass = _mass_parameter_name(native)
+    mass_value = native[mass]
+    if mass in declared_units:
+        mass_value = mass_value.to(declared_units[mass])
+    return {
+        mass: mass_value,
+        "p": Quantity(p, ""),
+        "q": Quantity(q, ""),
+        "u": Quantity(u, ""),
+    }
+
+
+def _mge_raw_parameters(
+    component: AbstractPotentialComponent,
+    parameterization: str | None,
+    declared_units: Mapping[str, str],
+    cosmological_parameters: Mapping[str, Quantity],
+) -> dict[str, Quantity]:
+    """Shared `raw_parameters` body for both triaxial MGE composite types."""
+    if parameterization is None:
+        return component.parameters
+    spec = get_parameterization(component._type, parameterization)
+    if spec is None:  # unreachable: resolve() already validated it
+        raise NotImplementedError(
+            f"{component._type}.{parameterization!r} is not a registered "
+            "parameterization."
+        )
+    return spec.invert(
+        component.parameters,
+        declared_units,
+        cosmological_parameters,
+        component.mge,
+    )
+
+
+def _register_pqu(type_name: str, mass_name: str, mass_dimension: str) -> None:
+    register_parameterization(
+        type_name=type_name,
+        name="pqu",
+        convert=_pqu_to_tpp,
+        invert=_tpp_to_pqu,
+        raw_dimensions={
+            mass_name: mass_dimension,
+            "p": "dimensionless",
+            "q": "dimensionless",
+            "u": "dimensionless",
+        },
+        raw_constraints={
+            mass_name: ParameterConstraint(minimum=0.0, minimum_inclusive=False),
+            **_PQU_SHAPE_CONSTRAINTS,
+        },
+    )
+
+
+_register_pqu("TriaxialLightMGEPotential", "ml", "mass_to_light")
+_register_pqu("TriaxialMassMGEPotential", "mge_mass_scale", "dimensionless")

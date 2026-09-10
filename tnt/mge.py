@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar, Self
@@ -67,6 +68,74 @@ def _check_axial_ratios(p: jnp.ndarray, q: jnp.ndarray) -> None:
         "Deprojection violates TNT's 0 < q <= p <= 1 intrinsic-axis convention "
         f"(or has no real solution) for: {details}."
     )
+
+
+# float64 noise floor for the de Zeeuw & Franx weights `w1`/`w2`/`w3` in
+# `AbstractMGE.triaxial_viewing_angles` (widened there to `16 * eps` at lower
+# precision): non-negative in exact arithmetic inside the valid domain, and
+# `u` is nudged off the singular boundaries, so a residual excursion this
+# small is roundoff and is clamped; a larger one is a genuinely degenerate
+# geometry and is rejected.
+_TRIAXIAL_WEIGHT_ATOL = 1e-9
+
+
+def _triaxial_intrinsic_axis_ratios(
+    theta_r: jnp.ndarray,
+    phi_r: jnp.ndarray,
+    psi_r: jnp.ndarray,
+    q_obs: jnp.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Intrinsic axial ratios ``(p, q)`` and compression ``u`` from viewing angles.
+
+    The general triaxial relation of de Zeeuw & Franx (1989) / Cappellari (2002)
+    eqs. 6-8 / van den Bosch et al. (2008) eqs. 6-9: given the observed axial
+    ratio ``q_obs`` of an ellipse and the three viewing angles (already in
+    radians, with ``psi_r`` already including any component ``PA_twist``), solve
+    for the intrinsic ``p = B/A``, ``q = C/A`` and the scale-length compression
+    ``u = sigma_observed / sigma_intrinsic`` (``= a'/a``, the projected-to-intrinsic
+    major-axis ratio). ``u`` is only 1 at special viewing angles.
+
+    Every argument may be a scalar or an array (one entry per Gaussian). No
+    validity check here -- ``p``/``q`` can come back ``nan`` for a viewing
+    geometry with no real solution; the caller checks (`_check_axial_ratios`,
+    or the ``pqu`` converter's own bounds).
+    """
+    delta = 1 - q_obs**2
+
+    cos_theta, sin_theta = jnp.cos(theta_r), jnp.sin(theta_r)
+    sec_theta = 1 / cos_theta
+    cot_phi = 1 / jnp.tan(phi_r)
+    tan_phi = jnp.tan(phi_r)
+    cos_phi, sin_phi = jnp.cos(phi_r), jnp.sin(phi_r)
+    cos_psi, sin_psi = jnp.cos(psi_r), jnp.sin(psi_r)
+    cos_2psi, sin_2psi = jnp.cos(2 * psi_r), jnp.sin(2 * psi_r)
+
+    denom = (
+        2
+        * sin_theta**2
+        * (delta * cos_psi * (cos_psi + cot_phi * sec_theta * sin_psi) - 1)
+    )
+    one_minus_q2 = (
+        delta
+        * (2 * cos_2psi + sin_2psi * (sec_theta * cot_phi - cos_theta * tan_phi))
+        / denom
+    )
+    p2_minus_q2 = (
+        delta
+        * (2 * cos_2psi + sin_2psi * (cos_theta * cot_phi - sec_theta * tan_phi))
+        / denom
+    )
+
+    q_intr = jnp.sqrt(1 - one_minus_q2)
+    p_intr = jnp.sqrt(q_intr**2 + p2_minus_q2)
+    u = jnp.sqrt(
+        jnp.sqrt(
+            p_intr**2 * cos_theta**2
+            + q_intr**2 * sin_theta**2 * (p_intr**2 * cos_phi**2 + sin_phi**2)
+        )
+        / q_obs
+    )
+    return p_intr, q_intr, u
 
 
 class AbstractMGE(eqx.Module):
@@ -417,56 +486,175 @@ class AbstractMGE(eqx.Module):
                 "call angular_to_physical(distance) first."
             )
 
-        theta_r = theta.ustrip("rad")
-        phi_r = phi.ustrip("rad")
-        psi_r = psi.ustrip("rad") + self.PA_twist.ustrip("rad")
-        delta = 1 - self.q.ustrip("") ** 2
-
-        cos_theta, sin_theta = jnp.cos(theta_r), jnp.sin(theta_r)
-        sec_theta = 1 / cos_theta
-        cot_phi = 1 / jnp.tan(phi_r)
-        tan_phi = jnp.tan(phi_r)
-        cos_psi, sin_psi = jnp.cos(psi_r), jnp.sin(psi_r)
-        cos_2psi, sin_2psi = jnp.cos(2 * psi_r), jnp.sin(2 * psi_r)
-
-        denom = 2 * sin_theta**2 * (
-            delta * cos_psi * (cos_psi + cot_phi * sec_theta * sin_psi) - 1
-        )
-        one_minus_q2 = (
-            delta
-            * (2 * cos_2psi + sin_2psi * (sec_theta * cot_phi - cos_theta * tan_phi))
-            / denom
-        )
-        p2_minus_q2 = (
-            delta
-            * (2 * cos_2psi + sin_2psi * (cos_theta * cot_phi - sec_theta * tan_phi))
-            / denom
-        )
-
-        q_intr = jnp.sqrt(1 - one_minus_q2)
-        p_intr = jnp.sqrt(q_intr**2 + p2_minus_q2)
+        p_intr, q_intr, u = self._triaxial_component_ratios(theta, phi, psi)
         _check_axial_ratios(p=p_intr, q=q_intr)
 
-        q_obs = self.q.ustrip("")
-        cos_phi, sin_phi = jnp.cos(phi_r), jnp.sin(phi_r)
-        u = jnp.sqrt(
-            jnp.sqrt(
-                p_intr**2 * cos_theta**2
-                + q_intr**2 * sin_theta**2 * (p_intr**2 * cos_phi**2 + sin_phi**2)
-            )
-            / q_obs
-        )
         sigma_intr = self.sigma / u
 
         I_3d = (
             self.I
-            * (u**3 * q_obs / (jnp.sqrt(2 * jnp.pi) * p_intr * q_intr))
+            * (u**3 * self.q.ustrip("") / (jnp.sqrt(2 * jnp.pi) * p_intr * q_intr))
             / self.sigma
         )
 
         return Deprojected3DMGE(
             I=I_3d, sigma=sigma_intr, p=Quantity(p_intr, ""), q=Quantity(q_intr, "")
         )
+
+    def _triaxial_component_ratios(
+        self, theta: Quantity, phi: Quantity, psi: Quantity
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        """Per-Gaussian intrinsic ``(p, q, u)`` at global viewing angles.
+
+        The shared core of `deproject_triaxial` and `triaxial_intrinsic_shape`:
+        each Gaussian's own line-of-sight angle is ``psi + PA_twist`` (van den
+        Bosch et al. 2008 eq. 6). No validity check -- the callers decide (see
+        `_triaxial_intrinsic_axis_ratios`).
+        """
+        psi_r = psi.ustrip("rad") + self.PA_twist.ustrip("rad")
+        return _triaxial_intrinsic_axis_ratios(
+            theta.ustrip("rad"), phi.ustrip("rad"), psi_r, self.q.ustrip("")
+        )
+
+    def _triaxial_anchor(self) -> tuple[float, float]:
+        """``(q', PA_twist)`` of the flattest Gaussian -- the ``(p, q, u)`` anchor.
+
+        The van den Bosch relations pin the triaxial viewing geometry to one
+        reference ellipse; TNT uses the component with the smallest observed
+        axial ratio. Ties break by component order. `triaxial_viewing_angles`
+        subtracts this ``PA_twist`` (radians) from the global ``psi`` it
+        returns, so `_triaxial_component_ratios` adds it straight back for the
+        anchor.
+        """
+        q = self.q.ustrip("")
+        anchor = int(jnp.argmin(q))
+        return float(q[anchor]), float(self.PA_twist.ustrip("rad")[anchor])
+
+    def triaxial_viewing_angles(
+        self, p: float, q: float, u: float
+    ) -> tuple[Quantity, Quantity, Quantity]:
+        """The global viewing angles giving the flattest Gaussian shape ``(p, q, u)``.
+
+        The inverse of `deproject_triaxial` at the anchor component (van den
+        Bosch et al. 2008 eqs. 6-9 / DYNAMITE ``triax_pqu2tpp``): the intrinsic
+        axis ratios ``p = B/A``, ``q = C/A`` and scale-length compression
+        ``u = sigma_observed / sigma_intrinsic`` of the ``q' = min(component q)``
+        Gaussian fix the three global angles. A non-zero anchor ``PA_twist`` is
+        folded out of the returned ``psi``, so `deproject_triaxial`'s
+        per-component ``psi + PA_twist`` reproduces the van den Bosch angle for
+        the anchor whatever the MGE's twist profile.
+
+        ``(p, q, u)`` must describe a genuine triaxial figure (``0 < q < p <= 1``)
+        with, against this MGE, ``max(q/q', p) < u <= min(p/q', 1)``. The lower
+        endpoints are excluded; the *inclusive upper* endpoints ``u == 1`` and
+        ``u == p/q'`` are valid limiting geometries. The de Zeeuw & Franx
+        weights are singular exactly there, so ``u`` is evaluated one margin
+        inside ``min(p/q', 1)`` -- ``4 * sqrt(eps)`` for the working JAX float
+        precision, since below ``sqrt(eps)`` the ``u -> 1`` deprojection loses
+        more than half its digits. At reduced precision this margin is wider
+        (``~1.4e-3`` for float32): a declared ``u == 1`` is then honoured only
+        to about that, and `triaxial_intrinsic_shape` reports the value it
+        recovers rather than an exact ``1``.
+
+        Raises:
+            MGEDeprojectionError: If this MGE is circular (``q' == 1``), if
+                ``q >= p`` (the prolate limit has no unique triaxial geometry),
+                if ``(p, q, u)`` is outside the MGE-dependent domain, or if
+                that domain is too narrow to deproject reliably at the working
+                precision.
+        """
+        q_obs, anchor_twist = self._triaxial_anchor()
+        if not q_obs < 1.0:
+            raise MGEDeprojectionError(
+                f"Triaxial deprojection needs a flattened MGE (min observed "
+                f"q' = {q_obs:g}); a circular MGE has no viewing geometry to "
+                "solve for."
+            )
+        if q >= p:
+            raise MGEDeprojectionError(
+                f"(p, q, u) = ({p:g}, {q:g}, {u:g}): q == p (prolate) has no "
+                "unique triaxial viewing geometry."
+            )
+
+        eps = float(jnp.finfo(jnp.result_type(float)).eps)
+        lo = max(q / q_obs, p)
+        hi = min(p / q_obs, 1.0)
+        # The upper bound is inclusive; tolerate eps-scale overshoot so a
+        # declared u == 1 still passes when `q_obs` (hence `p/q'`) rounds just
+        # below 1 at reduced precision. `u` is clamped back inside below.
+        if not lo < u <= hi + max(1.0, hi) * eps:
+            raise MGEDeprojectionError(
+                f"(p, q, u) = ({p:g}, {q:g}, {u:g}) has no triaxial deprojection "
+                f"for this MGE (min observed q' = {q_obs:g}): requires "
+                f"max(q/q', p) = {lo:g} < u <= min(p/q', 1) = {hi:g}."
+            )
+
+        # Keep u one precision-scaled margin clear of the singular endpoints.
+        # The margin is set by the working JAX float type, not float64, since
+        # the weights below feed a JAX-precision inverse.
+        margin = 4.0 * math.sqrt(eps)
+        u_lo = lo + max(lo, 1.0) * margin
+        u_hi = hi * (1.0 - margin)
+        if u_lo >= u_hi:
+            raise MGEDeprojectionError(
+                f"(p, q, u) = ({p:g}, {q:g}, {u:g}), q' = {q_obs:g}: the "
+                f"triaxial domain (max(q/q', p), min(p/q', 1)) = ({lo:g}, {hi:g}) "
+                "is too narrow to deproject reliably at this numerical precision."
+            )
+        u_calc = min(max(u, u_lo), u_hi)
+
+        p2, q2, u2, o2 = p * p, q * q, u_calc * u_calc, q_obs * q_obs
+        # Guard every de Zeeuw & Franx denominator before dividing, so a
+        # near-singular geometry that slipped through the domain checks is an
+        # explicit MGEDeprojectionError, never a ZeroDivisionError.
+        d_theta = (1.0 - q2) * (p2 - q2)
+        d_phi = (1.0 - u2) * (1.0 - o2 * u2) * (p2 - q2)
+        d_psi = (1.0 - u2) * (u2 - p2) * (o2 * u2 - q2)
+        if min(abs(d_theta), abs(d_phi), abs(d_psi)) < eps:
+            raise MGEDeprojectionError(
+                f"(p, q, u) = ({p:g}, {q:g}, {u:g}), q' = {q_obs:g}: viewing "
+                "geometry too close to a coordinate singularity to deproject."
+            )
+        w1 = (u2 - q2) * (o2 * u2 - q2) / d_theta
+        w2 = (u2 - p2) * (p2 - o2 * u2) * (1.0 - q2) / d_phi
+        w3 = (1.0 - o2 * u2) * (p2 - o2 * u2) * (u2 - q2) / d_psi
+
+        weight_atol = max(_TRIAXIAL_WEIGHT_ATOL, 16.0 * eps)
+        if (
+            w1 < -weight_atol
+            or w1 > 1.0 + weight_atol
+            or w2 < -weight_atol
+            or w3 < -weight_atol
+        ):
+            raise MGEDeprojectionError(
+                f"(p, q, u) = ({p:g}, {q:g}, {u:g}), q' = {q_obs:g}: degenerate "
+                f"viewing geometry (weights w1 = {w1:g}, w2 = {w2:g}, w3 = {w3:g})."
+            )
+        w1 = min(max(w1, 0.0), 1.0)
+        w2 = max(w2, 0.0)
+        w3 = max(w3, 0.0)
+
+        theta = math.acos(math.sqrt(w1))
+        phi = math.atan(math.sqrt(w2))
+        psi = math.pi - math.atan(math.sqrt(w3)) - anchor_twist
+        return Quantity(theta, "rad"), Quantity(phi, "rad"), Quantity(psi, "rad")
+
+    def triaxial_intrinsic_shape(
+        self, theta: Quantity, phi: Quantity, psi: Quantity
+    ) -> tuple[float, float, float]:
+        """The flattest Gaussian's intrinsic ``(p, q, u)`` at these viewing angles.
+
+        The anchor-component slice of `deproject_triaxial`, and the numerical
+        inverse of `triaxial_viewing_angles` -- exact for an interior geometry,
+        but a boundary ``u`` was nudged inside the domain by the forward call,
+        so it comes back as the nudged value rather than the exact endpoint
+        (more so at reduced JAX precision -- see `triaxial_viewing_angles`).
+        The anchor's ``PA_twist`` is folded back into ``psi`` by
+        `_triaxial_component_ratios`, same as for every other Gaussian.
+        """
+        p, q, u = self._triaxial_component_ratios(theta, phi, psi)
+        anchor = int(jnp.argmin(self.q.ustrip("")))
+        return float(p[anchor]), float(q[anchor]), float(u[anchor])
 
 
 class LightMGE(AbstractMGE):
@@ -525,9 +713,9 @@ def _gaussian_radial_antiderivative(a: jnp.ndarray, r: jnp.ndarray) -> jnp.ndarr
         constant of integration -- i.e. valid for computing definite integrals
         between finite radii, or between a finite radius and 0.
     """
-    return -r / (2 * a) * jnp.exp(-a * r**2) + jnp.sqrt(jnp.pi) / (
-        4 * a**1.5
-    ) * erf(jnp.sqrt(a) * r)
+    return -r / (2 * a) * jnp.exp(-a * r**2) + jnp.sqrt(jnp.pi) / (4 * a**1.5) * erf(
+        jnp.sqrt(a) * r
+    )
 
 
 class Deprojected3DMGE(eqx.Module):
@@ -584,9 +772,9 @@ class Deprojected3DMGE(eqx.Module):
 
         # Add a leading components axis: (G, n_theta, Q, n_phi, Q).
         shape = (-1, 1, 1, 1, 1)
-        a = (
-            x2 + y2 / p.reshape(shape) ** 2 + z2 / q.reshape(shape) ** 2
-        ) / (2 * sigma.reshape(shape) ** 2)
+        a = (x2 + y2 / p.reshape(shape) ** 2 + z2 / q.reshape(shape) ** 2) / (
+            2 * sigma.reshape(shape) ** 2
+        )
 
         # Radial integral per component and direction, for every finite edge,
         # then differenced into per-bin integrals; the last bin runs to infinity.
