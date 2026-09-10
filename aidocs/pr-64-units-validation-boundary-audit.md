@@ -111,6 +111,22 @@ from `units.md` / `potential.md` / `KNOWLEDGE.md` (it exists on the unmerged
 the docs no longer signal that a concrete cross-component mechanism is
 prototyped. Re-add when `prior-concept` lands if desired.
 
-## Response
+## Response (2026-09-10)
 
-(pending)
+M1 and L1 addressed on the branch.
+
+- **M1** -- `_potential_parameter_dimensions`'s docstring again states that
+  `None` covers a malformed / unrecognized `type` / unimplemented
+  `parameterization`, and that the caller skips unit validation so the error
+  falls to `AbstractPotentialComponent.resolve` instead of a misleading
+  "unit not supported". The explanatory comment is back on
+  `test_parameter_unit_check_defers_for_an_unrecognized_potential_type`.
+- **L1** -- `validate_declared_unit`'s docstring now names it the string-input
+  peer of `validate_dimension` and says which to use where.
+
+L2 (a fresh-process `import tnt.units` isolation assertion) and the
+prior-mechanism doc observation are left for the PR author's discretion; both
+are optional.
+
+Re-verified locally (macOS): `pytest -q` 398 passed, `ruff check .` clean,
+strict `sphinx-build` succeeded.

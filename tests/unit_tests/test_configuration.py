@@ -77,6 +77,8 @@ def test_parameter_unit_is_rejected_on_a_dimensionless_native_parameter() -> Non
 
 
 def test_parameter_unit_check_defers_for_an_unrecognized_potential_type() -> None:
+    # An unknown type has no known parameter schema, so unit validation is
+    # skipped here -- the "unsupported type" error is left to resolve().
     config = {
         "cosmological_parameters": {},
         "system_attributes": {},

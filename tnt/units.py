@@ -224,7 +224,13 @@ def _declared_quantity(value: Any, dimension: str, path: str) -> tuple[float, An
 
 
 def validate_declared_unit(value: Any, dimension: str, path: str) -> Any:
-    """Parse a declared unit and validate its physical dimension."""
+    """Parse a declared unit *string* and check its dimension, returning the unit.
+
+    The string-input peer of `validate_dimension`, which takes an already
+    parsed unit object and returns nothing. Use this at a configuration
+    boundary where the unit arrives as a declared string; use
+    `validate_dimension` once you hold a unit object.
+    """
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{path} must be a non-empty unit string.")
     try:

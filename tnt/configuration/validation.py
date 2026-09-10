@@ -200,7 +200,15 @@ def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
 def _potential_parameter_dimensions(
     settings: Mapping[str, Any],
 ) -> Mapping[str, str] | None:
-    """Return one component's dimensions when its parameter schema is known."""
+    """Return one component's raw parameter dimensions from `tnt.potential`.
+
+    `None` means the resolved `type`/`parameterization` has no known parameter
+    schema -- a malformed value (already rejected by `_validate_potential`,
+    which runs first), an unrecognized `type`, or an unimplemented
+    `parameterization`. The caller then skips unit validation for this
+    component, leaving that error to `AbstractPotentialComponent.resolve`
+    rather than emitting a misleading "unit not supported for this parameter".
+    """
     potential_type = settings.get("type")
     parameterization = settings.get("parameterization")
     if not (
