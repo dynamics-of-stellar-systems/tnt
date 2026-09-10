@@ -15,14 +15,14 @@ triaxial case.
 Both types also accept `parameterization: "pqu"`, replacing `theta/phi/psi`
 with the intrinsic axis ratios `p = B/A`, `q = C/A` and the compression `u`
 of the triaxial-Schwarzschild / DYNAMITE-successor literature (van den Bosch
-et al. 2008, MNRAS 385, 647). `_pqu_to_tpp` converts `(p, q, u)` to the
-native viewing angles at the anchor `q' = min(component q)`; `_tpp_to_pqu`
-reports back the same way for `AllModels`.
+et al. 2008, MNRAS 385, 647). `_pqu_to_tpp` / `_tpp_to_pqu` are thin adapters
+over `AbstractMGE.triaxial_viewing_angles` / `triaxial_intrinsic_shape`,
+which own the conversion (anchored at `q' = min(component q)`) and its
+inverse.
 """
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from typing import Any, ClassVar, Self
 
@@ -35,7 +35,7 @@ from tnt.mge import (
     Deprojected3DMGE,
     LightMGE,
     MassMGE,
-    _triaxial_intrinsic_axis_ratios,
+    MGEDeprojectionError,
 )
 from tnt.potential.components import AbstractPotentialComponent
 from tnt.potential.registry import (
@@ -255,25 +255,12 @@ def _galax_potential_from_deprojected(
 
 
 # ==========================================================================
-# The `pqu` parameterization: intrinsic axis ratios `(p, q, u)` <-> viewing
-# angles `(theta, phi, psi)`. `p = B/A`, `q = C/A`, `u` the scale-length
-# compression; anchored at `q' = min(component q)`, matching DYNAMITE
-# `triax_pqu2tpp` (van den Bosch et al. 2008, MNRAS 385, 647). The reverse
-# direction is the same van den Bosch math `deproject_triaxial` already uses,
-# factored into `tnt.mge._triaxial_intrinsic_axis_ratios`.
-#
-# The van den Bosch relations assume the anchor Gaussian has zero `PA_twist`.
-# When it doesn't, `_pqu_to_tpp` folds the anchor twist `delta` into the
-# global `psi` (`psi -> psi - delta`) and `_tpp_to_pqu` folds it back out, so
-# `deproject_triaxial`'s per-component `psi + PA_twist` gives the anchor
-# exactly the shape `(p, q, u)` names, whatever the MGE's twist profile.
-
-# Float noise floor for the de Zeeuw & Franx weights `w1`/`w2`/`w3`, which are
-# non-negative in exact arithmetic inside the valid `(p, q, u)` domain. `u` is
-# already nudged off the singular boundaries below, so any residual excursion
-# this small is roundoff and is clamped; a larger one is a genuinely
-# degenerate viewing geometry and still rejected.
-_PQU_WEIGHT_ATOL = 1e-9
+# The `pqu` parameterization: intrinsic axis ratios `(p, q, u)` of the MGE's
+# flattest Gaussian <-> global viewing angles `(theta, phi, psi)`, matching
+# DYNAMITE `triax_pqu2tpp` (van den Bosch et al. 2008, MNRAS 385, 647). Both
+# directions -- including the anchor-twist bookkeeping -- live on
+# `AbstractMGE` (`triaxial_viewing_angles` / `triaxial_intrinsic_shape`);
+# these converters are just the parameterization-registry adapters.
 
 _PQU_SHAPE_CONSTRAINTS: dict[str, ParameterConstraint] = {
     "p": ParameterConstraint(minimum=0.0, minimum_inclusive=False, maximum=1.0),
@@ -283,7 +270,7 @@ _PQU_SHAPE_CONSTRAINTS: dict[str, ParameterConstraint] = {
     ),
     # p < u <= 1 (data-independent floor of DYNAMITE's
     # max(q/q', p) < u <= min(p/q', 1); the q'-dependent parts are checked
-    # against the MGE in `_pqu_to_tpp`)
+    # against the MGE in `AbstractMGE.triaxial_viewing_angles`)
     "u": ParameterConstraint(maximum=1.0, other_parameter="p", relation=">"),
 }
 
@@ -293,117 +280,35 @@ def _mass_parameter_name(parameters: Mapping[str, Any]) -> str:
     return "ml" if "ml" in parameters else "mge_mass_scale"
 
 
-def _mge_pqu_anchor(mge: LightMGE | MassMGE) -> tuple[float, float]:
-    """The `(p, q, u)` anchor: the flattest Gaussian's observed `q'` and twist.
-
-    Returns `(q_obs, pa_twist)` for the component with the smallest observed
-    axial ratio, `pa_twist` in radians. Ties for the minimum `q'` are broken
-    by component order. See this section's header for how a non-zero anchor
-    twist is handled.
-    """
-    q = mge.q.ustrip("")
-    anchor = int(jnp.argmin(q))
-    return float(q[anchor]), float(mge.PA_twist.ustrip("rad")[anchor])
-
-
 def _pqu_to_tpp(
     raw: dict[str, Quantity],
     cosmological_parameters: Mapping[str, Quantity],
     mge: LightMGE | MassMGE | None,
 ) -> dict[str, Quantity]:
-    """Convert `(p, q, u)` to the native viewing angles `(theta, phi, psi)`.
+    """Adapt `(p, q, u)` -> `(theta, phi, psi)` via `triaxial_viewing_angles`.
 
-    van den Bosch et al. 2008 (MNRAS 385, 647) / DYNAMITE `triax_pqu2tpp`, at
-    the anchor `q' = min(component q)` (the anchor's own `PA_twist` is folded
-    into `psi` -- see this section's header). `p, q, u` bounds that don't
-    involve the MGE (`0 < q <= p <= 1`, `p < u <= 1`) are already enforced by
-    the parameterization's `raw_constraints` before this runs. Checked here,
-    raising `InvalidPotentialParametersError`: a circular MGE (`q' = 1`), the
-    prolate limit `q == p`, the `q'`-dependent domain
-    `max(q/q', p) < u <= min(p/q', 1)`, and any degenerate weight. `u == 1`
-    (intrinsic major axis exactly in the sky plane) is valid; it is evaluated
-    at the largest float below 1, as DYNAMITE does, since the `1 - u^2`
-    denominators in `w2`/`w3` vanish there.
+    The data-independent `(p, q, u)` bounds (`0 < q <= p <= 1`, `p < u <= 1`)
+    are enforced by the parameterization's `raw_constraints` before this runs;
+    the MGE-dependent domain and every singular geometry are the MGE method's
+    business, re-raised here as `InvalidPotentialParametersError` so
+    `ModelIterator` records an invalid model rather than crashing.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register `pqu`
         raise InvalidPotentialParametersError(
             "The 'pqu' parameterization requires an MGE component."
         )
-    p = float(raw["p"].ustrip(""))
-    q = float(raw["q"].ustrip(""))
-    u = float(raw["u"].ustrip(""))
-    q_obs, anchor_twist = _mge_pqu_anchor(mge)
-    if not q_obs < 1.0:
-        raise InvalidPotentialParametersError(
-            "The 'pqu' parameterization needs a genuinely flattened MGE "
-            f"(min observed q' = {q_obs:g}); a circular MGE has no triaxial "
-            "viewing geometry to solve for."
+    try:
+        theta, phi, psi = mge.triaxial_viewing_angles(
+            float(raw["p"].ustrip("")),
+            float(raw["q"].ustrip("")),
+            float(raw["u"].ustrip("")),
         )
-    if q >= p:  # prolate limit: no unique triaxial viewing geometry
-        raise InvalidPotentialParametersError(
-            f"(p, q, u) = ({p:g}, {q:g}, {u:g}): q == p (prolate) has no unique "
-            "triaxial viewing geometry."
-        )
-
-    lo = max(q / q_obs, p)
-    hi = min(p / q_obs, 1.0)
-    if not lo < u <= hi:
-        raise InvalidPotentialParametersError(
-            f"(p, q, u) = ({p:g}, {q:g}, {u:g}) has no triaxial deprojection for "
-            f"this MGE (min observed q' = {q_obs:g}): requires "
-            f"max(q/q', p) = {lo:g} < u <= min(p/q', 1) = {hi:g}."
-        )
-
-    # The de Zeeuw & Franx weights below are singular exactly on the domain
-    # boundaries (u in {p, q/q', p/q', 1}); a declared u there is a valid
-    # limiting geometry, so evaluate it a hair inside the open interval
-    # (DYNAMITE nudges u == 1 the same way). Interior values are untouched.
-    margin = 1e-9 * max(hi - lo, 1e-12)
-    u_calc = min(max(u, lo + margin), hi - margin)
-
-    p2, q2, u2, o2 = p * p, q * q, u_calc * u_calc, q_obs * q_obs
-    w1 = (u2 - q2) * (o2 * u2 - q2) / ((1.0 - q2) * (p2 - q2))
-    w2 = (
-        (u2 - p2)
-        * (p2 - o2 * u2)
-        * (1.0 - q2)
-        / ((1.0 - u2) * (1.0 - o2 * u2) * (p2 - q2))
-    )
-    w3 = (
-        (1.0 - o2 * u2)
-        * (p2 - o2 * u2)
-        * (u2 - q2)
-        / ((1.0 - u2) * (u2 - p2) * (o2 * u2 - q2))
-    )
-    if (
-        w1 < -_PQU_WEIGHT_ATOL
-        or w1 > 1.0 + _PQU_WEIGHT_ATOL
-        or w2 < -_PQU_WEIGHT_ATOL
-        or w3 < -_PQU_WEIGHT_ATOL
-    ):
-        raise InvalidPotentialParametersError(
-            f"(p, q, u) = ({p:g}, {q:g}, {u:g}), q' = {q_obs:g}: degenerate "
-            f"viewing geometry (weights w1 = {w1:g}, w2 = {w2:g}, w3 = {w3:g})."
-        )
-    w1 = min(max(w1, 0.0), 1.0)
-    w2 = max(w2, 0.0)
-    w3 = max(w3, 0.0)
-
-    theta = math.acos(math.sqrt(w1))
-    phi = math.atan(math.sqrt(w2))
-    # Fold the anchor's own PA_twist out of the global psi so that
-    # deproject_triaxial's `psi + PA_twist` reproduces the van den Bosch angle
-    # for the anchor Gaussian (see this section's header).
-    psi = math.pi - math.atan(math.sqrt(w3)) - anchor_twist
+    except MGEDeprojectionError as error:
+        raise InvalidPotentialParametersError(str(error)) from error
 
     mass = _mass_parameter_name(raw)
-    return {
-        mass: raw[mass],
-        "theta": Quantity(theta, "rad"),
-        "phi": Quantity(phi, "rad"),
-        "psi": Quantity(psi, "rad"),
-    }
+    return {mass: raw[mass], "theta": theta, "phi": phi, "psi": psi}
 
 
 def _tpp_to_pqu(
@@ -414,22 +319,16 @@ def _tpp_to_pqu(
 ) -> dict[str, Quantity]:
     """Report native `(theta, phi, psi)` back as `(p, q, u)` for `AllModels`.
 
-    The same van den Bosch 2008 relation `deproject_triaxial` uses
-    (`tnt.mge._triaxial_intrinsic_axis_ratios`), evaluated at the anchor
-    `q' = min(component q)` with the anchor's `PA_twist` folded back into
-    `psi` -- the exact inverse of `_pqu_to_tpp`.
+    `AbstractMGE.triaxial_intrinsic_shape` -- the anchor-component slice of
+    `deproject_triaxial`, the exact inverse of `triaxial_viewing_angles`.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register `pqu`
         raise InvalidPotentialParametersError(
             "The 'pqu' parameterization requires an MGE component."
         )
-    q_obs, anchor_twist = _mge_pqu_anchor(mge)
-    p, q, u = _triaxial_intrinsic_axis_ratios(
-        native["theta"].ustrip("rad"),
-        native["phi"].ustrip("rad"),
-        native["psi"].ustrip("rad") + anchor_twist,
-        q_obs,
+    p, q, u = mge.triaxial_intrinsic_shape(
+        native["theta"], native["phi"], native["psi"]
     )
     mass = _mass_parameter_name(native)
     mass_value = native[mass]

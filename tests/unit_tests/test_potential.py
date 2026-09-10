@@ -1971,7 +1971,7 @@ def test_pqu_to_tpp_rejects_a_circular_mge() -> None:
         major_axis_pa=Quantity(0.0, "deg"),
     )
     with pytest.raises(
-        _registry_module.InvalidPotentialParametersError, match="genuinely flattened"
+        _registry_module.InvalidPotentialParametersError, match="circular MGE"
     ):
         _pqu_to_tpp(
             {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU},

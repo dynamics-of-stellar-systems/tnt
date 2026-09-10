@@ -491,18 +491,21 @@
   `cosmological_parameters` into one converter-context object.
 - `pqu` (the two triaxial MGE types): `(p, q, u)` intrinsic axis ratios /
   compression <-> `(theta, phi, psi)` viewing angles, van den Bosch et al.
-  2008 MNRAS 385, 647 (= DYNAMITE `triax_pqu2tpp`). Anchor `q' = min` of the
-  MGE's component `q`; the anchor Gaussian's `PA_twist` is folded into `psi`
-  (`_pqu_to_tpp` subtracts it, `_tpp_to_pqu` adds it back), so `(p, q, u)`
-  keep their meaning for a twisted MGE. Ties for min `q'` break by component
-  order. Forward `_pqu_to_tpp`; inverse `_tpp_to_pqu` reuses
-  `tnt.mge._triaxial_intrinsic_axis_ratios` -- the same vdB2008 math
-  `deproject_triaxial` already runs -- so a `pqu` config and its equivalent
+  2008 MNRAS 385, 647 (= DYNAMITE `triax_pqu2tpp`). Both directions live on
+  `AbstractMGE`: `triaxial_viewing_angles(p, q, u) -> (theta, phi, psi)` and
+  its inverse `triaxial_intrinsic_shape(theta, phi, psi) -> (p, q, u)` (the
+  anchor slice of `deproject_triaxial`). Anchor `q' = min` component `q`; the
+  anchor Gaussian's `PA_twist` is folded out of `psi` by
+  `triaxial_viewing_angles` and back in by `triaxial_intrinsic_shape`, so
+  `(p, q, u)` keep their meaning for a twisted MGE. Ties for min `q'` break by
+  component order. `_pqu_to_tpp` / `_tpp_to_pqu` in `tnt.potential.triaxial_mge`
+  are thin registry adapters that re-raise `MGEDeprojectionError` as
+  `InvalidPotentialParametersError`. A `pqu` config and its equivalent
   `(theta, phi, psi)` config build an identical potential. Data-independent
   bounds (`0 < q <= p <= 1`, `p < u <= 1`) are `ParameterConstraint`s;
   `q == p` (prolate), `max(q/q', p) < u <= min(p/q', 1)` and degenerate
-  weights are checked in `_pqu_to_tpp` -> `InvalidPotentialParametersError`.
-  The de Zeeuw & Franx weights are singular exactly on the `u` boundaries
+  weights are rejected by `triaxial_viewing_angles`. The de Zeeuw & Franx
+  weights are singular exactly on the `u` boundaries
   (`u` in `{p, q/q', p/q', 1}`), all valid limiting geometries, so `u` is
   evaluated a hair inside the open interval (as DYNAMITE nudges `u == 1`).
 - `parameterization` is a separate, optional field controlling how config

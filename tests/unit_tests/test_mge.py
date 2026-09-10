@@ -577,6 +577,68 @@ def test_deproject_triaxial_global_psi_and_pa_twist_are_additive():
     assert jnp.allclose(shifted_psi.q.ustrip(""), shifted_twist.q.ustrip(""))
 
 
+def _triaxial_anchor_mge() -> LightMGE:
+    # 3 Gaussians, physical sigma, flattest (anchor) q' = 0.76.
+    return LightMGE(
+        I=u.Quantity(jnp.array([120.0, 45.0, 18.0]), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array([0.4, 1.8, 6.0]), "kpc"),
+        q=u.Quantity(jnp.array([0.88, 0.82, 0.76]), ""),
+        PA_twist=u.Quantity(jnp.zeros(3), "rad"),
+        major_axis_pa=u.Quantity(0.0, "deg"),
+    )
+
+
+def test_triaxial_viewing_angles_and_intrinsic_shape_are_inverses():
+    mge = _triaxial_anchor_mge()
+    p, q, u_ = 0.85, 0.60, 0.93
+
+    theta, phi, psi = mge.triaxial_viewing_angles(p, q, u_)
+    p_r, q_r, u_r = mge.triaxial_intrinsic_shape(theta, phi, psi)
+
+    assert (p_r, q_r, u_r) == pytest.approx((p, q, u_), abs=1e-9)
+
+
+def test_triaxial_viewing_angles_agree_with_deproject_triaxial_at_the_anchor():
+    mge = _triaxial_anchor_mge()
+    theta, phi, psi = mge.triaxial_viewing_angles(0.85, 0.60, 0.93)
+
+    deprojected = mge.deproject_triaxial(theta, phi, psi)
+
+    # component 2 is the anchor (q' = 0.76)
+    assert float(deprojected.p[2].ustrip("")) == pytest.approx(0.85, abs=1e-9)
+    assert float(deprojected.q[2].ustrip("")) == pytest.approx(0.60, abs=1e-9)
+
+
+def test_triaxial_viewing_angles_fold_the_anchor_pa_twist():
+    # A single-Gaussian MGE whose one component (the anchor) has PA_twist.
+    twisted = _single_component_light_mge(q_obs=0.76, psi=0.3)
+    theta, phi, psi = twisted.triaxial_viewing_angles(0.85, 0.60, 0.93)
+
+    # deproject_triaxial adds PA_twist=0.3 back, recovering the requested shape.
+    deprojected = twisted.deproject_triaxial(theta, phi, psi)
+    assert float(deprojected.p[0].ustrip("")) == pytest.approx(0.85, abs=1e-9)
+    assert float(deprojected.q[0].ustrip("")) == pytest.approx(0.60, abs=1e-9)
+
+
+@pytest.mark.parametrize(
+    ("p", "q", "u_", "match"),
+    [
+        (0.85, 0.85, 0.93, "prolate"),
+        (0.85, 0.60, 0.65, r"max\(q/q', p\)"),
+        (0.70, 0.55, 0.95, r"u <= min"),  # hi = p/q' = 0.921 < u
+    ],
+)
+def test_triaxial_viewing_angles_reject_degenerate_geometry(p, q, u_, match):
+    with pytest.raises(MGEDeprojectionError, match=match):
+        _triaxial_anchor_mge().triaxial_viewing_angles(p, q, u_)
+
+
+def test_triaxial_viewing_angles_reject_a_circular_mge():
+    circular = _single_component_light_mge(q_obs=1.0, psi=0.0)
+    with pytest.raises(MGEDeprojectionError, match="circular MGE"):
+        circular.triaxial_viewing_angles(0.85, 0.60, 0.93)
+
+
 def test_mge_is_frozen():
     mge = _multi_component_light_mge()
 

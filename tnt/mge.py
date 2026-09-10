@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar, Self
@@ -67,6 +68,14 @@ def _check_axial_ratios(p: jnp.ndarray, q: jnp.ndarray) -> None:
         "Deprojection violates TNT's 0 < q <= p <= 1 intrinsic-axis convention "
         f"(or has no real solution) for: {details}."
     )
+
+
+# Float noise floor for the de Zeeuw & Franx weights `w1`/`w2`/`w3` in
+# `AbstractMGE.triaxial_viewing_angles`: non-negative in exact arithmetic
+# inside the valid domain, and `u` is already nudged off the singular
+# boundaries, so a residual excursion this small is roundoff and is clamped;
+# a larger one is a genuinely degenerate geometry and is rejected.
+_TRIAXIAL_WEIGHT_ATOL = 1e-9
 
 
 def _triaxial_intrinsic_axis_ratios(
@@ -497,6 +506,122 @@ class AbstractMGE(eqx.Module):
         return Deprojected3DMGE(
             I=I_3d, sigma=sigma_intr, p=Quantity(p_intr, ""), q=Quantity(q_intr, "")
         )
+
+    def _triaxial_anchor(self) -> tuple[float, float]:
+        """``(q', PA_twist)`` of the flattest Gaussian -- the ``(p, q, u)`` anchor.
+
+        The van den Bosch relations pin the triaxial viewing geometry to one
+        reference ellipse; TNT uses the component with the smallest observed
+        axial ratio. Ties break by component order. ``PA_twist`` is returned
+        in radians so `triaxial_viewing_angles`/`triaxial_intrinsic_shape` can
+        fold it in or out of the global ``psi``.
+        """
+        q = self.q.ustrip("")
+        anchor = int(jnp.argmin(q))
+        return float(q[anchor]), float(self.PA_twist.ustrip("rad")[anchor])
+
+    def triaxial_viewing_angles(
+        self, p: float, q: float, u: float
+    ) -> tuple[Quantity, Quantity, Quantity]:
+        """The global viewing angles giving the flattest Gaussian shape ``(p, q, u)``.
+
+        The inverse of `deproject_triaxial` at the anchor component (van den
+        Bosch et al. 2008 eqs. 6-9 / DYNAMITE ``triax_pqu2tpp``): the intrinsic
+        axis ratios ``p = B/A``, ``q = C/A`` and scale-length compression
+        ``u = sigma_observed / sigma_intrinsic`` of the ``q' = min(component q)``
+        Gaussian fix the three global angles. A non-zero anchor ``PA_twist`` is
+        folded out of the returned ``psi``, so `deproject_triaxial`'s
+        per-component ``psi + PA_twist`` reproduces the van den Bosch angle for
+        the anchor whatever the MGE's twist profile.
+
+        ``(p, q, u)`` must describe a genuine triaxial figure (``0 < q < p <= 1``)
+        with, against this MGE, ``max(q/q', p) < u <= min(p/q', 1)``. The
+        inclusive ``u`` endpoints are valid limiting geometries: the de Zeeuw &
+        Franx weights are singular exactly on every ``u`` boundary
+        (``u`` in ``{p, q/q', p/q', 1}``), so ``u`` is evaluated a hair inside
+        the open interval, as DYNAMITE nudges ``u == 1``.
+
+        Raises:
+            MGEDeprojectionError: If this MGE is circular (``q' == 1``), if
+                ``q >= p`` (the prolate limit has no unique triaxial geometry),
+                or if ``(p, q, u)`` has no triaxial deprojection for this MGE.
+        """
+        q_obs, anchor_twist = self._triaxial_anchor()
+        if not q_obs < 1.0:
+            raise MGEDeprojectionError(
+                f"Triaxial deprojection needs a flattened MGE (min observed "
+                f"q' = {q_obs:g}); a circular MGE has no viewing geometry to "
+                "solve for."
+            )
+        if q >= p:
+            raise MGEDeprojectionError(
+                f"(p, q, u) = ({p:g}, {q:g}, {u:g}): q == p (prolate) has no "
+                "unique triaxial viewing geometry."
+            )
+
+        lo = max(q / q_obs, p)
+        hi = min(p / q_obs, 1.0)
+        if not lo < u <= hi:
+            raise MGEDeprojectionError(
+                f"(p, q, u) = ({p:g}, {q:g}, {u:g}) has no triaxial deprojection "
+                f"for this MGE (min observed q' = {q_obs:g}): requires "
+                f"max(q/q', p) = {lo:g} < u <= min(p/q', 1) = {hi:g}."
+            )
+
+        # Evaluate u a hair inside (lo, hi); interior values are untouched.
+        margin = 1e-9 * max(hi - lo, 1e-12)
+        u_calc = min(max(u, lo + margin), hi - margin)
+
+        p2, q2, u2, o2 = p * p, q * q, u_calc * u_calc, q_obs * q_obs
+        w1 = (u2 - q2) * (o2 * u2 - q2) / ((1.0 - q2) * (p2 - q2))
+        w2 = (
+            (u2 - p2)
+            * (p2 - o2 * u2)
+            * (1.0 - q2)
+            / ((1.0 - u2) * (1.0 - o2 * u2) * (p2 - q2))
+        )
+        w3 = (
+            (1.0 - o2 * u2)
+            * (p2 - o2 * u2)
+            * (u2 - q2)
+            / ((1.0 - u2) * (u2 - p2) * (o2 * u2 - q2))
+        )
+        if (
+            w1 < -_TRIAXIAL_WEIGHT_ATOL
+            or w1 > 1.0 + _TRIAXIAL_WEIGHT_ATOL
+            or w2 < -_TRIAXIAL_WEIGHT_ATOL
+            or w3 < -_TRIAXIAL_WEIGHT_ATOL
+        ):
+            raise MGEDeprojectionError(
+                f"(p, q, u) = ({p:g}, {q:g}, {u:g}), q' = {q_obs:g}: degenerate "
+                f"viewing geometry (weights w1 = {w1:g}, w2 = {w2:g}, w3 = {w3:g})."
+            )
+        w1 = min(max(w1, 0.0), 1.0)
+        w2 = max(w2, 0.0)
+        w3 = max(w3, 0.0)
+
+        theta = math.acos(math.sqrt(w1))
+        phi = math.atan(math.sqrt(w2))
+        psi = math.pi - math.atan(math.sqrt(w3)) - anchor_twist
+        return Quantity(theta, "rad"), Quantity(phi, "rad"), Quantity(psi, "rad")
+
+    def triaxial_intrinsic_shape(
+        self, theta: Quantity, phi: Quantity, psi: Quantity
+    ) -> tuple[float, float, float]:
+        """The flattest Gaussian's intrinsic ``(p, q, u)`` at these viewing angles.
+
+        The anchor-component slice of `deproject_triaxial`, and the exact
+        inverse of `triaxial_viewing_angles` -- the anchor's ``PA_twist`` is
+        folded back into ``psi``.
+        """
+        q_obs, anchor_twist = self._triaxial_anchor()
+        p, q, u = _triaxial_intrinsic_axis_ratios(
+            theta.ustrip("rad"),
+            phi.ustrip("rad"),
+            psi.ustrip("rad") + anchor_twist,
+            q_obs,
+        )
+        return float(p), float(q), float(u)
 
 
 class LightMGE(AbstractMGE):

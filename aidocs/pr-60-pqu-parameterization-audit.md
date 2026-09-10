@@ -308,3 +308,24 @@ converter/module docstrings all updated.
 The converter type-alias / `_identity_*` test-helper signature mismatch noted
 under Medium is left as-is: those helpers exercise registry storage only, and
 issue #65's centralization will settle the converter protocol.
+
+### Structural: the van den Bosch relation is now one owner
+
+Review raised that the relation had ended up split across layers -- the
+forward (`_triaxial_intrinsic_axis_ratios`) in `tnt.mge`, the inverse
+(`_pqu_to_tpp`) in the potential layer, with the inverse re-deriving
+`deproject_triaxial`'s `psi + PA_twist` convention to invert it. Both
+directions now live on `AbstractMGE`:
+
+- `triaxial_viewing_angles(p, q, u) -> (theta, phi, psi)` -- the vdB
+  `triax_pqu2tpp` math, anchor selection, `u`-boundary nudge, weight floor,
+  and the anchor-twist fold; raises `MGEDeprojectionError`.
+- `triaxial_intrinsic_shape(theta, phi, psi) -> (p, q, u)` -- the
+  anchor-component slice of `deproject_triaxial`, its exact inverse.
+
+`_pqu_to_tpp` / `_tpp_to_pqu` are now ~10-line registry adapters that call
+those and translate the exception. `_triaxial_intrinsic_axis_ratios` is no
+longer imported outside `tnt.mge`. Direct method coverage added in
+`test_mge.py` (round trip, agreement with `deproject_triaxial` at the anchor,
+twist fold, degenerate/circular rejection); the potential-layer tests stay as
+end-to-end coverage.

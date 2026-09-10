@@ -248,10 +248,11 @@ potential:
   MGE, `max(q/q', p) < u <= min(p/q', 1)`. Outside that range there is no
   triaxial deprojection and the build raises `InvalidPotentialParametersError`
   (recorded as an invalid model, not a crash); the inclusive `u` endpoints
-  are valid limiting geometries. The reverse conversion for `AllModels`'
-  columns is the same van den Bosch relation `deproject_triaxial` already
-  uses, so a `(p, q, u)` config and its equivalent `(theta, phi, psi)` config
-  build an identical potential. This is TNT's first non-native
+  are valid limiting geometries. Both directions are `AbstractMGE` methods
+  (`triaxial_viewing_angles` and its inverse `triaxial_intrinsic_shape`, the
+  anchor slice of `deproject_triaxial`), so a `(p, q, u)` config and its
+  equivalent `(theta, phi, psi)` config build an identical potential and
+  `AllModels` reports either faithfully. This is TNT's first non-native
   parameterization on one of its own component types.
 - **`Potential.generate_orbit_library`**: not implemented -- blocked on
   `tnt.orbit_library`, itself still a full scaffold.
