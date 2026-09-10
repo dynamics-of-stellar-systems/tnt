@@ -16,8 +16,8 @@ Both types also accept `parameterization: "pqu"`, replacing `theta/phi/psi`
 with the intrinsic axis ratios `p = B/A`, `q = C/A` and the compression `u`
 of the triaxial-Schwarzschild / DYNAMITE-successor literature (van den Bosch
 et al. 2008, MNRAS 385, 647). `_pqu_to_tpp` converts `(p, q, u)` to the
-native viewing angles at `q' = min(component q)` and zero twist -- the
-standard anchor; `_tpp_to_pqu` reports back the same way for `AllModels`.
+native viewing angles at the anchor `q' = min(component q)`; `_tpp_to_pqu`
+reports back the same way for `AllModels`.
 """
 
 from __future__ import annotations
@@ -257,10 +257,23 @@ def _galax_potential_from_deprojected(
 # ==========================================================================
 # The `pqu` parameterization: intrinsic axis ratios `(p, q, u)` <-> viewing
 # angles `(theta, phi, psi)`. `p = B/A`, `q = C/A`, `u` the scale-length
-# compression; anchored at `q' = min(component q)` with zero twist, matching
-# DYNAMITE `triax_pqu2tpp` (van den Bosch et al. 2008, MNRAS 385, 647). The
-# reverse direction is the same van den Bosch math `deproject_triaxial`
-# already uses, factored into `tnt.mge._triaxial_intrinsic_axis_ratios`.
+# compression; anchored at `q' = min(component q)`, matching DYNAMITE
+# `triax_pqu2tpp` (van den Bosch et al. 2008, MNRAS 385, 647). The reverse
+# direction is the same van den Bosch math `deproject_triaxial` already uses,
+# factored into `tnt.mge._triaxial_intrinsic_axis_ratios`.
+#
+# The van den Bosch relations assume the anchor Gaussian has zero `PA_twist`.
+# When it doesn't, `_pqu_to_tpp` folds the anchor twist `delta` into the
+# global `psi` (`psi -> psi - delta`) and `_tpp_to_pqu` folds it back out, so
+# `deproject_triaxial`'s per-component `psi + PA_twist` gives the anchor
+# exactly the shape `(p, q, u)` names, whatever the MGE's twist profile.
+
+# Float noise floor for the de Zeeuw & Franx weights `w1`/`w2`/`w3`, which are
+# non-negative in exact arithmetic inside the valid `(p, q, u)` domain. `u` is
+# already nudged off the singular boundaries below, so any residual excursion
+# this small is roundoff and is clamped; a larger one is a genuinely
+# degenerate viewing geometry and still rejected.
+_PQU_WEIGHT_ATOL = 1e-9
 
 _PQU_SHAPE_CONSTRAINTS: dict[str, ParameterConstraint] = {
     "p": ParameterConstraint(minimum=0.0, minimum_inclusive=False, maximum=1.0),
@@ -280,9 +293,17 @@ def _mass_parameter_name(parameters: Mapping[str, Any]) -> str:
     return "ml" if "ml" in parameters else "mge_mass_scale"
 
 
-def _mge_min_observed_q(mge: LightMGE | MassMGE) -> float:
-    """`q' = min` component observed axial ratio -- the `(p, q, u)` anchor."""
-    return float(jnp.min(mge.q.ustrip("")))
+def _mge_pqu_anchor(mge: LightMGE | MassMGE) -> tuple[float, float]:
+    """The `(p, q, u)` anchor: the flattest Gaussian's observed `q'` and twist.
+
+    Returns `(q_obs, pa_twist)` for the component with the smallest observed
+    axial ratio, `pa_twist` in radians. Ties for the minimum `q'` are broken
+    by component order. See this section's header for how a non-zero anchor
+    twist is handled.
+    """
+    q = mge.q.ustrip("")
+    anchor = int(jnp.argmin(q))
+    return float(q[anchor]), float(mge.PA_twist.ustrip("rad")[anchor])
 
 
 def _pqu_to_tpp(
@@ -292,15 +313,17 @@ def _pqu_to_tpp(
 ) -> dict[str, Quantity]:
     """Convert `(p, q, u)` to the native viewing angles `(theta, phi, psi)`.
 
-    van den Bosch et al. 2008 (MNRAS 385, 647) / DYNAMITE `triax_pqu2tpp`,
-    with `q' = min(component q)` and zero twist. `p, q, u` bounds that don't
+    van den Bosch et al. 2008 (MNRAS 385, 647) / DYNAMITE `triax_pqu2tpp`, at
+    the anchor `q' = min(component q)` (the anchor's own `PA_twist` is folded
+    into `psi` -- see this section's header). `p, q, u` bounds that don't
     involve the MGE (`0 < q <= p <= 1`, `p < u <= 1`) are already enforced by
     the parameterization's `raw_constraints` before this runs. Checked here,
     raising `InvalidPotentialParametersError`: a circular MGE (`q' = 1`), the
     prolate limit `q == p`, the `q'`-dependent domain
     `max(q/q', p) < u <= min(p/q', 1)`, and any degenerate weight. `u == 1`
-    (intrinsic major axis exactly in the sky plane) is valid -- handled by its
-    analytic limit `phi = psi = pi/2`, where DYNAMITE nudges `u` down one ULP.
+    (intrinsic major axis exactly in the sky plane) is valid; it is evaluated
+    at the largest float below 1, as DYNAMITE does, since the `1 - u^2`
+    denominators in `w2`/`w3` vanish there.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register `pqu`
@@ -310,7 +333,7 @@ def _pqu_to_tpp(
     p = float(raw["p"].ustrip(""))
     q = float(raw["q"].ustrip(""))
     u = float(raw["u"].ustrip(""))
-    q_obs = _mge_min_observed_q(mge)
+    q_obs, anchor_twist = _mge_pqu_anchor(mge)
     if not q_obs < 1.0:
         raise InvalidPotentialParametersError(
             "The 'pqu' parameterization needs a genuinely flattened MGE "
@@ -332,40 +355,47 @@ def _pqu_to_tpp(
             f"max(q/q', p) = {lo:g} < u <= min(p/q', 1) = {hi:g}."
         )
 
-    p2, q2, u2, o2 = p * p, q * q, u * u, q_obs * q_obs
+    # The de Zeeuw & Franx weights below are singular exactly on the domain
+    # boundaries (u in {p, q/q', p/q', 1}); a declared u there is a valid
+    # limiting geometry, so evaluate it a hair inside the open interval
+    # (DYNAMITE nudges u == 1 the same way). Interior values are untouched.
+    margin = 1e-9 * max(hi - lo, 1e-12)
+    u_calc = min(max(u, lo + margin), hi - margin)
+
+    p2, q2, u2, o2 = p * p, q * q, u_calc * u_calc, q_obs * q_obs
     w1 = (u2 - q2) * (o2 * u2 - q2) / ((1.0 - q2) * (p2 - q2))
-    if not 0.0 <= w1 <= 1.0:
+    w2 = (
+        (u2 - p2)
+        * (p2 - o2 * u2)
+        * (1.0 - q2)
+        / ((1.0 - u2) * (1.0 - o2 * u2) * (p2 - q2))
+    )
+    w3 = (
+        (1.0 - o2 * u2)
+        * (p2 - o2 * u2)
+        * (u2 - q2)
+        / ((1.0 - u2) * (u2 - p2) * (o2 * u2 - q2))
+    )
+    if (
+        w1 < -_PQU_WEIGHT_ATOL
+        or w1 > 1.0 + _PQU_WEIGHT_ATOL
+        or w2 < -_PQU_WEIGHT_ATOL
+        or w3 < -_PQU_WEIGHT_ATOL
+    ):
         raise InvalidPotentialParametersError(
             f"(p, q, u) = ({p:g}, {q:g}, {u:g}), q' = {q_obs:g}: degenerate "
-            f"viewing geometry (theta weight w1 = {w1:g} outside [0, 1])."
+            f"viewing geometry (weights w1 = {w1:g}, w2 = {w2:g}, w3 = {w3:g})."
         )
-    theta = math.acos(math.sqrt(w1))
+    w1 = min(max(w1, 0.0), 1.0)
+    w2 = max(w2, 0.0)
+    w3 = max(w3, 0.0)
 
-    if u == 1.0:
-        # Intrinsic major axis exactly in the sky plane: the (1 - u^2)
-        # denominators in w2/w3 vanish, and the analytic u -> 1 limit is
-        # phi = psi = pi/2 (DYNAMITE nudges u down one ULP to the same end).
-        phi = psi = math.pi / 2
-    else:
-        w2 = (
-            (u2 - p2)
-            * (p2 - o2 * u2)
-            * (1.0 - q2)
-            / ((1.0 - u2) * (1.0 - o2 * u2) * (p2 - q2))
-        )
-        w3 = (
-            (1.0 - o2 * u2)
-            * (p2 - o2 * u2)
-            * (u2 - q2)
-            / ((1.0 - u2) * (u2 - p2) * (o2 * u2 - q2))
-        )
-        if not (w2 >= 0.0 and w3 >= 0.0):
-            raise InvalidPotentialParametersError(
-                f"(p, q, u) = ({p:g}, {q:g}, {u:g}), q' = {q_obs:g}: degenerate "
-                f"viewing geometry (phi/psi weights w2 = {w2:g}, w3 = {w3:g})."
-            )
-        phi = math.atan(math.sqrt(w2))
-        psi = math.pi - math.atan(math.sqrt(w3))
+    theta = math.acos(math.sqrt(w1))
+    phi = math.atan(math.sqrt(w2))
+    # Fold the anchor's own PA_twist out of the global psi so that
+    # deproject_triaxial's `psi + PA_twist` reproduces the van den Bosch angle
+    # for the anchor Gaussian (see this section's header).
+    psi = math.pi - math.atan(math.sqrt(w3)) - anchor_twist
 
     mass = _mass_parameter_name(raw)
     return {
@@ -386,19 +416,19 @@ def _tpp_to_pqu(
 
     The same van den Bosch 2008 relation `deproject_triaxial` uses
     (`tnt.mge._triaxial_intrinsic_axis_ratios`), evaluated at the anchor
-    `q' = min(component q)` with zero twist -- the exact inverse of
-    `_pqu_to_tpp`.
+    `q' = min(component q)` with the anchor's `PA_twist` folded back into
+    `psi` -- the exact inverse of `_pqu_to_tpp`.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register `pqu`
         raise InvalidPotentialParametersError(
             "The 'pqu' parameterization requires an MGE component."
         )
-    q_obs = _mge_min_observed_q(mge)
+    q_obs, anchor_twist = _mge_pqu_anchor(mge)
     p, q, u = _triaxial_intrinsic_axis_ratios(
         native["theta"].ustrip("rad"),
         native["phi"].ustrip("rad"),
-        native["psi"].ustrip("rad"),
+        native["psi"].ustrip("rad") + anchor_twist,
         q_obs,
     )
     mass = _mass_parameter_name(native)

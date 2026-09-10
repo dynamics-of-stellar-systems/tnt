@@ -477,27 +477,34 @@
   parameterizations exist. Read back via `get_parameterization(type, name)` /
   `parameterization_names(type)`. `type_name` may be a curated native `galax`
   type OR a registered TNT component type (`is_registered_component_type`).
-  Config validation and `resolve()` were already generic (they key
-  `_PARAMETERIZATION_REGISTRY` by `(type, name)` with no galax assumption);
-  the inverse dispatch is not centralised -- `GalaxPotentialComponent` and
-  each MGE composite type carry their own `raw_parameters` override (the
-  `raw_potential_parameters` call site was always type-independent). Both
-  `ForwardConverter` and `InverseConverter` gained a trailing optional `mge`
-  arg (`ResolvedPotentialComponent.build` passes `extra_fields.get("mge")`);
-  `pqu` uses it for `qobs = min(component q)`, `concentration_m200` ignores
-  it. Follow-up: fold `mge` + `cosmological_parameters` into one optional
-  context object a converter reads what it needs from (neither then
-  "required"), and lift `raw_parameters` to `AbstractPotentialComponent`.
+  Config validation and `resolve()` are generic (they key
+  `_PARAMETERIZATION_REGISTRY` by `(type, name)` with no galax assumption).
+  The inverse dispatch is *not* centralised: `GalaxPotentialComponent` and
+  each triaxial MGE composite carry their own `raw_parameters` override,
+  `AbstractPotentialComponent.raw_parameters` is the identity, so a
+  parameterization registered for a third TNT component type would report
+  canonical parameters silently -- issue #65. `ForwardConverter` /
+  `InverseConverter` take a trailing optional `mge` arg
+  (`ResolvedPotentialComponent.build` passes `extra_fields.get("mge")`);
+  `pqu` uses it for `q' = min(component q)` and the anchor twist,
+  `concentration_m200` ignores it. Issue #65 also tracks folding `mge` +
+  `cosmological_parameters` into one converter-context object.
 - `pqu` (the two triaxial MGE types): `(p, q, u)` intrinsic axis ratios /
   compression <-> `(theta, phi, psi)` viewing angles, van den Bosch et al.
   2008 MNRAS 385, 647 (= DYNAMITE `triax_pqu2tpp`). Anchor `q' = min` of the
-  MGE's component `q`, zero twist. Forward `_pqu_to_tpp`; inverse `_tpp_to_pqu`
-  reuses `tnt.mge._triaxial_intrinsic_axis_ratios` -- the same vdB2008 math
+  MGE's component `q`; the anchor Gaussian's `PA_twist` is folded into `psi`
+  (`_pqu_to_tpp` subtracts it, `_tpp_to_pqu` adds it back), so `(p, q, u)`
+  keep their meaning for a twisted MGE. Ties for min `q'` break by component
+  order. Forward `_pqu_to_tpp`; inverse `_tpp_to_pqu` reuses
+  `tnt.mge._triaxial_intrinsic_axis_ratios` -- the same vdB2008 math
   `deproject_triaxial` already runs -- so a `pqu` config and its equivalent
   `(theta, phi, psi)` config build an identical potential. Data-independent
   bounds (`0 < q <= p <= 1`, `p < u <= 1`) are `ParameterConstraint`s;
-  `max(q/q', p) < u <= min(p/q', 1)` and degenerate weights are checked in
-  `_pqu_to_tpp` -> `InvalidPotentialParametersError`.
+  `q == p` (prolate), `max(q/q', p) < u <= min(p/q', 1)` and degenerate
+  weights are checked in `_pqu_to_tpp` -> `InvalidPotentialParametersError`.
+  The de Zeeuw & Franx weights are singular exactly on the `u` boundaries
+  (`u` in `{p, q/q', p/q', 1}`), all valid limiting geometries, so `u` is
+  evaluated a hair inside the open interval (as DYNAMITE nudges `u == 1`).
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`

@@ -38,11 +38,11 @@ ForwardConverter = Callable[..., dict[str, Quantity]]
 
 `mge` is the component's named `tnt.mge` MGE when it has one (the two triaxial
 MGE composite types), else `None` -- the `pqu` parameterization needs it for
-`qobs = min(component q)`; `concentration_m200` ignores it. No unit system:
-each result keeps whatever unit its arithmetic produces (`to_galax()`'s native
-constructor, or the MGE deprojection, converts again regardless -- see
-`tnt.potential`'s module docstring). See the follow-up in `aidocs/KNOWLEDGE.md`
-about folding `mge`/`cosmological_parameters` into one optional context object.
+`q' = min(component q)` and the anchor twist; `concentration_m200` ignores it.
+No unit system: each result keeps whatever unit its arithmetic produces
+(`to_galax()`'s native constructor, or the MGE deprojection, converts again
+regardless -- see `tnt.potential`'s module docstring). Issue #65 tracks
+folding `mge`/`cosmological_parameters` into one optional context object.
 """
 
 InverseConverter = Callable[..., dict[str, Quantity]]
@@ -508,8 +508,10 @@ def register_parameterization(
     a TNT composite (e.g. `(p, q, u)` -> `(theta, phi, psi)` for the triaxial
     MGE types). The component that runs the inverse converter to report a model
     back in its configured parameterization (`AllModels`) is
-    `GalaxPotentialComponent` for native types and each composite type's own
-    `raw_parameters` override.
+    `GalaxPotentialComponent` for native types and each triaxial MGE
+    composite's own `raw_parameters` override. Registering a parameterization
+    for any *other* TNT component type will resolve but silently report
+    canonical parameters until that dispatch is centralised -- issue #65.
 
     Constraint names must be a subset of ``raw_dimensions`` so schema and
     domain metadata cannot silently disagree.

@@ -1736,8 +1736,8 @@ def test_triaxial_light_mge_rescale_scales_to_galax_without_ml_recompute() -> No
 # ---------------------------------------------------------------------------
 # The `pqu` parameterization for the triaxial MGE composite types:
 # intrinsic axis ratios (p, q, u) <-> viewing angles (theta, phi, psi),
-# anchored at q' = min(component q), zero twist (van den Bosch et al. 2008 /
-# DYNAMITE triax_pqu2tpp).
+# anchored at q' = min(component q) (van den Bosch et al. 2008 / DYNAMITE
+# triax_pqu2tpp). A non-zero anchor PA_twist is folded into psi.
 # ---------------------------------------------------------------------------
 
 
@@ -1817,28 +1817,136 @@ def test_pqu_to_tpp_matches_dynamite_triax_pqu2tpp_at_a_known_point() -> None:
 
 
 def test_pqu_to_tpp_accepts_u_equal_to_one() -> None:
-    # u = 1 (major axis in the sky plane) is a valid limiting geometry;
-    # the (1 - u^2) denominators are handled by a one-ULP nudge.
+    # u = 1 (major axis in the sky plane) is a valid limiting geometry; the
+    # (1 - u^2) denominators are evaluated at the largest float below 1.
     mge = _triaxial_light_mge()
-    native = _pqu_to_tpp(
-        {
-            "ml": Quantity(1.0, "Msun / Lsun"),
-            "p": Quantity(0.85, ""),
-            "q": Quantity(0.60, ""),
-            "u": Quantity(1.0, ""),
-        },
-        _NO_COSMOLOGICAL_PARAMETERS,
-        mge,
-    )
+    raw = {
+        "ml": Quantity(1.0, "Msun / Lsun"),
+        "p": Quantity(0.85, ""),
+        "q": Quantity(0.60, ""),
+        "u": Quantity(1.0, ""),
+    }
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
     for angle in ("theta", "phi", "psi"):
         assert jnp.isfinite(native[angle].ustrip("rad"))
+
+
+def test_pqu_u_equal_to_one_builds_and_inverts() -> None:
+    # High 1: u = 1 must survive full construction (deprojection) and report
+    # back through _tpp_to_pqu, not just return finite angles.
+    mge = _triaxial_light_mge()
+    raw = {
+        "ml": Quantity(1.0, "Msun / Lsun"),
+        "p": Quantity(0.85, ""),
+        "q": Quantity(0.60, ""),
+        "u": Quantity(1.0, ""),
+    }
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": "TriaxialLightMGEPotential", "parameterization": "pqu",
+         "mge": "m", "parameters": {}},
+        {"m": mge},
+        path="potential.stars",
+    )
+    component = resolved.build(raw, _NO_COSMOLOGICAL_PARAMETERS)
+    assert jnp.all(jnp.isfinite(component.deprojected.p.ustrip("")))
+    assert jnp.all(jnp.isfinite(component.deprojected.q.ustrip("")))
+
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+    recovered = _tpp_to_pqu(
+        native, {"ml": "Msun / Lsun"}, _NO_COSMOLOGICAL_PARAMETERS, mge
+    )
+    assert recovered["p"].ustrip("") == pytest.approx(0.85, abs=1e-6)
+    assert recovered["q"].ustrip("") == pytest.approx(0.60, abs=1e-6)
+    assert recovered["u"].ustrip("") == pytest.approx(1.0, abs=1e-6)
+
+
+def test_pqu_accepts_the_upper_boundary_u_equals_p_over_qprime() -> None:
+    # High 1: at u = min(p/q', 1) the phi/psi weights are zero in exact
+    # arithmetic; roundoff must not push the point out of the domain.
+    flat = LightMGE(
+        I=Quantity(jnp.array([1.0, 1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([1.0, 4.0]), "kpc"),
+        q=Quantity(jnp.array([0.90, 0.80]), ""),  # q' = 0.80
+        PA_twist=Quantity(jnp.zeros(2), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    p, q = 0.70, 0.55  # p < q' so hi = p/q' = 0.875 < 1
+    raw = {
+        "ml": Quantity(1.0, "Msun / Lsun"),
+        "p": Quantity(p, ""),
+        "q": Quantity(q, ""),
+        "u": Quantity(p / 0.80, ""),
+    }
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, flat)
+    recovered = _tpp_to_pqu(
+        native, {"ml": "Msun / Lsun"}, _NO_COSMOLOGICAL_PARAMETERS, flat
+    )
+    assert recovered["p"].ustrip("") == pytest.approx(p, abs=1e-6)
+    assert recovered["q"].ustrip("") == pytest.approx(q, abs=1e-6)
+    assert recovered["u"].ustrip("") == pytest.approx(p / 0.80, abs=1e-6)
+
+
+def test_pqu_folds_a_non_zero_anchor_twist_into_psi() -> None:
+    # High 2: when the min-q' Gaussian has PA_twist != 0, the built anchor
+    # component must still have exactly the requested (p, q), and the round
+    # trip must still recover (p, q, u).
+    twisted = LightMGE(
+        I=Quantity(jnp.array([120.0, 45.0, 18.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([0.4, 1.8, 6.0]), "kpc"),
+        q=Quantity(jnp.array([0.88, 0.82, 0.76]), ""),  # anchor = component 2
+        PA_twist=Quantity(jnp.array([0.0, 0.1, 0.3]), "rad"),  # anchor twist = 0.3
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    raw = {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU}
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, twisted)
+
+    # Deproject the anchor Gaussian on its own, with its real twist, at the
+    # converted global angles: it must come back as the requested (p, q).
+    anchor = LightMGE(
+        I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([6.0]), "kpc"),
+        q=Quantity(jnp.array([0.76]), ""),
+        PA_twist=Quantity(jnp.array([0.3]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    deprojected = anchor.deproject_triaxial(
+        native["theta"], native["phi"], native["psi"]
+    )
+    assert deprojected.p[0].ustrip("") == pytest.approx(_PQU["p"].ustrip(""), abs=1e-9)
+    assert deprojected.q[0].ustrip("") == pytest.approx(_PQU["q"].ustrip(""), abs=1e-9)
+
+    recovered = _tpp_to_pqu(
+        native, {"ml": "Msun / Lsun"}, _NO_COSMOLOGICAL_PARAMETERS, twisted
+    )
+    for name, value in _PQU.items():
+        assert recovered[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+
+
+def test_pqu_ignores_twist_on_non_anchor_gaussians() -> None:
+    # Only the anchor's twist enters the conversion; twist on other
+    # components does not change the global angles.
+    base = _triaxial_light_mge()  # zero twist, anchor q' = 0.76 (component 2)
+    other_twist = LightMGE(
+        I=base.I, sigma=base.sigma, q=base.q,
+        PA_twist=Quantity(jnp.array([0.4, -0.2, 0.0]), "rad"),  # anchor still 0
+        major_axis_pa=base.major_axis_pa,
+    )
+    raw = {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU}
+    a = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, base)
+    b = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, other_twist)
+    for angle in ("theta", "phi", "psi"):
+        assert a[angle].ustrip("rad") == pytest.approx(b[angle].ustrip("rad"))
 
 
 @pytest.mark.parametrize(
     ("bad", "reason"),
     [
-        ({"p": 0.85, "q": 0.80, "u": 0.98}, "u.*min"),  # u > min(p/q', 1) = 1
-        ({"p": 0.85, "q": 0.60, "u": 0.65}, "max.*u"),  # u <= max(q/q', p) = 0.85
+        # q/q' = 0.80/0.76 = 1.05, so lo = max(q/q', p) = 1.05 > u
+        ({"p": 0.85, "q": 0.80, "u": 0.98}, "max.*u"),
+        # lo = max(q/q', p) = max(0.79, 0.85) = 0.85 > u
+        ({"p": 0.85, "q": 0.60, "u": 0.65}, "max.*u"),
+        # hi = min(p/q', 1) = min(0.70/0.76, 1) = 0.921 < u
+        ({"p": 0.70, "q": 0.55, "u": 0.95}, r"u <= min"),
         ({"p": 0.80, "q": 0.80, "u": 0.90}, "prolate"),  # q == p (allowed by q <= p)
     ],
 )

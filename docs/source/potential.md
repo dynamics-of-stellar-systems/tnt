@@ -168,9 +168,9 @@ potential:
     mge: "mge_lum"
     parameters:
       ml: {value: 5.0, unit: "Msun / Lsun"}
-      p: {value: 0.85}   # B/A,   0 < q <= p <= 1
+      p: {value: 0.85}   # B/A,   0 < q < p <= 1
       q: {value: 0.60}   # C/A
-      u: {value: 0.93}   # compression, p < u <= 1
+      u: {value: 0.93}   # compression, max(q/q', p) < u <= min(p/q', 1)
 
   bulge:
     type: "OblateLightMGEPotential"
@@ -238,18 +238,20 @@ potential:
   the scale-length compression `u` of the triaxial-Schwarzschild /
   DYNAMITE-successor literature (van den Bosch et al. 2008, MNRAS 385, 647;
   the same equations DYNAMITE's `triax_pqu2tpp` uses). The conversion is
-  anchored at `q' = min(component q)` with zero twist -- the standard
-  reference frame; each `(p, q, u)` corresponds to exactly one
-  `(theta, phi, psi)`, which then deprojects every Gaussian as usual.
-  `(p, q, u)` must satisfy `0 < q <= p <= 1`, `p < u <= 1` (data-independent,
-  checked as parameter constraints) and, against the MGE,
-  `max(q/q', p) < u <= min(p/q', 1)` -- outside that range there is no
-  triaxial deprojection, and the build raises
-  `InvalidPotentialParametersError` (recorded as an invalid model, not a
-  crash). The reverse conversion for `AllModels`' columns is the same van den
-  Bosch relation `deproject_triaxial` already uses, so a `(p, q, u)` config
-  and its equivalent `(theta, phi, psi)` config build an identical potential.
-  This is TNT's first non-native parameterization on one of its own component
-  types (`register_parameterization` was previously native-`galax`-only).
+  anchored at `q' = min(component q)`; if that Gaussian has a non-zero
+  `PA_twist` it is folded into `psi` so `(p, q, u)` keep their stated meaning
+  whatever the MGE's twist profile. Each `(p, q, u)` corresponds to exactly
+  one `(theta, phi, psi)`, which then deprojects every Gaussian as usual.
+  `(p, q, u)` must satisfy `0 < q <= p <= 1` and `p < u <= 1` as
+  data-independent parameter constraints; a genuine triaxial deprojection
+  additionally needs `q < p` (`q == p` is the prolate limit) and, against the
+  MGE, `max(q/q', p) < u <= min(p/q', 1)`. Outside that range there is no
+  triaxial deprojection and the build raises `InvalidPotentialParametersError`
+  (recorded as an invalid model, not a crash); the inclusive `u` endpoints
+  are valid limiting geometries. The reverse conversion for `AllModels`'
+  columns is the same van den Bosch relation `deproject_triaxial` already
+  uses, so a `(p, q, u)` config and its equivalent `(theta, phi, psi)` config
+  build an identical potential. This is TNT's first non-native
+  parameterization on one of its own component types.
 - **`Potential.generate_orbit_library`**: not implemented -- blocked on
   `tnt.orbit_library`, itself still a full scaffold.

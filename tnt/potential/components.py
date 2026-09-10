@@ -359,12 +359,12 @@ class AbstractPotentialComponent(eqx.Module):
 
         The inverse of `ResolvedPotentialComponent.build`'s conversion, so
         `AllModels` can report every component the way its configuration
-        actually specifies it, regardless of `rescale`. Identity by default:
-        `parameters` already *is* the raw, parameterization-independent
-        representation for anything without a registered non-native
-        parameterization -- the four MGE composite types (which don't support
-        one at all) and a native `galax` type with `parameterization`
-        omitted.
+        actually specifies it, regardless of `rescale`. This base
+        implementation is the identity -- `parameters` already *is* the raw,
+        parameterization-independent representation. A type with a registered
+        non-native parameterization overrides it to run the `invert`
+        converter (`GalaxPotentialComponent` for the native `galax` types,
+        the triaxial MGE composites for `pqu`).
 
         Args:
             parameterization: The registered non-native parameterization
