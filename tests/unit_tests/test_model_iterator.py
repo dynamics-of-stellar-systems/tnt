@@ -293,6 +293,7 @@ def test_evaluate_records_domain_invalid_pqu_deprojection(
         sigma=u.Quantity(jnp.array([1.0]), "rad"),
         q=u.Quantity(jnp.array([0.9]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "deg"),
     ).angular_to_physical(u.Quantity(30.0, "Mpc"))
     resolved = Potential.resolve(
         {

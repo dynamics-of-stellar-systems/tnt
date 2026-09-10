@@ -1747,6 +1747,7 @@ def _triaxial_light_mge() -> LightMGE:
         sigma=Quantity(jnp.array([0.4, 1.8, 6.0]), "kpc"),
         q=Quantity(jnp.array([0.88, 0.82, 0.76]), ""),  # min observed q' = 0.76
         PA_twist=Quantity(jnp.zeros(3), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     )
 
 
@@ -1784,6 +1785,7 @@ def test_pqu_to_tpp_matches_deproject_triaxial_at_the_anchor_component() -> None
         sigma=Quantity(jnp.array([6.0]), "kpc"),
         q=Quantity(jnp.array([0.76]), ""),
         PA_twist=Quantity(jnp.zeros(1), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     )
     deprojected = anchor.deproject_triaxial(
         native["theta"], native["phi"], native["psi"]
@@ -1858,6 +1860,7 @@ def test_pqu_to_tpp_rejects_a_circular_mge() -> None:
         sigma=Quantity(jnp.array([1.0]), "kpc"),
         q=Quantity(jnp.array([1.0]), ""),
         PA_twist=Quantity(jnp.zeros(1), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     )
     with pytest.raises(
         _registry_module.InvalidPotentialParametersError, match="genuinely flattened"
