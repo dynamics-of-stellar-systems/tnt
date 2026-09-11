@@ -349,6 +349,17 @@ class AbstractPotentialComponent(eqx.Module):
         """
         raise NotImplementedError
 
+    def _registry_type_name(self) -> str:
+        """The key this component looks itself up under in the parameterization
+        registry (`tnt.potential.registry.get_parameterization`).
+
+        Every `tnt.potential.registry.register_component`-registered subclass
+        already declares this as its own `_type` `ClassVar`, so that's the
+        default. `GalaxPotentialComponent` -- the only concrete subclass that
+        isn't registered that way -- overrides this to `self.galax_type`.
+        """
+        return self._type
+
     def raw_parameters(
         self,
         parameterization: str | None,
@@ -359,12 +370,17 @@ class AbstractPotentialComponent(eqx.Module):
 
         The inverse of `ResolvedPotentialComponent.build`'s conversion, so
         `AllModels` can report every component the way its configuration
-        actually specifies it, regardless of `rescale`. This base
-        implementation is the identity -- `parameters` already *is* the raw,
-        parameterization-independent representation. A type with a registered
-        non-native parameterization overrides it to run the `invert`
-        converter (`GalaxPotentialComponent` for the native `galax` types,
-        the triaxial MGE composites for `pqu`).
+        actually specifies it, regardless of `rescale`. `parameters` already
+        *is* the raw, parameterization-independent representation when no
+        `parameterization` was configured; otherwise this looks up and runs
+        the registered `invert` converter itself, via `_registry_type_name`,
+        so every component type gets correct dispatch without its own
+        override. The converter's trailing `mge` argument is read directly
+        off `self` (every MGE composite type stores its MGE in a field named
+        `mge`; `None` for a curated native `galax` type, which never carries
+        one) -- `ForwardConverter`'s matching argument comes from
+        `ResolvedPotentialComponent.build`'s `extra_fields`, before a
+        component exists to read it from.
 
         Args:
             parameterization: The registered non-native parameterization
@@ -376,8 +392,20 @@ class AbstractPotentialComponent(eqx.Module):
             cosmological_parameters: Passed through to an `invert` converter
                 that needs it, e.g. NFW's `concentration_m200` via `H`.
         """
-        del parameterization, declared_units, cosmological_parameters
-        return self.parameters
+        if parameterization is None:
+            return self.parameters
+        spec = get_parameterization(self._registry_type_name(), parameterization)
+        if spec is None:  # unreachable: resolve() already validated it
+            raise NotImplementedError(
+                f"{self._registry_type_name()}.{parameterization!r} is not a "
+                "registered parameterization."
+            )
+        return spec.invert(
+            self.parameters,
+            declared_units,
+            cosmological_parameters,
+            getattr(self, "mge", None),
+        )
 
 
 class GalaxPotentialComponent(AbstractPotentialComponent):
@@ -428,21 +456,6 @@ class GalaxPotentialComponent(AbstractPotentialComponent):
             rescaled[name] = value * mass_scale**exponent
         return eqx.tree_at(lambda c: c.parameters, self, rescaled)
 
-    def raw_parameters(
-        self,
-        parameterization: str | None,
-        declared_units: Mapping[str, str],
-        cosmological_parameters: Mapping[str, Quantity],
-    ) -> dict[str, Quantity]:
-        if parameterization is None:
-            return self.parameters
-        spec = get_parameterization(self.galax_type, parameterization)
-        if spec is None:  # unreachable: resolve() already validated it
-            raise NotImplementedError(
-                f"{self.galax_type}.{parameterization!r} is not a registered "
-                "parameterization."
-            )
-        # A curated galax type never carries an MGE; the trailing arg is `None`.
-        return spec.invert(
-            self.parameters, declared_units, cosmological_parameters, None
-        )
+    def _registry_type_name(self) -> str:
+        """`galax_type`, not `_type` -- see `AbstractPotentialComponent`'s docstring."""
+        return self.galax_type

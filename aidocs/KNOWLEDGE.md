@@ -477,18 +477,22 @@
   parameterizations exist. Read back via `get_parameterization(type, name)` /
   `parameterization_names(type)`. `type_name` may be a curated native `galax`
   type OR a registered TNT component type (`is_registered_component_type`).
-  Config validation and `resolve()` are generic (they key
-  `_PARAMETERIZATION_REGISTRY` by `(type, name)` with no galax assumption).
-  The inverse dispatch is *not* centralised: `GalaxPotentialComponent` and
-  each triaxial MGE composite carry their own `raw_parameters` override,
-  `AbstractPotentialComponent.raw_parameters` is the identity, so a
-  parameterization registered for a third TNT component type would report
-  canonical parameters silently -- issue #65. `ForwardConverter` /
-  `InverseConverter` take a trailing optional `mge` arg
-  (`ResolvedPotentialComponent.build` passes `extra_fields.get("mge")`);
-  `pqu` uses it for `q' = min(component q)` and the anchor twist,
-  `concentration_m200` ignores it. Issue #65 also tracks folding `mge` +
-  `cosmological_parameters` into one converter-context object.
+  Config validation, `resolve()`, and inverse dispatch are all generic (they
+  key `_PARAMETERIZATION_REGISTRY` by `(type, name)` with no galax
+  assumption; issue #65). `AbstractPotentialComponent.raw_parameters` looks
+  itself up via `_registry_type_name()` (`self._type` by default,
+  `GalaxPotentialComponent` overrides it to `self.galax_type`) and runs the
+  registered `invert` converter -- so a *new* type picks up correct
+  `AllModels` reporting the moment a parameterization is registered for it,
+  no per-type override needed. `ForwardConverter`/`InverseConverter` take a
+  trailing optional `mge` arg -- `None` for a curated native `galax` type,
+  else the component's own `tnt.mge` MGE (every MGE composite type stores it
+  in a field named `mge`) -- supplied generically, not per type:
+  `ResolvedPotentialComponent.build` passes `extra_fields.get("mge")` to the
+  forward converter, `AbstractPotentialComponent.raw_parameters` passes
+  `getattr(self, "mge", None)` -- the same value, off the built component --
+  to the inverse one. `pqu` uses it for `q' = min(component q)` and the
+  anchor twist; `concentration_m200` ignores it.
 - `pqu` (the two triaxial MGE types): `(p, q, u)` intrinsic axis ratios /
   compression <-> `(theta, phi, psi)` viewing angles, van den Bosch et al.
   2008 MNRAS 385, 647 (= DYNAMITE `triax_pqu2tpp`). Both directions live on
