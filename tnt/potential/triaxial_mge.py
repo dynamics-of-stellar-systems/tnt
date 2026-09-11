@@ -42,7 +42,6 @@ from tnt.potential.registry import (
     _VIEWING_ANGLES,
     InvalidPotentialParametersError,
     ParameterConstraint,
-    get_parameterization,
     register_component,
     register_parameterization,
 )
@@ -112,16 +111,6 @@ class TriaxialLightMGEPotential(AbstractPotentialComponent):
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
         return _galax_potential_from_deprojected(self.deprojected, unit_system)
-
-    def raw_parameters(
-        self,
-        parameterization: str | None,
-        declared_units: Mapping[str, str],
-        cosmological_parameters: Mapping[str, Quantity],
-    ) -> dict[str, Quantity]:
-        return _mge_raw_parameters(
-            self, parameterization, declared_units, cosmological_parameters
-        )
 
     def rescale(self, mass_scale: float) -> Self:
         rescaled_parameters = dict(self.parameters)
@@ -195,16 +184,6 @@ class TriaxialMassMGEPotential(AbstractPotentialComponent):
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
         return _galax_potential_from_deprojected(self.deprojected, unit_system)
-
-    def raw_parameters(
-        self,
-        parameterization: str | None,
-        declared_units: Mapping[str, str],
-        cosmological_parameters: Mapping[str, Quantity],
-    ) -> dict[str, Quantity]:
-        return _mge_raw_parameters(
-            self, parameterization, declared_units, cosmological_parameters
-        )
 
     def rescale(self, mass_scale: float) -> Self:
         rescaled_parameters = dict(self.parameters)
@@ -341,29 +320,6 @@ def _tpp_to_pqu(
         "q": Quantity(q, ""),
         "u": Quantity(u, ""),
     }
-
-
-def _mge_raw_parameters(
-    component: AbstractPotentialComponent,
-    parameterization: str | None,
-    declared_units: Mapping[str, str],
-    cosmological_parameters: Mapping[str, Quantity],
-) -> dict[str, Quantity]:
-    """Shared `raw_parameters` body for both triaxial MGE composite types."""
-    if parameterization is None:
-        return component.parameters
-    spec = get_parameterization(component._type, parameterization)
-    if spec is None:  # unreachable: resolve() already validated it
-        raise NotImplementedError(
-            f"{component._type}.{parameterization!r} is not a registered "
-            "parameterization."
-        )
-    return spec.invert(
-        component.parameters,
-        declared_units,
-        cosmological_parameters,
-        component.mge,
-    )
 
 
 def _register_pqu(type_name: str, mass_name: str, mass_dimension: str) -> None:

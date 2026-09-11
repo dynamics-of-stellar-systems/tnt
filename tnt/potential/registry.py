@@ -36,13 +36,17 @@ if TYPE_CHECKING:
 ForwardConverter = Callable[..., dict[str, Quantity]]
 """`(raw, cosmological_parameters, mge) -> native/canonical constructor kwargs`.
 
-`mge` is the component's named `tnt.mge` MGE when it has one (the two triaxial
-MGE composite types), else `None` -- the `pqu` parameterization needs it for
-`q' = min(component q)` and the anchor twist; `concentration_m200` ignores it.
-No unit system: each result keeps whatever unit its arithmetic produces
-(`to_galax()`'s native constructor, or the MGE deprojection, converts again
-regardless -- see `tnt.potential`'s module docstring). Issue #65 tracks
-folding `mge`/`cosmological_parameters` into one optional context object.
+`mge` is the component's own `tnt.mge` MGE when it has one -- every MGE
+composite type stores it in a field named `mge`, `None` for a curated native
+`galax` type, which never carries one. Supplied generically, not per type:
+`ResolvedPotentialComponent.build` passes `self.extra_fields.get("mge")` to
+this (forward) converter; `AbstractPotentialComponent.raw_parameters` passes
+`getattr(self, "mge", None)` -- the same value, read off the built component
+instead -- to the matching `InverseConverter`. The `pqu` parameterization
+needs it for `q' = min(component q)` and the anchor twist; `concentration_m200`
+ignores it. No unit system: each result keeps whatever unit its arithmetic
+produces (`to_galax()`'s native constructor, or the MGE deprojection,
+converts again regardless -- see `tnt.potential`'s module docstring).
 """
 
 InverseConverter = Callable[..., dict[str, Quantity]]
@@ -506,12 +510,10 @@ def register_parameterization(
     convention into the component's canonical parameters -- native `galax`
     constructor kwargs for a curated type, or the type's own native fields for
     a TNT composite (e.g. `(p, q, u)` -> `(theta, phi, psi)` for the triaxial
-    MGE types). The component that runs the inverse converter to report a model
-    back in its configured parameterization (`AllModels`) is
-    `GalaxPotentialComponent` for native types and each triaxial MGE
-    composite's own `raw_parameters` override. Registering a parameterization
-    for any *other* TNT component type will resolve but silently report
-    canonical parameters until that dispatch is centralised -- issue #65.
+    MGE types). `AbstractPotentialComponent.raw_parameters` runs the inverse
+    converter to report a model back in its configured parameterization
+    (`AllModels`) for *any* registered `type_name` -- no per-type override
+    needed, including for a type registered after this docstring was written.
 
     Constraint names must be a subset of ``raw_dimensions`` so schema and
     domain metadata cannot silently disagree.

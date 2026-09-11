@@ -1008,11 +1008,15 @@ def test_nfw_concentration_m200_is_registered_with_its_converters_and_schema() -
     )
 
 
-def _identity_forward(raw: dict, cosmological_parameters: object) -> dict:
+def _identity_forward(raw: dict, cosmological_parameters: object, mge: object) -> dict:
+    del cosmological_parameters, mge
     return raw
 
 
-def _identity_inverse(native: dict, declared_units: object, cosmo: object) -> dict:
+def _identity_inverse(
+    native: dict, declared_units: object, cosmo: object, mge: object
+) -> dict:
+    del declared_units, cosmo, mge
     return native
 
 
@@ -1070,8 +1074,8 @@ def test_register_parameterization_rejects_a_fully_unknown_target_type(
 def test_register_parameterization_accepts_a_registered_tnt_component_type(
     monkeypatch,
 ) -> None:
-    # A TNT composite type (in _COMPONENT_REGISTRY) is a valid target: its own
-    # `raw_parameters` override runs the inverse converter.
+    # A TNT composite type (in _COMPONENT_REGISTRY) is a valid target:
+    # AbstractPotentialComponent.raw_parameters dispatches to it generically.
     monkeypatch.setattr(_registry_module, "_PARAMETERIZATION_REGISTRY", {})
     _registry_module.register_parameterization(
         type_name="TriaxialLightMGEPotential",
@@ -1084,6 +1088,71 @@ def test_register_parameterization_accepts_a_registered_tnt_component_type(
     assert ("TriaxialLightMGEPotential", "shape") in (
         _registry_module._PARAMETERIZATION_REGISTRY
     )
+
+
+def test_raw_parameters_dispatches_generically_for_a_newly_registered_type(
+    monkeypatch,
+) -> None:
+    # OblateLightMGEPotential has never had its own raw_parameters override
+    # (unlike the pre-#65 triaxial types). Registering a parameterization for
+    # it must still report correctly through the base class alone -- the
+    # actual thing issue #65 was about.
+    monkeypatch.setattr(_registry_module, "_PARAMETERIZATION_REGISTRY", {})
+    light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
+        Quantity(30.0, "Mpc")
+    )
+
+    def _invert(native, declared_units, cosmological_parameters, mge):
+        del declared_units, cosmological_parameters
+        assert mge is light_mge  # the generic getattr(self, "mge", None) context
+        return {"doubled_ml": native["ml"] * 2.0, "inclination": native["inclination"]}
+
+    _registry_module.register_parameterization(
+        type_name="OblateLightMGEPotential",
+        name="doubled_ml",
+        convert=_identity_forward,  # unexercised here
+        invert=_invert,
+        raw_dimensions={"doubled_ml": "mass_to_light", "inclination": "angle"},
+        raw_constraints={},
+    )
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": "OblateLightMGEPotential", "mge": "mge_lum", "parameters": {}},
+        {"mge_lum": light_mge},
+        path="potential.stars",
+    )
+    component = resolved.build(
+        {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+    )
+
+    raw = component.raw_parameters("doubled_ml", {}, _NO_COSMOLOGICAL_PARAMETERS)
+
+    assert raw["doubled_ml"].ustrip("Msun / Lsun") == pytest.approx(10.0)
+
+
+def test_raw_parameters_dispatch_key_differs_for_galax_vs_tnt_types() -> None:
+    # GalaxPotentialComponent looks itself up by galax_type; a registered TNT
+    # component type by its own _type -- both via _registry_type_name().
+    galax_component = AbstractPotentialComponent.resolve(
+        {"type": "PlummerPotential", "parameters": {}}, {}, path="potential.bh"
+    ).build(
+        {"m_tot": Quantity(1.0e5, "Msun"), "r_s": Quantity(1.0, "kpc")},
+        _NO_COSMOLOGICAL_PARAMETERS,
+    )
+    assert galax_component._registry_type_name() == "PlummerPotential"
+
+    light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
+        Quantity(30.0, "Mpc")
+    )
+    oblate_component = AbstractPotentialComponent.resolve(
+        {"type": "OblateLightMGEPotential", "mge": "mge_lum", "parameters": {}},
+        {"mge_lum": light_mge},
+        path="potential.stars",
+    ).build(
+        {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+        _NO_COSMOLOGICAL_PARAMETERS,
+    )
+    assert oblate_component._registry_type_name() == "OblateLightMGEPotential"
 
 
 def test_register_parameterization_rejects_unknown_constraint_name(monkeypatch) -> None:
