@@ -46,7 +46,12 @@ from tnt.potential.registry import (
     parameter_constraints,
     register_component,
 )
-from tnt.potential.triaxial_mge import _pqu_to_tpp, _tpp_to_pqu
+from tnt.potential.triaxial_mge import (
+    _pqu_to_tpp,
+    _tmajmin_to_tpp,
+    _tpp_to_pqu,
+    _tpp_to_tmajmin,
+)
 
 
 def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
@@ -2263,6 +2268,147 @@ def test_pqu_domain_invalid_value_is_rejected_at_build_time() -> None:
                 "p": Quantity(0.6, ""),
                 "q": Quantity(0.8, ""),
                 "u": Quantity(0.9, ""),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+
+
+# (T, T_maj, T_min) equivalent to _PQU, against _triaxial_light_mge()'s q' = 0.76
+# (tnt.mge._T_Tmaj_Tmin_from_p_q_u(0.85, 0.60, 0.93, 0.76)):
+_TMAJMIN = {
+    "T": Quantity(0.4335937500000001, ""),
+    "T_maj": Quantity(0.4868468468468463, ""),
+    "T_min": Quantity(0.3850103172413796, ""),
+}
+
+
+def test_tmajmin_to_tpp_round_trips_through_tpp_to_tmajmin() -> None:
+    mge = _triaxial_light_mge()
+    raw = {"ml": Quantity(1.0, "Msun / Lsun"), **_TMAJMIN}
+
+    native = _tmajmin_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+    recovered = _tpp_to_tmajmin(native, {}, _NO_COSMOLOGICAL_PARAMETERS, mge)
+
+    for name, value in _TMAJMIN.items():
+        assert recovered[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+
+
+def test_T_maj_min_is_registered_for_both_triaxial_mge_types() -> None:
+    for type_name, mass_name, mass_dim in (
+        ("TriaxialLightMGEPotential", "ml", "mass_to_light"),
+        ("TriaxialMassMGEPotential", "mge_mass_scale", "dimensionless"),
+    ):
+        spec = _registry_module.get_parameterization(type_name, "T_maj_min")
+        assert spec is not None
+        assert spec.convert is _tmajmin_to_tpp
+        assert spec.invert is _tpp_to_tmajmin
+        assert spec.raw_dimensions == {
+            mass_name: mass_dim,
+            "T": "dimensionless",
+            "T_maj": "dimensionless",
+            "T_min": "dimensionless",
+        }
+        assert raw_parameter_dimensions(type_name, "T_maj_min") == spec.raw_dimensions
+        constraints = parameter_constraints(type_name, "T_maj_min")
+        assert set(constraints) == {mass_name, "T", "T_maj", "T_min"}
+        for name in ("T", "T_maj", "T_min"):
+            assert constraints[name].minimum == 0.0
+            assert constraints[name].maximum == 1.0
+
+
+@pytest.mark.parametrize(
+    "type_name", ["TriaxialLightMGEPotential", "TriaxialMassMGEPotential"]
+)
+def test_T_maj_min_config_builds_the_same_deprojection_as_pqu(
+    type_name: str,
+) -> None:
+    mge = _triaxial_light_mge()
+    if type_name == "TriaxialMassMGEPotential":
+        mge = mge.to_mass(Quantity(1.0, "Msun / Lsun"))
+    mass_name = "ml" if type_name == "TriaxialLightMGEPotential" else "mge_mass_scale"
+    mass_unit = "Msun / Lsun" if mass_name == "ml" else ""
+    mass_value = Quantity(3.5, mass_unit)
+
+    tmajmin_resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": type_name,
+            "parameterization": "T_maj_min",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    tmajmin_component = tmajmin_resolved.build(
+        {mass_name: mass_value, **_TMAJMIN}, _NO_COSMOLOGICAL_PARAMETERS
+    )
+
+    pqu_resolved = AbstractPotentialComponent.resolve(
+        {"type": type_name, "parameterization": "pqu", "mge": "m", "parameters": {}},
+        {"m": mge},
+        path="potential.stars",
+    )
+    pqu_component = pqu_resolved.build(
+        {mass_name: mass_value, **_PQU}, _NO_COSMOLOGICAL_PARAMETERS
+    )
+
+    for attr in ("I", "sigma", "p", "q"):
+        assert jnp.allclose(
+            getattr(tmajmin_component.deprojected, attr).ustrip(
+                getattr(tmajmin_component.deprojected, attr).unit
+            ),
+            getattr(pqu_component.deprojected, attr).ustrip(
+                getattr(pqu_component.deprojected, attr).unit
+            ),
+        ), attr
+
+
+def test_T_maj_min_raw_potential_parameters_round_trips_and_survives_rescale() -> None:
+    mge = _triaxial_light_mge()
+    settings = {
+        "stars": {
+            "type": "TriaxialLightMGEPotential",
+            "parameterization": "T_maj_min",
+            "mge": "m",
+            "parameters": {"ml": {"unit": "Msun / Lsun"}},
+        }
+    }
+    values = {"stars": {"ml": Quantity(4.0, "Msun / Lsun"), **_TMAJMIN}}
+    potential = Potential.from_settings(settings, values, {"m": mge}, {})
+
+    raw = raw_potential_parameters(settings, potential, {})["stars"]
+    assert set(raw) == {"ml", "T", "T_maj", "T_min"}
+    for name, value in _TMAJMIN.items():
+        assert raw[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+    assert raw["ml"].ustrip("Msun / Lsun") == pytest.approx(4.0)
+
+    rescaled = raw_potential_parameters(settings, potential.rescale(3.0), {})["stars"]
+    assert rescaled["ml"].ustrip("Msun / Lsun") == pytest.approx(12.0)
+    for name, value in _TMAJMIN.items():
+        assert rescaled[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+
+
+def test_T_maj_min_domain_invalid_value_is_rejected_at_build_time() -> None:
+    # T_maj > 1 violates the data-independent ParameterConstraint, caught
+    # before the converter (and before any MGE is consulted).
+    mge = _triaxial_light_mge()
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "TriaxialLightMGEPotential",
+            "parameterization": "T_maj_min",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    with pytest.raises(ValueError, match=r"parameters\.T_maj"):
+        resolved.build(
+            {
+                "ml": Quantity(1.0, "Msun / Lsun"),
+                "T": Quantity(0.5, ""),
+                "T_maj": Quantity(1.5, ""),
+                "T_min": Quantity(0.5, ""),
             },
             _NO_COSMOLOGICAL_PARAMETERS,
         )

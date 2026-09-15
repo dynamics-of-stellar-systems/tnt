@@ -517,6 +517,21 @@
   float type. At float32 that margin is `~1.4e-3`, so a declared `u = 1` is
   honoured only to about that and `triaxial_intrinsic_shape` reports the
   recovered value, not an exact `1`.
+- `T_maj_min` (the same two triaxial MGE types): a second, bijective
+  reparameterization of `pqu`'s own `(p, q, u)` as `(T, T_maj, T_min) in
+  [0,1]^3` (Quenneville, Liepold & Ma 2022, ApJ 926:30, sec. 3 eqs. 3-4, 7),
+  chosen for more uniform shape/viewing-geometry sampling, not a different
+  deprojection. The `(T,T_maj,T_min) <-> (p,q,u)` algebra (given the anchor's
+  `q'`) is `tnt.mge._p_q_u_from_T_Tmaj_Tmin` / `_T_Tmaj_Tmin_from_p_q_u`,
+  each guarding its own denominator (`eps`-scaled) before dividing;
+  `AbstractMGE.viewing_angles_from_T_Tmaj_Tmin` /
+  `T_Tmaj_Tmin_from_viewing_angles` compose that with `triaxial_viewing_angles`
+  / `triaxial_intrinsic_shape`, inheriting all of `pqu`'s domain/margin/
+  singularity handling for the `(theta, phi, psi)` side. `_tmajmin_to_tpp` /
+  `_tpp_to_tmajmin` in `tnt.potential.triaxial_mge` are the registry adapters,
+  mirroring `_pqu_to_tpp` / `_tpp_to_pqu`. `T`, `T_maj`, `T_min` are each a
+  closed `[0,1]` `ParameterConstraint`; no pairwise relation is needed at
+  schema level (unlike `pqu`'s `q <= p`).
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`

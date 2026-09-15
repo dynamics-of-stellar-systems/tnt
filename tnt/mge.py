@@ -138,6 +138,66 @@ def _triaxial_intrinsic_axis_ratios(
     return p_intr, q_intr, u
 
 
+def _p_q_u_from_T_Tmaj_Tmin(
+    T: float, T_maj: float, T_min: float, q_obs: float
+) -> tuple[float, float, float]:
+    """``(p, q, u)`` from the anchor's ``(T, T_maj, T_min)`` and ``q_obs``.
+
+    Inverts Quenneville, Liepold & Ma (2022) eq. 7 -- the forward direction is
+    `_T_Tmaj_Tmin_from_p_q_u`. Doesn't itself check the MGE-dependent
+    ``(p, q, u)`` domain (their eq. 6); the caller
+    (`AbstractMGE.viewing_angles_from_T_Tmaj_Tmin`) hands the result to
+    `AbstractMGE.triaxial_viewing_angles`, which does.
+
+    Raises:
+        MGEDeprojectionError: If the shared denominator is too close to zero
+            to divide by reliably at the working precision, or the resulting
+            ``(p, q, u)`` isn't real-valued in ``[0, 1]``.
+    """
+    eps = float(jnp.finfo(jnp.result_type(float)).eps)
+    o2 = q_obs * q_obs
+    den = 1.0 - (1.0 - T) * T_min - o2 * T * T_maj
+    if abs(den) < 4.0 * eps:
+        raise MGEDeprojectionError(
+            f"(T, T_maj, T_min) = ({T:g}, {T_maj:g}, {T_min:g}), q' = {q_obs:g}: "
+            "denominator too close to zero to deproject reliably at this "
+            "numerical precision."
+        )
+    q2 = 1.0 - (1.0 - o2) / den
+    p2 = 1.0 - T * (1.0 - q2)
+    u2 = 1.0 - T_maj * (1.0 - p2)
+    if not (0.0 <= q2 <= 1.0 and 0.0 <= p2 <= 1.0 and 0.0 <= u2 <= 1.0):
+        raise MGEDeprojectionError(
+            f"(T, T_maj, T_min) = ({T:g}, {T_maj:g}, {T_min:g}) has no valid "
+            f"triaxial deprojection for this MGE (q' = {q_obs:g})."
+        )
+    return math.sqrt(p2), math.sqrt(q2), math.sqrt(u2)
+
+
+def _T_Tmaj_Tmin_from_p_q_u(
+    p: float, q: float, u: float, q_obs: float
+) -> tuple[float, float, float]:
+    """The anchor's ``(T, T_maj, T_min)`` from its ``(p, q, u)`` and ``q_obs``.
+
+    Quenneville, Liepold & Ma (2022) eqs. 3-4; the inverse is
+    `_p_q_u_from_T_Tmaj_Tmin`.
+
+    Raises:
+        MGEDeprojectionError: If ``(p, q, u)`` is too close to a coordinate
+            singularity (``q == 1``, ``p == 1``, or ``p == q``) to convert
+            reliably at the working precision.
+    """
+    eps = float(jnp.finfo(jnp.result_type(float)).eps)
+    p2, q2, u2, o2 = p * p, q * q, u * u, q_obs * q_obs
+    d_t, d_tmaj, d_tmin = 1.0 - q2, 1.0 - p2, p2 - q2
+    if min(abs(d_t), abs(d_tmaj), abs(d_tmin)) < eps:
+        raise MGEDeprojectionError(
+            f"(p, q, u) = ({p:g}, {q:g}, {u:g}), q' = {q_obs:g}: too close to "
+            "a coordinate singularity to convert to (T, T_maj, T_min)."
+        )
+    return (1.0 - p2) / d_t, (1.0 - u2) / d_tmaj, (u2 * o2 - q2) / d_tmin
+
+
 class AbstractMGE(eqx.Module):
     """Shared structure and behaviour for MGE models.
 
@@ -655,6 +715,41 @@ class AbstractMGE(eqx.Module):
         p, q, u = self._triaxial_component_ratios(theta, phi, psi)
         anchor = int(jnp.argmin(self.q.ustrip("")))
         return float(p[anchor]), float(q[anchor]), float(u[anchor])
+
+    def viewing_angles_from_T_Tmaj_Tmin(
+        self, T: float, T_maj: float, T_min: float
+    ) -> tuple[Quantity, Quantity, Quantity]:
+        """The global viewing angles giving anchor shape ``(T, T_maj, T_min)``.
+
+        A reparameterization of `triaxial_viewing_angles`'s own ``(p, q, u)``
+        -- ``(T, T_maj, T_min) in [0, 1]^3`` is chosen for more uniform
+        sampling of shape and viewing geometry (Quenneville, Liepold & Ma
+        2022, ApJ 926:30, sec. 3), not a different deprojection. Converts to
+        ``(p, q, u)`` via `_p_q_u_from_T_Tmaj_Tmin`, using this MGE's own
+        anchor ``q' = min(component q)`` (`_triaxial_anchor`), then defers to
+        `triaxial_viewing_angles` for everything else -- domain, margin, and
+        singularity handling included.
+
+        Raises:
+            MGEDeprojectionError: see `_p_q_u_from_T_Tmaj_Tmin` and
+                `triaxial_viewing_angles`.
+        """
+        q_obs, _ = self._triaxial_anchor()
+        p, q, u = _p_q_u_from_T_Tmaj_Tmin(T, T_maj, T_min, q_obs)
+        return self.triaxial_viewing_angles(p, q, u)
+
+    def T_Tmaj_Tmin_from_viewing_angles(
+        self, theta: Quantity, phi: Quantity, psi: Quantity
+    ) -> tuple[float, float, float]:
+        """The anchor's ``(T, T_maj, T_min)`` at these viewing angles.
+
+        The numerical inverse of `viewing_angles_from_T_Tmaj_Tmin`:
+        `triaxial_intrinsic_shape`'s anchor ``(p, q, u)``, reparameterized via
+        `_T_Tmaj_Tmin_from_p_q_u`.
+        """
+        p, q, u = self.triaxial_intrinsic_shape(theta, phi, psi)
+        q_obs, _ = self._triaxial_anchor()
+        return _T_Tmaj_Tmin_from_p_q_u(p, q, u, q_obs)
 
 
 class LightMGE(AbstractMGE):

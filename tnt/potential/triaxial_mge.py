@@ -19,6 +19,14 @@ et al. 2008, MNRAS 385, 647). `_pqu_to_tpp` / `_tpp_to_pqu` are thin adapters
 over `AbstractMGE.triaxial_viewing_angles` / `triaxial_intrinsic_shape`,
 which own the conversion (anchored at `q' = min(component q)`) and its
 inverse.
+
+`parameterization: "T_maj_min"` is a second option, over the same
+`(p, q, u)` anchor but reparameterized as `(T, T_maj, T_min) in [0, 1]^3`
+for more uniform shape/viewing-geometry sampling (Quenneville, Liepold & Ma
+2022, ApJ 926:30, sec. 3). `_tmajmin_to_tpp` / `_tpp_to_tmajmin` are the
+matching thin adapters, over `AbstractMGE.viewing_angles_from_T_Tmaj_Tmin` /
+`T_Tmaj_Tmin_from_viewing_angles`, which themselves convert to/from `(p, q, u)`
+and delegate the rest to `triaxial_viewing_angles` / `triaxial_intrinsic_shape`.
 """
 
 from __future__ import annotations
@@ -343,3 +351,107 @@ def _register_pqu(type_name: str, mass_name: str, mass_dimension: str) -> None:
 
 _register_pqu("TriaxialLightMGEPotential", "ml", "mass_to_light")
 _register_pqu("TriaxialMassMGEPotential", "mge_mass_scale", "dimensionless")
+
+
+# ==========================================================================
+# The `T_maj_min` parameterization: `(T, T_maj, T_min)`, a reparameterization
+# of `pqu`'s own `(p, q, u)` chosen for more uniform sampling of shape and
+# viewing geometry (Quenneville, Liepold & Ma 2022, ApJ 926:30, sec. 3), not
+# a different deprojection -- same anchor, same underlying geometry. Both
+# directions live on `AbstractMGE` (`viewing_angles_from_T_Tmaj_Tmin` /
+# `T_Tmaj_Tmin_from_viewing_angles`), which delegate to `triaxial_viewing_angles`
+# / `triaxial_intrinsic_shape` for everything beyond the `(T, T_maj, T_min)`
+# <-> `(p, q, u)` algebra itself.
+
+_TMAJMIN_SHAPE_CONSTRAINTS: dict[str, ParameterConstraint] = {
+    name: ParameterConstraint(minimum=0.0, maximum=1.0)
+    for name in ("T", "T_maj", "T_min")
+}
+
+
+def _tmajmin_to_tpp(
+    raw: dict[str, Quantity],
+    cosmological_parameters: Mapping[str, Quantity],
+    mge: LightMGE | MassMGE | None,
+) -> dict[str, Quantity]:
+    """Adapt ``(T, T_maj, T_min)`` -> ``(theta, phi, psi)`` via `AbstractMGE`.
+
+    The data-independent `(T, T_maj, T_min)` bounds (each in `[0, 1]`) are
+    enforced by the parameterization's `raw_constraints` before this runs;
+    the MGE-dependent domain and every singular geometry are
+    `AbstractMGE.viewing_angles_from_T_Tmaj_Tmin`'s business, re-raised here
+    as `InvalidPotentialParametersError` so `ModelIterator` records an
+    invalid model rather than crashing.
+    """
+    del cosmological_parameters
+    if mge is None:  # unreachable: only the MGE composite types register this
+        raise InvalidPotentialParametersError(
+            "The 'T_maj_min' parameterization requires an MGE component."
+        )
+    try:
+        theta, phi, psi = mge.viewing_angles_from_T_Tmaj_Tmin(
+            float(raw["T"].ustrip("")),
+            float(raw["T_maj"].ustrip("")),
+            float(raw["T_min"].ustrip("")),
+        )
+    except MGEDeprojectionError as error:
+        raise InvalidPotentialParametersError(str(error)) from error
+
+    mass = _mass_parameter_name(raw)
+    return {mass: raw[mass], "theta": theta, "phi": phi, "psi": psi}
+
+
+def _tpp_to_tmajmin(
+    native: dict[str, Quantity],
+    declared_units: Mapping[str, str],
+    cosmological_parameters: Mapping[str, Quantity],
+    mge: LightMGE | MassMGE | None,
+) -> dict[str, Quantity]:
+    """Report native ``(theta, phi, psi)`` back as ``(T, T_maj, T_min)`` for
+    `AllModels`.
+
+    `AbstractMGE.T_Tmaj_Tmin_from_viewing_angles` -- the numerical inverse of
+    `viewing_angles_from_T_Tmaj_Tmin` (a boundary value comes back nudged,
+    same as `pqu`'s `(p, q, u)`; see `triaxial_viewing_angles`).
+    """
+    del cosmological_parameters
+    if mge is None:  # unreachable: only the MGE composite types register this
+        raise InvalidPotentialParametersError(
+            "The 'T_maj_min' parameterization requires an MGE component."
+        )
+    T, T_maj, T_min = mge.T_Tmaj_Tmin_from_viewing_angles(
+        native["theta"], native["phi"], native["psi"]
+    )
+    mass = _mass_parameter_name(native)
+    mass_value = native[mass]
+    if mass in declared_units:
+        mass_value = mass_value.to(declared_units[mass])
+    return {
+        mass: mass_value,
+        "T": Quantity(T, ""),
+        "T_maj": Quantity(T_maj, ""),
+        "T_min": Quantity(T_min, ""),
+    }
+
+
+def _register_tmajmin(type_name: str, mass_name: str, mass_dimension: str) -> None:
+    register_parameterization(
+        type_name=type_name,
+        name="T_maj_min",
+        convert=_tmajmin_to_tpp,
+        invert=_tpp_to_tmajmin,
+        raw_dimensions={
+            mass_name: mass_dimension,
+            "T": "dimensionless",
+            "T_maj": "dimensionless",
+            "T_min": "dimensionless",
+        },
+        raw_constraints={
+            mass_name: ParameterConstraint(minimum=0.0, minimum_inclusive=False),
+            **_TMAJMIN_SHAPE_CONSTRAINTS,
+        },
+    )
+
+
+_register_tmajmin("TriaxialLightMGEPotential", "ml", "mass_to_light")
+_register_tmajmin("TriaxialMassMGEPotential", "mge_mass_scale", "dimensionless")
