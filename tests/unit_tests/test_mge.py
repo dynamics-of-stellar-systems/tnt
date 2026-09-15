@@ -394,6 +394,40 @@ def test_deproject_oblate_rejects_inclination_outside_0_90():
             physical.deproject_oblate(u.Quantity(bad, "deg"))
 
 
+def test_inclination_from_q_min_and_q_min_from_inclination_are_inverses():
+    mge = _triaxial_anchor_mge()  # anchor q' = 0.76 (zero PA_twist)
+
+    inclination = mge.inclination_from_q_min(0.6)
+    q_min_r = mge.q_min_from_inclination(inclination)
+
+    assert q_min_r == pytest.approx(0.6, abs=1e-9)
+
+
+def test_inclination_from_q_min_at_the_anchor_edge_is_edge_on():
+    # q_min == q_obs' is the inclusive i = 90 deg (edge-on) limit.
+    mge = _triaxial_anchor_mge()
+
+    inclination = mge.inclination_from_q_min(0.76)
+
+    assert inclination.ustrip("deg") == pytest.approx(90.0, abs=1e-9)
+
+
+def test_inclination_from_q_min_rejects_q_min_above_the_anchor():
+    with pytest.raises(MGEDeprojectionError, match="0 < q_min <= q'"):
+        _triaxial_anchor_mge().inclination_from_q_min(0.9)
+
+
+def test_inclination_from_q_min_rejects_non_positive_q_min():
+    with pytest.raises(MGEDeprojectionError, match="0 < q_min <= q'"):
+        _triaxial_anchor_mge().inclination_from_q_min(0.0)
+
+
+def test_inclination_from_q_min_rejects_a_circular_anchor():
+    circular = _single_component_light_mge(q_obs=1.0, psi=0.0)
+    with pytest.raises(MGEDeprojectionError, match="circular MGE"):
+        circular.inclination_from_q_min(0.5)
+
+
 def _single_component_light_mge(q_obs: float, psi: float) -> LightMGE:
     return LightMGE(
         I=u.Quantity(jnp.array([5.0]), "Lsun / kpc2"),

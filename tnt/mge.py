@@ -437,6 +437,59 @@ class AbstractMGE(eqx.Module):
             q=Quantity(q_intr, ""),
         )
 
+    def inclination_from_q_min(self, q_min: float) -> Quantity:
+        """The inclination giving the anchor component's intrinsic axial ratio.
+
+        Inverts `deproject_oblate`'s own relation, ``q_obs**2 = q_min**2 *
+        sin(i)**2 + cos(i)**2``, evaluated at this MGE's own anchor ``q_obs'
+        = min(component q)`` (`_triaxial_anchor`; its `PA_twist` element is
+        unused here -- `deproject_oblate` itself requires every component's
+        `PA_twist` to be zero for an oblate system):
+
+        ``cos(i)**2 = (q_obs'**2 - q_min**2) / (1 - q_min**2)``.
+
+        ``q_min == q_obs'`` is the inclusive edge-on limit (``i = 90 deg``),
+        not a singularity; ``q_min -> 1`` (a near-spherical anchor) is.
+
+        Raises:
+            MGEDeprojectionError: If this MGE's anchor is circular
+                (``q_obs' == 1``), if ``q_min`` is outside
+                ``0 < q_min <= q_obs'``, or if ``q_min`` is too close to 1 to
+                divide by reliably at the working precision.
+        """
+        q_obs, _ = self._triaxial_anchor()
+        if not q_obs < 1.0:
+            raise MGEDeprojectionError(
+                f"Oblate deprojection needs a flattened MGE (anchor q' = "
+                f"{q_obs:g}); a circular MGE has no inclination to solve for."
+            )
+        if not 0.0 < q_min <= q_obs:
+            raise MGEDeprojectionError(
+                f"q_min = {q_min:g} has no oblate deprojection for this MGE "
+                f"(anchor q' = {q_obs:g}): requires 0 < q_min <= q'."
+            )
+        eps = float(jnp.finfo(jnp.result_type(float)).eps)
+        den = 1.0 - q_min * q_min
+        if den < eps:
+            raise MGEDeprojectionError(
+                f"q_min = {q_min:g} is too close to 1 (spherical) to "
+                "deproject reliably at this numerical precision."
+            )
+        cos2_i = min(max((q_obs * q_obs - q_min * q_min) / den, 0.0), 1.0)
+        return Quantity(math.acos(math.sqrt(cos2_i)), "rad")
+
+    def q_min_from_inclination(self, inclination: Quantity) -> float:
+        """The anchor component's intrinsic axial ratio at this inclination.
+
+        The numerical inverse of `inclination_from_q_min`: deprojects the
+        whole MGE (`deproject_oblate`) and reads off the anchor component's
+        own intrinsic `q`, reusing all of that method's unit/`PA_twist`/
+        domain validation rather than duplicating it.
+        """
+        deprojected = self.deproject_oblate(inclination)
+        anchor = int(jnp.argmin(self.q.ustrip("")))
+        return float(deprojected.q[anchor].ustrip(""))
+
     def deproject_triaxial(
         self, theta: Quantity, phi: Quantity, psi: Quantity
     ) -> Deprojected3DMGE:
