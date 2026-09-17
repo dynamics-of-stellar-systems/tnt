@@ -230,3 +230,128 @@ No change was made to the registered `T`/`T_maj`/`T_min` `ParameterConstraint`
 bounds, the registry adapters, or the `pqu` parameterization's own behavior.
 
 Assisted by Claude (Anthropic).
+
+## Re-audit — Codex, 2026-09-17
+
+**Recommendation: not ready to merge. F2 is resolved; F1 is only partially
+resolved.** The original reproductions now reject correctly, but the new
+float32 tolerance still admits substantial changes to the requested geometry.
+
+### Exact reviewed state
+
+This re-audit reviews the **latest remote PR 67 head**,
+`3feec33dfaba9c6dea27d913209564d9d996c279` (`Fix PR-67 audit findings F1/F2 in
+the T_maj_min parameterization`), on `T-maj-min-parameterization`. After
+`git fetch origin`, the existing local checkout's `HEAD`,
+`origin/T-maj-min-parameterization`, and GitHub's PR head all matched that
+commit. The checkout was clean. No separate audit branch was used.
+The base remains `7429509d1fb59d45a599e17170ac78c3793e48c2` on `main`.
+GitHub's head and base were checked again after the full suite and were
+unchanged. The audit amendment itself is not part of that reviewed commit.
+
+Completed: read the author's response, review the fix and added tests, rerun
+the complete suite and documentation checks, reproduce both findings for both
+potential types at both precisions, and test nearby accepted points against
+the independent angle equations used in the original audit.
+
+### F2 resolved: explicit zero-thickness rejection
+
+The strict `q2 > 0` check rejects the exact input
+`q' = 0.5`, `(T, T_maj, T_min) = (0.5, 0.5, 0.375)` before angle conversion.
+Both registered types raise `InvalidPotentialParametersError` at float64 and
+float32. The positive-thickness control `(0.5, 0.5, 0.374)` builds and recovers
+the declared coordinates accurately at both precisions. This closes F2.
+
+### F1 remains open: float32 accuracy threshold admits degree-scale errors
+
+**Location:** `tnt/mge.py:770–773`, using
+`_TMAJMIN_ROUNDTRIP_TOL_FACTOR = 100` defined at line 92.
+
+The round-trip guard is the right kind of check, and it rejects all four
+original F1 examples at the precision where their inaccurate construction was
+reported. However, `100 * sqrt(eps)` is an **absolute per-coordinate** tolerance
+of approximately `1.49e-6` at float64 and **`0.0345267` at float32**. The latter
+allows a change of 3.45 percentage points of the entire coordinate range. It
+is not a small relative-error limit on the requested coordinate.
+
+The following float32 points all build successfully through
+`Potential.from_settings` in **both** light and mass potential types, using
+observed `q' = 0.76` and anchor twist `0.2 rad`:
+
+| Requested `(T, T_maj, T_min)` | Reported `T_maj` | Absolute `T_maj` drift | `phi` error |
+| --- | --- | --- | --- |
+| `(0.1, 0.02, 0.2)` | `0.0535070971` | `0.0335071` | −5.302959° |
+| `(0.1, 0.03, 0.2)` | `0.0534717366` | `0.0234717` | −3.432868° |
+| `(0.05, 0.08, 0.2)` | `0.1055563763` | `0.0255564` | −2.541780° |
+
+Errors were calculated against the actual stored input values, using the
+paper's equation 8 and the anchor-twist adjustment, not against the clamped
+PQU conversion. In the first row, `T_maj` increases by approximately 168%.
+The largest coordinate drift remains below `0.0345267`, so the new guard
+accepts the model. Raw reporting returns the changed coordinates, and mass
+rescaling preserves them. At float64 these same three points agree with the
+reference to approximately `2e-13` degrees. The remaining demonstrated defect
+therefore concerns supported reduced-precision operation, not these ordinary
+points under TNT's default float64 setting.
+
+**Required before merge:** tighten or otherwise redesign the accepted-error
+criterion so the three examples above either preserve the requested geometry
+or explicitly reject it as numerically unreliable. Check the resulting policy
+with independent coordinate/angle regressions at both precisions and for both
+registered types, including accepted and rejected controls. A blanket absolute
+allowance of `0.0345` does not close the original shape-preservation finding.
+Document the accepted accuracy and rejection policy in the current
+parameterization documentation; `aidocs/KNOWLEDGE.md` and
+`docs/source/potential.md` currently do not describe the new round-trip guard.
+
+The six added regressions run at default precision and cover the original
+examples. They do not exercise these float32 points below the new threshold.
+
+### Reproduction of the remaining F1 behavior
+
+Run the original audit's `Potential.from_settings` reproduction with
+`jax.enable_x64(False)`, observed `q = 0.76`, twist `0.2 rad`, and raw shape
+`(0.1, 0.02, 0.2)`. A compact reproduction at the shared MGE conversion layer is:
+
+```python
+import tnt
+import jax
+import jax.numpy as jnp
+from unxt import Quantity as Q
+from tnt.mge import LightMGE
+
+with jax.enable_x64(False):
+    mge = LightMGE(
+        I=Q(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=Q(jnp.array([1.0]), "kpc"),
+        q=Q(jnp.array([0.76]), ""),
+        PA_twist=Q(jnp.array([0.2]), "rad"),
+        major_axis_pa=Q(0.0, "deg"),
+    )
+    requested = tuple(float(Q(v, "").ustrip("")) for v in (0.1, 0.02, 0.2))
+    angles = mge.viewing_angles_from_T_Tmaj_Tmin(*requested)
+    print(mge.T_Tmaj_Tmin_from_viewing_angles(*angles))
+    # Approximately (0.100000583, 0.053507097, 0.197849512), without an error.
+```
+
+### Re-audit validation
+
+| Check | Result |
+| --- | --- |
+| Full Linux suite: `docker compose run --rm dev pytest -q` | **463 passed**, one dependency deprecation warning, 189.60 seconds |
+| `docker compose run --rm dev ruff check .` | Passed |
+| Strict Sphinx: `sphinx-build -E -b html -W docs/source /tmp/pr67-reaudit-sphinx` | Passed |
+| `git diff --check origin/main...HEAD` | Passed |
+| Focused probe | 40 cases: ten inputs × two types × two precisions; original reproductions, ordinary/positive-thickness controls, and three tolerance-gap cases |
+
+The probe checked full potential construction, inverse parameter reporting,
+independent reference angles, and mass rescaling for successfully built models.
+It did not run an orbit integration, scientific fit, or a new end-to-end YAML
+configuration session. No other PR-specific blocker was found in the fix.
+
+The existing Colima VM was initially stopped and was started for validation,
+after backing up its configuration. Tests and the numerical probe ran
+sequentially. Only this audit document was edited in the repository; no commit,
+push, GitHub comment, approval, or merge was performed during this re-audit.
+
+Assisted by Codex (OpenAI).
