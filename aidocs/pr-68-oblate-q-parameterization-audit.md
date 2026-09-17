@@ -228,3 +228,106 @@ rejection, anchor selection, twist rejection) were not touched -- this
 response addresses F1 only, as scoped by the audit's own recommendation.
 
 Assisted by Claude (Anthropic).
+
+## Re-audit — Codex, 2026-09-17
+
+**Recommendation: ready from a code-review standpoint. F1 is resolved; no
+remaining PR-specific code blocker was found.** Include the documentation
+clarifications from this re-audit before merging. Under the project's review
+workflow, remove this temporary audit document when completing the merge.
+The original recommendation above records the initial review; this section
+is the current assessment.
+
+### Exact reviewed state
+
+Reviewed the **latest remote PR 68 head**,
+`d5698da631c005b07d60ca82a05899c2ab2dde3c` (`Fix PR-68 audit finding F1 in the
+q_min oblate parameterization`), on `oblate-q-parameterization`. After
+`git fetch origin`, local `HEAD`, `origin/oblate-q-parameterization`, and
+GitHub's PR head all matched that commit. The existing worktree was clean;
+no separate audit branch was created. Base `main` remains
+`7429509d1fb59d45a599e17170ac78c3793e48c2`. A GitHub recheck after the full
+test suite confirmed unchanged head and base.
+
+GitHub reports `MERGEABLE`, an existing `CHANGES_REQUESTED` review status,
+and no status checks listed. This re-audit does not change that GitHub review
+status. The documentation edits made here are additional local changes,
+not part of the remote commit identified above.
+
+Completed: read the response and relevant project guidance, inspect the fix
+and seven added regression cases, run the full suite and focused construction
+checks, clarify the numerical policy in current documentation, and record
+the re-audit in this existing document.
+
+### F1 resolved: explicit relative-error gate
+
+`inclination_from_q_min` now deprojects its proposed inclination through
+`q_min_from_inclination` and compares the recovered anchor ratio with the
+requested ratio. Excessive relative drift raises `MGEDeprojectionError`; the
+registry adapter exposes it as `InvalidPotentialParametersError` so the model
+iterator can record an invalid model. This is an explicit rejection policy,
+not a replacement of the requested point with an alternative geometry.
+
+All three original examples now reject for **both** oblate potential types
+at the precision where the original error was observed:
+
+| Precision | Observed q | Requested q_min | Re-audit result |
+| --- | --- | --- | --- |
+| float32 | `0.76` | `0.001` | Rejected: relative drift `0.0624851` exceeds `0.0172633` |
+| float32 | `0.999999` | `0.6` | Rejected: relative drift `0.0226202` exceeds `0.0172633` |
+| float64 | `0.999999999999999` | `0.6` | Rejected: relative drift `0.00397616` exceeds `7.45058e-7` |
+
+The same thin and near-circular inputs in the first two rows remain accurate
+and accepted at float64. Controls `(q_obs, q_min) = (0.76, 0.6), (0.5, 0.3),
+(0.9, 0.1), (0.95, 0.05), (0.99, 0.02)` build at both precisions. The last,
+most demanding control has approximately **0.225% relative error at float32**,
+within the declared ceiling. The edge-on `(0.76, 0.76)` control recovers the
+stored input exactly at both precisions. Zero, above-anchor, and circular-anchor
+inputs reject explicitly.
+
+### Accuracy policy and documentation
+
+The gate uses **relative** error `50 * sqrt(eps)`: approximately `7.45e-7`
+at float64 (0.000075%) and `0.0173` at float32 (1.73%). This bounds the change
+in the requested intrinsic thickness itself, including small `q_min` values.
+It is a ceiling, not an assertion that every accepted model has exact shape
+recovery or that every scientific application can tolerate the float32 ceiling.
+The default float64 setting provides the substantially tighter bound.
+
+I consider this explicit, enforced relative-error policy sufficient to close
+F1. A stricter scientific error budget should use float64. The scalar shape
+check is not a bound on every downstream scientific observable.
+
+The remote revision described the policy in code and the response but omitted
+it from the current project documentation. This re-audit adds its formula,
+precision-dependent limits, invalid-model behavior, and recovered-value
+reporting to `aidocs/KNOWLEDGE.md` and `docs/source/potential.md`. These
+documentation clarifications should accompany the merge. No production code
+or tests were changed during this re-audit.
+
+### Validation and limits
+
+| Check | Result |
+| --- | --- |
+| Full Linux suite: `docker compose run --rm dev pytest -q` | **461 passed**, one dependency deprecation warning; 303.78 seconds |
+| `docker compose run --rm dev ruff check .` | Passed |
+| Strict Sphinx, including the documentation edits: `sphinx-build -E -b html -W docs/source /tmp/pr68-reaudit-sphinx` | Passed |
+| `git diff --check` | Passed |
+| Focused probe | 48 cases: 12 inputs × two potential types × two precisions |
+
+For accepted probe models, assertions checked the relative-error ceiling,
+agreement between reported and built intrinsic ratios, mass rescaling by
+three without shape changes, and insertion of recovered parameters into an
+`AllModels` table. The original failing inputs were checked through full
+`Potential.from_settings` construction, rather than only the helper function.
+Tests and the probe ran sequentially in the Linux development container.
+
+No new end-to-end YAML session, orbit integration, or scientific fit was run.
+The previously noted native-path circular non-anchor limitation remains
+outside this fix and is not a new blocker. This assessment is limited to
+the reviewed commit and the documented accuracy policy.
+
+Only this audit and the two supporting documentation files were edited.
+No commit, push, GitHub comment, approval, or merge was performed.
+
+Assisted by Codex (OpenAI).

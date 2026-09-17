@@ -290,5 +290,14 @@ potential:
   `q_min` config and its equivalent `inclination` config build an identical
   potential and `AllModels` reports either faithfully. `q_min` is registered
   only for `OblateLightMGEPotential` and `OblateMassMGEPotential`.
+  Before accepting the converted inclination, TNT checks that the recovered
+  intrinsic ratio differs from the requested `q_min` by no more than
+  `50 * sqrt(eps)` **relative error**, using the active JAX precision.
+  This permits approximately `0.000075%` at float64 and **1.73% at float32**;
+  it is an acceptance ceiling, not the typical error. Thin or nearly circular
+  configurations outside this accuracy limit are rejected as invalid models.
+  `AllModels` reports the recovered ratio rather than the exact requested
+  value. Use the default float64 setting when percent-level shape error is
+  unacceptable.
 - **`Potential.generate_orbit_library`**: not implemented -- blocked on
   `tnt.orbit_library`, itself still a full scaffold.

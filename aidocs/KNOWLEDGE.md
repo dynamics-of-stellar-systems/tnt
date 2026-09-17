@@ -536,6 +536,14 @@
   (`eps`-scaled, same style as `pqu`'s own guards). Unlike `pqu`'s `u`
   boundary, `q_min == q_obs'` (edge-on, `i = 90 deg`) is not a singularity,
   so it needs no precision margin.
+  The forward conversion also deprojects at the computed inclination and
+  checks `abs(q_recovered - q_min) / q_min <= 50 * sqrt(eps)`, where `eps`
+  is for the active JAX float type. This is a relative shape-error ceiling:
+  approximately `7.45e-7` at float64 and `0.0173` (1.73%) at float32.
+  Exceeding it raises `MGEDeprojectionError`, translated by the adapter to
+  `InvalidPotentialParametersError`. Thin or nearly circular configurations
+  can fail this check even inside the mathematical domain. Reporting uses
+  the recovered shape, so accepted values need not equal inputs exactly.
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`
