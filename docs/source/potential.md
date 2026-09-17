@@ -97,11 +97,11 @@ potential:
   composite type names.
 - `parameterization` (optional): a named conversion registered for `type`.
   Omit it to use `type`'s native parameters directly. Registered:
-  `concentration_m200` for `NFWPotential` (`(c, M_200)` -> `(m, r_s)`), and
-  two for `TriaxialLightMGEPotential` / `TriaxialMassMGEPotential` --
-  `pqu` (intrinsic axis ratios `(p, q, u)` -> viewing angles
-  `(theta, phi, psi)`) and `T_maj_min` (a reparameterization of `pqu`'s own
-  `(p, q, u)` as `(T, T_maj, T_min)`, chosen for more uniform sampling).
+  `concentration_m200` for `NFWPotential` (`(c, M_200)` -> `(m, r_s)`),
+  `pqu` and `T_maj_min` for `TriaxialLightMGEPotential` /
+  `TriaxialMassMGEPotential` (intrinsic shape coordinates -> viewing angles),
+  and `q_min` for `OblateLightMGEPotential` / `OblateMassMGEPotential`
+  (the anchor Gaussian's intrinsic axial ratio -> `inclination`).
 - `parameters` (required): one entry per parameter the resolved
   `type`/`parameterization` pair expects -- every native field, including
   ones with a `galax` constructor default (e.g. `TriaxialHernquistPotential`'s
@@ -151,8 +151,10 @@ split along two independent axes:
   get its own `Prolate...` types. The triaxial types also accept
   `parameterization: "pqu"`, taking the intrinsic axis ratios `(p, q, u)` in
   place of `(theta, phi, psi)`, or `parameterization: "T_maj_min"`, a
-  reparameterization of that same `(p, q, u)` -- see "What's implemented
-  today" below.
+  reparameterization of that same `(p, q, u)`. The oblate types accept
+  `parameterization: "q_min"`, taking the flattest observed (anchor)
+  component's intrinsic axial ratio in place of `inclination` -- see "What's
+  implemented today" below.
 
 ```yaml
 potential:
@@ -193,6 +195,15 @@ potential:
     parameters:
       ml: {value: 3.0, unit: "Msun / Lsun"}
       inclination: {value: 90.0, unit: "deg"}   # edge-on; must be in (0, 90] deg
+
+  # or, with the intrinsic-shape parameterization:
+  bulge_q_min:
+    type: "OblateLightMGEPotential"
+    parameterization: "q_min"
+    mge: "mge_bulge"
+    parameters:
+      ml: {value: 3.0, unit: "Msun / Lsun"}
+      q_min: {value: 0.6}   # anchor component's C/A, 0 < q_min <= q'
 ```
 
 ## What's implemented today
@@ -293,5 +304,31 @@ potential:
   out-of-domain one, rather than silently building a different point.
   `T_maj_min` is registered only for `TriaxialLightMGEPotential` and
   `TriaxialMassMGEPotential`, same as `pqu`.
+- **The oblate MGE types' `q_min` parameterization**: implemented, the
+  oblate counterpart of `pqu`. Replaces the single `inclination` with the
+  intrinsic axial ratio `q_min` of the flattest observed (anchor) Gaussian
+  component, `q_obs' = min(component q)`, via
+  `q_obs'^2 = q_min^2 sin(i)^2 + cos(i)^2`. `q_min` must satisfy
+  `0 < q_min <= 1` as a data-independent parameter constraint; against the
+  MGE it additionally needs `q_min <= q_obs'` (`q_min == q_obs'` is the
+  valid, inclusive edge-on limit `i = 90 deg`) and a non-circular anchor
+  (`q_obs' < 1`). Anything outside that -- or a `q_min` too close to 1
+  (spherical) to invert reliably at the active JAX precision -- makes the
+  build raise `InvalidPotentialParametersError` (recorded as an invalid
+  model, not a crash). Both directions are `AbstractMGE` methods
+  (`inclination_from_q_min` and its inverse `q_min_from_inclination`, which
+  reads the anchor's intrinsic `q` off a full `deproject_oblate` call), so a
+  `q_min` config and its equivalent `inclination` config build an identical
+  potential and `AllModels` reports either faithfully. `q_min` is registered
+  only for `OblateLightMGEPotential` and `OblateMassMGEPotential`.
+  Before accepting the converted inclination, TNT checks that the recovered
+  intrinsic ratio differs from the requested `q_min` by no more than
+  `50 * sqrt(eps)` **relative error**, using the active JAX precision.
+  This permits approximately `0.000075%` at float64 and **1.73% at float32**;
+  it is an acceptance ceiling, not the typical error. Thin or nearly circular
+  configurations outside this accuracy limit are rejected as invalid models.
+  `AllModels` reports the recovered ratio rather than the exact requested
+  value. Use the default float64 setting when percent-level shape error is
+  unacceptable.
 - **`Potential.generate_orbit_library`**: not implemented -- blocked on
   `tnt.orbit_library`, itself still a full scaffold.

@@ -397,6 +397,79 @@ def test_deproject_oblate_rejects_inclination_outside_0_90():
             physical.deproject_oblate(u.Quantity(bad, "deg"))
 
 
+def test_inclination_from_q_min_and_q_min_from_inclination_are_inverses():
+    mge = _triaxial_anchor_mge()  # anchor q' = 0.76 (zero PA_twist)
+
+    inclination = mge.inclination_from_q_min(0.6)
+    q_min_r = mge.q_min_from_inclination(inclination)
+
+    assert q_min_r == pytest.approx(0.6, abs=1e-9)
+
+
+def test_inclination_from_q_min_at_the_anchor_edge_is_edge_on():
+    # q_min == q_obs' is the inclusive i = 90 deg (edge-on) limit.
+    mge = _triaxial_anchor_mge()
+
+    inclination = mge.inclination_from_q_min(0.76)
+
+    assert inclination.ustrip("deg") == pytest.approx(90.0, abs=1e-9)
+
+
+def test_inclination_from_q_min_rejects_q_min_above_the_anchor():
+    with pytest.raises(MGEDeprojectionError, match="0 < q_min <= q'"):
+        _triaxial_anchor_mge().inclination_from_q_min(0.9)
+
+
+def test_inclination_from_q_min_rejects_non_positive_q_min():
+    with pytest.raises(MGEDeprojectionError, match="0 < q_min <= q'"):
+        _triaxial_anchor_mge().inclination_from_q_min(0.0)
+
+
+def test_inclination_from_q_min_rejects_a_circular_anchor():
+    circular = _single_component_light_mge(q_obs=1.0, psi=0.0)
+    with pytest.raises(MGEDeprojectionError, match="circular MGE"):
+        circular.inclination_from_q_min(0.5)
+
+
+def test_inclination_from_q_min_rejects_a_thin_disk_at_reduced_precision():
+    # PR-68 audit finding: deproject_oblate's own q**2 = q_obs**2 - cos(i)**2
+    # subtracts two nearly equal quantities whenever q_min is small relative
+    # to q_obs -- at float32, q_min = 0.001 against q_obs = 0.76 previously
+    # recovered ~0.00106249 (+6.2% relative error) without ever raising.
+    with jax.enable_x64(False):
+        mge = _single_component_light_mge(q_obs=0.76, psi=0.0)
+        with pytest.raises(MGEDeprojectionError, match="precision boundary"):
+            mge.inclination_from_q_min(0.001)
+
+
+def test_inclination_from_q_min_rejects_a_near_circular_anchor_at_reduced_precision():
+    # PR-68 audit finding: the same cancellation also triggers for an
+    # ordinary, non-thin q_min when the anchor itself is nearly circular --
+    # at float32, q_min = 0.6 against q_obs = 0.999999 previously recovered
+    # ~0.613572 (+2.26% relative error).
+    with jax.enable_x64(False):
+        mge = _single_component_light_mge(q_obs=0.999999, psi=0.0)
+        with pytest.raises(MGEDeprojectionError, match="precision boundary"):
+            mge.inclination_from_q_min(0.6)
+
+
+@pytest.mark.parametrize(
+    ("q_obs", "q_min"), [(0.76, 0.6), (0.5, 0.3), (0.9, 0.1), (0.95, 0.05)]
+)
+def test_inclination_from_q_min_accepts_ordinary_points_at_both_precisions(
+    q_obs, q_min
+):
+    # The round-trip check must not reject ordinary configurations --
+    # confirms it doesn't just reject everything near a flattened anchor.
+    for x64 in (True, False):
+        with jax.enable_x64(x64):
+            mge = _single_component_light_mge(q_obs=q_obs, psi=0.0)
+            inclination = mge.inclination_from_q_min(q_min)
+            q_min_r = mge.q_min_from_inclination(inclination)
+            tol = 1e-6 if x64 else 1e-2
+            assert q_min_r == pytest.approx(q_min, rel=tol)
+
+
 def _single_component_light_mge(q_obs: float, psi: float) -> LightMGE:
     return LightMGE(
         I=u.Quantity(jnp.array([5.0]), "Lsun / kpc2"),
