@@ -407,3 +407,117 @@ accepted-accuracy/rejection policy in both `aidocs/KNOWLEDGE.md` and
 `docs/source/potential.md`.
 
 Assisted by Claude (Anthropic).
+
+## Second re-audit — Codex, 2026-09-17
+
+**Current assessment: F1 and F2 are resolved in the reviewed code. No further
+PR-specific correctness blocker was found. The PR cannot merge yet because
+it conflicts with current `main`; resolve those conflicts and validate the
+combined branch before merging.** This supersedes the earlier assessment
+that the numerical fix was incomplete.
+
+### Reviewed state
+
+Reviewed the latest remote PR 67 commit
+`33c4d431976314d4b233ce98a3022bf9803ccf44` on
+`T-maj-min-parameterization`. After fetching origin, local `HEAD`, the remote
+tracking branch, and GitHub's PR head matched this commit. The existing
+worktree was clean; no separate audit branch was used.
+
+The common ancestor with `main` is
+`7429509d1fb59d45a599e17170ac78c3793e48c2`. Current fetched `origin/main` is
+`00e5954a7ee4b1485503d08853ad1e2c81bb249f`, which includes merged PR 68.
+GitHub still returned `7429509...` in its PR `baseRefOid` field, but reported
+`CONFLICTING`; a local trial merge against the freshly fetched main commit
+independently confirmed the conflicts. All test results below apply to
+`33c4d43`, not a conflict-resolved combination with current main.
+
+Completed: read Response 2, inspect the implementation, tests and current
+documentation changes, rerun the suite and focused numerical checks, inspect
+merge conflicts without changing the worktree, and append this assessment.
+
+### Findings closed
+
+**F1:** the implementation now checks each coordinate independently using
+`abs(recovered - requested) <= 100*eps + 50*sqrt(eps)*abs(requested)`.
+The relative term scales with the requested coordinate; the absolute term
+handles values at or near zero. This removes the large fixed absolute
+allowance that admitted the last re-audit's failing examples.
+
+Confirmed through full potential construction and inverse reporting for
+both `TriaxialLightMGEPotential` and `TriaxialMassMGEPotential`, with observed
+`q' = 0.76` and anchor twist `0.2 rad`:
+
+| Requested `(T, T_maj, T_min)` | float32 | float64 |
+| --- | --- | --- |
+| `(0.1, 0.02, 0.2)` | Explicit invalid-model rejection | Accepted; reference-angle error below `2e-13` degrees |
+| `(0.1, 0.03, 0.2)` | Explicit invalid-model rejection | Accepted; reference-angle error below `2e-13` degrees |
+| `(0.05, 0.08, 0.2)` | Explicit invalid-model rejection | Accepted; reference-angle error below `2e-13` degrees |
+
+All original F1 cases also reject at the precision where the inaccurate
+construction was reported. Ordinary `(0.43, 0.49, 0.39)` and small-coordinate
+`(0.1, 0.1, 0.2)` controls build at both precisions; float32 reference-angle
+errors for these controls are below `3e-6` degrees. The probe also asserts
+that every accepted coordinate satisfies the combined tolerance and that
+mass rescaling preserves the recovered shape.
+
+**F2:** the exact zero-thickness case remains explicitly rejected at both
+precisions and for both types. The nearby positive-thickness control remains
+accepted. No regression in the strict `q2 > 0` guard was found.
+
+The policy is now documented in both `aidocs/KNOWLEDGE.md` and
+`docs/source/potential.md`. Numerically, the per-coordinate ceiling is:
+
+- float64: `2.22e-14 + 7.45e-7 * abs(requested)`;
+- float32: `1.19e-5 + 0.0172633 * abs(requested)`.
+
+These are acceptance ceilings, not typical errors or universal bounds on
+viewing-angle or downstream scientific errors. The relative portion is about
+1.73% at float32; the absolute term dominates sufficiently close to zero.
+The default float64 setting remains appropriate for tighter accuracy needs.
+Closed schema bounds do not guarantee construction at every endpoint: the
+probe's `(0.43, 0, 0.39)` point rejects at both precisions because the recovered
+coordinate fails the accuracy check. That is consistent with explicit
+rejection of geometries the implementation cannot represent accurately.
+
+### Remaining merge preparation
+
+A trial `git merge-tree --write-tree --name-only HEAD origin/main` reports
+conflicts in:
+
+- `tnt/mge.py`;
+- `tests/unit_tests/test_potential.py`;
+- `aidocs/KNOWLEDGE.md`;
+- `docs/source/potential.md`.
+
+The trial did not change the branch or worktree and did not create a merge
+commit. The MGE conflict includes the adjacent triaxial and oblate tolerance
+constant blocks; both must survive resolution. Likewise preserve both sets
+of registered-parameterization tests and documentation. Merge main into the
+PR branch, following project policy, rather than rebasing the shared branch.
+Rerun the full suite, lint, strict documentation build, and focused checks for
+both PR 67 and PR 68 after resolving. Remove this temporary audit document
+before the final PR merge, as specified by the project workflow.
+
+### Validation and scope
+
+| Check | Result |
+| --- | --- |
+| Full Linux suite: `docker compose run --rm dev pytest -q` | **466 passed**, one dependency deprecation warning; 221.61 seconds |
+| `docker compose run --rm dev ruff check .` | Passed |
+| Strict Sphinx: `sphinx-build -E -b html -W docs/source /tmp/pr67-second-reaudit-sphinx` | Passed |
+| `git diff --check origin/main...HEAD` | Passed |
+| Focused numerical probe | 48 cases: 12 inputs × two potential types × two precisions |
+| Trial merge against current main | Conflicts in the four files listed above |
+
+The numerical probe checked construction, inverse reporting, independent
+reference angles where the reference is nonsingular, the combined accuracy
+bound, and mass rescaling. Tests and probe ran sequentially. No new orbit
+integration, scientific fit, or end-to-end YAML configuration session was run.
+The integrated result with PR 68 has not been tested because the conflicts
+have not been resolved in this review.
+
+Only this audit document was edited. No production changes, conflict
+resolution, commit, push, GitHub comment, approval, or merge was performed.
+
+Assisted by Codex (OpenAI).
