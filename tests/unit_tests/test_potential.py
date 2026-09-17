@@ -40,6 +40,7 @@ from tnt.potential import (
 )
 from tnt.potential import registry as _registry_module
 from tnt.potential.nfw import _newtonian_gravitational_constant
+from tnt.potential.oblate_mge import _inclination_to_qmin, _qmin_to_inclination
 from tnt.potential.registry import (
     _COMPONENT_REGISTRY,
     ParameterConstraint,
@@ -2266,3 +2267,159 @@ def test_pqu_domain_invalid_value_is_rejected_at_build_time() -> None:
             },
             _NO_COSMOLOGICAL_PARAMETERS,
         )
+
+
+# q_min = 0.6 against _triaxial_light_mge()'s anchor q' = 0.76 (its zero
+# PA_twist also satisfies deproject_oblate's requirement):
+_QMIN = {"q_min": Quantity(0.6, "")}
+
+
+def test_qmin_to_inclination_round_trips_through_inclination_to_qmin() -> None:
+    mge = _triaxial_light_mge()
+    raw = {"ml": Quantity(1.0, "Msun / Lsun"), **_QMIN}
+
+    native = _qmin_to_inclination(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+    recovered = _inclination_to_qmin(native, {}, _NO_COSMOLOGICAL_PARAMETERS, mge)
+
+    assert recovered["q_min"].ustrip("") == pytest.approx(0.6, abs=1e-9)
+
+
+def test_q_min_is_registered_for_both_oblate_mge_types() -> None:
+    for type_name, mass_name, mass_dim in (
+        ("OblateLightMGEPotential", "ml", "mass_to_light"),
+        ("OblateMassMGEPotential", "mge_mass_scale", "dimensionless"),
+    ):
+        spec = _registry_module.get_parameterization(type_name, "q_min")
+        assert spec is not None
+        assert spec.convert is _qmin_to_inclination
+        assert spec.invert is _inclination_to_qmin
+        assert spec.raw_dimensions == {mass_name: mass_dim, "q_min": "dimensionless"}
+        assert raw_parameter_dimensions(type_name, "q_min") == spec.raw_dimensions
+        constraints = parameter_constraints(type_name, "q_min")
+        assert set(constraints) == {mass_name, "q_min"}
+        assert constraints["q_min"].minimum == 0.0
+        assert constraints["q_min"].minimum_inclusive is False
+        assert constraints["q_min"].maximum == 1.0
+
+
+@pytest.mark.parametrize(
+    "type_name", ["OblateLightMGEPotential", "OblateMassMGEPotential"]
+)
+def test_q_min_config_builds_the_same_deprojection_as_inclination(
+    type_name: str,
+) -> None:
+    mge = _triaxial_light_mge()
+    if type_name == "OblateMassMGEPotential":
+        mge = mge.to_mass(Quantity(1.0, "Msun / Lsun"))
+    mass_name = "ml" if type_name == "OblateLightMGEPotential" else "mge_mass_scale"
+    mass_unit = "Msun / Lsun" if mass_name == "ml" else ""
+    mass_value = Quantity(3.5, mass_unit)
+
+    qmin_resolved = AbstractPotentialComponent.resolve(
+        {"type": type_name, "parameterization": "q_min", "mge": "m", "parameters": {}},
+        {"m": mge},
+        path="potential.stars",
+    )
+    qmin_component = qmin_resolved.build(
+        {mass_name: mass_value, **_QMIN}, _NO_COSMOLOGICAL_PARAMETERS
+    )
+
+    inclination = _qmin_to_inclination(
+        {mass_name: mass_value, **_QMIN}, _NO_COSMOLOGICAL_PARAMETERS, mge
+    )["inclination"]
+    incl_resolved = AbstractPotentialComponent.resolve(
+        {"type": type_name, "mge": "m", "parameters": {}},
+        {"m": mge},
+        path="potential.stars",
+    )
+    incl_component = incl_resolved.build(
+        {mass_name: mass_value, "inclination": inclination}, _NO_COSMOLOGICAL_PARAMETERS
+    )
+
+    for attr in ("I", "sigma", "p", "q"):
+        assert jnp.allclose(
+            getattr(qmin_component.deprojected, attr).ustrip(
+                getattr(qmin_component.deprojected, attr).unit
+            ),
+            getattr(incl_component.deprojected, attr).ustrip(
+                getattr(incl_component.deprojected, attr).unit
+            ),
+        ), attr
+
+
+def test_q_min_raw_potential_parameters_round_trips_and_survives_rescale() -> None:
+    mge = _triaxial_light_mge()
+    settings = {
+        "stars": {
+            "type": "OblateLightMGEPotential",
+            "parameterization": "q_min",
+            "mge": "m",
+            "parameters": {"ml": {"unit": "Msun / Lsun"}},
+        }
+    }
+    values = {"stars": {"ml": Quantity(4.0, "Msun / Lsun"), **_QMIN}}
+    potential = Potential.from_settings(settings, values, {"m": mge}, {})
+
+    raw = raw_potential_parameters(settings, potential, {})["stars"]
+    assert set(raw) == {"ml", "q_min"}
+    assert raw["q_min"].ustrip("") == pytest.approx(0.6, abs=1e-9)
+    assert raw["ml"].ustrip("Msun / Lsun") == pytest.approx(4.0)
+
+    rescaled = raw_potential_parameters(settings, potential.rescale(3.0), {})["stars"]
+    assert rescaled["ml"].ustrip("Msun / Lsun") == pytest.approx(12.0)
+    assert rescaled["q_min"].ustrip("") == pytest.approx(0.6, abs=1e-9)
+
+
+def test_q_min_domain_invalid_value_is_rejected_at_build_time() -> None:
+    # q_min > 1 violates the data-independent ParameterConstraint, caught
+    # before the converter (and before any MGE is consulted).
+    mge = _triaxial_light_mge()
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "OblateLightMGEPotential",
+            "parameterization": "q_min",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    with pytest.raises(ValueError, match=r"parameters\.q_min"):
+        resolved.build(
+            {"ml": Quantity(1.0, "Msun / Lsun"), "q_min": Quantity(1.5, "")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+
+
+def test_q_min_rejects_a_thin_disk_the_cancellation_would_silently_move() -> None:
+    # PR-68 audit finding: deproject_oblate's own q**2 = q_obs**2 - cos(i)**2
+    # subtracts two nearly equal quantities whenever q_min is small relative
+    # to q_obs -- at float32, q_min = 0.001 against q_obs = 0.76 previously
+    # recovered ~0.00106249 (+6.2% relative error) without ever raising. The
+    # config-layer build must now reject it as an invalid model instead.
+    with jax.enable_x64(False):
+        mge = LightMGE(
+            I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+            sigma=Quantity(jnp.array([1.0]), "kpc"),
+            q=Quantity(jnp.array([0.76]), ""),  # anchor q' = 0.76
+            PA_twist=Quantity(jnp.zeros(1), "rad"),
+            major_axis_pa=Quantity(0.0, "deg"),
+        )
+        resolved = AbstractPotentialComponent.resolve(
+            {
+                "type": "OblateLightMGEPotential",
+                "parameterization": "q_min",
+                "mge": "m",
+                "parameters": {},
+            },
+            {"m": mge},
+            path="potential.stars",
+        )
+        with pytest.raises(
+            _registry_module.InvalidPotentialParametersError,
+            match="precision boundary",
+        ):
+            resolved.build(
+                {"ml": Quantity(1.0, "Msun / Lsun"), "q_min": Quantity(0.001, "")},
+                _NO_COSMOLOGICAL_PARAMETERS,
+            )

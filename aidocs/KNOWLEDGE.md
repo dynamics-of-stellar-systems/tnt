@@ -517,6 +517,33 @@
   float type. At float32 that margin is `~1.4e-3`, so a declared `u = 1` is
   honoured only to about that and `triaxial_intrinsic_shape` reports the
   recovered value, not an exact `1`.
+- `q_min` (the two oblate MGE types): the oblate counterpart of `pqu` --
+  the anchor Gaussian's intrinsic axial ratio <-> the single global
+  `inclination`, via `deproject_oblate`'s own relation `q_obs'^2 = q_min^2
+  sin(i)^2 + cos(i)^2` at the anchor `q_obs' = min(component q)`
+  (`_triaxial_anchor`; its `PA_twist` element is unused here since
+  `deproject_oblate` requires every component's twist to be zero). Both
+  directions are `AbstractMGE` methods: `inclination_from_q_min(q_min) ->
+  inclination` and its inverse `q_min_from_inclination(inclination) ->
+  q_min`, which reads the anchor's own intrinsic `q` off a full
+  `deproject_oblate` call rather than duplicating that method's unit/twist/
+  domain validation. `_qmin_to_inclination` / `_inclination_to_qmin` in
+  `tnt.potential.oblate_mge` are the registry adapters, mirroring
+  `_pqu_to_tpp` / `_tpp_to_pqu`. Data-independent bound: `0 < q_min <= 1`
+  (`ParameterConstraint`); `inclination_from_q_min` additionally rejects a
+  circular anchor (`q_obs' == 1`), `q_min` outside `0 < q_min <= q_obs'`,
+  and `q_min` too close to 1 to divide by reliably at the working precision
+  (`eps`-scaled, same style as `pqu`'s own guards). Unlike `pqu`'s `u`
+  boundary, `q_min == q_obs'` (edge-on, `i = 90 deg`) is not a singularity,
+  so it needs no precision margin.
+  The forward conversion also deprojects at the computed inclination and
+  checks `abs(q_recovered - q_min) / q_min <= 50 * sqrt(eps)`, where `eps`
+  is for the active JAX float type. This is a relative shape-error ceiling:
+  approximately `7.45e-7` at float64 and `0.0173` (1.73%) at float32.
+  Exceeding it raises `MGEDeprojectionError`, translated by the adapter to
+  `InvalidPotentialParametersError`. Thin or nearly circular configurations
+  can fail this check even inside the mathematical domain. Reporting uses
+  the recovered shape, so accepted values need not equal inputs exactly.
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`

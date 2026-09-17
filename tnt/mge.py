@@ -78,6 +78,27 @@ def _check_axial_ratios(p: jnp.ndarray, q: jnp.ndarray) -> None:
 # geometry and is rejected.
 _TRIAXIAL_WEIGHT_ATOL = 1e-9
 
+# `AbstractMGE.inclination_from_q_min`'s own round-trip accuracy check.
+# `deproject_oblate`'s `q_intr = sqrt(q_obs**2 - cos(i)**2) / sin(i)` (used by
+# both the native `inclination` parameterization and, via
+# `q_min_from_inclination`, this round trip) subtracts two nearly equal
+# quantities whenever the requested `q_min` is small relative to `q_obs` --
+# `cos(i)**2` is then close to `q_obs**2` by construction (see
+# `inclination_from_q_min`'s own `cos2_i` formula) -- so a tiny rounding error
+# already present in `i` at the working precision can become a large
+# *relative* error in the recovered `q_min`. A relative tolerance (not
+# absolute, unlike `_TRIAXIAL_WEIGHT_ATOL`) is the right test here
+# specifically because the failure mode scales with how small the requested
+# `q_min` itself is, not with its absolute size. Scaled by `sqrt(eps)` rather
+# than `eps` itself for the same headroom-vs-sensitivity reason as
+# `triaxial_viewing_angles`'s own `4 * sqrt(eps)` margin. Calibrated against
+# measured round-trip drift, not guessed: an ordinary configuration (q_obs up
+# to 0.99, q_min down to 0.02) stays within ~5e-3 relative drift at float32
+# and ~2e-12 at float64, while every case the PR-68 audit flagged measured
+# 0.4%-6.2% -- `50 * sqrt(eps)` (~1.7% at float32, ~7.5e-7 at float64) sits
+# comfortably between the two at both precisions.
+_QMIN_ROUNDTRIP_TOL_FACTOR = 50.0
+
 
 def _triaxial_intrinsic_axis_ratios(
     theta_r: jnp.ndarray,
@@ -436,6 +457,79 @@ class AbstractMGE(eqx.Module):
             p=Quantity(jnp.ones_like(q_intr), ""),
             q=Quantity(q_intr, ""),
         )
+
+    def inclination_from_q_min(self, q_min: float) -> Quantity:
+        """The inclination giving the anchor component's intrinsic axial ratio.
+
+        Inverts `deproject_oblate`'s own relation, ``q_obs**2 = q_min**2 *
+        sin(i)**2 + cos(i)**2``, evaluated at this MGE's own anchor ``q_obs'
+        = min(component q)`` (`_triaxial_anchor`; its `PA_twist` element is
+        unused here -- `deproject_oblate` itself requires every component's
+        `PA_twist` to be zero for an oblate system):
+
+        ``cos(i)**2 = (q_obs'**2 - q_min**2) / (1 - q_min**2)``.
+
+        ``q_min == q_obs'`` is the inclusive edge-on limit (``i = 90 deg``),
+        not a singularity; ``q_min -> 1`` (a near-spherical anchor) is.
+
+        Raises:
+            MGEDeprojectionError: If this MGE's anchor is circular
+                (``q_obs' == 1``), if ``q_min`` is outside
+                ``0 < q_min <= q_obs'``, if ``q_min`` is too close to 1 to
+                divide by reliably at the working precision, or if
+                `deproject_oblate`'s own inverse relation can't recover
+                ``q_min`` accurately at the resulting inclination (see
+                `_QMIN_ROUNDTRIP_TOL_FACTOR`).
+        """
+        q_obs, _ = self._triaxial_anchor()
+        if not q_obs < 1.0:
+            raise MGEDeprojectionError(
+                f"Oblate deprojection needs a flattened MGE (anchor q' = "
+                f"{q_obs:g}); a circular MGE has no inclination to solve for."
+            )
+        if not 0.0 < q_min <= q_obs:
+            raise MGEDeprojectionError(
+                f"q_min = {q_min:g} has no oblate deprojection for this MGE "
+                f"(anchor q' = {q_obs:g}): requires 0 < q_min <= q'."
+            )
+        eps = float(jnp.finfo(jnp.result_type(float)).eps)
+        den = 1.0 - q_min * q_min
+        if den < eps:
+            raise MGEDeprojectionError(
+                f"q_min = {q_min:g} is too close to 1 (spherical) to "
+                "deproject reliably at this numerical precision."
+            )
+        cos2_i = min(max((q_obs * q_obs - q_min * q_min) / den, 0.0), 1.0)
+        inclination = Quantity(math.acos(math.sqrt(cos2_i)), "rad")
+
+        # Verify the round trip instead of trusting it silently: reject
+        # rather than construct a substantially different intrinsic shape
+        # (see `_QMIN_ROUNDTRIP_TOL_FACTOR`'s own definition).
+        q_min_r = self.q_min_from_inclination(inclination)
+        tolerance = _QMIN_ROUNDTRIP_TOL_FACTOR * math.sqrt(eps)
+        relative_drift = abs(q_min_r - q_min) / q_min
+        if relative_drift > tolerance:
+            raise MGEDeprojectionError(
+                f"q_min = {q_min:g}, q' = {q_obs:g}: too close to a "
+                "numerical-precision boundary in deproject_oblate's own "
+                "q**2 = q_obs**2 - cos(i)**2 cancellation to represent "
+                f"accurately (round-trip recovers q_min = {q_min_r:g}, "
+                f"relative drift {relative_drift:g} exceeds tolerance "
+                f"{tolerance:g})."
+            )
+        return inclination
+
+    def q_min_from_inclination(self, inclination: Quantity) -> float:
+        """The anchor component's intrinsic axial ratio at this inclination.
+
+        The numerical inverse of `inclination_from_q_min`: deprojects the
+        whole MGE (`deproject_oblate`) and reads off the anchor component's
+        own intrinsic `q`, reusing all of that method's unit/`PA_twist`/
+        domain validation rather than duplicating it.
+        """
+        deprojected = self.deproject_oblate(inclination)
+        anchor = int(jnp.argmin(self.q.ustrip("")))
+        return float(deprojected.q[anchor].ustrip(""))
 
     def deproject_triaxial(
         self, theta: Quantity, phi: Quantity, psi: Quantity
