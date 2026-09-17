@@ -1,4 +1,5 @@
 import dataclasses
+import math
 from pathlib import Path
 
 import jax
@@ -13,6 +14,8 @@ from tnt.mge import (
     LightMGE,
     MassMGE,
     MGEDeprojectionError,
+    _p_q_u_from_T_Tmaj_Tmin,
+    _T_Tmaj_Tmin_from_p_q_u,
     build_mges,
     read_mge,
 )
@@ -742,6 +745,131 @@ def test_triaxial_viewing_angles_round_trip_at_both_precisions(x64, q_obs, p, q,
     assert (p_r, q_r) == pytest.approx((p, q), abs=tol)
     # a boundary u is honoured only to the precision-scaled margin
     assert u_r == pytest.approx(u_in, abs=1e-6 if x64 else 3e-3)
+
+
+@pytest.mark.parametrize(
+    ("p", "q", "u_", "q_obs"),
+    [(0.85, 0.60, 0.93, 0.76), (0.55, 0.40, 0.55 / 0.60, 0.60), (0.99, 0.20, 1.0, 0.5)],
+)
+def test_T_Tmaj_Tmin_round_trips_through_p_q_u(p, q, u_, q_obs):
+    T, T_maj, T_min = _T_Tmaj_Tmin_from_p_q_u(p, q, u_, q_obs)
+    assert 0.0 <= T <= 1.0
+    assert 0.0 <= T_maj <= 1.0
+    assert 0.0 <= T_min <= 1.0
+
+    p_r, q_r, u_r = _p_q_u_from_T_Tmaj_Tmin(T, T_maj, T_min, q_obs)
+
+    assert (p_r, q_r, u_r) == pytest.approx((p, q, u_), abs=1e-9)
+
+
+def test_T_matches_the_ngc1453_value_from_quenneville_liepold_ma_2022():
+    # Quenneville, Liepold & Ma (2022), ApJ 926:30, abstract: the best-fit
+    # NGC 1453 model has p = 0.933, q = 0.779, T = 0.33. T = (1-p^2)/(1-q^2)
+    # doesn't depend on q_obs, so any valid dummy anchor value works here.
+    T, _, _ = _T_Tmaj_Tmin_from_p_q_u(p=0.933, q=0.779, u=0.95, q_obs=0.5)
+    assert T == pytest.approx(0.33, abs=5e-3)
+
+
+def test_p_q_u_from_T_Tmaj_Tmin_rejects_a_degenerate_denominator():
+    # den = 1 - (1-T)*T_min - q_obs^2*T*T_maj == 0 at T=1, T_maj=1, q_obs^2=1... but
+    # q_obs < 1 always for a flattened MGE, so drive den -> 0 via T_min instead:
+    # (1-T)*T_min == 1 needs T=0, T_min=1 (T*T_maj term then vanishes since T=0).
+    with pytest.raises(MGEDeprojectionError, match="denominator"):
+        _p_q_u_from_T_Tmaj_Tmin(T=0.0, T_maj=0.5, T_min=1.0, q_obs=0.76)
+
+
+def test_T_Tmaj_Tmin_and_viewing_angles_are_inverses():
+    mge = _triaxial_anchor_mge()
+    T, T_maj, T_min = _T_Tmaj_Tmin_from_p_q_u(0.85, 0.60, 0.93, q_obs=0.76)
+
+    theta, phi, psi = mge.viewing_angles_from_T_Tmaj_Tmin(T, T_maj, T_min)
+    T_r, T_maj_r, T_min_r = mge.T_Tmaj_Tmin_from_viewing_angles(theta, phi, psi)
+
+    assert (T_r, T_maj_r, T_min_r) == pytest.approx((T, T_maj, T_min), abs=1e-9)
+
+
+def test_viewing_angles_from_T_Tmaj_Tmin_agrees_with_the_pqu_path():
+    # Both parameterizations pin down the same anchor geometry -- going via
+    # (T, T_maj, T_min) must reproduce the (p, q, u) path's own angles exactly.
+    mge = _triaxial_anchor_mge()
+    p, q, u_ = 0.85, 0.60, 0.93
+    T, T_maj, T_min = _T_Tmaj_Tmin_from_p_q_u(p, q, u_, q_obs=0.76)
+
+    theta_pqu, phi_pqu, psi_pqu = mge.triaxial_viewing_angles(p, q, u_)
+    theta_t, phi_t, psi_t = mge.viewing_angles_from_T_Tmaj_Tmin(T, T_maj, T_min)
+
+    assert theta_t.ustrip("rad") == pytest.approx(theta_pqu.ustrip("rad"), abs=1e-9)
+    assert phi_t.ustrip("rad") == pytest.approx(phi_pqu.ustrip("rad"), abs=1e-9)
+    assert psi_t.ustrip("rad") == pytest.approx(psi_pqu.ustrip("rad"), abs=1e-9)
+
+
+def test_viewing_angles_from_T_Tmaj_Tmin_rejects_a_prolate_geometry():
+    # T=1 <=> p == q (see _T_Tmaj_Tmin_from_p_q_u); triaxial_viewing_angles
+    # itself rejects the prolate limit q == p.
+    with pytest.raises(MGEDeprojectionError, match="prolate"):
+        _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(1.0, 0.5, 0.5)
+
+
+def test_p_q_u_from_T_Tmaj_Tmin_rejects_a_zero_thickness_boundary():
+    # q_obs=0.5, (T, T_maj, T_min) = (0.5, 0.5, 0.375): den = 1 - 0.5*0.375 -
+    # 0.25*0.5*0.5 = 0.75 exactly, giving q^2 = 1 - (1 - 0.25)/0.75 = 0.0
+    # exactly -- a zero-thickness anchor, excluded by TNT's strict
+    # `0 < q <= p <= 1` intrinsic-axis convention even though it's a
+    # boundary rather than negative value.
+    with pytest.raises(MGEDeprojectionError, match="positive"):
+        _p_q_u_from_T_Tmaj_Tmin(T=0.5, T_maj=0.5, T_min=0.375, q_obs=0.5)
+
+
+def test_p_q_u_from_T_Tmaj_Tmin_accepts_the_adjacent_interior_point():
+    # One ULP-scale nudge off the exact zero-thickness boundary above should
+    # still deproject normally -- confirms the new q^2 > 0 check rejects
+    # only the boundary itself, not a neighbourhood around it.
+    p, q, u_ = _p_q_u_from_T_Tmaj_Tmin(T=0.5, T_maj=0.5, T_min=0.374, q_obs=0.5)
+    assert 0.0 < q <= p <= 1.0
+    assert 0.0 < u_ <= 1.0
+
+
+def test_viewing_angles_from_T_Tmaj_Tmin_rejects_a_clamped_boundary_point():
+    # Same point the PR-67 audit flagged: near the T -> 0 (oblate) limit,
+    # triaxial_viewing_angles's own eps-margin clamp on u moves u by only
+    # ~3e-8, but (T, T_maj, T_min) divides by (1 - p**2) and (p**2 - q**2),
+    # amplifying that into a recovered T_maj far from the one requested
+    # (0.1 requested vs. ~0.226 previously silently recovered). The
+    # round-trip check must reject this rather than build the wrong point.
+    with pytest.raises(MGEDeprojectionError, match="precision boundary"):
+        _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(1e-6, 0.1, 0.2)
+
+
+def test_viewing_angles_from_T_Tmaj_Tmin_accepts_an_ordinary_interior_point():
+    # The round-trip check must not reject points that aren't actually near
+    # a clamped boundary -- confirms it doesn't just reject everything.
+    theta, phi, psi = _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(
+        0.43, 0.49, 0.39
+    )
+    assert all(math.isfinite(a.ustrip("rad")) for a in (theta, phi, psi))
+
+
+@pytest.mark.parametrize(
+    ("T", "T_maj", "T_min"), [(0.1, 0.02, 0.2), (0.1, 0.03, 0.2), (0.05, 0.08, 0.2)]
+)
+def test_viewing_angles_from_T_Tmaj_Tmin_rejects_small_coordinate_drift_at_float32(
+    T, T_maj, T_min
+):
+    # PR-67 re-audit finding: a purely *absolute* round-trip tolerance is
+    # blind to a small requested coordinate -- at float32, T_maj = 0.02
+    # (etc.) previously recovered a value ~32%-168% larger, well under the
+    # old absolute-only bound (~0.0345), without ever raising. These same
+    # three points are genuinely fine at float64 (agree to ~1e-13) -- only
+    # float32 should reject them.
+    with jax.enable_x64(True):
+        mge = _triaxial_anchor_mge()  # anchor q' = 0.76
+        theta, phi, psi = mge.viewing_angles_from_T_Tmaj_Tmin(T, T_maj, T_min)
+        assert all(math.isfinite(a.ustrip("rad")) for a in (theta, phi, psi))
+    with (
+        jax.enable_x64(False),
+        pytest.raises(MGEDeprojectionError, match="precision boundary"),
+    ):
+        _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(T, T_maj, T_min)
 
 
 def test_mge_is_frozen():

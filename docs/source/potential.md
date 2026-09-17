@@ -98,10 +98,10 @@ potential:
 - `parameterization` (optional): a named conversion registered for `type`.
   Omit it to use `type`'s native parameters directly. Registered:
   `concentration_m200` for `NFWPotential` (`(c, M_200)` -> `(m, r_s)`),
-  `pqu` for `TriaxialLightMGEPotential` / `TriaxialMassMGEPotential`
-  (intrinsic axis ratios `(p, q, u)` -> viewing angles `(theta, phi, psi)`),
-  and `q_min` for `OblateLightMGEPotential` / `OblateMassMGEPotential` (the
-  anchor Gaussian's intrinsic axial ratio -> `inclination`).
+  `pqu` and `T_maj_min` for `TriaxialLightMGEPotential` /
+  `TriaxialMassMGEPotential` (intrinsic shape coordinates -> viewing angles),
+  and `q_min` for `OblateLightMGEPotential` / `OblateMassMGEPotential`
+  (the anchor Gaussian's intrinsic axial ratio -> `inclination`).
 - `parameters` (required): one entry per parameter the resolved
   `type`/`parameterization` pair expects -- every native field, including
   ones with a `galax` constructor default (e.g. `TriaxialHernquistPotential`'s
@@ -150,7 +150,8 @@ split along two independent axes:
   `q = C/A <= 1`); a prolate spheroid needs a different relation and would
   get its own `Prolate...` types. The triaxial types also accept
   `parameterization: "pqu"`, taking the intrinsic axis ratios `(p, q, u)` in
-  place of `(theta, phi, psi)`; the oblate types accept
+  place of `(theta, phi, psi)`, or `parameterization: "T_maj_min"`, a
+  reparameterization of that same `(p, q, u)`. The oblate types accept
   `parameterization: "q_min"`, taking the flattest observed (anchor)
   component's intrinsic axial ratio in place of `inclination` -- see "What's
   implemented today" below.
@@ -176,6 +177,17 @@ potential:
       p: {value: 0.85}   # B/A,   0 < q < p <= 1
       q: {value: 0.60}   # C/A
       u: {value: 0.93}   # compression, max(q/q', p) < u <= min(p/q', 1)
+
+  # or, reparameterized for more uniform sampling:
+  stars_T_maj_min:
+    type: "TriaxialLightMGEPotential"
+    parameterization: "T_maj_min"
+    mge: "mge_lum"
+    parameters:
+      ml: {value: 5.0, unit: "Msun / Lsun"}
+      T: {value: 0.43}       # in [0, 1]
+      T_maj: {value: 0.49}   # in [0, 1]
+      T_min: {value: 0.39}   # in [0, 1]
 
   bulge:
     type: "OblateLightMGEPotential"
@@ -273,6 +285,25 @@ potential:
   `(theta, phi, psi)` config build an identical potential and `AllModels`
   reports either faithfully. `pqu` is registered only for
   `TriaxialLightMGEPotential` and `TriaxialMassMGEPotential`.
+- **The triaxial MGE types' `T_maj_min` parameterization**: implemented. A
+  second, bijective reparameterization of `pqu`'s own `(p, q, u)` as
+  `(T, T_maj, T_min) = ((1-p^2)/(1-q^2),\ (1-u^2)/(1-p^2),\ ((uq')^2-q^2)/(p^2-q^2))`
+  (Quenneville, Liepold & Ma 2022, ApJ 926:30, sec. 3) -- each in `[0, 1]`,
+  chosen so uniform sampling doesn't concentrate on the pathologically flat
+  models `(p,q,u)`/`(theta,phi,psi)` sampling can produce. Not a new
+  deprojection: converts to `(p, q, u)` at the same `q' = min(component q)`
+  anchor `pqu` uses, then defers to it for everything else -- domain,
+  precision-margin, and singularity handling included. A requested
+  `(T, T_maj, T_min)` is additionally accepted only if it round-trips
+  through that conversion and back within a combined absolute+relative
+  tolerance (tight at float64, looser at float32) -- `pqu`'s own
+  precision-margin clamp on `u` is negligible in `(p, q, u)` space, but the
+  `T_maj_min` reparameterization's own divisions can amplify that same
+  clamp into a materially different requested shape; an accepted point that
+  fails this check raises the same `InvalidPotentialParametersError` as an
+  out-of-domain one, rather than silently building a different point.
+  `T_maj_min` is registered only for `TriaxialLightMGEPotential` and
+  `TriaxialMassMGEPotential`, same as `pqu`.
 - **The oblate MGE types' `q_min` parameterization**: implemented, the
   oblate counterpart of `pqu`. Replaces the single `inclination` with the
   intrinsic axial ratio `q_min` of the flattest observed (anchor) Gaussian
