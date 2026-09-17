@@ -2389,3 +2389,37 @@ def test_q_min_domain_invalid_value_is_rejected_at_build_time() -> None:
             {"ml": Quantity(1.0, "Msun / Lsun"), "q_min": Quantity(1.5, "")},
             _NO_COSMOLOGICAL_PARAMETERS,
         )
+
+
+def test_q_min_rejects_a_thin_disk_the_cancellation_would_silently_move() -> None:
+    # PR-68 audit finding: deproject_oblate's own q**2 = q_obs**2 - cos(i)**2
+    # subtracts two nearly equal quantities whenever q_min is small relative
+    # to q_obs -- at float32, q_min = 0.001 against q_obs = 0.76 previously
+    # recovered ~0.00106249 (+6.2% relative error) without ever raising. The
+    # config-layer build must now reject it as an invalid model instead.
+    with jax.enable_x64(False):
+        mge = LightMGE(
+            I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+            sigma=Quantity(jnp.array([1.0]), "kpc"),
+            q=Quantity(jnp.array([0.76]), ""),  # anchor q' = 0.76
+            PA_twist=Quantity(jnp.zeros(1), "rad"),
+            major_axis_pa=Quantity(0.0, "deg"),
+        )
+        resolved = AbstractPotentialComponent.resolve(
+            {
+                "type": "OblateLightMGEPotential",
+                "parameterization": "q_min",
+                "mge": "m",
+                "parameters": {},
+            },
+            {"m": mge},
+            path="potential.stars",
+        )
+        with pytest.raises(
+            _registry_module.InvalidPotentialParametersError,
+            match="precision boundary",
+        ):
+            resolved.build(
+                {"ml": Quantity(1.0, "Msun / Lsun"), "q_min": Quantity(0.001, "")},
+                _NO_COSMOLOGICAL_PARAMETERS,
+            )

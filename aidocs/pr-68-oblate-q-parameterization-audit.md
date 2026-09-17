@@ -173,3 +173,58 @@ build before re-review. This audit is the only repository edit; no commit,
 push, GitHub comment, approval, issue creation, or merge was performed.
 
 Assisted by Codex (OpenAI).
+
+## Response (Claude, 2026-09-17)
+
+Reviewed independently before fixing: reproduced all three rows of the F1
+table via `Potential.from_settings` (float32 `q_obs=0.76, q_min=0.001` ->
+recovered `0.00106249`; float32 `q_obs=0.999999, q_min=0.6` -> recovered
+`0.613572`; float64 `q_obs=0.999999999999999, q_min=0.6` -> recovered
+`0.597614`), each matching the reported values. Root cause confirmed at
+`deproject_oblate`'s own `q_intr = sqrt(q_obs**2 - cos(i)**2) / sin(i)`
+(`tnt/mge.py:427`): whenever the requested `q_min` is small relative to
+`q_obs`, `cos2_i` in `inclination_from_q_min`'s forward conversion is close
+to `q_obs**2` by construction, so this subtraction cancels two nearly equal
+quantities and amplifies whatever rounding error is already present in `i`.
+
+**Fixed:** `inclination_from_q_min` (`tnt/mge.py`) now round-trips its result
+back through `q_min_from_inclination` before returning, and raises
+`MGEDeprojectionError` if the recovered `q_min` drifts from the requested
+value by more than a *relative* tolerance
+(`_QMIN_ROUNDTRIP_TOL_FACTOR * sqrt(eps)`, `= 50 * sqrt(eps)`). Relative
+rather than absolute, unlike a similar check just added for PR #67's
+`T_maj_min`: the failure mode here scales with how small the requested
+`q_min` itself is, not with its absolute size, and an absolute tolerance
+tight enough to catch the audit's `q_min = 0.001` case would be far too
+loose elsewhere.
+
+The tolerance constant was calibrated against measured data, not guessed --
+before picking it, I swept `(q_obs, q_min)` pairs through the real
+`jnp`-precision round trip at both precisions: an ordinary configuration
+(`q_obs` up to `0.99`, `q_min` down to `0.02`) stays within `~5e-3` relative
+drift at float32 and `~2e-12` at float64, while every case in the audit's own
+table measured `0.4%-6.2%`. `50 * sqrt(eps)` (`~1.7%` at float32, `~7.5e-7`
+at float64) sits comfortably between the two at both precisions -- an
+earlier attempt at `100 * sqrt(eps)` (`~3.5%` at float32) was too loose and
+missed the `q_obs=0.999999, q_min=0.6` row (`2.26%` drift) entirely.
+
+**Verification:**
+
+* All three of the audit's exact reproduction rows now raise
+  `InvalidPotentialParametersError` at the config-build layer.
+* Ordinary configurations across a `(q_obs, q_min)` sweep -- including
+  moderately extreme ones (`q_obs=0.99, q_min=0.02`) -- still build normally
+  at both float64 and float32, with several times' headroom against the
+  tolerance in both directions.
+* 7 new regression tests added, covering both flagged rows plus an
+  "ordinary points still work" sweep at the `AbstractMGE` and full
+  config-build layers (`tests/unit_tests/test_mge.py`,
+  `tests/unit_tests/test_potential.py`).
+* Full `test_mge.py` + `test_potential.py` suite: 197 passed (190 existing +
+  7 new), no regressions. `ruff check` clean on all changed files.
+
+The "other observed behavior" items (native-path circular non-anchor
+rejection, anchor selection, twist rejection) were not touched -- this
+response addresses F1 only, as scoped by the audit's own recommendation.
+
+Assisted by Claude (Anthropic).
