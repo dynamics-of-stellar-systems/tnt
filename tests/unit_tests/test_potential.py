@@ -2412,3 +2412,72 @@ def test_T_maj_min_domain_invalid_value_is_rejected_at_build_time() -> None:
             },
             _NO_COSMOLOGICAL_PARAMETERS,
         )
+
+
+def test_T_maj_min_rejects_a_point_the_domain_clamp_would_silently_move() -> None:
+    # PR-67 audit finding: near the T -> 0 (oblate) limit,
+    # triaxial_viewing_angles's own eps-margin clamp on u moved the recovered
+    # (T, T_maj, T_min) far from the requested point (0.1 requested vs.
+    # ~0.226 previously recovered for T_maj) without ever raising -- the
+    # config-layer build must now reject it as an invalid model instead.
+    mge = _triaxial_light_mge()  # anchor q' = 0.76
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "TriaxialLightMGEPotential",
+            "parameterization": "T_maj_min",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    with pytest.raises(
+        _registry_module.InvalidPotentialParametersError, match="precision boundary"
+    ):
+        resolved.build(
+            {
+                "ml": Quantity(1.0, "Msun / Lsun"),
+                "T": Quantity(1e-6, ""),
+                "T_maj": Quantity(0.1, ""),
+                "T_min": Quantity(0.2, ""),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+
+
+def test_T_maj_min_rejects_a_zero_thickness_boundary_at_build_time() -> None:
+    # PR-67 audit finding: an exact zero-thickness anchor (q^2 == 0) is a
+    # real value that previously passed the forward conversion's own
+    # `0 <= q^2 <= 1` check, only sometimes caught later by
+    # `deproject_triaxial`'s general check depending on unrelated
+    # floating-point rounding. Now rejected explicitly and deterministically
+    # at the source.
+    mge = LightMGE(
+        I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([1.0]), "kpc"),
+        q=Quantity(jnp.array([0.5]), ""),  # anchor q' = 0.5
+        PA_twist=Quantity(jnp.zeros(1), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "TriaxialLightMGEPotential",
+            "parameterization": "T_maj_min",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    with pytest.raises(
+        _registry_module.InvalidPotentialParametersError, match="positive"
+    ):
+        resolved.build(
+            {
+                "ml": Quantity(1.0, "Msun / Lsun"),
+                "T": Quantity(0.5, ""),
+                "T_maj": Quantity(0.5, ""),
+                "T_min": Quantity(0.375, ""),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )

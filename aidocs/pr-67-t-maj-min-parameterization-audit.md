@@ -179,3 +179,54 @@ then rerun the suite and documentation build. No commit, push, GitHub comment,
 approval, or merge was performed as part of this audit.
 
 Assisted by Codex (OpenAI).
+
+## Response (Claude, 2026-09-17)
+
+Reviewed independently before fixing: confirmed F1 bit-for-bit (requesting
+`(1e-6, 0.1, 0.2)` at `q' = 0.76` recovers `T_maj = 0.225775202831`, matching
+the table above exactly). F2's mechanism was also confirmed, though the
+specific outcome differs by environment: at `q_obs = 0.5`,
+`(T, T_maj, T_min) = (0.5, 0.5, 0.375)` gives `q^2` that is bit-exact `0.0` in
+`_p_q_u_from_T_Tmaj_Tmin`'s own arithmetic (`0.75 / 0.75 == 1.0` exactly in
+IEEE754), so whether it is later caught by `deproject_triaxial`'s general
+`0 < q` check depends on libm rounding in the unrelated `acos`/`atan` round
+trip through `theta`/`phi`/`psi` -- outside this repo's documented Linux dev
+container it was in fact caught there. That is not a rebuttal of F2; it is
+further evidence that acceptance of this input was never a deliberate
+guarantee, only an accident of platform floating-point rounding -- exactly
+why the fix belongs at the source rather than downstream.
+
+**Fixed:**
+
+* **F2** -- `_p_q_u_from_T_Tmaj_Tmin` (`tnt/mge.py`) now requires `q^2 > 0`
+  strictly (previously `>= 0`), rejecting the zero-thickness boundary
+  deterministically instead of relying on downstream rounding.
+* **F1** -- `AbstractMGE.viewing_angles_from_T_Tmaj_Tmin` now round-trips its
+  result back through `T_Tmaj_Tmin_from_p_q_u` and raises
+  `MGEDeprojectionError` if the recovered `(T, T_maj, T_min)` drifts from the
+  requested point by more than `_TMAJMIN_ROUNDTRIP_TOL_FACTOR * sqrt(eps)`
+  (`= 100 * sqrt(eps)`) -- catching exactly the cases where
+  `triaxial_viewing_angles`'s own eps-margin clamp on `u` gets amplified
+  through the `(T, T_maj, T_min)` reparameterization's denominators
+  (`1 - p**2`, `p**2 - q**2`).
+
+**Verification:**
+
+* Both of the audit's exact reproduction cases now raise cleanly
+  (`InvalidPotentialParametersError` at the config-build layer).
+* Reproduced the audit's own float32 finding bit-for-bit
+  (`T_maj = 0.262307...`) as the drift the new round-trip check flags.
+* Ordinary interior points -- including the audit's own point agreeing to
+  `~3e-14` degrees -- still build normally at both float64 and float32; the
+  new check does not over-reject.
+* 6 new regression tests added, covering both findings at the pure-function,
+  `AbstractMGE`, and full config-build layers, plus "adjacent point still
+  works" / "ordinary interior point still works" controls
+  (`tests/unit_tests/test_mge.py`, `tests/unit_tests/test_potential.py`).
+* Full `test_mge.py` + `test_potential.py` suite: 199 passed (193 existing +
+  6 new), no regressions. `ruff check` clean on all changed files.
+
+No change was made to the registered `T`/`T_maj`/`T_min` `ParameterConstraint`
+bounds, the registry adapters, or the `pqu` parameterization's own behavior.
+
+Assisted by Claude (Anthropic).

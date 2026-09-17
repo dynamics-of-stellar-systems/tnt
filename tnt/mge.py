@@ -78,6 +78,19 @@ def _check_axial_ratios(p: jnp.ndarray, q: jnp.ndarray) -> None:
 # geometry and is rejected.
 _TRIAXIAL_WEIGHT_ATOL = 1e-9
 
+# `AbstractMGE.viewing_angles_from_T_Tmaj_Tmin`'s own round-trip accuracy
+# check: `triaxial_viewing_angles` clamps `u` a small, *absolute* distance
+# (`4 * sqrt(eps)`, scaled for the working precision) away from its domain
+# boundary -- negligible for `(p, q, u)` itself, but `(T, T_maj, T_min))`
+# divide by `1 - p**2` and `p**2 - q**2`, so the same clamp can move the
+# *requested* shape coordinates by far more than it moved `u` (see that
+# function's own docstring, and `_p_q_u_from_T_Tmaj_Tmin`). An ordinary
+# interior point round-trips to within machine precision; scaled by
+# `sqrt(eps)` rather than `eps` itself gives enough headroom that this
+# never rejects one, while still catching the amplified drift near a
+# clamped boundary.
+_TMAJMIN_ROUNDTRIP_TOL_FACTOR = 1e2
+
 
 def _triaxial_intrinsic_axis_ratios(
     theta_r: jnp.ndarray,
@@ -166,10 +179,18 @@ def _p_q_u_from_T_Tmaj_Tmin(
     q2 = 1.0 - (1.0 - o2) / den
     p2 = 1.0 - T * (1.0 - q2)
     u2 = 1.0 - T_maj * (1.0 - p2)
-    if not (0.0 <= q2 <= 1.0 and 0.0 <= p2 <= 1.0 and 0.0 <= u2 <= 1.0):
+    # `q2 == 0.0` is a zero-thickness (razor-thin) anchor -- not just outside
+    # `[0, 1]`, but a real value TNT's `0 < q <= p <= 1` intrinsic-axis
+    # convention (`AbstractMGE.deproject_triaxial`) still excludes. Left as
+    # `>= 0.0`, this boundary previously fell through to that later, general
+    # check instead -- whether it was actually caught there turned out to
+    # depend on libm rounding in the unrelated `acos`/`atan` round trip
+    # through `theta`/`phi`/`psi`, not on this function's own domain check.
+    if not (0.0 < q2 <= 1.0 and 0.0 <= p2 <= 1.0 and 0.0 <= u2 <= 1.0):
         raise MGEDeprojectionError(
             f"(T, T_maj, T_min) = ({T:g}, {T_maj:g}, {T_min:g}) has no valid "
-            f"triaxial deprojection for this MGE (q' = {q_obs:g})."
+            f"triaxial deprojection for this MGE (q' = {q_obs:g}): requires a "
+            "strictly positive intrinsic minor-axis ratio (q^2 > 0)."
         )
     return math.sqrt(p2), math.sqrt(q2), math.sqrt(u2)
 
@@ -732,11 +753,32 @@ class AbstractMGE(eqx.Module):
 
         Raises:
             MGEDeprojectionError: see `_p_q_u_from_T_Tmaj_Tmin` and
-                `triaxial_viewing_angles`.
+                `triaxial_viewing_angles`, or if `triaxial_viewing_angles`'s
+                own margin clamp on `u` moves the recovered
+                `(T, T_maj, T_min)` away from the requested point by more
+                than `_TMAJMIN_ROUNDTRIP_TOL_FACTOR * sqrt(eps)` (see that
+                constant's own definition) -- accepted points must preserve
+                the requested shape coordinates, not silently substitute a
+                nearby one that happened to survive clamping.
         """
         q_obs, _ = self._triaxial_anchor()
         p, q, u = _p_q_u_from_T_Tmaj_Tmin(T, T_maj, T_min, q_obs)
-        return self.triaxial_viewing_angles(p, q, u)
+        theta, phi, psi = self.triaxial_viewing_angles(p, q, u)
+
+        p_r, q_r, u_r = self.triaxial_intrinsic_shape(theta, phi, psi)
+        T_r, T_maj_r, T_min_r = _T_Tmaj_Tmin_from_p_q_u(p_r, q_r, u_r, q_obs)
+        eps = float(jnp.finfo(jnp.result_type(float)).eps)
+        tolerance = _TMAJMIN_ROUNDTRIP_TOL_FACTOR * math.sqrt(eps)
+        drift = max(abs(T_r - T), abs(T_maj_r - T_maj), abs(T_min_r - T_min))
+        if drift > tolerance:
+            raise MGEDeprojectionError(
+                f"(T, T_maj, T_min) = ({T:g}, {T_maj:g}, {T_min:g}), q' = "
+                f"{q_obs:g}: too close to a numerical-precision boundary in "
+                "the underlying (p, q, u) geometry to represent accurately "
+                f"(round-trip recovers ({T_r:g}, {T_maj_r:g}, {T_min_r:g}), "
+                f"drift {drift:g} exceeds tolerance {tolerance:g})."
+            )
+        return theta, phi, psi
 
     def T_Tmaj_Tmin_from_viewing_angles(
         self, theta: Quantity, phi: Quantity, psi: Quantity

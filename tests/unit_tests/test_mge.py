@@ -1,4 +1,5 @@
 import dataclasses
+import math
 from pathlib import Path
 
 import jax
@@ -734,6 +735,45 @@ def test_viewing_angles_from_T_Tmaj_Tmin_rejects_a_prolate_geometry():
     # itself rejects the prolate limit q == p.
     with pytest.raises(MGEDeprojectionError, match="prolate"):
         _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(1.0, 0.5, 0.5)
+
+
+def test_p_q_u_from_T_Tmaj_Tmin_rejects_a_zero_thickness_boundary():
+    # q_obs=0.5, (T, T_maj, T_min) = (0.5, 0.5, 0.375): den = 1 - 0.5*0.375 -
+    # 0.25*0.5*0.5 = 0.75 exactly, giving q^2 = 1 - (1 - 0.25)/0.75 = 0.0
+    # exactly -- a zero-thickness anchor, excluded by TNT's strict
+    # `0 < q <= p <= 1` intrinsic-axis convention even though it's a
+    # boundary rather than negative value.
+    with pytest.raises(MGEDeprojectionError, match="positive"):
+        _p_q_u_from_T_Tmaj_Tmin(T=0.5, T_maj=0.5, T_min=0.375, q_obs=0.5)
+
+
+def test_p_q_u_from_T_Tmaj_Tmin_accepts_the_adjacent_interior_point():
+    # One ULP-scale nudge off the exact zero-thickness boundary above should
+    # still deproject normally -- confirms the new q^2 > 0 check rejects
+    # only the boundary itself, not a neighbourhood around it.
+    p, q, u_ = _p_q_u_from_T_Tmaj_Tmin(T=0.5, T_maj=0.5, T_min=0.374, q_obs=0.5)
+    assert 0.0 < q <= p <= 1.0
+    assert 0.0 < u_ <= 1.0
+
+
+def test_viewing_angles_from_T_Tmaj_Tmin_rejects_a_clamped_boundary_point():
+    # Same point the PR-67 audit flagged: near the T -> 0 (oblate) limit,
+    # triaxial_viewing_angles's own eps-margin clamp on u moves u by only
+    # ~3e-8, but (T, T_maj, T_min) divides by (1 - p**2) and (p**2 - q**2),
+    # amplifying that into a recovered T_maj far from the one requested
+    # (0.1 requested vs. ~0.226 previously silently recovered). The
+    # round-trip check must reject this rather than build the wrong point.
+    with pytest.raises(MGEDeprojectionError, match="precision boundary"):
+        _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(1e-6, 0.1, 0.2)
+
+
+def test_viewing_angles_from_T_Tmaj_Tmin_accepts_an_ordinary_interior_point():
+    # The round-trip check must not reject points that aren't actually near
+    # a clamped boundary -- confirms it doesn't just reject everything.
+    theta, phi, psi = _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(
+        0.43, 0.49, 0.39
+    )
+    assert all(math.isfinite(a.ustrip("rad")) for a in (theta, phi, psi))
 
 
 def test_mge_is_frozen():
