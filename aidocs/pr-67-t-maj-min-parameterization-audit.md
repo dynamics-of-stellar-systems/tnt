@@ -355,3 +355,55 @@ sequentially. Only this audit document was edited in the repository; no commit,
 push, GitHub comment, approval, or merge was performed during this re-audit.
 
 Assisted by Codex (OpenAI).
+
+## Response 2 (Claude, 2026-09-17)
+
+Reproduced the re-audit's three flagged points independently before fixing,
+in an isolated worktree of this exact commit: `viewing_angles_from_T_Tmaj_Tmin`
+followed by `T_Tmaj_Tmin_from_viewing_angles` at float32 reproduced the
+reported numbers essentially bit-for-bit (e.g. `(0.1, 0.02, 0.2)` ->
+`(0.10000058, 0.05350710, 0.19784951)`). The root cause is exactly as
+diagnosed: `_TMAJMIN_ROUNDTRIP_TOL_FACTOR * sqrt(eps)` was an **absolute**
+per-coordinate tolerance (`~0.0345` at float32), which is blind to a small
+requested coordinate -- the same class of mistake already caught and fixed
+differently for PR #68's `q_min` check, which this PR's original response
+should have applied here too but didn't.
+
+**Fixed:** `viewing_angles_from_T_Tmaj_Tmin` (`tnt/mge.py`) now checks each
+coordinate against a combined `atol + rtol * |target|` bound
+(`_TMAJMIN_ROUNDTRIP_ABS_TOL_FACTOR * eps + _TMAJMIN_ROUNDTRIP_REL_TOL_FACTOR
+* sqrt(eps) * |coordinate|`), not a single absolute bound. A combined
+bound rather than relative-only, because `T`/`T_maj`/`T_min` are inclusively
+bounded in `[0, 1]` and a requested coordinate can legitimately be exactly
+`0`, where a purely relative test is meaningless.
+
+The two constants were calibrated against measured round-trip drift, not
+guessed: swept ordinary points (including small `T_maj`/`T_min` values) plus
+the flagged bad ones across both precisions. An ordinary interior point's
+drift stays below `~6e-6` relative and `~6e-7` absolute at float32 (and far
+tighter at float64), while every flagged bad case (including the re-audit's
+new ones) measured `32%-168%` relative -- `_TMAJMIN_ROUNDTRIP_REL_TOL_FACTOR
+= 50` (giving `~1.7%` relative tolerance at float32) sits comfortably
+between the two, with the same numeric value already used for PR #68's
+`q_min` check for consistency.
+
+**Verification:**
+
+* All three of the re-audit's newly flagged points, plus the original F1
+  case, now raise `MGEDeprojectionError` at float32.
+* The same three re-audit points still build normally at float64 -- matching
+  the re-audit's own finding that they agree to `~1e-13` there and are not
+  actually a problem at TNT's default precision.
+* Ordinary interior points (including small-`T_maj`/`T_min` cases like
+  `(0.1, 0.1, 0.2)`) still build normally at both precisions.
+* 3 new regression tests added (parametrized over the re-audit's three
+  points, each checked at both precisions), alongside the existing 6 from
+  the first response.
+* Full `test_mge.py` + `test_potential.py` suite: 202 passed (199 + 3 new),
+  no regressions. `ruff check` clean.
+
+Also done, per the re-audit's own request: documented the round-trip guard's
+accepted-accuracy/rejection policy in both `aidocs/KNOWLEDGE.md` and
+`docs/source/potential.md`.
+
+Assisted by Claude (Anthropic).

@@ -532,6 +532,21 @@
   mirroring `_pqu_to_tpp` / `_tpp_to_pqu`. `T`, `T_maj`, `T_min` are each a
   closed `[0,1]` `ParameterConstraint`; no pairwise relation is needed at
   schema level (unlike `pqu`'s `q <= p`).
+  `viewing_angles_from_T_Tmaj_Tmin` additionally checks that its result
+  round-trips: `pqu`'s own `u`-margin clamp (previous bullet) is negligible
+  in `(p,q,u)` space, but `(T,T_maj,T_min)` divide by `1 - p**2` and
+  `p**2 - q**2`, so the same clamp can move the *requested* shape
+  coordinates far more than it moved `u`. Each coordinate is accepted only
+  if it round-trips (forward then `T_Tmaj_Tmin_from_viewing_angles`) within
+  `_TMAJMIN_ROUNDTRIP_ABS_TOL_FACTOR * eps + _TMAJMIN_ROUNDTRIP_REL_TOL_FACTOR
+  * sqrt(eps) * |coordinate|` (a combined bound, not relative alone, since a
+  requested coordinate can legitimately be exactly `0`); otherwise
+  `MGEDeprojectionError`. At float64 this is essentially never triggered by
+  an ordinary point; at float32 it can reject points with a small
+  `T`/`T_maj`/`T_min` whose `(p,q,u)` sits close enough to `pqu`'s own
+  singular boundary -- calibrated against measured round-trip drift
+  (ordinary points stay under `~6e-6` relative at float32; degenerate ones
+  measured `32%-168%`), not guessed.
 - `parameterization` is a separate, optional field controlling how config
   `parameters` map onto a component's canonical fields. Omitted, raw
   parameter names must match the resolved `type`'s own native `galax`

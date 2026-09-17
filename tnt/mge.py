@@ -84,12 +84,22 @@ _TRIAXIAL_WEIGHT_ATOL = 1e-9
 # boundary -- negligible for `(p, q, u)` itself, but `(T, T_maj, T_min))`
 # divide by `1 - p**2` and `p**2 - q**2`, so the same clamp can move the
 # *requested* shape coordinates by far more than it moved `u` (see that
-# function's own docstring, and `_p_q_u_from_T_Tmaj_Tmin`). An ordinary
-# interior point round-trips to within machine precision; scaled by
-# `sqrt(eps)` rather than `eps` itself gives enough headroom that this
-# never rejects one, while still catching the amplified drift near a
-# clamped boundary.
-_TMAJMIN_ROUNDTRIP_TOL_FACTOR = 1e2
+# function's own docstring, and `_p_q_u_from_T_Tmaj_Tmin`).
+#
+# Re-audit finding (PR 67): a purely *absolute* tolerance here (the first
+# version of this check) is blind to a small requested coordinate -- at
+# float32, `T_maj = 0.02` recovering `~0.054` (a 168% relative change) still
+# passed an absolute-only bound of `~0.0345`. Calibrated against measured
+# round-trip drift the same way as `tnt.orbit_library`'s q_min check
+# (PR 68): an ordinary interior point's drift stays below `~6e-6` relative
+# and `~6e-7` absolute at float32 (and far tighter at float64), while every
+# flagged bad case measured `32%-168%` relative. A combined
+# `atol + rtol * |target|` bound (not relative alone) is needed because
+# `T`/`T_maj`/`T_min` are inclusively bounded in `[0, 1]` and a requested
+# coordinate can legitimately be exactly `0`, where a purely relative test
+# is either meaningless or infinite.
+_TMAJMIN_ROUNDTRIP_REL_TOL_FACTOR = 50.0
+_TMAJMIN_ROUNDTRIP_ABS_TOL_FACTOR = 1e2
 
 
 def _triaxial_intrinsic_axis_ratios(
@@ -756,10 +766,12 @@ class AbstractMGE(eqx.Module):
                 `triaxial_viewing_angles`, or if `triaxial_viewing_angles`'s
                 own margin clamp on `u` moves the recovered
                 `(T, T_maj, T_min)` away from the requested point by more
-                than `_TMAJMIN_ROUNDTRIP_TOL_FACTOR * sqrt(eps)` (see that
-                constant's own definition) -- accepted points must preserve
-                the requested shape coordinates, not silently substitute a
-                nearby one that happened to survive clamping.
+                than `_TMAJMIN_ROUNDTRIP_ABS_TOL_FACTOR * eps +
+                _TMAJMIN_ROUNDTRIP_REL_TOL_FACTOR * sqrt(eps) * |coordinate|`
+                per coordinate (see those constants' own definition) --
+                accepted points must preserve the requested shape
+                coordinates, not silently substitute a nearby one that
+                happened to survive clamping.
         """
         q_obs, _ = self._triaxial_anchor()
         p, q, u = _p_q_u_from_T_Tmaj_Tmin(T, T_maj, T_min, q_obs)
@@ -768,15 +780,22 @@ class AbstractMGE(eqx.Module):
         p_r, q_r, u_r = self.triaxial_intrinsic_shape(theta, phi, psi)
         T_r, T_maj_r, T_min_r = _T_Tmaj_Tmin_from_p_q_u(p_r, q_r, u_r, q_obs)
         eps = float(jnp.finfo(jnp.result_type(float)).eps)
-        tolerance = _TMAJMIN_ROUNDTRIP_TOL_FACTOR * math.sqrt(eps)
-        drift = max(abs(T_r - T), abs(T_maj_r - T_maj), abs(T_min_r - T_min))
-        if drift > tolerance:
+        abs_tol = _TMAJMIN_ROUNDTRIP_ABS_TOL_FACTOR * eps
+        rel_tol = _TMAJMIN_ROUNDTRIP_REL_TOL_FACTOR * math.sqrt(eps)
+
+        def _exceeds(value: float, target: float) -> bool:
+            return abs(value - target) > abs_tol + rel_tol * abs(target)
+
+        if (
+            _exceeds(T_r, T)
+            or _exceeds(T_maj_r, T_maj)
+            or _exceeds(T_min_r, T_min)
+        ):
             raise MGEDeprojectionError(
                 f"(T, T_maj, T_min) = ({T:g}, {T_maj:g}, {T_min:g}), q' = "
                 f"{q_obs:g}: too close to a numerical-precision boundary in "
                 "the underlying (p, q, u) geometry to represent accurately "
-                f"(round-trip recovers ({T_r:g}, {T_maj_r:g}, {T_min_r:g}), "
-                f"drift {drift:g} exceeds tolerance {tolerance:g})."
+                f"(round-trip recovers ({T_r:g}, {T_maj_r:g}, {T_min_r:g}))."
             )
         return theta, phi, psi
 

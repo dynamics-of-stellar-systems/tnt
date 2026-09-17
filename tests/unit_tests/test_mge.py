@@ -776,6 +776,29 @@ def test_viewing_angles_from_T_Tmaj_Tmin_accepts_an_ordinary_interior_point():
     assert all(math.isfinite(a.ustrip("rad")) for a in (theta, phi, psi))
 
 
+@pytest.mark.parametrize(
+    ("T", "T_maj", "T_min"), [(0.1, 0.02, 0.2), (0.1, 0.03, 0.2), (0.05, 0.08, 0.2)]
+)
+def test_viewing_angles_from_T_Tmaj_Tmin_rejects_small_coordinate_drift_at_float32(
+    T, T_maj, T_min
+):
+    # PR-67 re-audit finding: a purely *absolute* round-trip tolerance is
+    # blind to a small requested coordinate -- at float32, T_maj = 0.02
+    # (etc.) previously recovered a value ~32%-168% larger, well under the
+    # old absolute-only bound (~0.0345), without ever raising. These same
+    # three points are genuinely fine at float64 (agree to ~1e-13) -- only
+    # float32 should reject them.
+    with jax.enable_x64(True):
+        mge = _triaxial_anchor_mge()  # anchor q' = 0.76
+        theta, phi, psi = mge.viewing_angles_from_T_Tmaj_Tmin(T, T_maj, T_min)
+        assert all(math.isfinite(a.ustrip("rad")) for a in (theta, phi, psi))
+    with (
+        jax.enable_x64(False),
+        pytest.raises(MGEDeprojectionError, match="precision boundary"),
+    ):
+        _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(T, T_maj, T_min)
+
+
 def test_mge_is_frozen():
     mge = _multi_component_light_mge()
 

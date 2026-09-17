@@ -282,8 +282,16 @@ potential:
   models `(p,q,u)`/`(theta,phi,psi)` sampling can produce. Not a new
   deprojection: converts to `(p, q, u)` at the same `q' = min(component q)`
   anchor `pqu` uses, then defers to it for everything else -- domain,
-  precision-margin, and singularity handling included. `T_maj_min` is
-  registered only for `TriaxialLightMGEPotential` and
+  precision-margin, and singularity handling included. A requested
+  `(T, T_maj, T_min)` is additionally accepted only if it round-trips
+  through that conversion and back within a combined absolute+relative
+  tolerance (tight at float64, looser at float32) -- `pqu`'s own
+  precision-margin clamp on `u` is negligible in `(p, q, u)` space, but the
+  `T_maj_min` reparameterization's own divisions can amplify that same
+  clamp into a materially different requested shape; an accepted point that
+  fails this check raises the same `InvalidPotentialParametersError` as an
+  out-of-domain one, rather than silently building a different point.
+  `T_maj_min` is registered only for `TriaxialLightMGEPotential` and
   `TriaxialMassMGEPotential`, same as `pqu`.
 - **`Potential.generate_orbit_library`**: not implemented -- blocked on
   `tnt.orbit_library`, itself still a full scaffold.
