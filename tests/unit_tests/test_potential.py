@@ -424,6 +424,47 @@ def test_resolved_component_raw_validity_is_traceable(x64_enabled: bool) -> None
         resolved._raw_parameters_valid({"m_tot": Quantity(1.0e5, "Msun")})
 
 
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_native_potential_build_flag_guards_traced_evaluation_and_gradients(
+    x64_enabled: bool,
+) -> None:
+    resolved = Potential.resolve(
+        {"bh": {"type": "PlummerPotential", "parameters": {}}}, {}
+    )
+    xyz = Quantity(jnp.array([1.0, 0.0, 0.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+
+    def log_density(mass: jax.Array) -> tuple[jax.Array, jax.Array]:
+        potential, valid = Potential.build_with_validity(
+            resolved,
+            {"bh": {"m_tot": Quantity(mass, "Msun"), "r_s": Quantity(1.0, "kpc")}},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+        value = jax.lax.cond(
+            valid,
+            lambda: (
+                potential.to_galax(_internal_unit_system())
+                .potential(xyz, t)
+                .ustrip("kpc2 / Myr2")
+            ),
+            lambda: jnp.asarray(-jnp.inf),
+        )
+        return value, valid
+
+    with jax.enable_x64(x64_enabled):
+        traced = jax.jit(jax.value_and_grad(log_density, has_aux=True))
+        (valid_value, valid_flag), valid_gradient = traced(jnp.asarray(1.0e5))
+        assert bool(valid_flag)
+        assert bool(jnp.isfinite(valid_value))
+        assert bool(jnp.isfinite(valid_gradient))
+        assert float(valid_gradient) < 0
+
+        (invalid_value, invalid_flag), invalid_gradient = traced(jnp.asarray(0.0))
+        assert not bool(invalid_flag)
+        assert float(invalid_value) == -jnp.inf
+        assert bool(jnp.isfinite(invalid_gradient))
+
+
 @pytest.mark.parametrize(
     ("galax_type", "parameters", "parameter_name"),
     [

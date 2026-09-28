@@ -224,8 +224,10 @@
   `violation()` uses those same predicates for its diagnostics.
   `ResolvedPotentialComponent._raw_parameters_valid()` checks static
   names/types/dimensions/shapes before tracing and returns a JAX scalar flag
-  for finite raw values and registered bounds. Component conversion, MGE
-  deprojection, whole-potential validity, and iterator/prior integration
+  for finite raw values and registered bounds. `Potential.build_with_validity()`
+  composes native Galax components and their flags inside a single JAX trace;
+  a false flag requires JAX conditional execution before evaluating derived
+  quantities. Conversion, MGE deprojection, and iterator/prior integration
   remain eager or unfinished.
 - Intel macOS is not a native TNT target because current JAX releases do not
   provide `jaxlib` wheels for that platform. Use the Linux `x86_64`

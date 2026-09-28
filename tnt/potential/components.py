@@ -79,6 +79,31 @@ class ResolvedPotentialComponent(NamedTuple):
             valid = valid & constraint.valid(parameter_values[name], parameter_values)
         return valid
 
+    def build_with_validity(
+        self,
+        parameter_values: Mapping[str, Quantity],
+        cosmological_parameters: Mapping[str, Quantity],
+    ) -> tuple[AbstractPotentialComponent, jax.Array]:
+        """Build a native Galax component and return its JAX validity flag.
+
+        Only native Galax components are supported while conversion and MGE
+        deprojection are made traceable. Callers must condition numerical use
+        of an invalid component on the flag.
+        """
+        if (
+            self.convert is not None
+            or self.component_cls is not GalaxPotentialComponent
+        ):
+            raise NotImplementedError(
+                f"Traced construction is not implemented for {self.path}."
+            )
+        raw = dict(parameter_values)
+        valid = self._raw_parameters_valid(raw)
+        component = self.component_cls._build(
+            raw, cosmological_parameters, self.extra_fields
+        )
+        return component, valid
+
     def build(
         self,
         parameter_values: Mapping[str, Quantity],
