@@ -221,9 +221,12 @@
 - Issue #72 fixes the execution target as one proposal evaluated inside a JAX
   trace. `ParameterConstraint.valid()` now exposes JAX scalar predicates for
   registered numeric bounds and same-component relationships; eager
-  `violation()` uses those same predicates for its diagnostics. This is only
-  the first layer: component conversion, MGE deprojection, whole-potential
-  validity, and iterator/prior integration are still eager or unfinished.
+  `violation()` uses those same predicates for its diagnostics.
+  `ResolvedPotentialComponent._raw_parameters_valid()` checks static
+  names/types/dimensions/shapes before tracing and returns a JAX scalar flag
+  for finite raw values and registered bounds. Component conversion, MGE
+  deprojection, whole-potential validity, and iterator/prior integration
+  remain eager or unfinished.
 - Intel macOS is not a native TNT target because current JAX releases do not
   provide `jaxlib` wheels for that platform. Use the Linux `x86_64`
   development container there instead.

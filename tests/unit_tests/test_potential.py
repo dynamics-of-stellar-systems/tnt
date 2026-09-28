@@ -401,6 +401,29 @@ def test_runtime_parameter_domain_requires_scalar_quantities_and_exact_names() -
         )
 
 
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_resolved_component_raw_validity_is_traceable(x64_enabled: bool) -> None:
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": "PlummerPotential", "parameters": {}},
+        {},
+        path="potential.bh",
+    )
+
+    def raw_valid(mass: jax.Array) -> jax.Array:
+        return resolved._raw_parameters_valid(
+            {"m_tot": Quantity(mass, "Msun"), "r_s": Quantity(1.0, "kpc")}
+        )
+
+    with jax.enable_x64(x64_enabled):
+        traced = jax.jit(raw_valid)
+        assert bool(traced(jnp.asarray(1.0e5)))
+        assert not bool(traced(jnp.asarray(0.0)))
+        assert not bool(traced(jnp.asarray(float("nan"))))
+
+    with pytest.raises(ValueError, match=r"missing \['r_s'\]"):
+        resolved._raw_parameters_valid({"m_tot": Quantity(1.0e5, "Msun")})
+
+
 @pytest.mark.parametrize(
     ("galax_type", "parameters", "parameter_name"),
     [
