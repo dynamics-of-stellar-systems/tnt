@@ -128,6 +128,14 @@ Comparisons convert compatible units locally but do not normalize or replace a
 parameter's declared unit. MGE deprojection continues to own the more complex
 viewing-geometry checks that depend on the MGE data itself.
 
+For native `galax` components, `Potential.build_with_validity` provides a
+compiled-build path that returns the potential and a JAX boolean indicating
+whether its proposed numerical parameters are valid. Configuration structure
+errors still raise during setup. A caller must use the boolean to condition
+any derived calculation: a potential returned with a false flag is not a
+valid physical model. Registered parameterization conversions and MGE
+deprojections still use the eager build path.
+
 ### MGE composite types
 
 All four build a potential from a named Multi-Gaussian Expansion (MGE) --

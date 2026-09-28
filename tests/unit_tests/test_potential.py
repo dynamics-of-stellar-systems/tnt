@@ -511,24 +511,32 @@ def test_traced_native_build_covers_each_curated_galax_type(
     def potential_value(value: jax.Array) -> jax.Array:
         candidate = dict(reference)
         candidate[constrained_name] = Quantity(value, reference_value.unit)
-        potential, _ = Potential.build_with_validity(
+        potential, valid = Potential.build_with_validity(
             resolved, {"component": candidate}, _NO_COSMOLOGICAL_PARAMETERS
         )
-        return (
-            potential.to_galax(_internal_unit_system())
-            .potential(xyz, t)
-            .ustrip("kpc2 / Myr2")
+        return jax.lax.cond(
+            valid,
+            lambda: (
+                potential.to_galax(_internal_unit_system())
+                .potential(xyz, t)
+                .ustrip("kpc2 / Myr2")
+            ),
+            lambda: jnp.asarray(-jnp.inf),
         )
 
     with jax.enable_x64(x64_enabled):
         compiled = jax.jit(traced)
         assert bool(compiled(reference_value.ustrip(reference_value.unit)))
         assert not bool(compiled(jnp.asarray(0.0)))
-        value, gradient = jax.jit(jax.value_and_grad(potential_value))(
+        compiled_potential = jax.jit(jax.value_and_grad(potential_value))
+        value, gradient = compiled_potential(
             reference_value.ustrip(reference_value.unit)
         )
         assert bool(jnp.isfinite(value))
         assert bool(jnp.isfinite(gradient))
+        invalid_value, invalid_gradient = compiled_potential(jnp.asarray(0.0))
+        assert float(invalid_value) == -jnp.inf
+        assert bool(jnp.isfinite(invalid_gradient))
 
 
 @pytest.mark.parametrize(
