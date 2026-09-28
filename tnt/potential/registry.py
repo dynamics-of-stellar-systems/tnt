@@ -26,6 +26,8 @@ import operator
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
+import jax
+import jax.numpy as jnp
 from unxt import Quantity
 
 from tnt.registry import register_typed_class
@@ -90,6 +92,39 @@ class ParameterConstraint(NamedTuple):
     other_parameter: str | None = None
     relation: Literal[">", ">=", "<", "<="] | None = None
 
+    def _checks(
+        self, number: jax.Array | float, other: jax.Array | float | None
+    ) -> dict[str, jax.Array]:
+        """Numerical predicates shared by eager diagnostics and JAX tracing."""
+        checks = {"finite": jnp.isfinite(number)}
+        if self.minimum is not None:
+            checks["minimum"] = (
+                number >= self.minimum
+                if self.minimum_inclusive
+                else number > self.minimum
+            )
+        if self.maximum is not None:
+            checks["maximum"] = (
+                number <= self.maximum
+                if self.maximum_inclusive
+                else number < self.maximum
+            )
+        if other is not None:
+            checks["other_finite"] = jnp.isfinite(other)
+            checks["relation"] = _RELATION_OPERATORS[self.relation](number, other)
+        return checks
+
+    def valid(self, value: Quantity, siblings: Mapping[str, Quantity]) -> jax.Array:
+        """JAX scalar boolean for this constraint, including finite values."""
+        unit = self.unit or value.unit
+        number = value.ustrip(unit)
+        other = (
+            siblings[self.other_parameter].ustrip(unit)
+            if self.other_parameter is not None
+            else None
+        )
+        return jnp.all(jnp.stack(tuple(self._checks(number, other).values())))
+
     def violation(
         self,
         value: Quantity,
@@ -107,27 +142,18 @@ class ParameterConstraint(NamedTuple):
         except (TypeError, ValueError):
             return f"{value} cannot be compared in constraint unit {unit!s}."
 
-        if self.minimum is not None:
-            valid = (
-                number >= self.minimum
-                if self.minimum_inclusive
-                else number > self.minimum
-            )
-            if not valid:
-                relation = "at least" if self.minimum_inclusive else "greater than"
-                suffix = f" {unit}" if str(unit) else ""
-                return f"{value} must be {relation} {self.minimum}{suffix}."
+        checks = self._checks(number, None)
+        if not bool(checks["finite"]):
+            return f"{value} must be finite."
+        if self.minimum is not None and not bool(checks["minimum"]):
+            relation = "at least" if self.minimum_inclusive else "greater than"
+            suffix = f" {unit}" if str(unit) else ""
+            return f"{value} must be {relation} {self.minimum}{suffix}."
 
-        if self.maximum is not None:
-            valid = (
-                number <= self.maximum
-                if self.maximum_inclusive
-                else number < self.maximum
-            )
-            if not valid:
-                relation = "at most" if self.maximum_inclusive else "less than"
-                suffix = f" {unit}" if str(unit) else ""
-                return f"{value} must be {relation} {self.maximum}{suffix}."
+        if self.maximum is not None and not bool(checks["maximum"]):
+            relation = "at most" if self.maximum_inclusive else "less than"
+            suffix = f" {unit}" if str(unit) else ""
+            return f"{value} must be {relation} {self.maximum}{suffix}."
 
         if self.other_parameter is None:
             return None
@@ -139,7 +165,8 @@ class ParameterConstraint(NamedTuple):
                 f"{value} and parameter {self.other_parameter!r} "
                 f"({other_value}) do not have compatible units."
             )
-        if not _RELATION_OPERATORS[self.relation](number, other):
+        checks = self._checks(number, other)
+        if not bool(checks["other_finite"]) or not bool(checks["relation"]):
             return (
                 f"{value} must be {self.relation} parameter "
                 f"{self.other_parameter!r} ({other_value})."

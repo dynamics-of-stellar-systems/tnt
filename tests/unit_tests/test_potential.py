@@ -1191,6 +1191,39 @@ def test_constraint_metadata_matches_each_registered_schema() -> None:
         )
 
 
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_constraint_predicate_matches_eager_diagnostics_under_jit(
+    x64_enabled: bool,
+) -> None:
+    constraint = ParameterConstraint(
+        minimum=0.0,
+        minimum_inclusive=False,
+        maximum=3.0,
+        unit="kpc",
+        other_parameter="reference",
+        relation=">=",
+    )
+    siblings = {"reference": Quantity(1.0, "kpc")}
+
+    def valid(value: jax.Array) -> jax.Array:
+        return constraint.valid(Quantity(value, "pc"), siblings)
+
+    with jax.enable_x64(x64_enabled):
+        traced = jax.jit(valid)
+        for value, expected in [
+            (900.0, False),
+            (1000.0, True),
+            (2900.0, True),
+            (3001.0, False),
+            (float("inf"), False),
+            (float("nan"), False),
+        ]:
+            assert bool(traced(jnp.asarray(value))) is expected
+            assert (
+                constraint.violation(Quantity(value, "pc"), siblings) is None
+            ) is expected
+
+
 def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
     light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
         Quantity(30.0, "Mpc")

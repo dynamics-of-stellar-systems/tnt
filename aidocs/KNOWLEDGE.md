@@ -213,14 +213,17 @@
   Python control flow (`bool(...)` and `.nonzero()`) and raises
   `MGEDeprojectionError`, so `deproject_triaxial()` and
   `deproject_oblate()` are deliberately not `jax.jit`/`jax.vmap`
-  traceable. This is acceptable while model evaluation itself remains eager:
-  `ModelIterator._evaluate()` catches Python exceptions and returns a
-  variable-length `list[Model]`, while orbit integration and weight solving
-  are still scaffolding. Revisit deprojection validity and `_evaluate()`
-  failure handling together when orbit integration is implemented and TNT
-  chooses whether models are individually jitted or evaluated as a masked,
-  vectorized batch. Do not design a separate JAX validity mechanism before
-  that execution strategy is known.
+  traceable. `ModelIterator._evaluate()` currently catches Python exceptions
+  and returns a variable-length `list[Model]`, while orbit integration and
+  weight solving are still scaffolding. Issue #72 replaces proposal-dependent
+  exceptions with one traced validity result shared by the prior and iterator;
+  the first implementation targets one proposal, with batching deferred.
+- Issue #72 fixes the execution target as one proposal evaluated inside a JAX
+  trace. `ParameterConstraint.valid()` now exposes JAX scalar predicates for
+  registered numeric bounds and same-component relationships; eager
+  `violation()` uses those same predicates for its diagnostics. This is only
+  the first layer: component conversion, MGE deprojection, whole-potential
+  validity, and iterator/prior integration are still eager or unfinished.
 - Intel macOS is not a native TNT target because current JAX releases do not
   provide `jaxlib` wheels for that platform. Use the Linux `x86_64`
   development container there instead.
