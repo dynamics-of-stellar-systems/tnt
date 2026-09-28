@@ -229,6 +229,14 @@
   a false flag requires JAX conditional execution before evaluating derived
   quantities. Conversion, MGE deprojection, and iterator/prior integration
   remain eager or unfinished.
+- Eager constraint diagnostics and traced validity evaluate the same JAX
+  predicates at the proposed value's active precision; converting eager values
+  to Python floats would change half-open bound decisions in float32. For
+  `StoneOstriker15Potential`, `r_h > r_c` also requires
+  `(r_h - r_c) / max(abs(r_h), abs(r_c)) > eps**(1/5)` at that precision.
+  The upstream potential formula subtracts nearly equal terms and otherwise
+  yields unreliable gradients close to equal radii. This numerical guard is
+  shared by eager and traced construction.
 - Intel macOS is not a native TNT target because current JAX releases do not
   provide `jaxlib` wheels for that platform. Use the Linux `x86_64`
   development container there instead.

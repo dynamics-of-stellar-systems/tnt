@@ -1362,6 +1362,124 @@ def test_constraint_predicate_matches_eager_diagnostics_under_jit(
             ) is expected
 
 
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_vogelsberger_upper_bound_agrees_in_eager_and_traced_builds(
+    x64_enabled: bool,
+) -> None:
+    resolved = Potential.resolve(
+        {"halo": {"type": "Vogelsberger08TriaxialNFWPotential"}}, {}
+    )
+
+    def proposed(q1: jax.Array) -> dict[str, dict[str, Quantity]]:
+        return {
+            "halo": {
+                "m": Quantity(1.0e10, "Msun"),
+                "r_s": Quantity(1.0, "kpc"),
+                "q1": Quantity(q1, ""),
+                "a_r": Quantity(0.7, ""),
+            }
+        }
+
+    with jax.enable_x64(x64_enabled):
+        boundary = jnp.asarray(3**0.5)
+        with pytest.raises(ValueError, match=r"q1.*less than"):
+            Potential.build(resolved, proposed(boundary), {})
+        _, eager_valid = Potential.build_with_validity(resolved, proposed(boundary), {})
+        traced_valid = jax.jit(
+            lambda q1: Potential.build_with_validity(resolved, proposed(q1), {})[1]
+        )(boundary)
+        assert not bool(eager_valid)
+        assert not bool(traced_valid)
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_stone_ostriker_precision_margin_matches_eager_and_traced_builds(
+    x64_enabled: bool,
+) -> None:
+    resolved = Potential.resolve({"cluster": {"type": "StoneOstriker15Potential"}}, {})
+
+    def proposed(halo_radius: jax.Array) -> dict[str, dict[str, Quantity]]:
+        return {
+            "cluster": {
+                "m_tot": Quantity(1.0e10, "Msun"),
+                "r_c": Quantity(1.0, "kpc"),
+                "r_h": Quantity(halo_radius, "pc"),
+            }
+        }
+
+    with jax.enable_x64(x64_enabled):
+        traced_valid = jax.jit(
+            lambda radius: Potential.build_with_validity(
+                resolved, proposed(radius), {}
+            )[1]
+        )
+        for radius_pc, expected_valid in [
+            (1000.001, False),
+            (1010.0, x64_enabled),
+            (1050.0, True),
+        ]:
+            radius = jnp.asarray(radius_pc)
+            if expected_valid:
+                Potential.build(resolved, proposed(radius), {})
+            else:
+                with pytest.raises(ValueError, match=r"r_h.*too close"):
+                    Potential.build(resolved, proposed(radius), {})
+            assert bool(traced_valid(radius)) is expected_valid
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_stone_ostriker_accepted_gradient_matches_high_precision_reference(
+    x64_enabled: bool,
+) -> None:
+    resolved = Potential.resolve({"cluster": {"type": "StoneOstriker15Potential"}}, {})
+
+    with jax.enable_x64(x64_enabled):
+        xyz = Quantity(jnp.array([2.0, 1.0, 0.5]), "kpc")
+        t = Quantity(0.0, "Myr")
+
+        def guarded_value(halo_radius: jax.Array) -> tuple[jax.Array, jax.Array]:
+            potential, valid = Potential.build_with_validity(
+                resolved,
+                {
+                    "cluster": {
+                        "m_tot": Quantity(1.0e10, "Msun"),
+                        "r_c": Quantity(1.0, "kpc"),
+                        "r_h": Quantity(halo_radius, "kpc"),
+                    }
+                },
+                {},
+            )
+            value = jax.lax.cond(
+                valid,
+                lambda: (
+                    potential.to_galax(_internal_unit_system())
+                    .potential(xyz, t)
+                    .ustrip("kpc2 / Myr2")
+                ),
+                lambda: jnp.asarray(-jnp.inf),
+            )
+            return value, valid
+
+        compiled = jax.jit(jax.value_and_grad(guarded_value, has_aux=True))
+        # Independent 90-digit evaluation of the Stone-Ostriker formula.
+        accepted = (
+            [(1.001, 0.002290579505), (1.01, 0.002286174186)]
+            if x64_enabled
+            else [(1.05, 0.002266473226)]
+        )
+        for radius, reference_gradient in accepted:
+            (value, valid), gradient = compiled(jnp.asarray(radius))
+            assert bool(valid)
+            assert bool(jnp.isfinite(value))
+            assert float(gradient) == pytest.approx(reference_gradient, rel=0.002)
+
+        for rejected in [1.00001, 1.0003] if x64_enabled else [1.00001, 1.01]:
+            (value, valid), gradient = compiled(jnp.asarray(rejected))
+            assert not bool(valid)
+            assert float(value) == -jnp.inf
+            assert bool(jnp.isfinite(gradient))
+
+
 def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
     light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
         Quantity(30.0, "Mpc")
