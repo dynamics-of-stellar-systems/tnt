@@ -570,6 +570,59 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
     assert float(mean_density / rho_crit) == pytest.approx(200.0, rel=1e-5)
 
 
+@pytest.mark.parametrize(
+    ("mass_value", "mass_unit", "hubble_value", "hubble_unit"),
+    [
+        (1.0e12, "Msun", 7.158985155319864e-05, "1 / Myr"),
+        (100.0, "1e10 Msun", 70.0, "km / (s Mpc)"),
+    ],
+)
+def test_nfw_concentration_m200_traces_with_gradients(
+    mass_value: float,
+    mass_unit: str,
+    hubble_value: float,
+    hubble_unit: str,
+) -> None:
+    def scale_radius(c: jax.Array, mass_scale: jax.Array) -> jax.Array:
+        native = _nfw_concentration_m200(
+            {
+                "c": Quantity(c, ""),
+                "M_200": Quantity(mass_value * mass_scale, mass_unit),
+            },
+            {"H": Quantity(hubble_value, hubble_unit)},
+        )
+        return native["r_s"].ustrip("kpc")
+
+    c, mass_scale = jnp.asarray(8.0), jnp.asarray(1.0)
+    eager_radius = scale_radius(c, mass_scale)
+    traced_radius, (c_gradient, mass_gradient) = jax.jit(
+        jax.value_and_grad(scale_radius, argnums=(0, 1))
+    )(c, mass_scale)
+
+    assert float(traced_radius) == pytest.approx(float(eager_radius), rel=1e-6)
+    assert bool(jnp.isfinite(c_gradient))
+    assert bool(jnp.isfinite(mass_gradient))
+    assert float(c_gradient) == pytest.approx(-float(traced_radius) / 8.0, rel=1e-5)
+    assert float(mass_gradient) == pytest.approx(float(traced_radius) / 3.0, rel=1e-5)
+
+    concentrations = jnp.asarray([4.0, 8.0])
+    mass_scales = jnp.asarray([0.5, 1.0])
+    batched_radii, (batched_c_gradients, batched_mass_gradients) = jax.jit(
+        jax.vmap(jax.value_and_grad(scale_radius, argnums=(0, 1)))
+    )(concentrations, mass_scales)
+    assert bool(jnp.all(jnp.isfinite(batched_radii)))
+    assert bool(jnp.all(jnp.isfinite(batched_c_gradients)))
+    assert bool(jnp.all(jnp.isfinite(batched_mass_gradients)))
+    assert bool(
+        jnp.allclose(batched_c_gradients, -batched_radii / concentrations, rtol=1e-5)
+    )
+    assert bool(
+        jnp.allclose(
+            batched_mass_gradients, batched_radii / (3 * mass_scales), rtol=1e-5
+        )
+    )
+
+
 @pytest.mark.parametrize("name", ["c", "M_200"])
 def test_nfw_parameterization_rejects_invalid_raw_values_before_conversion(
     name: str,

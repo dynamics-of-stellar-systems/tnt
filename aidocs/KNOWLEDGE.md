@@ -635,18 +635,20 @@
   runtime-family packages. Configuration validation imports runtime-family
   registries to obtain their authoritative schemas, so importing the
   configuration package can load JAX, Equinox, and galax.
-  `_nfw_concentration_m200`/its inverse do their entire calculation in
-  `Quantity` arithmetic rather than eagerly stripping every input to a bare
-  float in one specific unit -- `unxt` composes/converts units automatically
-  through the whole chain (verified: mixing `H` in `km / (s Mpc)` with
+  `_nfw_concentration_m200`/its inverse retain `Quantity` arithmetic rather
+  than eagerly stripping every input to a bare float in one specific unit --
+  `unxt` composes/converts units automatically through the whole chain
+  (verified: mixing `H` in `km / (s Mpc)` with
   `_newtonian_gravitational_constant()` in `m3 / (kg s2)` and `M_200` in `Msun`
   still gives the correct `r_s`/`m`), so `H` works in whatever unit it is
-  declared in. The forward conversion leaves the native quantities in the
-  units produced by that arithmetic; `Potential.to_galax()` later supplies
-  the shared unit system to `galax`. The inverse returns dimensioned raw
-  parameters in their configured units.
-  Bare-number stripping only remains where a library function isn't
-  `Quantity`-aware (`_nfw_g`'s `jnp.log`) or where `_solve_nfw_concentration`'s
+  declared in. The forward converter cube-roots the volume's numeric value
+  and attaches the cube-root unit: directly raising a volume `Quantity` to
+  `1/3` fails under a batched JAX trace. The forward conversion leaves the
+  native quantities in the units produced by that arithmetic;
+  `Potential.to_galax()` later supplies the shared unit system to `galax`.
+  The inverse returns dimensioned raw parameters in their configured units.
+  Bare-number stripping also occurs where a library function isn't
+  `Quantity`-aware (`_nfw_g`'s `jnp.log1p`) or where `_solve_nfw_concentration`'s
   bisection needs a plain number to compare against. A registered non-native
   parameterization carries its own `raw_dimensions` in its
   `ParameterizationSpec` (see `register_parameterization`); each registered TNT

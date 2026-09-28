@@ -47,7 +47,10 @@ def _nfw_concentration_m200(
     h = cosmological_parameters["H"]
 
     rho_crit = 3 * h**2 / (8 * jnp.pi * _newtonian_gravitational_constant())
-    r200 = (3 * m200 / (4 * jnp.pi * 200 * rho_crit)) ** (1 / 3)
+    volume = 3 * m200 / (4 * jnp.pi * 200 * rho_crit)
+    # A fractional power on a volume Quantity fails under batched JAX traces.
+    # Cube-root the numeric value, then attach the corresponding length unit.
+    r200 = Quantity(jnp.cbrt(volume.ustrip(volume.unit)), volume.unit ** (1 / 3))
     r_s = r200 / c
     m = m200 / _nfw_g(c.ustrip(""))
     # No unit-system conversion: `m`/`r_s` keep whatever unit the arithmetic
