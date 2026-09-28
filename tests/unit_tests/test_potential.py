@@ -465,6 +465,72 @@ def test_native_potential_build_flag_guards_traced_evaluation_and_gradients(
         assert bool(jnp.isfinite(invalid_gradient))
 
 
+@pytest.mark.parametrize("galax_type", sorted(_SUPPORTED_GALAX_TYPES))
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_traced_native_build_covers_each_curated_galax_type(
+    galax_type: str, x64_enabled: bool
+) -> None:
+    units_and_values = {
+        "mass": (1.0e10, "Msun"),
+        "length": (1.0, "kpc"),
+        "angle": (0.1, "rad"),
+        "dimensionless": (0.7, ""),
+        "speed": (200.0, "km / s"),
+        "frequency": (0.1, "1 / Myr"),
+    }
+    parameter_specs = _SUPPORTED_GALAX_TYPES[galax_type]
+    with jax.enable_x64(x64_enabled):
+        reference = {
+            name: Quantity(*units_and_values[spec.dimension])
+            for name, spec in parameter_specs.items()
+        }
+        if galax_type == "StoneOstriker15Potential":
+            reference["r_h"] = Quantity(2.0, "kpc")
+        xyz = Quantity(jnp.array([2.0, 1.0, 0.5]), "kpc")
+        t = Quantity(0.0, "Myr")
+    constrained_name = next(
+        name
+        for name, spec in parameter_specs.items()
+        if spec.constraint is not None
+        and spec.constraint.minimum == 0.0
+        and not spec.constraint.minimum_inclusive
+    )
+    reference_value = reference[constrained_name]
+    resolved = Potential.resolve(
+        {"component": {"type": galax_type, "parameters": {}}}, {}
+    )
+
+    def traced(value: jax.Array) -> jax.Array:
+        candidate = dict(reference)
+        candidate[constrained_name] = Quantity(value, reference_value.unit)
+        _, valid = Potential.build_with_validity(
+            resolved, {"component": candidate}, _NO_COSMOLOGICAL_PARAMETERS
+        )
+        return valid
+
+    def potential_value(value: jax.Array) -> jax.Array:
+        candidate = dict(reference)
+        candidate[constrained_name] = Quantity(value, reference_value.unit)
+        potential, _ = Potential.build_with_validity(
+            resolved, {"component": candidate}, _NO_COSMOLOGICAL_PARAMETERS
+        )
+        return (
+            potential.to_galax(_internal_unit_system())
+            .potential(xyz, t)
+            .ustrip("kpc2 / Myr2")
+        )
+
+    with jax.enable_x64(x64_enabled):
+        compiled = jax.jit(traced)
+        assert bool(compiled(reference_value.ustrip(reference_value.unit)))
+        assert not bool(compiled(jnp.asarray(0.0)))
+        value, gradient = jax.jit(jax.value_and_grad(potential_value))(
+            reference_value.ustrip(reference_value.unit)
+        )
+        assert bool(jnp.isfinite(value))
+        assert bool(jnp.isfinite(gradient))
+
+
 @pytest.mark.parametrize(
     ("galax_type", "parameters", "parameter_name"),
     [
