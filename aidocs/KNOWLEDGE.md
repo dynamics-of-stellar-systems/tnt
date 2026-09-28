@@ -649,8 +649,10 @@
   The inverse returns dimensioned raw parameters in their configured units.
   Bare-number stripping also occurs where a library function isn't
   `Quantity`-aware (`_nfw_g`'s `jnp.log1p`) or where `_solve_nfw_concentration`'s
-  bisection needs a plain number to compare against. A registered non-native
-  parameterization carries its own `raw_dimensions` in its
+  bisection needs a plain number to compare against. The concentration solver
+  supplies a custom JAX derivative from its implicit root equation, because
+  differentiating the bisection comparisons would yield zero gradients. A
+  registered non-native parameterization carries its own `raw_dimensions` in its
   `ParameterizationSpec` (see `register_parameterization`); each registered TNT
   composite type declares its own `_raw_dimensions`, while curated native
   `galax` types use `_SUPPORTED_GALAX_TYPES`. A parameterization is deliberately
@@ -680,10 +682,13 @@
   solving `c**3 / (ln(1+c) - c/(1+c)) = target` for `c` --
   `tnt.potential._solve_nfw_concentration` does this via fixed-iteration
   bisection, relying on that function being verified (numerically) strictly
-  monotonically increasing in `c`. Verified by round-trip self-consistency
-  (`forward(inverse(native)) == native`, including after a rescale) rather
-  than against any independently derivable expected value, since none
-  exists.
+  monotonically increasing in `c`. Its gradients use the derivative of the
+  solved equation, including when the inverse is batched. The fixed
+  `[1e-6, 1e6]` concentration bracket limits this derivative to roots inside
+  that range; outside it the solver clamps to an endpoint. The values are
+  verified by round-trip self-consistency
+  (`forward(inverse(native)) == native`, including after a rescale); gradients
+  are checked against finite differences.
 - Every component declared under `potential` is active. Excluding a component
   means removing or commenting out its complete configuration entry. Each
   declared component must contain a nonempty `parameters` mapping.

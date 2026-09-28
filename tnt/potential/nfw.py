@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 from unxt import Quantity
 
@@ -68,6 +69,7 @@ def _nfw_g(c: Any) -> Any:
     return jnp.log1p(c) - c / (1 + c)
 
 
+@jax.custom_jvp
 def _solve_nfw_concentration(target: Any) -> Any:
     """Solve `c**3 / _nfw_g(c) == target` for `c > 0`.
 
@@ -76,7 +78,10 @@ def _solve_nfw_concentration(target: Any) -> Any:
     magnitude of `c`), so a fixed-iteration bisection over a wide,
     unit-independent bracket (`c` is dimensionless -- realistic halo
     concentrations are always well inside `[1e-6, 1e6]`) converges reliably
-    regardless of `target`'s scale.
+    for targets whose roots lie inside that bracket. The custom derivative
+    comes from the root equation, not from differentiating the bisection
+    comparisons. Outside the bracket, bisection returns an endpoint and the
+    implicit derivative does not describe that clamped result.
     """
 
     def h(c: Any) -> Any:
@@ -89,6 +94,20 @@ def _solve_nfw_concentration(target: Any) -> Any:
         lower = jnp.where(too_low, mid, lower)
         upper = jnp.where(too_low, upper, mid)
     return 0.5 * (lower + upper)
+
+
+@_solve_nfw_concentration.defjvp
+def _solve_nfw_concentration_jvp(
+    primals: tuple[Any], tangents: tuple[Any]
+) -> tuple[Any, Any]:
+    """Differentiate the root equation instead of the bisection decisions."""
+    (target,) = primals
+    (target_dot,) = tangents
+    c = _solve_nfw_concentration(target)
+    g = _nfw_g(c)
+    g_prime = c / (1 + c) ** 2
+    h_prime = c**2 * (3 * g - c * g_prime) / g**2
+    return c, target_dot / h_prime
 
 
 def _nfw_concentration_m200_inverse(

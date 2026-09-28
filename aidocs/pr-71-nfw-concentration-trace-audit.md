@@ -1,5 +1,24 @@
 # PR 71 audit: NFW concentration conversion traceable in batches
 
+## Follow-up (2026-09-28)
+
+F1 has been fixed in the working tree: the concentration solver now uses an
+implicit JAX derivative, and tests compare inverse gradients with finite
+differences for scalar and batched inputs. The focused NFW tests and the full
+potential unit-test module passed. At this follow-up, the changes were not yet
+committed or pushed; the review below describes the earlier commit named in
+"Reviewed repository state."
+
+The inverse's current internal callers recompute raw parameters while
+generating models and reporting their values. The audit demonstrated incorrect
+gradients through the inverse API, but did not establish that the current
+model-fitting path differentiates through that API.
+
+One pre-existing range limitation remains: a true concentration outside the
+solver's `[1e-6, 1e6]` bracket is returned as a clamped endpoint. The new
+implicit derivative is valid for roots inside the bracket; it does not
+describe the clamped result. The solver docstring now states this limit.
+
 Audit date: 2026-09-28. Reviewer: Claude, at Prash's request.
 
 **Recommendation: do not merge yet.** One correctness finding needs
