@@ -77,7 +77,7 @@ def _check_axial_ratios(p: jnp.ndarray, q: jnp.ndarray) -> None:
 
 
 def _deprojected_valid(model: Deprojected3DMGE) -> jax.Array:
-    """Shared intrinsic-domain and representability checks in declared units."""
+    """Shared intrinsic-domain and density/width/mass representability checks."""
     p, q = model.p.ustrip(""), model.q.ustrip("")
     valid = jnp.all(_axial_ratios_valid(p, q))
     for quantity in (model.I, model.sigma):
@@ -1165,13 +1165,45 @@ class Deprojected3DMGE(eqx.Module):
     q: Quantity
 
     @property
+    def gaussian_widths(self) -> Quantity:
+        """Floating-point widths in kpc for stable Gaussian construction.
+
+        Preserve conversion before Galax forms powers of the widths, even
+        when compilation rearranges arithmetic or stored widths are integers.
+        """
+        return Quantity(
+            jax.lax.optimization_barrier(
+                jnp.asarray(self.sigma.ustrip("kpc"), dtype=float)
+            ),
+            "kpc",
+        )
+
+    @property
     def component_masses(self) -> Quantity:
         """Integrated mass (or luminosity) of each intrinsic Gaussian.
 
         Shared by numerical validation and Galax construction; ``I`` is the
         central volume density, not the projected surface intensity.
+        Calculate locally in kpc and Msun/Lsun without changing stored units.
+        Interleave density and width factors to avoid overflowing sigma**3
+        when the integrated mass itself is representable.
         """
-        return self.I * self.p * self.q * (2 * jnp.pi) ** 1.5 * self.sigma**3
+        unit = au.Msun if self.I.unit.is_equivalent(au.Msun / au.kpc**3) else au.Lsun
+        density = self.I.ustrip(unit / au.kpc**3)
+        sigma = self.sigma.ustrip("kpc")
+        # Keep compiler reassociation from combining a large declared-unit
+        # width with conversion factors only after its products overflow.
+        density, sigma = jax.lax.optimization_barrier((density, sigma))
+        mass = (
+            density
+            * sigma
+            * self.p.ustrip("")
+            * self.q.ustrip("")
+            * (2 * jnp.pi) ** 1.5
+            * sigma
+            * sigma
+        )
+        return Quantity(mass, unit)
 
     def spherical_mass_grid(self, grid: SphericalGrid) -> Quantity:
         """Mass in each cell of a `SphericalGrid` (one octant).

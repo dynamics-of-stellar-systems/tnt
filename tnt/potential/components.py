@@ -243,7 +243,7 @@ def _build_mge_with_validity(
         }
         model, _ = candidate(values)
         total = model.component_masses
-        return tuple(
+        outputs = tuple(
             value.ustrip(value.unit)
             for value in (model.I, model.sigma, model.p, model.q, total)
         ) + (
@@ -251,6 +251,9 @@ def _build_mge_with_validity(
             model.sigma.ustrip("kpc"),
             total.ustrip("Msun"),
         )
+        # Fixed columns may be integer-valued (notably oblate widths).
+        # Reverse differentiation requires real floating-point outputs.
+        return tuple(jnp.asarray(value, dtype=float) for value in outputs)
 
     def probe(values: dict[str, Quantity]) -> jax.Array:
         _, valid = candidate(values)
@@ -262,9 +265,24 @@ def _build_mge_with_validity(
             for key, value in values.items()
         }
         outputs = numerical_outputs(numbers)
-        derivatives = jax.jacfwd(numerical_outputs)(numbers)
-        for leaf in jax.tree.leaves((outputs, derivatives)):
+        forward = jax.jacfwd(numerical_outputs)(numbers)
+        reverse = jax.jacrev(numerical_outputs)(numbers)
+        for leaf in jax.tree.leaves((outputs, forward, reverse)):
             valid = valid & jnp.all(jnp.isfinite(leaf))
+        # Finite forward derivatives do not guarantee safe reverse-mode
+        # intermediates. Require both modes to resolve the same derivatives.
+        for output, fwd, rev in zip(outputs, forward, reverse, strict=True):
+            for name, number in numbers.items():
+                tolerance = 50 * jnp.sqrt(jnp.finfo(fwd[name].dtype).eps)
+                # Total mass is independent of viewing angles: allow roundoff
+                # about a zero derivative, scaled to the output and input.
+                scale = jnp.maximum(
+                    jnp.maximum(jnp.abs(fwd[name]), jnp.abs(rev[name])),
+                    jnp.abs(output) / jnp.maximum(1, jnp.abs(number)),
+                )
+                valid = valid & jnp.all(
+                    jnp.abs(fwd[name] - rev[name]) <= tolerance * scale
+                )
         for output in outputs[-3:]:
             valid = valid & jnp.all(output > 0)
         return valid

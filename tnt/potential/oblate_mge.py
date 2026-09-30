@@ -220,10 +220,11 @@ def _galax_potential_from_oblate_deprojected(
     """
     n_components = deprojected.I.shape[0]
     masses = deprojected.component_masses
+    widths = deprojected.gaussian_widths
     components = {
         str(i): galax.potential.AxisymmetricGaussianPotential(
             m_tot=masses[i],
-            r_s=deprojected.sigma[i],
+            r_s=widths[i],
             q2=deprojected.q[i],
             units=unit_system,
         )

@@ -1,12 +1,13 @@
 """Native MGE construction inside one trace, at both supported precisions."""
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from unxt import Quantity, unitsystem
 
-from tnt.mge import LightMGE, MGEDeprojectionError
+from tnt.mge import LightMGE, MassMGE, MGEDeprojectionError
 from tnt.potential import Potential
 
 TYPES = [
@@ -26,10 +27,10 @@ def _release_compilation_cache():
     jax.clear_caches()
 
 
-def _setup(kind):
+def _setup(kind, sigma_unit="kpc"):
     mge = LightMGE(
         I=Quantity(jnp.array([20.0, 5.0]), "Lsun / pc2"),
-        sigma=Quantity(jnp.array([1.5, 3.0]), "kpc"),
+        sigma=Quantity(jnp.array([1.5, 3.0]), "kpc").uconvert(sigma_unit),
         q=Quantity(jnp.array([0.9, 0.95]), ""),
         PA_twist=Quantity(jnp.zeros(2), "rad"),
         major_axis_pa=Quantity(0.0, "deg"),
@@ -55,6 +56,229 @@ def _setup(kind):
 
     values = jnp.array([2.0, 1.0] if "Oblate" in kind else [2.0, 0.3, 0.96, -1.08])
     return resolved, proposal, values
+
+
+@pytest.mark.parametrize("kind", TYPES)
+@pytest.mark.parametrize("x64", [False, True])
+def test_equivalent_width_units_preserve_native_mge_values_and_gradients(kind, x64):
+    with jax.enable_x64(x64):
+        units = unitsystem("kpc", "Myr", "Msun", "rad")
+        position = Quantity(jnp.array([0.7, 0.4, 0.2]), "kpc")
+        # Independent surface integral, in pc and Msun/pc2. The mass template
+        # includes an additional factor of two from _setup's light conversion.
+        expected_mass = (
+            2
+            * np.pi
+            * np.sum(
+                np.array([20.0, 5.0]) * np.array([1500.0, 3000.0]) ** 2 * [0.9, 0.95]
+            )
+            * (4 if "Mass" in kind else 2)
+        )
+        reference = None
+        for sigma_unit in ("kpc", "pc", "km"):
+            resolved, proposal, values = _setup(kind, sigma_unit)
+
+            def evaluate(values, resolved=resolved, proposal=proposal):
+                potential, valid = Potential.build_with_validity(
+                    resolved, proposal(values), {}
+                )
+                mass = potential.components["stars"].deprojected.component_masses
+                value = jax.lax.cond(
+                    valid,
+                    lambda: (
+                        potential.to_galax(units)
+                        .potential(position, Quantity(0.0, "Myr"))
+                        .ustrip("kpc2 / Myr2")
+                    ),
+                    lambda: jnp.asarray(0.0),
+                )
+                return value, (valid, jnp.sum(mass.ustrip("Msun")))
+
+            (value, (traced_valid, mass)), gradient = jax.jit(
+                jax.value_and_grad(evaluate, has_aux=True)
+            )(values)
+            eager, eager_valid = Potential.build_with_validity(
+                resolved, proposal(values), {}
+            )
+            assert bool(eager_valid) and bool(traced_valid)
+            assert float(mass) == pytest.approx(expected_mass, rel=2e-5)
+            assert bool(jnp.all(jnp.isfinite(gradient)))
+            assert float(gradient[0]) == pytest.approx(
+                float(value / values[0]), rel=2e-5
+            )
+            if reference is None:
+                reference = float(value), np.asarray(gradient)
+            else:
+                assert float(value) == pytest.approx(reference[0], rel=2e-5)
+                np.testing.assert_allclose(gradient, reference[1], rtol=2e-5, atol=1e-8)
+            component = eager.components["stars"]
+            assert component.mge.sigma.unit == Quantity(1.0, sigma_unit).unit
+
+            def rescaled_mass(scale, component=component):
+                mass = component.rescale(scale).deprojected.component_masses
+                return jnp.sum(mass.ustrip(mass.unit))
+
+            # A finite construction Jacobian in forward mode used to miss an
+            # infinite reverse-mode gradient through the integrated mass.
+            assert float(jax.grad(rescaled_mass)(jnp.asarray(1.0))) == pytest.approx(
+                expected_mass, rel=2e-5
+            )
+            rescaled_value, rescaled_gradient = jax.jit(
+                jax.value_and_grad(rescaled_mass)
+            )(jnp.asarray(1.0))
+            assert float(rescaled_value) == pytest.approx(expected_mass, rel=2e-5)
+            assert float(rescaled_gradient) == pytest.approx(expected_mass, rel=2e-5)
+            jax.clear_caches()  # Bound memory across the equivalent-unit graphs.
+
+
+@pytest.mark.parametrize("kind", TYPES)
+@pytest.mark.parametrize("x64", [False, True])
+def test_integer_mge_columns_support_native_construction_and_gradients(kind, x64):
+    with jax.enable_x64(x64):
+        resolved, proposal, values = _setup(kind)
+        source = resolved["stars"].extra_fields["mge"]
+        source = eqx.tree_at(
+            lambda m: (m.I, m.sigma),
+            source,
+            (
+                Quantity(jnp.array([20, 5]), source.I.unit),
+                Quantity(jnp.array([100, 300]), "kpc"),
+            ),
+        )
+        resolved = Potential.resolve(
+            {"stars": {"type": kind, "mge": "m"}}, {"m": source}
+        )
+        units = unitsystem("kpc", "Myr", "Msun", "rad")
+
+        def evaluate(values):
+            potential, valid = Potential.build_with_validity(
+                resolved, proposal(values), {}
+            )
+            value = jax.lax.cond(
+                valid,
+                lambda: (
+                    potential.to_galax(units)
+                    .potential(
+                        Quantity(jnp.array([70.0, 40.0, 20.0]), "kpc"),
+                        Quantity(0.0, "Myr"),
+                    )
+                    .ustrip("kpc2 / Myr2")
+                ),
+                lambda: jnp.asarray(0.0),
+            )
+            return value, valid
+
+        (value, valid), gradient = jax.jit(jax.value_and_grad(evaluate, has_aux=True))(
+            values
+        )
+        _, eager_valid = Potential.build_with_validity(resolved, proposal(values), {})
+        assert bool(valid) and bool(eager_valid)
+        assert bool(jnp.all(jnp.isfinite(gradient)))
+        assert float(gradient[0]) == pytest.approx(float(value / values[0]), rel=2e-5)
+        assert jnp.issubdtype(source.sigma.dtype, jnp.integer)
+
+
+@pytest.mark.parametrize("kind", TYPES)
+@pytest.mark.parametrize("x64", [False, True])
+def test_reverse_mode_overflow_is_rejected_eagerly_and_under_jit(kind, x64):
+    with jax.enable_x64(x64):
+        resolved, proposal, values = _setup(kind)
+        source = resolved["stars"].extra_fields["mge"]
+        intensity = 1e-100 if x64 else 1e-10
+        # Exceed the reverse-mode volume limit for both deprojection geometries.
+        width = 1e103 if x64 else 1e13
+        source = eqx.tree_at(
+            lambda m: (m.I, m.sigma),
+            source,
+            (
+                Quantity(
+                    jnp.full(2, intensity),
+                    "Msun/kpc2" if "Mass" in kind else "Lsun/kpc2",
+                ),
+                Quantity(jnp.full(2, width), "kpc"),
+            ),
+        )
+        resolved = Potential.resolve(
+            {"stars": {"type": kind, "mge": "m"}}, {"m": source}
+        )
+        # The analytical projected mass and its normalization derivative are
+        # representable. Reverse-mode intermediate products are not.
+        expected_mass = 2 * np.pi * intensity * width**2 * (0.9 + 0.95) * 2
+        assert np.isfinite(expected_mass) and expected_mass > 0
+        _, eager_valid = Potential.build_with_validity(resolved, proposal(values), {})
+        assert not bool(eager_valid)
+
+        def evaluate(values):
+            potential, valid = Potential.build_with_validity(
+                resolved, proposal(values), {}
+            )
+            mass = jax.lax.cond(
+                valid,
+                lambda: jnp.sum(
+                    potential.components["stars"].deprojected.component_masses.ustrip(
+                        "Msun"
+                    )
+                ),
+                lambda: jnp.asarray(0.0),
+            )
+            return mass, valid
+
+        (mass, traced_valid), gradient = jax.jit(
+            jax.value_and_grad(evaluate, has_aux=True)
+        )(values)
+        assert not bool(traced_valid)
+        assert float(mass) == 0.0
+        np.testing.assert_array_equal(gradient, np.zeros(len(values)))
+        with pytest.raises(ValueError, match="precision"):
+            Potential.build(resolved, proposal(values), {})
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_compact_mge_in_kilometres_has_finite_compiled_mass_and_gradient(x64):
+    with jax.enable_x64(x64):
+        source = MassMGE(
+            I=Quantity(jnp.array([1e10]), "Msun/kpc2"),
+            sigma=Quantity(jnp.array([3e12]), "km"),
+            q=Quantity(jnp.array([0.9]), ""),
+            PA_twist=Quantity(jnp.zeros(1), "rad"),
+            major_axis_pa=Quantity(0.0, "rad"),
+        )
+        resolved = Potential.resolve(
+            {"stars": {"type": "OblateMassMGEPotential", "mge": "m"}}, {"m": source}
+        )
+
+        def evaluate(scale):
+            potential, valid = Potential.build_with_validity(
+                resolved,
+                {
+                    "stars": {
+                        "mge_mass_scale": Quantity(scale, ""),
+                        "inclination": Quantity(1.0, "rad"),
+                    }
+                },
+                {},
+            )
+            mass = jax.lax.cond(
+                valid,
+                lambda: jnp.sum(
+                    potential.components["stars"].deprojected.component_masses.ustrip(
+                        "Msun"
+                    )
+                ),
+                lambda: jnp.asarray(0.0),
+            )
+            return mass, valid
+
+        # About 0.097 pc wide and 535 Msun; use the independently converted
+        # width in the analytical 2D Gaussian integral.
+        width_kpc = 3e12 / 3.085677581491367e16
+        expected = 2 * np.pi * 1e10 * width_kpc**2 * 0.9
+        (mass, valid), derivative = jax.jit(jax.value_and_grad(evaluate, has_aux=True))(
+            jnp.asarray(1.0)
+        )
+        assert bool(valid)
+        assert float(mass) == pytest.approx(expected, rel=2e-5)
+        assert float(derivative) == pytest.approx(expected, rel=2e-5)
 
 
 @pytest.mark.parametrize("kind", TYPES)

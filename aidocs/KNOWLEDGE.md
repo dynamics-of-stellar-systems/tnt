@@ -228,16 +228,30 @@
   scalar boolean; invalid intrinsic MGEs contain zeros and must not be used,
   including through `to_galax`, unless the flag is true. Eager and traced paths
   share intrinsic-axis, finite positive density/width/mass, and numerical
-  accuracy checks. Native potential construction additionally probes finite
-  construction derivatives and values in declared and local `Msun`/`kpc`
-  units before allowing differentiation. Oblate cancellation and triaxial
+  accuracy checks. Native potential construction additionally probes values
+  and both forward- and reverse-mode construction derivatives in declared and
+  local `Msun`/`kpc` units before allowing differentiation. Both modes must be
+  finite and agree within `50*sqrt(eps)`, with an output/input-scaled roundoff
+  allowance for zero derivatives (such as mass versus viewing angle).
+  Oblate cancellation and triaxial
   covariance-inversion conditioning/residual checks use `50*sqrt(eps)`
   relative error thresholds at active precision. Exactly circular projected
   rows use the analytic spherical result, avoiding roundoff beyond q=1 or u=1;
   see `docs/source/potential.md`.
   Surface intensity stays physical and projected total mass is conserved.
   `Deprojected3DMGE.component_masses` owns the intrinsic Gaussian mass
-  calculation shared by validation and both Galax construction paths.
+  calculation shared by validation and both Galax construction paths. It
+  converts locally to `kpc` and `Msun` (or `Lsun` for luminosity), interleaves
+  density/width products, and preserves the conversion boundary against
+  compiler reassociation. Its shared `gaussian_widths` property supplies
+  floating-point `kpc` widths to both Galax factories with the same conversion
+  boundary. Stored MGE columns and proposal units remain unchanged. Numerical
+  derivative checks and Gaussian-width arithmetic use floating-point arrays
+  even when fixed input columns contain integers. Equivalent physical widths
+  in `pc`, `kpc`, and `km` must yield consistent validity, mass, potential
+  values, and gradients; finite
+  integrated mass alone is insufficient when reverse-mode intermediates
+  overflow at the selected precision.
   The native-MGE validity contract covers deprojection and construction
   values/derivatives. By explicit scope decision, it does not certify Galax's
   fixed-order potential quadrature. Galax's 50-point Gaussian quadrature can
