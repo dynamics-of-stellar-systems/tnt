@@ -240,7 +240,9 @@ potential:
   bisection, verified by confirming the round trip is self-consistent
   (converting the recovered `(c, M_200)` forward again reproduces the same
   rescaled `(m, r_s)`), since there's no independent closed-form answer to
-  check against.
+  check against. JAX gradients through the inverse use the derivative of
+  the solved equation; differentiating bisection decisions directly would
+  give incorrect zero gradients.
 - **All four MGE composite types**: implemented. The named MGE is
   deprojected -- triaxial types under `theta`/`phi`/`psi`
   (`AbstractMGE.deproject_triaxial`), oblate axisymmetric types under a

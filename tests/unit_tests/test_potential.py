@@ -570,6 +570,59 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
     assert float(mean_density / rho_crit) == pytest.approx(200.0, rel=1e-5)
 
 
+@pytest.mark.parametrize(
+    ("mass_value", "mass_unit", "hubble_value", "hubble_unit"),
+    [
+        (1.0e12, "Msun", 7.158985155319864e-05, "1 / Myr"),
+        (100.0, "1e10 Msun", 70.0, "km / (s Mpc)"),
+    ],
+)
+def test_nfw_concentration_m200_traces_with_gradients(
+    mass_value: float,
+    mass_unit: str,
+    hubble_value: float,
+    hubble_unit: str,
+) -> None:
+    def scale_radius(c: jax.Array, mass_scale: jax.Array) -> jax.Array:
+        native = _nfw_concentration_m200(
+            {
+                "c": Quantity(c, ""),
+                "M_200": Quantity(mass_value * mass_scale, mass_unit),
+            },
+            {"H": Quantity(hubble_value, hubble_unit)},
+        )
+        return native["r_s"].ustrip("kpc")
+
+    c, mass_scale = jnp.asarray(8.0), jnp.asarray(1.0)
+    eager_radius = scale_radius(c, mass_scale)
+    traced_radius, (c_gradient, mass_gradient) = jax.jit(
+        jax.value_and_grad(scale_radius, argnums=(0, 1))
+    )(c, mass_scale)
+
+    assert float(traced_radius) == pytest.approx(float(eager_radius), rel=1e-6)
+    assert bool(jnp.isfinite(c_gradient))
+    assert bool(jnp.isfinite(mass_gradient))
+    assert float(c_gradient) == pytest.approx(-float(traced_radius) / 8.0, rel=1e-5)
+    assert float(mass_gradient) == pytest.approx(float(traced_radius) / 3.0, rel=1e-5)
+
+    concentrations = jnp.asarray([4.0, 8.0])
+    mass_scales = jnp.asarray([0.5, 1.0])
+    batched_radii, (batched_c_gradients, batched_mass_gradients) = jax.jit(
+        jax.vmap(jax.value_and_grad(scale_radius, argnums=(0, 1)))
+    )(concentrations, mass_scales)
+    assert bool(jnp.all(jnp.isfinite(batched_radii)))
+    assert bool(jnp.all(jnp.isfinite(batched_c_gradients)))
+    assert bool(jnp.all(jnp.isfinite(batched_mass_gradients)))
+    assert bool(
+        jnp.allclose(batched_c_gradients, -batched_radii / concentrations, rtol=1e-5)
+    )
+    assert bool(
+        jnp.allclose(
+            batched_mass_gradients, batched_radii / (3 * mass_scales), rtol=1e-5
+        )
+    )
+
+
 @pytest.mark.parametrize("name", ["c", "M_200"])
 def test_nfw_parameterization_rejects_invalid_raw_values_before_conversion(
     name: str,
@@ -663,9 +716,8 @@ def test_nfw_concentration_m200_raw_dimensions() -> None:
 
 
 # ---------------------------------------------------------------------------
-# concentration_m200's inverse: (m, r_s) -> (c, M_200). No closed form, so
-# these check the numerical root-find and the round trip directly, rather
-# than against any independently derivable expected value.
+# concentration_m200's inverse: (m, r_s) -> (c, M_200). No closed form;
+# check values by round trip and gradients against finite differences.
 # ---------------------------------------------------------------------------
 
 
@@ -678,6 +730,72 @@ def test_solve_nfw_concentration_recovers_a_known_c() -> None:
     for c in (0.01, 0.1, 1.0, 5.0, 8.0, 20.0, 100.0):
         target = c**3 / _nfw_g(c)
         assert float(_solve_nfw_concentration(target)) == pytest.approx(c, rel=1e-12)
+
+
+def test_solve_nfw_concentration_has_the_root_derivative() -> None:
+    with jax.enable_x64(True):
+        for target in (10.0, 50.0, 1000.0):
+            gradient = jax.jit(jax.grad(_solve_nfw_concentration))(target)
+            step = target * 1e-5
+            finite_difference = (
+                _solve_nfw_concentration(target + step)
+                - _solve_nfw_concentration(target - step)
+            ) / (2 * step)
+            assert float(gradient) == pytest.approx(float(finite_difference), rel=1e-7)
+
+
+@pytest.mark.parametrize("output_name", ["c", "M_200"])
+def test_nfw_concentration_m200_inverse_traces_with_gradients(
+    output_name: str,
+) -> None:
+    def converted(mass_scale: jax.Array, radius: jax.Array) -> jax.Array:
+        recovered = _nfw_concentration_m200_inverse(
+            {"m": Quantity(1e12 * mass_scale, "Msun"), "r_s": Quantity(radius, "kpc")},
+            {"M_200": "Msun"},
+            {"H": Quantity(70.0, "km/(s*Mpc)")},
+        )
+        unit = "" if output_name == "c" else "Msun"
+        scale = 1.0 if output_name == "c" else 1e12
+        return recovered[output_name].ustrip(unit) / scale
+
+    with jax.enable_x64(True):
+        masses = jnp.asarray([0.7, 1.0])
+        radii = jnp.asarray([16.0, 20.0])
+        values, (mass_gradients, radius_gradients) = jax.jit(
+            jax.vmap(jax.value_and_grad(converted, argnums=(0, 1)))
+        )(masses, radii)
+        assert bool(jnp.all(jnp.isfinite(values)))
+        assert bool(jnp.all(jnp.isfinite(mass_gradients)))
+        assert bool(jnp.all(jnp.isfinite(radius_gradients)))
+
+        for mass, radius, value, mass_gradient, radius_gradient in zip(
+            masses, radii, values, mass_gradients, radius_gradients, strict=True
+        ):
+            eager_value = converted(mass, radius)
+            single_value, single_gradients = jax.jit(
+                jax.value_and_grad(converted, argnums=(0, 1))
+            )(mass, radius)
+            assert float(value) == pytest.approx(float(eager_value), rel=1e-10)
+            assert float(single_value) == pytest.approx(float(value), rel=1e-10)
+            assert float(single_gradients[0]) == pytest.approx(float(mass_gradient))
+            assert float(single_gradients[1]) == pytest.approx(float(radius_gradient))
+
+            mass_step = float(mass) * 1e-5
+            radius_step = float(radius) * 1e-5
+            mass_difference = (
+                converted(mass + mass_step, radius)
+                - converted(mass - mass_step, radius)
+            ) / (2 * mass_step)
+            radius_difference = (
+                converted(mass, radius + radius_step)
+                - converted(mass, radius - radius_step)
+            ) / (2 * radius_step)
+            assert float(mass_gradient) == pytest.approx(
+                float(mass_difference), rel=1e-5
+            )
+            assert float(radius_gradient) == pytest.approx(
+                float(radius_difference), rel=1e-5
+            )
 
 
 def test_nfw_concentration_m200_inverse_round_trips_the_forward_conversion() -> None:
@@ -695,8 +813,8 @@ def test_nfw_concentration_m200_inverse_round_trips_the_forward_conversion() -> 
 def test_nfw_concentration_m200_inverse_is_self_consistent_after_rescale() -> None:
     # There's no closed form for (c, M_200) after a mass rescale (rescale()
     # holds r_s fixed and scales only m -- not the same as holding c fixed
-    # and scaling M_200), so the only checkable invariant is that inverting
-    # and then re-converting forward reproduces the same rescaled (m, r_s).
+    # and scaling M_200), so check that inverting and then re-converting
+    # forward reproduces the same rescaled (m, r_s).
     h = Quantity(7.158985155319864e-05, "1 / Myr")
     raw = {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")}
     native = _nfw_concentration_m200(raw, {"H": h})
