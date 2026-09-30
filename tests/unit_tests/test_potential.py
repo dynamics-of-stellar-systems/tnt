@@ -401,6 +401,144 @@ def test_runtime_parameter_domain_requires_scalar_quantities_and_exact_names() -
         )
 
 
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_resolved_component_raw_validity_is_traceable(x64_enabled: bool) -> None:
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": "PlummerPotential", "parameters": {}},
+        {},
+        path="potential.bh",
+    )
+
+    def raw_valid(mass: jax.Array) -> jax.Array:
+        return resolved._raw_parameters_valid(
+            {"m_tot": Quantity(mass, "Msun"), "r_s": Quantity(1.0, "kpc")}
+        )
+
+    with jax.enable_x64(x64_enabled):
+        traced = jax.jit(raw_valid)
+        assert bool(traced(jnp.asarray(1.0e5)))
+        assert not bool(traced(jnp.asarray(0.0)))
+        assert not bool(traced(jnp.asarray(float("nan"))))
+
+    with pytest.raises(ValueError, match=r"missing \['r_s'\]"):
+        resolved._raw_parameters_valid({"m_tot": Quantity(1.0e5, "Msun")})
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_native_potential_build_flag_guards_traced_evaluation_and_gradients(
+    x64_enabled: bool,
+) -> None:
+    resolved = Potential.resolve(
+        {"bh": {"type": "PlummerPotential", "parameters": {}}}, {}
+    )
+    xyz = Quantity(jnp.array([1.0, 0.0, 0.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+
+    def log_density(mass: jax.Array) -> tuple[jax.Array, jax.Array]:
+        potential, valid = Potential.build_with_validity(
+            resolved,
+            {"bh": {"m_tot": Quantity(mass, "Msun"), "r_s": Quantity(1.0, "kpc")}},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+        value = jax.lax.cond(
+            valid,
+            lambda: (
+                potential.to_galax(_internal_unit_system())
+                .potential(xyz, t)
+                .ustrip("kpc2 / Myr2")
+            ),
+            lambda: jnp.asarray(-jnp.inf),
+        )
+        return value, valid
+
+    with jax.enable_x64(x64_enabled):
+        traced = jax.jit(jax.value_and_grad(log_density, has_aux=True))
+        (valid_value, valid_flag), valid_gradient = traced(jnp.asarray(1.0e5))
+        assert bool(valid_flag)
+        assert bool(jnp.isfinite(valid_value))
+        assert bool(jnp.isfinite(valid_gradient))
+        assert float(valid_gradient) < 0
+
+        (invalid_value, invalid_flag), invalid_gradient = traced(jnp.asarray(0.0))
+        assert not bool(invalid_flag)
+        assert float(invalid_value) == -jnp.inf
+        assert bool(jnp.isfinite(invalid_gradient))
+
+
+@pytest.mark.parametrize("galax_type", sorted(_SUPPORTED_GALAX_TYPES))
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_traced_native_build_covers_each_curated_galax_type(
+    galax_type: str, x64_enabled: bool
+) -> None:
+    units_and_values = {
+        "mass": (1.0e10, "Msun"),
+        "length": (1.0, "kpc"),
+        "angle": (0.1, "rad"),
+        "dimensionless": (0.7, ""),
+        "speed": (200.0, "km / s"),
+        "frequency": (0.1, "1 / Myr"),
+    }
+    parameter_specs = _SUPPORTED_GALAX_TYPES[galax_type]
+    with jax.enable_x64(x64_enabled):
+        reference = {
+            name: Quantity(*units_and_values[spec.dimension])
+            for name, spec in parameter_specs.items()
+        }
+        if galax_type == "StoneOstriker15Potential":
+            reference["r_h"] = Quantity(2.0, "kpc")
+        xyz = Quantity(jnp.array([2.0, 1.0, 0.5]), "kpc")
+        t = Quantity(0.0, "Myr")
+    constrained_name = next(
+        name
+        for name, spec in parameter_specs.items()
+        if spec.constraint is not None
+        and spec.constraint.minimum == 0.0
+        and not spec.constraint.minimum_inclusive
+    )
+    reference_value = reference[constrained_name]
+    resolved = Potential.resolve(
+        {"component": {"type": galax_type, "parameters": {}}}, {}
+    )
+
+    def traced(value: jax.Array) -> jax.Array:
+        candidate = dict(reference)
+        candidate[constrained_name] = Quantity(value, reference_value.unit)
+        _, valid = Potential.build_with_validity(
+            resolved, {"component": candidate}, _NO_COSMOLOGICAL_PARAMETERS
+        )
+        return valid
+
+    def potential_value(value: jax.Array) -> jax.Array:
+        candidate = dict(reference)
+        candidate[constrained_name] = Quantity(value, reference_value.unit)
+        potential, valid = Potential.build_with_validity(
+            resolved, {"component": candidate}, _NO_COSMOLOGICAL_PARAMETERS
+        )
+        return jax.lax.cond(
+            valid,
+            lambda: (
+                potential.to_galax(_internal_unit_system())
+                .potential(xyz, t)
+                .ustrip("kpc2 / Myr2")
+            ),
+            lambda: jnp.asarray(-jnp.inf),
+        )
+
+    with jax.enable_x64(x64_enabled):
+        compiled = jax.jit(traced)
+        assert bool(compiled(reference_value.ustrip(reference_value.unit)))
+        assert not bool(compiled(jnp.asarray(0.0)))
+        compiled_potential = jax.jit(jax.value_and_grad(potential_value))
+        value, gradient = compiled_potential(
+            reference_value.ustrip(reference_value.unit)
+        )
+        assert bool(jnp.isfinite(value))
+        assert bool(jnp.isfinite(gradient))
+        invalid_value, invalid_gradient = compiled_potential(jnp.asarray(0.0))
+        assert float(invalid_value) == -jnp.inf
+        assert bool(jnp.isfinite(invalid_gradient))
+
+
 @pytest.mark.parametrize(
     ("galax_type", "parameters", "parameter_name"),
     [
@@ -1307,6 +1445,157 @@ def test_constraint_metadata_matches_each_registered_schema() -> None:
         assert set(component_cls._constraints) <= set(component_cls._raw_dimensions), (
             component_type
         )
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_constraint_predicate_matches_eager_diagnostics_under_jit(
+    x64_enabled: bool,
+) -> None:
+    constraint = ParameterConstraint(
+        minimum=0.0,
+        minimum_inclusive=False,
+        maximum=3.0,
+        unit="kpc",
+        other_parameter="reference",
+        relation=">=",
+    )
+    siblings = {"reference": Quantity(1.0, "kpc")}
+
+    def valid(value: jax.Array) -> jax.Array:
+        return constraint.valid(Quantity(value, "pc"), siblings)
+
+    with jax.enable_x64(x64_enabled):
+        traced = jax.jit(valid)
+        for value, expected in [
+            (900.0, False),
+            (1000.0, True),
+            (2900.0, True),
+            (3001.0, False),
+            (float("inf"), False),
+            (float("nan"), False),
+        ]:
+            assert bool(traced(jnp.asarray(value))) is expected
+            assert (
+                constraint.violation(Quantity(value, "pc"), siblings) is None
+            ) is expected
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_vogelsberger_upper_bound_agrees_in_eager_and_traced_builds(
+    x64_enabled: bool,
+) -> None:
+    resolved = Potential.resolve(
+        {"halo": {"type": "Vogelsberger08TriaxialNFWPotential"}}, {}
+    )
+
+    def proposed(q1: jax.Array) -> dict[str, dict[str, Quantity]]:
+        return {
+            "halo": {
+                "m": Quantity(1.0e10, "Msun"),
+                "r_s": Quantity(1.0, "kpc"),
+                "q1": Quantity(q1, ""),
+                "a_r": Quantity(0.7, ""),
+            }
+        }
+
+    with jax.enable_x64(x64_enabled):
+        boundary = jnp.asarray(3**0.5)
+        with pytest.raises(ValueError, match=r"q1.*less than"):
+            Potential.build(resolved, proposed(boundary), {})
+        _, eager_valid = Potential.build_with_validity(resolved, proposed(boundary), {})
+        traced_valid = jax.jit(
+            lambda q1: Potential.build_with_validity(resolved, proposed(q1), {})[1]
+        )(boundary)
+        assert not bool(eager_valid)
+        assert not bool(traced_valid)
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_stone_ostriker_precision_margin_matches_eager_and_traced_builds(
+    x64_enabled: bool,
+) -> None:
+    resolved = Potential.resolve({"cluster": {"type": "StoneOstriker15Potential"}}, {})
+
+    def proposed(halo_radius: jax.Array) -> dict[str, dict[str, Quantity]]:
+        return {
+            "cluster": {
+                "m_tot": Quantity(1.0e10, "Msun"),
+                "r_c": Quantity(1.0, "kpc"),
+                "r_h": Quantity(halo_radius, "pc"),
+            }
+        }
+
+    with jax.enable_x64(x64_enabled):
+        traced_valid = jax.jit(
+            lambda radius: Potential.build_with_validity(
+                resolved, proposed(radius), {}
+            )[1]
+        )
+        for radius_pc, expected_valid in [
+            (1000.001, False),
+            (1010.0, x64_enabled),
+            (1050.0, True),
+        ]:
+            radius = jnp.asarray(radius_pc)
+            if expected_valid:
+                Potential.build(resolved, proposed(radius), {})
+            else:
+                with pytest.raises(ValueError, match=r"r_h.*too close"):
+                    Potential.build(resolved, proposed(radius), {})
+            assert bool(traced_valid(radius)) is expected_valid
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_stone_ostriker_accepted_gradient_matches_high_precision_reference(
+    x64_enabled: bool,
+) -> None:
+    resolved = Potential.resolve({"cluster": {"type": "StoneOstriker15Potential"}}, {})
+
+    with jax.enable_x64(x64_enabled):
+        xyz = Quantity(jnp.array([2.0, 1.0, 0.5]), "kpc")
+        t = Quantity(0.0, "Myr")
+
+        def guarded_value(halo_radius: jax.Array) -> tuple[jax.Array, jax.Array]:
+            potential, valid = Potential.build_with_validity(
+                resolved,
+                {
+                    "cluster": {
+                        "m_tot": Quantity(1.0e10, "Msun"),
+                        "r_c": Quantity(1.0, "kpc"),
+                        "r_h": Quantity(halo_radius, "kpc"),
+                    }
+                },
+                {},
+            )
+            value = jax.lax.cond(
+                valid,
+                lambda: (
+                    potential.to_galax(_internal_unit_system())
+                    .potential(xyz, t)
+                    .ustrip("kpc2 / Myr2")
+                ),
+                lambda: jnp.asarray(-jnp.inf),
+            )
+            return value, valid
+
+        compiled = jax.jit(jax.value_and_grad(guarded_value, has_aux=True))
+        # Independent 90-digit evaluation of the Stone-Ostriker formula.
+        accepted = (
+            [(1.001, 0.002290579505), (1.01, 0.002286174186)]
+            if x64_enabled
+            else [(1.05, 0.002266473226)]
+        )
+        for radius, reference_gradient in accepted:
+            (value, valid), gradient = compiled(jnp.asarray(radius))
+            assert bool(valid)
+            assert bool(jnp.isfinite(value))
+            assert float(gradient) == pytest.approx(reference_gradient, rel=0.002)
+
+        for rejected in [1.00001, 1.0003] if x64_enabled else [1.00001, 1.01]:
+            (value, valid), gradient = compiled(jnp.asarray(rejected))
+            assert not bool(valid)
+            assert float(value) == -jnp.inf
+            assert bool(jnp.isfinite(gradient))
 
 
 def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:

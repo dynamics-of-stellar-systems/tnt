@@ -21,12 +21,13 @@ reused across every proposed point in parameter space; see
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from typing import Any, ClassVar, NamedTuple, Self
 
 import equinox as eqx
 import galax.potential
+import jax
+import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import LightMGE, MassMGE
@@ -63,6 +64,45 @@ class ResolvedPotentialComponent(NamedTuple):
     convert: ForwardConverter | None
     extra_fields: dict[str, Any]
     path: str
+
+    def _raw_parameters_valid(
+        self, parameter_values: Mapping[str, Quantity]
+    ) -> jax.Array:
+        """JAX boolean for raw numerical values after static contract checks."""
+        _check_parameter_set_structure(
+            parameter_values, self.raw_dimensions, path=self.path, stage="raw"
+        )
+        valid = jnp.asarray(True)
+        for value in parameter_values.values():
+            valid = valid & jnp.isfinite(value.ustrip(value.unit))
+        for name, constraint in self.raw_constraints.items():
+            valid = valid & constraint.valid(parameter_values[name], parameter_values)
+        return valid
+
+    def build_with_validity(
+        self,
+        parameter_values: Mapping[str, Quantity],
+        cosmological_parameters: Mapping[str, Quantity],
+    ) -> tuple[AbstractPotentialComponent, jax.Array]:
+        """Build a native Galax component and return its JAX validity flag.
+
+        Only native Galax components are supported while conversion and MGE
+        deprojection are made traceable. Callers must condition numerical use
+        of an invalid component on the flag.
+        """
+        if (
+            self.convert is not None
+            or self.component_cls is not GalaxPotentialComponent
+        ):
+            raise NotImplementedError(
+                f"Traced construction is not implemented for {self.path}."
+            )
+        raw = dict(parameter_values)
+        valid = self._raw_parameters_valid(raw)
+        component = self.component_cls._build(
+            raw, cosmological_parameters, self.extra_fields
+        )
+        return component, valid
 
     def build(
         self,
@@ -128,7 +168,24 @@ def _check_parameter_set_contract(
     path: str,
     stage: str,
 ) -> None:
-    """Check the generator/converter contract for one parameter mapping."""
+    """Check static structure and eager finiteness of one parameter mapping."""
+    _check_parameter_set_structure(values, dimensions, path=path, stage=stage)
+    for name, value in values.items():
+        if not bool(jnp.isfinite(value.ustrip(value.unit))):
+            raise InvalidPotentialParametersError(
+                f"Invalid {stage} value for {path}.parameters.{name}: "
+                f"{value} must be finite."
+            )
+
+
+def _check_parameter_set_structure(
+    values: Mapping[str, Quantity],
+    dimensions: Mapping[str, str],
+    *,
+    path: str,
+    stage: str,
+) -> None:
+    """Check names, Quantity types, dimensions, and scalar shapes before tracing."""
     expected = set(dimensions)
     actual = set(values)
     if actual != expected:
@@ -161,10 +218,6 @@ def _check_parameter_set_contract(
             raise InvalidPotentialParametersError(
                 f"Invalid {stage} value for {label}: expected a scalar, "
                 f"got shape {getattr(stripped, 'shape', None)}."
-            )
-        if not math.isfinite(float(stripped)):
-            raise InvalidPotentialParametersError(
-                f"Invalid {stage} value for {label}: {value} must be finite."
             )
 
 

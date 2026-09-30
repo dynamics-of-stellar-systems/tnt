@@ -127,6 +127,18 @@ parameters, so either rotation direction is representable.
 Comparisons convert compatible units locally but do not normalize or replace a
 parameter's declared unit. MGE deprojection continues to own the more complex
 viewing-geometry checks that depend on the MGE data itself.
+For `StoneOstriker15Potential`, the halo radius must also be separated from
+the core radius by more than `eps**(1/5)` of the larger radius, where
+`eps` is the active floating-point precision's machine epsilon. Near-equal
+radii are rejected because the potential calculation loses gradient accuracy.
+
+For native `galax` components, `Potential.build_with_validity` provides a
+compiled-build path that returns the potential and a JAX boolean indicating
+whether its proposed numerical parameters are valid. Configuration structure
+errors still raise during setup. A caller must use the boolean to condition
+any derived calculation: a potential returned with a false flag is not a
+valid physical model. Registered parameterization conversions and MGE
+deprojections still use the eager build path.
 
 ### MGE composite types
 

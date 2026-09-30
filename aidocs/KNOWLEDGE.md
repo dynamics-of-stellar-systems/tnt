@@ -213,14 +213,30 @@
   Python control flow (`bool(...)` and `.nonzero()`) and raises
   `MGEDeprojectionError`, so `deproject_triaxial()` and
   `deproject_oblate()` are deliberately not `jax.jit`/`jax.vmap`
-  traceable. This is acceptable while model evaluation itself remains eager:
-  `ModelIterator._evaluate()` catches Python exceptions and returns a
-  variable-length `list[Model]`, while orbit integration and weight solving
-  are still scaffolding. Revisit deprojection validity and `_evaluate()`
-  failure handling together when orbit integration is implemented and TNT
-  chooses whether models are individually jitted or evaluated as a masked,
-  vectorized batch. Do not design a separate JAX validity mechanism before
-  that execution strategy is known.
+  traceable. `ModelIterator._evaluate()` currently catches Python exceptions
+  and returns a variable-length `list[Model]`, while orbit integration and
+  weight solving are still scaffolding. Issue #72 replaces proposal-dependent
+  exceptions with one traced validity result shared by the prior and iterator;
+  the first implementation targets one proposal, with batching deferred.
+- Issue #72 fixes the execution target as one proposal evaluated inside a JAX
+  trace. `ParameterConstraint.valid()` now exposes JAX scalar predicates for
+  registered numeric bounds and same-component relationships; eager
+  `violation()` uses those same predicates for its diagnostics.
+  `ResolvedPotentialComponent._raw_parameters_valid()` checks static
+  names/types/dimensions/shapes before tracing and returns a JAX scalar flag
+  for finite raw values and registered bounds. `Potential.build_with_validity()`
+  composes native Galax components and their flags inside a single JAX trace;
+  a false flag requires JAX conditional execution before evaluating derived
+  quantities. Conversion, MGE deprojection, and iterator/prior integration
+  remain eager or unfinished.
+- Eager constraint diagnostics and traced validity evaluate the same JAX
+  predicates at the proposed value's active precision; converting eager values
+  to Python floats would change half-open bound decisions in float32. For
+  `StoneOstriker15Potential`, `r_h > r_c` also requires
+  `(r_h - r_c) / max(abs(r_h), abs(r_c)) > eps**(1/5)` at that precision.
+  The upstream potential formula subtracts nearly equal terms and otherwise
+  yields unreliable gradients close to equal radii. This numerical guard is
+  shared by eager and traced construction.
 - Intel macOS is not a native TNT target because current JAX releases do not
   provide `jaxlib` wheels for that platform. Use the Linux `x86_64`
   development container there instead.
