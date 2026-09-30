@@ -10,6 +10,7 @@ paths, and the four MGE composite types' `to_galax`.
 from __future__ import annotations
 
 import dataclasses
+from decimal import Decimal, localcontext
 from typing import ClassVar
 
 import galax.potential as gp
@@ -713,6 +714,7 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
     [
         (1.0e12, "Msun", 7.158985155319864e-05, "1 / Myr"),
         (100.0, "1e10 Msun", 70.0, "km / (s Mpc)"),
+        (1.0e12, "Msun", 2.2685455026110557e-18, "1 / s"),
     ],
 )
 def test_nfw_concentration_m200_traces_with_gradients(
@@ -767,6 +769,7 @@ def test_nfw_concentration_m200_traces_with_gradients(
     [
         (1.0e12, "Msun", 7.158985155319864e-05, "1 / Myr"),
         (100.0, "1e10 Msun", 70.0, "km / (s Mpc)"),
+        (1.0e12, "Msun", 2.2685455026110557e-18, "1 / s"),
     ],
 )
 def test_traced_nfw_build_guards_conversion_and_preserves_gradients(
@@ -868,10 +871,11 @@ def test_traced_nfw_build_guards_conversion_and_preserves_gradients(
         invalid = [
             (bad, 1.0, 1.0) for bad in (0.0, -1.0, float("nan"), float("inf"))
         ] + [(8.0, bad, 1.0) for bad in (0.0, -1.0, float("nan"), float("inf"))]
-        # Raw positivity is insufficient: cancellation in g(c), overflow in
-        # the volume, or bad cosmology can invalidate the converted values.
+        # Raw positivity is insufficient: unrepresentable conversion values or
+        # derivatives, overflow in the volume, and bad cosmology remain invalid.
         overflow_scale = jnp.finfo(value.dtype).max / 2 / mass_value
-        for c, mass_scale in ((1e-30, 1.0), (8.0, overflow_scale)):
+        tiny_c = 1e-106 if x64_enabled else 1e-10
+        for c, mass_scale in ((tiny_c, 1.0), (8.0, overflow_scale)):
             assert bool(
                 resolved["halo"]._raw_parameters_valid(proposed(c, mass_scale)["halo"])
             )
@@ -886,6 +890,58 @@ def test_traced_nfw_build_guards_conversion_and_preserves_gradients(
             assert all(float(gradient) == 0.0 for gradient in invalid_gradients), (
                 candidate
             )
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_nfw_small_concentration_values_and_gradients(x64_enabled: bool) -> None:
+    """Independent decimal references expose cancellation shared by converters."""
+    resolved = Potential.resolve(
+        {"halo": {"type": "NFWPotential", "parameterization": "concentration_m200"}},
+        {},
+    )
+    with jax.enable_x64(x64_enabled):
+        concentrations = [
+            1e-15 if x64_enabled else 1e-7,
+            1e-4,
+            0.009999,
+            0.01,
+            0.010001,
+        ]
+        shape_and_gradient = jax.jit(jax.value_and_grad(_nfw_g))
+
+        def converted_mass(c: jax.Array) -> tuple[jax.Array, jax.Array]:
+            potential, valid = Potential.build_with_validity(
+                resolved,
+                {"halo": {"c": Quantity(c, ""), "M_200": Quantity(1e12, "Msun")}},
+                {"H": Quantity(70.0, "km / (s Mpc)")},
+            )
+            mass = potential.components["halo"].parameters["m"].ustrip("Msun")
+            return (
+                jax.lax.cond(valid, lambda: mass, lambda: jnp.asarray(-jnp.inf)),
+                valid,
+            )
+
+        mass_and_gradient = jax.jit(jax.value_and_grad(converted_mass, has_aux=True))
+        tolerance = 3e-5 if not x64_enabled else 5e-13
+        for value in concentrations:
+            c = jnp.asarray(value)
+            with localcontext() as context:
+                context.prec = 100
+                exact_c = Decimal.from_float(float(c))
+                g = (1 + exact_c).ln() - exact_c / (1 + exact_c)
+                g_prime = exact_c / (1 + exact_c) ** 2
+                exact_mass = Decimal.from_float(float(jnp.asarray(1e12))) / g
+                exact_mass_prime = -exact_mass * g_prime / g
+            actual_g, actual_g_prime = shape_and_gradient(c)
+            (mass, valid), mass_prime = mass_and_gradient(c)
+            assert bool(valid)
+            for actual, expected in (
+                (actual_g, g),
+                (actual_g_prime, g_prime),
+                (mass, exact_mass),
+                (mass_prime, exact_mass_prime),
+            ):
+                assert float(actual) == pytest.approx(float(expected), rel=tolerance)
 
 
 @pytest.mark.parametrize("x64_enabled", [False, True])
@@ -1005,7 +1061,7 @@ def test_nfw_parameterization_validates_converted_native_values() -> None:
         {},
         path="potential.halo",
     )
-    with pytest.raises(ValueError, match=r"converted.*parameters\.r_s.*finite"):
+    with pytest.raises(ValueError, match=r"converted.*parameters\.(m|r_s).*finite"):
         resolved.build(
             {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")},
             {"H": Quantity(0.0, "km / (s Mpc)")},

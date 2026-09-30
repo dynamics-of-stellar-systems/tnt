@@ -660,13 +660,23 @@
   runtime-family packages. Configuration validation imports runtime-family
   registries to obtain their authoritative schemas, so importing the
   configuration package can load JAX, Equinox, and galax.
-  `_nfw_concentration_m200`/its inverse retain `Quantity` arithmetic rather
-  than eagerly stripping every input to a bare float in one specific unit --
-  `unxt` composes/converts units automatically through the whole chain
-  (verified: mixing `H` in `km / (s Mpc)` with
-  `_newtonian_gravitational_constant()` in `m3 / (kg s2)` and `M_200` in `Msun`
-  still gives the correct `r_s`/`m`), so `H` works in whatever unit it is
-  declared in. The forward converter cube-roots the volume's numeric value
+  `_nfw_concentration_m200`/its inverse use `Quantity` arithmetic with local
+  `Msun`, `kpc`, and `Myr` units for critical density and radius calculations.
+  This keeps float32 reverse-mode intermediates representable even for `H`
+  declared in `1 / s`; declared inputs remain unchanged. The native mass
+  retains its input mass unit and the forward scale radius is in `kpc`.
+  `_nfw_g` uses a Taylor series through c**10 below c=0.01, avoiding small-c
+  cancellation in both conversions. The characteristic-mass quotient has a
+  custom JAX derivative that avoids g(c)**2 in the denominator. Unrepresentable
+  native values or mass/concentration derivative coefficients invalidate the
+  conversion (eager errors or a false traced flag); derivative representability
+  is checked in `Msun` and `kpc` so equivalent declared mass units agree.
+  A JAX optimization barrier preserves the local H conversion during JIT
+  compilation, preventing arithmetic reassociation from recreating underflow.
+  Independent decimal
+  references test small-c values and gradients, including both sides of the
+  series switch in x32/x64. The forward converter cube-roots the volume's
+  numeric value
   and attaches the cube-root unit: directly raising a volume `Quantity` to
   `1/3` fails under a batched JAX trace. The forward conversion leaves the
   native quantities in the units produced by that arithmetic;

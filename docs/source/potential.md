@@ -248,7 +248,15 @@ potential:
   halo's epoch, not necessarily the present-day $H_0$):
   $\rho_\mathrm{crit} = 3 H^2 / (8\pi G)$,
   $r_{200} = (3 M_{200} / (4\pi \cdot 200 \rho_\mathrm{crit}))^{1/3}$,
-  $r_s = r_{200} / c$, $m = M_{200} / (\ln(1+c) - c/(1+c))$. The reverse
+  $r_s = r_{200} / c$, $m = M_{200} / (\ln(1+c) - c/(1+c))$. The
+  mass-shape calculation uses a Taylor series through $c^{10}$ for
+  $c < 0.01$ to avoid cancellation, with a custom derivative for the mass
+  quotient that avoids squaring the small denominator. Conversions with
+  unrepresentable native values or mass/concentration derivative coefficients
+  are rejected. Critical-density and radius calculations use local `Msun`,
+  `kpc`, and `Myr` units, including when $H$ is declared in inverse seconds,
+  to keep differentiation reliable in either precision. The native mass
+  retains its declared mass unit; the scale radius is in `kpc`. The reverse
   conversion, native `(m, r_s)` back to `(c, M_200)`, is implemented too --
   used to build `AllModels`' table columns -- but has no closed form:
   `rescale()` scales `m` while holding `r_s` fixed, which is *not* the same
