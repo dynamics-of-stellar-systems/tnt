@@ -132,18 +132,46 @@ the core radius by more than `eps**(1/5)` of the larger radius, where
 `eps` is the active floating-point precision's machine epsilon. Near-equal
 radii are rejected because the potential calculation loses gradient accuracy.
 
-For `galax` components, `Potential.build_with_validity` provides a
+`Potential.build_with_validity` provides a
 compiled-build path that returns the potential and a JAX boolean indicating
-whether its proposed numerical parameters are valid. Configuration structure
-errors still raise during setup. A caller must use the boolean to condition
+whether its proposed numerical parameters are valid. One complete proposal
+must contain exactly the resolved component names. Names, real scalar types,
+array shapes, and unit dimensions remain setup errors. A caller must use the boolean to condition
 any derived calculation: a potential returned with a false flag is not a
 valid physical model. Native parameters and traceable registered conversions
 are supported, including NFW's `concentration_m200`. Conversions check both
 raw and converted parameter validity before allowing differentiation;
 invalid converted components contain zero placeholders in the converter's
 output units. This also rejects proposals whose positive raw values overflow
-or otherwise produce invalid native parameters. MGE deprojections still use
-the eager build path, and batched proposal construction remains deferred.
+or otherwise produce invalid native parameters. All four MGE component types
+support native viewing angles and normalization inside one JAX trace.
+MGE `q_min`, `pqu`, and `T_maj_min` conversions remain eager; proposal batching
+and prior/model-iterator integration are deferred.
+
+Native MGE construction validates the complete set of Gaussians: intrinsic
+`0 < q <= p <= 1`, positive finite density, width and mass, and finite
+construction derivatives in declared units and local `Msun`/`kpc` units.
+Oblate deprojection rejects cancellation in `q_obs**2 - cos(i)**2` when its
+roundoff estimate exceeds `50 * sqrt(eps)` relative error. Triaxial deprojection
+checks the conditioning of the map from intrinsic diagonal covariance to sky
+covariance and verifies the recovered sky covariance. The relative roundoff
+estimate for the smallest intrinsic variance and the residual relative to the
+smallest observed variance must each stay within `50 * sqrt(eps)`. Here `eps`
+is machine epsilon at the active precision. These are conservative accuracy
+guards, not clipping or normalization of physical parameters. Exactly circular
+projected rows use their analytic spherical solution to avoid roundoff beyond
+`q=1` or `u=1`.
+
+Eager construction uses the same numerical predicates and raises diagnostics.
+Invalid traced MGEs contain zero intrinsic placeholders; callers must condition
+all use, including `to_galax`, on the combined flag. Physical surface intensity
+is preserved; deprojection conserves `2*pi*I*sigma_observed**2*q_observed` per
+Gaussian. Validity covers construction, rather than every possible subsequent
+calculation at arbitrary coordinates or in arbitrary units. In particular,
+the flag does not certify Galax's fixed-order Gaussian potential quadrature.
+Very thin Gaussians can have inaccurate potential values and gradients even
+when native deprojection and construction are reliable; quadrature accuracy
+is a separate numerical concern.
 
 ### MGE composite types
 

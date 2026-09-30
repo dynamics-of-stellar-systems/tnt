@@ -70,11 +70,10 @@ class Potential(eqx.Module):
                 `cosmological_parameters` section -- used only by
                 parameterizations that need it, e.g. NFW's `concentration_m200`.
         """
+        _check_proposal_components(resolved, parameter_values)
         return cls(
             components={
-                name: component.build(
-                    parameter_values.get(name, {}), cosmological_parameters
-                )
+                name: component.build(parameter_values[name], cosmological_parameters)
                 for name, component in resolved.items()
             }
         )
@@ -86,18 +85,19 @@ class Potential(eqx.Module):
         parameter_values: ParameterSet,
         cosmological_parameters: Mapping[str, Quantity],
     ) -> tuple[Self, jax.Array]:
-        """Build Galax components with one combined JAX validity flag.
+        """Build one complete proposal with one scalar JAX validity flag.
 
-        Native parameters and traceable registered conversions are supported;
-        MGE deprojection remains unsupported. A false flag means the returned
-        potential must not be evaluated; use JAX conditional execution around
+        Galax native parameters/traceable conversions and native parameters for
+        all four MGE component types are supported. A false flag means the
+        returned potential must not be evaluated; use JAX conditional execution around
         derived calculations.
         """
+        _check_proposal_components(resolved, parameter_values)
         components: dict[str, AbstractPotentialComponent] = {}
         valid = jnp.asarray(True)
         for name, component in resolved.items():
             built, component_valid = component.build_with_validity(
-                parameter_values.get(name, {}), cosmological_parameters
+                parameter_values[name], cosmological_parameters
             )
             components[name] = built
             valid = valid & component_valid
@@ -167,6 +167,20 @@ class Potential(eqx.Module):
                 name: component.rescale(mass_scale)
                 for name, component in self.components.items()
             }
+        )
+
+
+def _check_proposal_components(
+    resolved: Mapping[str, ResolvedPotentialComponent],
+    values: Mapping[str, Mapping[str, Quantity]],
+) -> None:
+    """Require exactly the resolved components for one complete proposal."""
+    _mapping(values, "potential proposal")
+    if set(values) != set(resolved):
+        raise ValueError(
+            "Invalid potential proposal components: "
+            f"missing {sorted(set(resolved) - set(values))}, "
+            f"unexpected {sorted(set(values) - set(resolved))}."
         )
 
 

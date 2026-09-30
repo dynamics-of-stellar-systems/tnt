@@ -36,7 +36,6 @@ from typing import Any, ClassVar, Self
 
 import equinox as eqx
 import galax.potential
-import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import (
@@ -72,6 +71,7 @@ class TriaxialLightMGEPotential(AbstractPotentialComponent):
     `docs/source/potential.md`).
     """
 
+    _native_mge: ClassVar[bool] = True
     _type: ClassVar[str] = "TriaxialLightMGEPotential"
     _raw_dimensions: ClassVar[dict[str, str]] = {
         "ml": "mass_to_light",
@@ -145,6 +145,7 @@ class TriaxialMassMGEPotential(AbstractPotentialComponent):
     `TriaxialLightMGEPotential` -- see its docstring.
     """
 
+    _native_mge: ClassVar[bool] = True
     _type: ClassVar[str] = "TriaxialMassMGEPotential"
     _raw_dimensions: ClassVar[dict[str, str]] = {
         "mge_mass_scale": "dimensionless",
@@ -224,13 +225,10 @@ def _galax_potential_from_deprojected(
     no new potential formula, `galax` already owns that math.
     """
     n_components = deprojected.I.shape[0]
+    masses = deprojected.component_masses
     components = {
         str(i): galax.potential.TriaxialGaussianPotential(
-            m_tot=deprojected.I[i]
-            * deprojected.p[i]
-            * deprojected.q[i]
-            * (2 * jnp.pi) ** 1.5
-            * deprojected.sigma[i] ** 3,
+            m_tot=masses[i],
             r_s=deprojected.sigma[i],
             q1=deprojected.p[i],
             q2=deprojected.q[i],

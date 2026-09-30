@@ -31,7 +31,6 @@ from typing import Any, ClassVar, Self
 
 import equinox as eqx
 import galax.potential
-import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, MGEDeprojectionError
@@ -68,6 +67,7 @@ class OblateLightMGEPotential(AbstractPotentialComponent):
     is this component's native viewing-geometry parameter.
     """
 
+    _native_mge: ClassVar[bool] = True
     _type: ClassVar[str] = "OblateLightMGEPotential"
     _raw_dimensions: ClassVar[dict[str, str]] = {
         "ml": "mass_to_light",
@@ -140,6 +140,7 @@ class OblateMassMGEPotential(AbstractPotentialComponent):
     docstring.
     """
 
+    _native_mge: ClassVar[bool] = True
     _type: ClassVar[str] = "OblateMassMGEPotential"
     _raw_dimensions: ClassVar[dict[str, str]] = {
         "mge_mass_scale": "dimensionless",
@@ -218,12 +219,10 @@ def _galax_potential_from_oblate_deprojected(
     triaxial `m_tot = I * p * q * (2*pi)**1.5 * sigma**3`).
     """
     n_components = deprojected.I.shape[0]
+    masses = deprojected.component_masses
     components = {
         str(i): galax.potential.AxisymmetricGaussianPotential(
-            m_tot=deprojected.I[i]
-            * deprojected.q[i]
-            * (2 * jnp.pi) ** 1.5
-            * deprojected.sigma[i] ** 3,
+            m_tot=masses[i],
             r_s=deprojected.sigma[i],
             q2=deprojected.q[i],
             units=unit_system,

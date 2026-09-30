@@ -103,6 +103,14 @@
   development environment used from Intel macOS. The host checkout is mounted
   at `/workspace`; its macOS `.venv` is never used in the container because
   `UV_PROJECT_ENVIRONMENT` points to `/opt/tnt-venv` inside the image.
+- For this checkout's local macOS workflow, use Docker's `colima` context.
+  The local Colima VM has 2 GB of memory. Run scientific test suites
+  sequentially, preferably in separate processes; do not run multiple JAX
+  test processes in parallel. Accumulated compiled graphs can also exhaust
+  memory within one process. The native MGE gradient tests clear JAX's
+  compilation caches between cases to bound their memory use.
+  Example: `docker --context colima compose run --rm dev pytest -q
+  tests/unit_tests/test_mge.py`.
 - Run `docker compose build` after dependency or container-definition changes.
   Normal source edits are immediately visible without rebuilding.
 - Use `docker compose run --rm dev <command>` for Linux validation, for example
@@ -214,24 +222,44 @@
   system distance and preserves `I`. For fixed angular widths, total
   luminosity/mass scales with distance squared. Direct constructors may
   already carry physical widths. See `docs/source/data_preparation.md`.
-- MGE deprojection enforces TNT's intrinsic-axis convention
-  `0 < q <= p <= 1` eagerly. `_check_axial_ratios()` converts JAX results to
-  Python control flow (`bool(...)` and `.nonzero()`) and raises
-  `MGEDeprojectionError`, so `deproject_triaxial()` and
-  `deproject_oblate()` are deliberately not `jax.jit`/`jax.vmap`
-  traceable. `ModelIterator._evaluate()` currently catches Python exceptions
-  and returns a variable-length `list[Model]`, while orbit integration and
-  weight solving are still scaffolding. Issue #72 replaces proposal-dependent
-  exceptions with one traced validity result shared by the prior and iterator;
-  the first implementation targets one proposal, with batching deferred.
+- Native MGE deprojection has paired eager and `with_validity` APIs.
+  All four supported MGE potential types construct inside one JAX trace using
+  native normalization and viewing angles. The complete proposal returns one
+  scalar boolean; invalid intrinsic MGEs contain zeros and must not be used,
+  including through `to_galax`, unless the flag is true. Eager and traced paths
+  share intrinsic-axis, finite positive density/width/mass, and numerical
+  accuracy checks. Native potential construction additionally probes finite
+  construction derivatives and values in declared and local `Msun`/`kpc`
+  units before allowing differentiation. Oblate cancellation and triaxial
+  covariance-inversion conditioning/residual checks use `50*sqrt(eps)`
+  relative error thresholds at active precision. Exactly circular projected
+  rows use the analytic spherical result, avoiding roundoff beyond q=1 or u=1;
+  see `docs/source/potential.md`.
+  Surface intensity stays physical and projected total mass is conserved.
+  `Deprojected3DMGE.component_masses` owns the intrinsic Gaussian mass
+  calculation shared by validation and both Galax construction paths.
+  The native-MGE validity contract covers deprojection and construction
+  values/derivatives. By explicit scope decision, it does not certify Galax's
+  fixed-order potential quadrature. Galax's 50-point Gaussian quadrature can
+  be inaccurate for very thin Gaussians: at oblate q=0.001 the normalized
+  central potential differs from the analytic arccos(q)/sqrt(1-q**2)
+  reference by about 0.7%, and its q derivative by about 95%, even with a
+  well-resolved float64 deprojection. Potential-quadrature accuracy needs
+  separate work; do not treat a true construction flag as that guarantee.
+  MGE `q_min`, `pqu`, and `T_maj_min` conversions remain eager; proposal
+  batching and prior/model-iterator integration are deferred.
+  `ModelIterator._evaluate()` still catches Python exceptions and returns a
+  variable-length `list[Model]`; orbit integration and weight solving remain
+  scaffolding.
 - Issue #72 fixes the execution target as one proposal evaluated inside a JAX
   trace. `ParameterConstraint.valid()` now exposes JAX scalar predicates for
   registered numeric bounds and same-component relationships; eager
   `violation()` uses those same predicates for its diagnostics.
   `ResolvedPotentialComponent._raw_parameters_valid()` checks static
   names/types/dimensions/shapes before tracing and returns a JAX scalar flag
-  for finite raw values and registered bounds. `Potential.build_with_validity()`
-  composes Galax components and their flags inside a single JAX trace,
+  for finite raw values and registered bounds. A complete proposal must contain
+  exactly the resolved component names. `Potential.build_with_validity()`
+  composes native Galax and MGE components and their flags inside a JAX trace,
   including traceable registered conversions such as NFW's `concentration_m200`;
   a false flag requires JAX conditional execution before evaluating derived
   quantities. Registered conversions first check raw validity, then probe
@@ -242,8 +270,7 @@
   dtypes for zero placeholders used by invalid converted components; these
   are not usable physical models. Converters must themselves support JAX
   tracing, and their output names/types/dimensions/scalar shapes remain hard
-  contract checks. MGE deprojection and iterator/prior integration remain
-  eager or unfinished; proposal batching is still deferred.
+  contract checks. Iterator/prior integration and proposal batching are deferred.
 - Eager constraint diagnostics and traced validity evaluate the same JAX
   predicates at the proposed value's active precision; converting eager values
   to Python floats would change half-open bound decisions in float32. For

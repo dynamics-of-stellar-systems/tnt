@@ -30,7 +30,7 @@ import jax
 import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt.mge import LightMGE, MassMGE
+from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE
 from tnt.potential.registry import (
     _SUPPORTED_GALAX_TYPES,
     ForwardConverter,
@@ -44,7 +44,7 @@ from tnt.potential.registry import (
     raw_parameter_dimensions,
 )
 from tnt.units import validate_dimension
-from tnt.validation import _required_string, _string
+from tnt.validation import _mapping, _required_string, _string
 
 
 class ResolvedPotentialComponent(NamedTuple):
@@ -69,6 +69,7 @@ class ResolvedPotentialComponent(NamedTuple):
         self, parameter_values: Mapping[str, Quantity]
     ) -> jax.Array:
         """JAX boolean for raw numerical values after static contract checks."""
+        _mapping(parameter_values, f"{self.path}.parameters")
         _check_parameter_set_structure(
             parameter_values, self.raw_dimensions, path=self.path, stage="raw"
         )
@@ -79,21 +80,31 @@ class ResolvedPotentialComponent(NamedTuple):
         parameter_values: Mapping[str, Quantity],
         cosmological_parameters: Mapping[str, Quantity],
     ) -> tuple[AbstractPotentialComponent, jax.Array]:
-        """Build a Galax component and return its JAX validity flag.
+        """Build a component and return its scalar JAX validity flag.
 
-        Native parameters and traceable registered conversions are supported;
-        MGE deprojection remains unsupported. Conversion first probes native
-        validity without differentiation, then runs differentiably only for
-        valid proposals. Invalid converted proposals contain zero placeholders
-        in the converter's output units, never a usable physical model.
+        Galax native parameters/traceable conversions and native MGE parameters
+        are supported. MGE parameter conversions are deferred.
+        Conversion first probes native validity without differentiation, then
+        runs differentiably only for valid proposals. Invalid converted proposals
+        contain zero placeholders in the converter's output units, never a
+        usable physical model.
         Callers must condition numerical use of any component on the flag.
         """
-        if self.component_cls is not GalaxPotentialComponent:
-            raise NotImplementedError(
-                f"Traced construction is not implemented for {self.path}."
-            )
-        raw = dict(parameter_values)
+        raw = dict(_mapping(parameter_values, f"{self.path}.parameters"))
         valid = self._raw_parameters_valid(raw)
+        if self.component_cls is not GalaxPotentialComponent:
+            if not self.component_cls._native_mge:
+                raise NotImplementedError(
+                    f"Traced construction is not implemented for {self.path}."
+                )
+            if self.convert is not None:
+                raise NotImplementedError(
+                    "Traced MGE parameter conversions are not implemented "
+                    f"for {self.path}."
+                )
+            return _build_mge_with_validity(
+                self.component_cls, raw, self.extra_fields, valid
+            )
         if self.convert is None:
             canonical = raw
         else:
@@ -143,8 +154,8 @@ class ResolvedPotentialComponent(NamedTuple):
         converter's canonical output is checked again against the native
         component constraints. No unit-system normalization happens here (see
         `tnt.potential`'s module docstring); constraints convert only as needed
-        for a comparison. MGE geometry validation remains owned by the eager
-        deprojection in the four composite types' `_build` methods.
+        for a comparison. Native MGE construction shares its numerical checks
+        with `build_with_validity`, including geometry and derivative checks.
         Validation uses Python boolean checks, so `build` is an
         eager runtime boundary and must remain outside `jax.jit`/`jax.vmap`
         traces; only the resulting potential enters compiled numerical work.
@@ -156,7 +167,7 @@ class ResolvedPotentialComponent(NamedTuple):
                 `parameterization` converter that needs it, e.g. NFW's
                 `concentration_m200` via `H`.
         """
-        raw = dict(parameter_values)
+        raw = dict(_mapping(parameter_values, f"{self.path}.parameters"))
         _check_parameter_set_contract(
             raw, self.raw_dimensions, path=self.path, stage="raw"
         )
@@ -181,9 +192,105 @@ class ResolvedPotentialComponent(NamedTuple):
                 path=self.path,
                 stage="converted",
             )
+        if self.component_cls._native_mge and self.convert is None:
+            component, valid = _build_mge_with_validity(
+                self.component_cls, canonical, self.extra_fields, jnp.asarray(True)
+            )
+            if not bool(valid):
+                # Preserve the eager geometry diagnostics from the same checks.
+                self.component_cls._build(
+                    canonical, cosmological_parameters, self.extra_fields
+                )
+                raise InvalidPotentialParametersError(
+                    f"Invalid construction for {self.path}: converted values or "
+                    "derivatives are not representable at this numerical precision."
+                )
+            return component
         return self.component_cls._build(
             canonical, cosmological_parameters, self.extra_fields
         )
+
+
+def _build_mge_with_validity(
+    component_cls: type[AbstractPotentialComponent],
+    parameters: dict[str, Quantity],
+    extra_fields: dict[str, Any],
+    raw_valid: jax.Array,
+) -> tuple[AbstractPotentialComponent, jax.Array]:
+    """Shared native construction for light/mass and oblate/triaxial MGEs."""
+    mge = extra_fields["mge"]
+
+    def candidate(
+        values: dict[str, Quantity],
+    ) -> tuple[Deprojected3DMGE, jax.Array]:
+        mass = (
+            mge.to_mass(values["ml"])
+            if isinstance(mge, LightMGE)
+            else mge.rescaled(values["mge_mass_scale"])
+        )
+        if "inclination" in values:
+            mass._check_deprojection_structure(values["inclination"])
+            return mass._oblate_candidate(values["inclination"])
+        mass._check_deprojection_structure(
+            values["theta"], values["phi"], values["psi"]
+        )
+        return mass._triaxial_candidate(values["theta"], values["phi"], values["psi"])
+
+    def numerical_outputs(numbers: dict[str, jax.Array]) -> tuple[jax.Array, ...]:
+        values = {
+            key: Quantity(number, parameters[key].unit)
+            for key, number in numbers.items()
+        }
+        model, _ = candidate(values)
+        total = model.component_masses
+        return tuple(
+            value.ustrip(value.unit)
+            for value in (model.I, model.sigma, model.p, model.q, total)
+        ) + (
+            model.I.ustrip("Msun / kpc3"),
+            model.sigma.ustrip("kpc"),
+            total.ustrip("Msun"),
+        )
+
+    def probe(values: dict[str, Quantity]) -> jax.Array:
+        _, valid = candidate(values)
+        numbers = {
+            key: jnp.asarray(
+                value.ustrip(value.unit),
+                dtype=jnp.result_type(value.ustrip(value.unit), float),
+            )
+            for key, value in values.items()
+        }
+        outputs = numerical_outputs(numbers)
+        derivatives = jax.jacfwd(numerical_outputs)(numbers)
+        for leaf in jax.tree.leaves((outputs, derivatives)):
+            valid = valid & jnp.all(jnp.isfinite(leaf))
+        for output in outputs[-3:]:
+            valid = valid & jnp.all(output > 0)
+        return valid
+
+    shape = jax.eval_shape(candidate, parameters)[0]
+    placeholder = jax.tree.map(lambda x: jnp.zeros(x.shape, x.dtype), shape)
+    if not any(
+        isinstance(x, jax.core.Tracer)
+        for x in jax.tree.leaves((parameters, mge, raw_valid))
+    ):
+        valid = raw_valid & probe(parameters) if bool(raw_valid) else jnp.asarray(False)
+        model = candidate(parameters)[0] if bool(valid) else placeholder
+        return component_cls(parameters=parameters, mge=mge, deprojected=model), valid
+    # Invalid normalization/angles must never enter differentiated scaling or
+    # deprojection, including 0 * inf in a reverse-mode cotangent.
+    geometry_valid = jax.lax.cond(
+        raw_valid,
+        probe,
+        lambda _: jnp.asarray(False),
+        jax.tree.map(jax.lax.stop_gradient, parameters),
+    )
+    valid = raw_valid & geometry_valid
+    deprojected = jax.lax.cond(
+        valid, lambda values: candidate(values)[0], lambda _: placeholder, parameters
+    )
+    return component_cls(parameters=parameters, mge=mge, deprojected=deprojected), valid
 
 
 def _parameter_values_valid(
@@ -251,6 +358,13 @@ def _check_parameter_set_structure(
                 f"Invalid {stage} value: {error}"
             ) from error
         stripped = value.ustrip(value.unit)
+        if not (
+            jnp.issubdtype(stripped.dtype, jnp.integer)
+            or jnp.issubdtype(stripped.dtype, jnp.floating)
+        ):
+            raise TypeError(
+                f"Invalid {stage} value for {label}: expected a real number."
+            )
         if getattr(stripped, "shape", ()) != ():
             raise InvalidPotentialParametersError(
                 f"Invalid {stage} value for {label}: expected a scalar, "
@@ -292,6 +406,7 @@ class AbstractPotentialComponent(eqx.Module):
     """
 
     _constraints: ClassVar[dict[str, ParameterConstraint]] = {}
+    _native_mge: ClassVar[bool] = False
 
     parameters: dict[str, Quantity]
 

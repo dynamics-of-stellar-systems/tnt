@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, ClassVar, Self
 
 import astropy.units as au
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from astropy.table import QTable
 from jax.ops import segment_sum
@@ -28,10 +29,8 @@ MAJOR_AXIS_PA_DOMAIN_DEG: tuple[float, float] = (0.0, 180.0)
 class MGEDeprojectionError(ValueError):
     """A deprojection has no solution, or violates TNT's ``0 < q <= p <= 1`` convention.
 
-    Raised eagerly, in plain Python -- not `jax.jit`/`jax.vmap`-traceable.
-    Fine today since nothing calls this under a trace; see
-    `aidocs/KNOWLEDGE.md` for the durable limitation and the trigger for
-    revisiting it.
+    Eager deprojection raises this error. The matching ``with_validity``
+    methods return a scalar JAX boolean from the same numerical checks.
     """
 
 
@@ -52,6 +51,11 @@ def _rebased_unit(intensity_unit: au.UnitBase, length_unit: au.UnitBase) -> au.U
     return result
 
 
+def _axial_ratios_valid(p: jax.Array, q: jax.Array) -> jax.Array:
+    """Per-row finite intrinsic-axis convention, shared by eager diagnostics."""
+    return jnp.isfinite(p) & jnp.isfinite(q) & (q > 0) & (q <= p) & (p <= 1)
+
+
 def _check_axial_ratios(p: jnp.ndarray, q: jnp.ndarray) -> None:
     """Raise `MGEDeprojectionError` unless every component has ``0 < q <= p <= 1``.
 
@@ -59,7 +63,7 @@ def _check_axial_ratios(p: jnp.ndarray, q: jnp.ndarray) -> None:
     fails every comparison below) and a solution that's finite but violates
     TNT's intrinsic-axis convention.
     """
-    valid = (q > 0) & (q <= p) & (p <= 1)
+    valid = _axial_ratios_valid(p, q)
     if bool(jnp.all(valid)):
         return
     bad = jnp.asarray(~valid).nonzero()[0]
@@ -69,6 +73,88 @@ def _check_axial_ratios(p: jnp.ndarray, q: jnp.ndarray) -> None:
     raise MGEDeprojectionError(
         "Deprojection violates TNT's 0 < q <= p <= 1 intrinsic-axis convention "
         f"(or has no real solution) for: {details}."
+    )
+
+
+def _deprojected_valid(model: Deprojected3DMGE) -> jax.Array:
+    """Shared intrinsic-domain and representability checks in declared units."""
+    p, q = model.p.ustrip(""), model.q.ustrip("")
+    valid = jnp.all(_axial_ratios_valid(p, q))
+    for quantity in (model.I, model.sigma):
+        value = quantity.ustrip(quantity.unit)
+        valid = valid & jnp.all(jnp.isfinite(value) & (value > 0))
+    # These are the exact products used to construct the Galax Gaussians.
+    mass = model.component_masses
+    value = mass.ustrip(mass.unit)
+    return valid & jnp.all(jnp.isfinite(value) & (value > 0))
+
+
+def _guard_deprojection(
+    candidate: Callable[..., tuple[Deprojected3DMGE, jax.Array]],
+    arguments: tuple[Quantity, ...],
+) -> tuple[Deprojected3DMGE, jax.Array]:
+    """Probe without AD, then differentiate only a valid deprojection.
+
+    Invalid results contain zeros in every leaf, and are never physical models.
+    The probe may encounter undefined arithmetic, but is disconnected from AD.
+    """
+    shape = jax.eval_shape(lambda args: candidate(*args)[0], arguments)
+    placeholder = jax.tree.map(lambda x: jnp.zeros(x.shape, x.dtype), shape)
+    _, valid = candidate(*jax.tree.map(jax.lax.stop_gradient, arguments))
+    result = jax.lax.cond(
+        valid, lambda args: candidate(*args)[0], lambda _: placeholder, arguments
+    )
+    return result, valid
+
+
+def _triaxial_geometry_valid(
+    theta: jax.Array,
+    phi: jax.Array,
+    psi: jax.Array,
+    q_obs: jax.Array,
+    p: jax.Array,
+    q: jax.Array,
+    u: jax.Array,
+) -> jax.Array:
+    """Bound inversion roundoff and verify the projected covariance independently.
+
+    The 3x3 map sends intrinsic diagonal covariance to the two sky variances
+    and their covariance. Its singular values bound sensitivity to roundoff.
+    Require the worst-case relative error in the smallest intrinsic variance
+    to be <= 50 sqrt(eps); a small residual alone cannot detect ill conditioning.
+    """
+    st, ct = jnp.sin(theta), jnp.cos(theta)
+    sp, cp = jnp.sin(phi), jnp.cos(phi)
+    x = jnp.stack([sp, -cp, jnp.zeros_like(sp)])
+    y = jnp.stack([ct * cp, ct * sp, -st])
+    matrix = jnp.stack([x * x, y * y, x * y])
+    singular = jnp.linalg.svd(matrix, compute_uv=False)
+    eps = jnp.finfo(matrix.dtype).eps
+    # q**2 is the smallest variance relative to the largest one.
+    argument_scale = 1 + jnp.maximum(
+        jnp.abs(theta), jnp.maximum(jnp.abs(phi), jnp.abs(psi))
+    )
+    error_bound = eps * argument_scale * singular[0] / singular[-1] / q**2
+    intrinsic = jnp.stack([jnp.ones_like(p), p**2, q**2], axis=-1) / u[:, None] ** 2
+    projected = intrinsic @ matrix.T
+    cs, sn = jnp.cos(psi), jnp.sin(psi)
+    expected = jnp.stack(
+        [
+            sn**2 + q_obs**2 * cs**2,
+            cs**2 + q_obs**2 * sn**2,
+            (q_obs**2 - 1) * sn * cs,
+        ],
+        axis=-1,
+    )
+    tolerance = 50 * jnp.sqrt(eps)
+    residual = jnp.max(jnp.abs(projected - expected), axis=-1)
+    return jnp.all(
+        jnp.isfinite(error_bound)
+        & (error_bound <= tolerance)
+        & jnp.isfinite(u)
+        & (u > 0)
+        & (u <= 1)
+        & (residual <= tolerance * q_obs**2)
     )
 
 
@@ -181,6 +267,9 @@ def _triaxial_intrinsic_axis_ratios(
         )
         / q_obs
     )
+    # Circular projected rows have the exact spherical solution wherever
+    # the viewing geometry is nonsingular. Do not round u above its bound.
+    u = jnp.where(q_obs == 1, 1, u)
     return p_intr, q_intr, u
 
 
@@ -449,9 +538,9 @@ class AbstractMGE(eqx.Module):
         # of the grid's own x-axis is `y_axis_pa + 90 deg`, and PA increases
         # in the opposite rotational sense to alpha (north-through-east vs.
         # counterclockwise-from-x), so alpha = (grid x-axis PA) - (sky PA).
-        sky_pa = self.major_axis_pa.ustrip("rad") + self.PA_twist.ustrip(
-            "rad"
-        ).reshape(shape)
+        sky_pa = self.major_axis_pa.ustrip("rad") + self.PA_twist.ustrip("rad").reshape(
+            shape
+        )
         alpha = binning.y_axis_pa.ustrip("rad") + jnp.pi / 2 - sky_pa
 
         # Cappellari (2002) appendix B3's "p" -- unrelated to `Deprojected3DMGE`'s
@@ -532,27 +621,85 @@ class AbstractMGE(eqx.Module):
                 "deproject_oblate requires physical (length) sigma; "
                 "call angular_to_physical(distance) first."
             )
-        if not bool(jnp.allclose(self.PA_twist.ustrip("rad"), 0.0)):
+        if not bool(jnp.all(self.PA_twist.ustrip("rad") == 0)):
             raise ValueError(
                 "deproject_oblate requires PA_twist == 0 for every "
                 "component (an axisymmetric system has no isophote twist)."
             )
 
-        cos_i = jnp.cos(inclination.ustrip("rad"))
-        sin_i = jnp.sin(inclination.ustrip("rad"))
-        q_obs = self.q.ustrip("")
-        q_intr = jnp.sqrt(q_obs**2 - cos_i**2) / sin_i
+        self._check_deprojection_structure(inclination)
+        model, valid = self._oblate_candidate(inclination)
+        if not bool(valid):
+            _check_axial_ratios(model.p.ustrip(""), model.q.ustrip(""))
+            raise MGEDeprojectionError(
+                "Oblate deprojection has no reliable solution at this numerical "
+                "precision boundary (requires 0 < q <= p <= 1 "
+                "and representable values)."
+            )
+        return model
 
-        _check_axial_ratios(p=jnp.ones_like(q_intr), q=q_intr)
+    def _check_deprojection_structure(self, *angles: Quantity) -> None:
+        """Reject static units, types and shapes independently of proposal values."""
+        for angle in angles:
+            if not isinstance(angle, Quantity) or angle.ndim != 0:
+                raise ValueError("MGE viewing angles must be scalar Quantities.")
+            validate_dimension(angle.unit, "angle", "MGE viewing angle")
+        n = self.I.shape
+        if len(n) != 1 or n[0] == 0:
+            raise ValueError("MGE columns must be nonempty one-dimensional arrays.")
+        for name, dimension in (
+            ("I", self._intensity_dimension),
+            ("sigma", "length"),
+            ("q", "dimensionless"),
+            ("PA_twist", "angle"),
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, Quantity) or value.shape != n:
+                raise ValueError("MGE columns must be Quantities with matching shapes.")
+            validate_dimension(value.unit, dimension, f"MGE {name}")
 
-        I_3d = self.I * (q_obs / (jnp.sqrt(2 * jnp.pi) * q_intr)) / self.sigma
+    def deproject_oblate_with_validity(
+        self, inclination: Quantity
+    ) -> tuple[Deprojected3DMGE, jax.Array]:
+        """Trace one native inclination; return intrinsic MGE and scalar validity.
 
-        return Deprojected3DMGE(
-            I=I_3d,
+        Invalid results are zero placeholders. Numerical probes are detached
+        from AD before conditional construction. Static unit/shape errors raise.
+        Cancellation in q_obs**2 - cos(i)**2 must retain relative accuracy
+        within 50 sqrt(eps) at the active precision.
+        """
+        self._check_deprojection_structure(inclination)
+        return _guard_deprojection(self._oblate_candidate, (inclination,))
+
+    def _oblate_candidate(
+        self, inclination: Quantity
+    ) -> tuple[Deprojected3DMGE, jax.Array]:
+        angle = inclination.ustrip("rad")
+        cos_i, sin_i = jnp.cos(angle), jnp.sin(angle)
+        observed = self.q.ustrip("")
+        numerator = observed**2 - cos_i**2
+        circular = observed == 1
+        # The exact spherical solution avoids cancellation and roundoff above
+        # q=1. Safe operands also prevent a masked 0/0 from poisoning AD.
+        q = jnp.sqrt(jnp.where(circular, 1, numerator)) / jnp.where(circular, 1, sin_i)
+        model = Deprojected3DMGE(
+            I=self.I * (observed / (jnp.sqrt(2 * jnp.pi) * q)) / self.sigma,
             sigma=self.sigma,
-            p=Quantity(jnp.ones_like(q_intr), ""),
-            q=Quantity(q_intr, ""),
+            p=Quantity(jnp.ones_like(q), ""),
+            q=Quantity(q, ""),
         )
+        eps = jnp.finfo(q.dtype).eps
+        valid = (
+            (inclination.ustrip("deg") > 0)
+            & (inclination.ustrip("deg") <= 90)
+            & jnp.all(self.PA_twist.ustrip("rad") == 0)
+            & jnp.all(_axial_ratios_valid(jnp.ones_like(observed), observed))
+            & jnp.all(
+                circular | (numerator > (observed**2 + cos_i**2) * jnp.sqrt(eps) / 50)
+            )
+            & _deprojected_valid(model)
+        )
+        return model, valid
 
     def inclination_from_q_min(self, q_min: float) -> Quantity:
         """The inclination giving the anchor component's intrinsic axial ratio.
@@ -650,9 +797,9 @@ class AbstractMGE(eqx.Module):
         A solution isn't guaranteed to exist for arbitrary viewing angles (Cappellari
         2002 sec. 2.2.1), and a solution that exists isn't guaranteed to respect TNT's
         ``0 < q <= p <= 1`` intrinsic-axis convention (``p = B/A``, ``q = C/A``) --
-        both cases raise `MGEDeprojectionError` (this is an eager Python check, not
-        JAX-traceable; see that exception's own note if `theta`/`phi`/`psi` are ever
-        evaluated under `jax.jit`/`jax.vmap`).
+        both cases raise `MGEDeprojectionError`. The matching
+        `deproject_triaxial_with_validity` method exposes those checks inside
+        a JAX trace, including numerical conditioning and covariance residuals.
 
         Args:
             theta: Global polar viewing angle, relative to the principal axes.
@@ -676,20 +823,52 @@ class AbstractMGE(eqx.Module):
                 "call angular_to_physical(distance) first."
             )
 
-        p_intr, q_intr, u = self._triaxial_component_ratios(theta, phi, psi)
-        _check_axial_ratios(p=p_intr, q=q_intr)
+        self._check_deprojection_structure(theta, phi, psi)
+        model, valid = self._triaxial_candidate(theta, phi, psi)
+        if not bool(valid):
+            _check_axial_ratios(model.p.ustrip(""), model.q.ustrip(""))
+            raise MGEDeprojectionError(
+                "Triaxial deprojection has no reliable solution at this numerical "
+                "precision boundary (requires 0 < q <= p <= 1 "
+                "and representable values)."
+            )
+        return model
 
-        sigma_intr = self.sigma / u
+    def deproject_triaxial_with_validity(
+        self, theta: Quantity, phi: Quantity, psi: Quantity
+    ) -> tuple[Deprojected3DMGE, jax.Array]:
+        """Trace one native viewing geometry, with shared accuracy/domain checks."""
+        self._check_deprojection_structure(theta, phi, psi)
+        return _guard_deprojection(self._triaxial_candidate, (theta, phi, psi))
 
-        I_3d = (
-            self.I
-            * (u**3 * self.q.ustrip("") / (jnp.sqrt(2 * jnp.pi) * p_intr * q_intr))
-            / self.sigma
+    def _triaxial_candidate(
+        self, theta: Quantity, phi: Quantity, psi: Quantity
+    ) -> tuple[Deprojected3DMGE, jax.Array]:
+        p, q, u = self._triaxial_component_ratios(theta, phi, psi)
+        model = Deprojected3DMGE(
+            I=self.I
+            * (u**3 * self.q.ustrip("") / (jnp.sqrt(2 * jnp.pi) * p * q))
+            / self.sigma,
+            sigma=self.sigma / u,
+            p=Quantity(p, ""),
+            q=Quantity(q, ""),
         )
-
-        return Deprojected3DMGE(
-            I=I_3d, sigma=sigma_intr, p=Quantity(p_intr, ""), q=Quantity(q_intr, "")
+        observed = self.q.ustrip("")
+        valid = jnp.all(_axial_ratios_valid(jnp.ones_like(observed), observed))
+        valid = (
+            valid
+            & _deprojected_valid(model)
+            & _triaxial_geometry_valid(
+                theta.ustrip("rad"),
+                phi.ustrip("rad"),
+                psi.ustrip("rad") + self.PA_twist.ustrip("rad"),
+                self.q.ustrip(""),
+                p,
+                q,
+                u,
+            )
         )
+        return model, valid
 
     def _triaxial_component_ratios(
         self, theta: Quantity, phi: Quantity, psi: Quantity
@@ -885,11 +1064,7 @@ class AbstractMGE(eqx.Module):
         def _exceeds(value: float, target: float) -> bool:
             return abs(value - target) > abs_tol + rel_tol * abs(target)
 
-        if (
-            _exceeds(T_r, T)
-            or _exceeds(T_maj_r, T_maj)
-            or _exceeds(T_min_r, T_min)
-        ):
+        if _exceeds(T_r, T) or _exceeds(T_maj_r, T_maj) or _exceeds(T_min_r, T_min):
             raise MGEDeprojectionError(
                 f"(T, T_maj, T_min) = ({T:g}, {T_maj:g}, {T_min:g}), q' = "
                 f"{q_obs:g}: too close to a numerical-precision boundary in "
@@ -988,6 +1163,15 @@ class Deprojected3DMGE(eqx.Module):
     sigma: Quantity
     p: Quantity
     q: Quantity
+
+    @property
+    def component_masses(self) -> Quantity:
+        """Integrated mass (or luminosity) of each intrinsic Gaussian.
+
+        Shared by numerical validation and Galax construction; ``I`` is the
+        central volume density, not the projected surface intensity.
+        """
+        return self.I * self.p * self.q * (2 * jnp.pi) ** 1.5 * self.sigma**3
 
     def spherical_mass_grid(self, grid: SphericalGrid) -> Quantity:
         """Mass in each cell of a `SphericalGrid` (one octant).
