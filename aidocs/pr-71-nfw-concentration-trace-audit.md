@@ -1,5 +1,44 @@
 # PR 71 audit: NFW concentration conversion traceable in batches
 
+## Follow-up (2026-09-30)
+
+F1 is fixed, now committed and pushed (`2c18d0e`, "Fix NFW inverse
+concentration gradients") -- superseding the "not yet committed or pushed"
+note below. Independently re-verified in this checkout, not just re-read:
+`_solve_nfw_concentration`'s new `@jax.custom_jvp` supplies
+`h'(c) = c^2(3g - c g')/g^2`, the implicit-function derivative of
+`h(c) = target`; re-derived that algebraically and it's correct.
+
+Reran both of this audit's own failing verification commands against the
+fix directly. Scalar: `jax.grad` gives `0.030257804916976556` against a
+central finite difference of `0.0302578049193869` (relative error ~8e-11).
+The inverse-converter case (`m=1e12 Msun, r_s=20 kpc`): previously
+`(1.6561716807634490, 0.0)` -- wrong `m` partial, exactly-zero `r_s`
+partial; now `(2.0000466, -5.15812376e+10)`, matching finite differences to
+~1e-10/1e-12 relative error.
+
+Also checked second-order differentiation (`jax.grad(jax.grad(...))`),
+which neither the PR's own tests nor this audit's original review covers:
+matches a finite difference of the gradient to ~2.5e-10 relative error --
+no hidden limitation there either.
+
+All 20 NFW-related tests pass, including the new scalar- and
+`vmap`-batched-gradient tests this commit adds
+(`test_solve_nfw_concentration_has_the_root_derivative`,
+`test_nfw_concentration_m200_inverse_traces_with_gradients`), which is
+exactly this audit's own "Required outcome" for F1.
+
+One non-blocking observation: `_solve_nfw_concentration(target)` is called
+recursively inside its own `defjvp` to recompute `c` as the primal -- a
+standard, safe JAX pattern, not infinite recursion, but it does mean the
+80-iteration bisection runs twice whenever gradients are requested.
+Negligible next to everything else this codebase does per model.
+
+**Updated recommendation: ready to merge.** F1, the one correctness finding
+below, is fixed and independently reverified; no new findings. The
+"Reviewed commit" this audit's original review describes
+(`1b8b656`) is superseded by `2c18d0e`.
+
 ## Follow-up (2026-09-28)
 
 F1 has been fixed in the working tree: the concentration solver now uses an
