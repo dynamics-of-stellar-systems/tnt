@@ -86,11 +86,12 @@ class Potential(eqx.Module):
         parameter_values: ParameterSet,
         cosmological_parameters: Mapping[str, Quantity],
     ) -> tuple[Self, jax.Array]:
-        """Build native Galax components with one combined JAX validity flag.
+        """Build Galax components with one combined JAX validity flag.
 
-        This first implementation covers components without a converter or MGE
-        deprojection. A false flag means the returned potential must not be
-        evaluated; use JAX conditional execution around derived calculations.
+        Native parameters and traceable registered conversions are supported;
+        MGE deprojection remains unsupported. A false flag means the returned
+        potential must not be evaluated; use JAX conditional execution around
+        derived calculations.
         """
         components: dict[str, AbstractPotentialComponent] = {}
         valid = jnp.asarray(True)
