@@ -905,6 +905,28 @@ def test_angular_to_physical_converts_sigma_and_leaves_intensity_unchanged():
     assert jnp.array_equal(physical.I.ustrip(mge.I.unit), mge.I.ustrip(mge.I.unit))
 
 
+def test_angular_to_physical_total_luminosity_scales_with_distance_squared():
+    mge = _multi_component_light_mge()
+    totals = []
+    for distance_mpc in (30.0, 60.0):
+        physical = mge.angular_to_physical(u.Quantity(distance_mpc, "Mpc"))
+        intrinsic = physical.deproject_oblate(u.Quantity(90.0, "deg"))
+        total = (
+            (2 * jnp.pi) ** 1.5
+            * intrinsic.I
+            * intrinsic.sigma**3
+            * intrinsic.p
+            * intrinsic.q
+        ).ustrip("Lsun")
+        expected = (
+            2 * jnp.pi * mge.I * physical.sigma**2 * mge.q
+        ).ustrip("Lsun")
+        assert jnp.allclose(total, expected, rtol=1e-6)
+        totals.append(total)
+
+    assert jnp.allclose(totals[1], 4 * totals[0], rtol=1e-6)
+
+
 def test_angular_to_physical_is_invariant_to_the_declared_angular_unit():
     # The same physical MGE declared in radians vs. arcsec/deg must project
     # to the same physical `sigma`; `angular_to_physical` converts each

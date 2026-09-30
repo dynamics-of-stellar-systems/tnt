@@ -36,7 +36,7 @@ class MGEDeprojectionError(ValueError):
 
 
 def _rebased_unit(intensity_unit: au.UnitBase, length_unit: au.UnitBase) -> au.UnitBase:
-    """`intensity_unit` (some ``X`` per physical area) re-expressed as ``X`` per ``length_unit**2``.
+    """Re-express surface intensity as ``X`` per ``length_unit**2``.
 
     Every length base is swapped for `length_unit` at its existing power, so
     e.g. ``Lsun / pc2`` re-based on ``kpc`` becomes ``Lsun / kpc2``.
@@ -263,8 +263,9 @@ class AbstractMGE(eqx.Module):
     instantiated directly -- use `LightMGE` or `MassMGE`.
 
     ``I`` is a physical surface density (e.g. Lsun/pc2, Msun/pc2), independent
-    of any assumed distance. ``sigma`` is declared angular and depends on
-    distance (see `angular_to_physical`).
+    of any assumed distance. File-loaded ``sigma`` starts in angular units;
+    `angular_to_physical` converts it to a distance-dependent physical width.
+    Converted MGEs and directly constructed MGEs can carry physical widths.
 
     ``major_axis_pa`` is the on-sky position angle of the MGE's major axis --
     a standard astronomical PA, measured from north through east, in
@@ -1058,8 +1059,10 @@ def read_mge(path: str | Path, major_axis_pa: Quantity) -> AbstractMGE:
     """Read an MGE from an ECSV file, inferring whether it's light or mass.
 
     The kind is inferred from the declared unit of the file's ``I`` column: whichever of
-    `LightMGE` (power/angle**2) or `MassMGE` (mass/angle**2) it is dimensionally
-    consistent with. Columns keep their declared units (see `from_qtable`).
+    `LightMGE` (power/length**2) or `MassMGE` (mass/length**2) it is dimensionally
+    consistent with. ``sigma`` must be angular; columns keep their declared
+    units (see `from_qtable`). Only ``sigma`` changes with distance when
+    `angular_to_physical` is subsequently applied.
 
     Args:
         path: Path to the ECSV file.

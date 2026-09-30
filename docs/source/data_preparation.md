@@ -28,6 +28,23 @@ from this origin, and any kinematic or population data referencing that
 binning inherits it. Recenter data that was reduced on a different origin
 before configuring it.
 
+## MGE file units
+
+Each Multi-Gaussian Expansion (MGE) ECSV file must declare these column units:
+
+| Column | Required dimension | Example |
+| --- | --- | --- |
+| `I` | Physical surface brightness or mass density | `Lsun/pc2` or `Msun/pc2` |
+| `sigma` | Angular width | `arcsec` |
+| `q` | Dimensionless axial ratio | `''` |
+| `PA_twist` | Angle | `deg` |
+
+`I` is the peak surface intensity, and `sigma` is the Gaussian standard
+deviation. TNT uses the system distance to convert only `sigma` to a physical
+width; `I` remains unchanged. For a fixed angular Gaussian, its total
+luminosity or mass is `2*pi*I*sigma_physical**2*q` and scales with distance
+squared. Intensity declared per angular area is rejected by the file loader.
+
 ## MGE `major_axis_pa`
 
 `major_axis_pa` should be the on-sky position angle (north through east) of

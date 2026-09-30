@@ -243,7 +243,7 @@ def test_evaluate_records_domain_invalid_oblate_inclination(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     light_mge = LightMGE(
-        I=u.Quantity(jnp.array([1.0]), "Lsun / rad2"),
+        I=u.Quantity(jnp.array([1.0]), "Lsun / pc2"),
         sigma=u.Quantity(jnp.array([1.0]), "rad"),
         q=u.Quantity(jnp.array([1.0]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
@@ -289,7 +289,7 @@ def test_evaluate_records_domain_invalid_pqu_deprojection(
     # InvalidPotentialParametersError, which `_evaluate` records rather than
     # letting it crash the run.
     light_mge = LightMGE(
-        I=u.Quantity(jnp.array([1.0]), "Lsun / rad2"),
+        I=u.Quantity(jnp.array([1.0]), "Lsun / pc2"),
         sigma=u.Quantity(jnp.array([1.0]), "rad"),
         q=u.Quantity(jnp.array([0.9]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),

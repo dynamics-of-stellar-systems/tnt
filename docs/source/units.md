@@ -146,9 +146,11 @@ declared units for the right dimension and then keeps them:
 - **MGE** (`tnt.mge`): the `I`, `sigma`, `q`, and `PA_twist` columns are read
   in the units the ECSV file declares, and the configuration-supplied
   `major_axis_pa` (validated as an angle in `[0, 180)` degrees) keeps its
-  own declared unit. `build_mges()` still projects each MGE to physical units
-  with `AbstractMGE.angular_to_physical()`, which works for any angular unit
-  `sigma`/`I` were declared in.
+  own declared unit. `I` must be physical surface brightness or density
+  (for example `Lsun/pc2` or `Msun/pc2`), `sigma` and `PA_twist` must be
+  angular, and `q` must be dimensionless. `build_mges()` uses
+  `AbstractMGE.angular_to_physical()` to convert only `sigma` to a physical
+  width using distance; `I` and the other fields remain unchanged.
 - **Gauss-Hermite kinematics**: the `v`/`dv`/`sigma`/`dsigma` columns keep
   their ECSV units; the velocity column's unit is the local reference the
   quadrature errors and the auto-sized histogram are computed in.
