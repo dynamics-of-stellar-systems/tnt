@@ -208,6 +208,12 @@
 - `tnt.mge.build_mges()` is the explicit runtime boundary that loads the
   resolved `MGEs` registry into named `LightMGE` and `MassMGE` objects.
   `Configuration` continues to contain no instantiated scientific objects.
+  MGE ECSV `I` is physical surface brightness/density (`Lsun/pc2` or
+  `Msun/pc2`, or equivalent units); `sigma` is angular, `q` dimensionless,
+  and `PA_twist` angular. Runtime loading converts only `sigma` using the
+  system distance and preserves `I`. For fixed angular widths, total
+  luminosity/mass scales with distance squared. Direct constructors may
+  already carry physical widths. See `docs/source/data_preparation.md`.
 - MGE deprojection enforces TNT's intrinsic-axis convention
   `0 < q <= p <= 1` eagerly. `_check_axial_ratios()` converts JAX results to
   Python control flow (`bool(...)` and `.nonzero()`) and raises

@@ -67,19 +67,21 @@ _MASS_ROWS = [
 def _multi_component_light_mge() -> LightMGE:
     """A multi-component LightMGE with realistic, varied q values.
 
-    Same values as `_LIGHT_ROWS`, converted to radians up front and
-    constructed directly rather than read from a file -- for tests that just
-    need some realistic LightMGE to operate on, as opposed to testing
-    file-reading behaviour itself. (`LightMGE.read` keeps each column's
-    declared unit, so a real MGE would carry arcsec/deg here; radians keep
-    these fixtures' expected values unchanged.)
+    Same values as `_LIGHT_ROWS`, converted to radians (for `sigma`) up
+    front and constructed directly rather than read from a file -- for
+    tests that just need some realistic LightMGE to operate on, as opposed
+    to testing file-reading behaviour itself. (`LightMGE.read` keeps each
+    column's declared unit, so a real MGE would carry arcsec/deg for
+    `sigma`/`PA_twist` here; radians keep these fixtures' expected values
+    unchanged. `I` is the standard MGE convention's already-physical
+    surface density -- no angular unit or conversion involved, so it's
+    declared directly in Lsun/pc2, unlike `sigma`.)
     """
     intensity, sigma, q, pa_twist = zip(*_LIGHT_ROWS, strict=True)
     sigma_arcsec = u.Quantity(jnp.array(sigma), "arcsec")
-    intensity_per_arcsec2 = u.Quantity(jnp.array(intensity), "Lsun / arcsec2")
     pa_twist_deg = u.Quantity(jnp.array(pa_twist), "deg")
     return LightMGE(
-        I=u.Quantity(intensity_per_arcsec2.ustrip("Lsun / rad2"), "Lsun / rad2"),
+        I=u.Quantity(jnp.array(intensity), "Lsun / pc2"),
         sigma=u.Quantity(sigma_arcsec.ustrip("rad"), "rad"),
         q=u.Quantity(jnp.array(q), ""),
         PA_twist=u.Quantity(pa_twist_deg.ustrip("rad"), "rad"),
@@ -89,11 +91,11 @@ def _multi_component_light_mge() -> LightMGE:
 
 def test_read_keeps_declared_light_column_units(tmp_path):
     path = tmp_path / "mge_lum.ecsv"
-    _write_ecsv(path, intensity_unit="Lsun / arcsec2", rows=_LIGHT_ROWS)
+    _write_ecsv(path, intensity_unit="Lsun / pc2", rows=_LIGHT_ROWS)
 
     mge = LightMGE.read(path, u.Quantity(20.0, "deg"))
 
-    assert mge.I.unit == u.unit("Lsun / arcsec2")
+    assert mge.I.unit == u.unit("Lsun / pc2")
     assert mge.sigma.unit == u.unit("arcsec")
     assert mge.q.unit == u.unit("")
     assert mge.PA_twist.unit == u.unit("deg")
@@ -105,11 +107,11 @@ def test_read_keeps_declared_light_column_units(tmp_path):
 
 def test_read_keeps_declared_mass_column_units(tmp_path):
     path = tmp_path / "mge_mass.ecsv"
-    _write_ecsv(path, intensity_unit="Msun / arcsec2", rows=_MASS_ROWS)
+    _write_ecsv(path, intensity_unit="Msun / pc2", rows=_MASS_ROWS)
 
     mge = MassMGE.read(path, u.Quantity(20.0, "deg"))
 
-    assert mge.I.unit == u.unit("Msun / arcsec2")
+    assert mge.I.unit == u.unit("Msun / pc2")
     assert mge.sigma.unit == u.unit("arcsec")
     assert mge.q.unit == u.unit("")
     assert mge.PA_twist.unit == u.unit("deg")
@@ -121,33 +123,33 @@ def test_read_keeps_declared_mass_column_units(tmp_path):
 
 def test_read_mge_infers_light_kind(tmp_path):
     path = tmp_path / "mge.ecsv"
-    _write_ecsv(path, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, 0.9, 0.0)])
+    _write_ecsv(path, intensity_unit="Lsun / pc2", rows=[(1.0, 1.0, 0.9, 0.0)])
 
     mge = read_mge(path, u.Quantity(20.0, "deg"))
 
     assert isinstance(mge, LightMGE)
-    assert mge.I.unit == u.unit("Lsun / arcsec2")
+    assert mge.I.unit == u.unit("Lsun / pc2")
 
 
 def test_read_mge_infers_mass_kind(tmp_path):
     path = tmp_path / "mge.ecsv"
-    _write_ecsv(path, intensity_unit="Msun / arcsec2", rows=[(1.0, 1.0, 0.9, 0.0)])
+    _write_ecsv(path, intensity_unit="Msun / pc2", rows=[(1.0, 1.0, 0.9, 0.0)])
 
     mge = read_mge(path, u.Quantity(20.0, "deg"))
 
     assert isinstance(mge, MassMGE)
-    assert mge.I.unit == u.unit("Msun / arcsec2")
+    assert mge.I.unit == u.unit("Msun / pc2")
 
 
 def test_build_mges_reads_each_named_file(tmp_path):
     _write_ecsv(
         tmp_path / "light.ecsv",
-        intensity_unit="Lsun / arcsec2",
+        intensity_unit="Lsun / pc2",
         rows=[(1.0, 1.0, 0.9, 0.0)],
     )
     _write_ecsv(
         tmp_path / "mass.ecsv",
-        intensity_unit="Msun / arcsec2",
+        intensity_unit="Msun / pc2",
         rows=[(1.0, 1.0, 0.9, 0.0)],
     )
 
@@ -183,7 +185,7 @@ def test_build_mges_without_entries_returns_empty_dict(tmp_path):
 def test_read_rejects_q_out_of_range(tmp_path, bad_q):
     bad_file = tmp_path / "bad_q.ecsv"
     _write_ecsv(
-        bad_file, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, bad_q, 0.0)]
+        bad_file, intensity_unit="Lsun / pc2", rows=[(1.0, 1.0, bad_q, 0.0)]
     )
 
     with pytest.raises(ValueError, match="q must satisfy 0 < q <= 1"):
@@ -192,7 +194,7 @@ def test_read_rejects_q_out_of_range(tmp_path, bad_q):
 
 def test_read_accepts_q_equal_to_one(tmp_path):
     ok_file = tmp_path / "q_one.ecsv"
-    _write_ecsv(ok_file, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, 1.0, 0.0)])
+    _write_ecsv(ok_file, intensity_unit="Lsun / pc2", rows=[(1.0, 1.0, 1.0, 0.0)])
 
     mge = LightMGE.read(ok_file, u.Quantity(0.0, "deg"))
 
@@ -208,7 +210,7 @@ def test_read_mge_rejects_unrecognized_units(tmp_path):
 
 
 def _write_simple_light_ecsv(path):
-    _write_ecsv(path, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, 0.9, 0.0)])
+    _write_ecsv(path, intensity_unit="Lsun / pc2", rows=[(1.0, 1.0, 0.9, 0.0)])
 
 
 @pytest.mark.parametrize(
@@ -272,9 +274,9 @@ def test_to_mass_with_constant_ratio():
     mass = light.to_mass(m_over_l)
 
     assert isinstance(mass, MassMGE)
-    assert mass.I.unit == u.unit("Msun / rad2")
+    assert mass.I.unit == u.unit("Msun / pc2")
     assert jnp.allclose(
-        mass.I.ustrip("Msun / rad2"), light.I.ustrip("Lsun / rad2") * 2.5
+        mass.I.ustrip("Msun / pc2"), light.I.ustrip("Lsun / pc2") * 2.5
     )
     assert jnp.allclose(mass.sigma.ustrip("rad"), light.sigma.ustrip("rad"))
     assert jnp.allclose(mass.q.ustrip(""), light.q.ustrip(""))
@@ -291,7 +293,7 @@ def test_to_mass_with_per_component_ratio():
 
     assert isinstance(mass, MassMGE)
     assert jnp.allclose(
-        mass.I.ustrip("Msun / rad2"), light.I.ustrip("Lsun / rad2") * ratios
+        mass.I.ustrip("Msun / pc2"), light.I.ustrip("Lsun / pc2") * ratios
     )
 
 
@@ -303,7 +305,7 @@ def test_rescaled_multiplies_intensity_and_keeps_everything_else():
 
     assert isinstance(rescaled, LightMGE)
     assert jnp.allclose(
-        rescaled.I.ustrip("Lsun / rad2"), light.I.ustrip("Lsun / rad2") * 2.0
+        rescaled.I.ustrip("Lsun / pc2"), light.I.ustrip("Lsun / pc2") * 2.0
     )
     assert jnp.allclose(rescaled.sigma.ustrip("rad"), light.sigma.ustrip("rad"))
     assert jnp.allclose(rescaled.q.ustrip(""), light.q.ustrip(""))
@@ -887,31 +889,53 @@ def test_mge_is_a_jax_pytree():
     assert jnp.allclose(doubled.q.ustrip(""), mge.q.ustrip("") * 2)
 
 
-def test_angular_to_physical_converts_sigma_and_intensity():
+def test_angular_to_physical_converts_sigma_and_leaves_intensity_unchanged():
     mge = _multi_component_light_mge()
     distance = u.Quantity(30.5, "Mpc")
 
     physical = mge.angular_to_physical(distance)
 
     assert physical.sigma.unit == u.unit("Mpc")
-    assert physical.I.unit == u.unit("Lsun / Mpc2")
     assert jnp.allclose(
         physical.sigma.ustrip("Mpc"),
         distance.ustrip("Mpc") * mge.sigma.ustrip("rad"),
     )
-    assert jnp.allclose(
-        physical.I.ustrip("Lsun / Mpc2"),
-        mge.I.ustrip("Lsun / rad2") / distance.ustrip("Mpc") ** 2,
-    )
+    # `I` is a physical surface density, independent of distance.
+    assert physical.I.unit == mge.I.unit
+    assert jnp.array_equal(physical.I.ustrip(mge.I.unit), mge.I.ustrip(mge.I.unit))
+
+
+def test_angular_to_physical_total_luminosity_scales_with_distance_squared():
+    mge = _multi_component_light_mge()
+    totals = []
+    for distance_mpc in (30.0, 60.0):
+        physical = mge.angular_to_physical(u.Quantity(distance_mpc, "Mpc"))
+        intrinsic = physical.deproject_oblate(u.Quantity(90.0, "deg"))
+        total = (
+            (2 * jnp.pi) ** 1.5
+            * intrinsic.I
+            * intrinsic.sigma**3
+            * intrinsic.p
+            * intrinsic.q
+        ).ustrip("Lsun")
+        expected = (
+            2 * jnp.pi * mge.I * physical.sigma**2 * mge.q
+        ).ustrip("Lsun")
+        assert jnp.allclose(total, expected, rtol=1e-6)
+        totals.append(total)
+
+    assert jnp.allclose(totals[1], 4 * totals[0], rtol=1e-6)
 
 
 def test_angular_to_physical_is_invariant_to_the_declared_angular_unit():
     # The same physical MGE declared in radians vs. arcsec/deg must project
-    # to the same physical `sigma` and `I`; `angular_to_physical` converts
-    # each declared angular unit on demand.
+    # to the same physical `sigma`; `angular_to_physical` converts each
+    # declared angular unit on demand. `I` (already physical, untouched by
+    # this conversion) is identical on both sides by construction -- kept
+    # here as a cross-check that it really is passed through unchanged.
     rad = _multi_component_light_mge()
     arcsec = LightMGE(
-        I=u.Quantity(rad.I.ustrip("Lsun / arcsec2"), "Lsun / arcsec2"),
+        I=u.Quantity(rad.I.ustrip("Lsun / pc2"), "Lsun / pc2"),
         sigma=u.Quantity(rad.sigma.ustrip("arcsec"), "arcsec"),
         q=rad.q,
         PA_twist=u.Quantity(rad.PA_twist.ustrip("deg"), "deg"),
@@ -947,18 +971,26 @@ _PROJECTED_MASS_QUAD_ORDER = 10
 
 
 def _projected_binning(
-    *, min_x, min_y, x_extent, y_extent, y_axis_pa, bins
+    *, min_x, min_y, x_extent, y_extent, y_axis_pa, bins, coord_unit="pc"
 ) -> ProjectedBinning:
-    return ProjectedBinning.from_settings(
-        {
-            "min_x": {"value": min_x, "unit": "rad"},
-            "min_y": {"value": min_y, "unit": "rad"},
-            "x_extent": {"value": x_extent, "unit": "rad"},
-            "y_extent": {"value": y_extent, "unit": "rad"},
-            "y_axis_pa": {"value": y_axis_pa, "unit": "rad"},
-        },
-        bins,
-        _PROJECTED_MASS_QUAD_ORDER,
+    """A `ProjectedBinning` for `get_projected_mass` tests.
+
+    `coord_unit` defaults to a physical length (`pc`, matching `I`'s
+    always-physical convention -- see `AbstractMGE.angular_to_physical`),
+    not angular. Built via the plain constructor, not `from_settings`
+    (which -- a configuration-boundary validator, unrelated to this
+    dimension -- always requires an angular unit); pass `coord_unit="rad"`
+    explicitly for the tests that deliberately exercise a still-angular
+    grid.
+    """
+    return ProjectedBinning(
+        min_x=u.Quantity(min_x, coord_unit),
+        min_y=u.Quantity(min_y, coord_unit),
+        x_extent=u.Quantity(x_extent, coord_unit),
+        y_extent=u.Quantity(y_extent, coord_unit),
+        y_axis_pa=u.Quantity(y_axis_pa, "rad"),
+        bins=jnp.asarray(bins),
+        quad_order=_PROJECTED_MASS_QUAD_ORDER,
     )
 
 
@@ -1022,8 +1054,8 @@ def test_get_projected_mass_matches_independent_numeric_integral(
     I, sigma, q, pa_twist, major_axis_pa, y_axis_pa
 ):
     mge = LightMGE(
-        I=u.Quantity(jnp.array(I), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array(sigma), "rad"),
+        I=u.Quantity(jnp.array(I), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array(sigma), "pc"),
         q=u.Quantity(jnp.array(q), ""),
         PA_twist=u.Quantity(jnp.array(pa_twist), "rad"),
         major_axis_pa=u.Quantity(major_axis_pa, "rad"),
@@ -1074,8 +1106,8 @@ def test_get_projected_mass_pa_convention_matches_documented_axis(
     integration formula itself.
     """
     mge = LightMGE(
-        I=u.Quantity(jnp.array([1.0]), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array([1.0]), "rad"),
+        I=u.Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array([1.0]), "pc"),
         q=u.Quantity(jnp.array([0.2]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
         major_axis_pa=u.Quantity(major_axis_pa, "deg"),
@@ -1117,8 +1149,8 @@ def test_get_projected_mass_invariant_under_global_frame_rotation(rotation_deg):
 
     def masses(major_deg, y_deg):
         mge = LightMGE(
-            I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / rad2"),
-            sigma=u.Quantity(jnp.array([0.01, 0.02]), "rad"),
+            I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / pc2"),
+            sigma=u.Quantity(jnp.array([0.01, 0.02]), "pc"),
             q=u.Quantity(jnp.array([0.5, 0.8]), ""),
             PA_twist=u.Quantity(jnp.array([0.0, 0.35]), "rad"),
             major_axis_pa=u.Quantity(major_deg, "deg"),
@@ -1142,8 +1174,8 @@ def test_get_projected_mass_invariant_under_global_frame_rotation(rotation_deg):
 
 def test_get_projected_mass_conserves_total_flux_for_circular_component():
     mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array([0.01]), "rad"),
+        I=u.Quantity(jnp.array([5.0]), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array([0.01]), "pc"),
         q=u.Quantity(jnp.array([1.0]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
         major_axis_pa=u.Quantity(0.0, "rad"),
@@ -1166,8 +1198,8 @@ def test_get_projected_mass_conserves_total_flux_for_circular_component():
 
 def test_get_projected_mass_excludes_unbinned_pixels():
     mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array([0.01]), "rad"),
+        I=u.Quantity(jnp.array([5.0]), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array([0.01]), "pc"),
         q=u.Quantity(jnp.array([1.0]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
         major_axis_pa=u.Quantity(0.0, "rad"),
@@ -1189,8 +1221,8 @@ def test_get_projected_mass_excludes_unbinned_pixels():
 
 def test_get_projected_mass_aggregates_multiple_pixels_per_bin():
     mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array([0.01]), "rad"),
+        I=u.Quantity(jnp.array([5.0]), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array([0.01]), "pc"),
         q=u.Quantity(jnp.array([0.7]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
         major_axis_pa=u.Quantity(0.0, "rad"),
@@ -1216,8 +1248,12 @@ def test_get_projected_mass_aggregates_multiple_pixels_per_bin():
 
 
 def test_get_projected_mass_requires_consistent_units():
+    """`sigma` left angular (not yet `angular_to_physical`-converted) while
+    `binning` is already physical -- a mismatch `get_projected_mass` must
+    reject, regardless of `I` (always physical; see `angular_to_physical`).
+    """
     mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
+        I=u.Quantity(jnp.array([5.0]), "Lsun / pc2"),
         sigma=u.Quantity(jnp.array([0.01]), "rad"),
         q=u.Quantity(jnp.array([1.0]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
@@ -1230,39 +1266,44 @@ def test_get_projected_mass_requires_consistent_units():
         y_extent=2.0,
         y_axis_pa=np.pi / 2,
         bins=np.ones((3, 3), dtype=int),
+        coord_unit="rad",
     ).angular_to_physical(u.Quantity(30.5, "Mpc"))
 
     with pytest.raises(ValueError, match="not convertible"):
         mge.get_projected_mass(binning)
 
 
-def test_get_projected_mass_invariant_under_matching_physical_conversion():
-    mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array([0.01, 0.02]), "rad"),
+def test_get_projected_mass_invariant_under_matching_physical_length_unit():
+    """`get_projected_mass` gives the same answer regardless of which
+    physical length unit `sigma`/`binning` happen to be re-expressed in
+    (`pc` vs `kpc`, the same grid and MGE) -- `I` (always physical; see
+    `angular_to_physical`) must be re-based to match either one correctly.
+    """
+    sigma_pc = jnp.array([0.01, 0.02])
+    mge_pc = LightMGE(
+        I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / pc2"),
+        sigma=u.Quantity(sigma_pc, "pc"),
         q=u.Quantity(jnp.array([0.6, 0.9]), ""),
         PA_twist=u.Quantity(jnp.array([0.0, 0.4]), "rad"),
         major_axis_pa=u.Quantity(0.0, "rad"),
     )
+    mge_kpc = dataclasses.replace(mge_pc, sigma=mge_pc.sigma.uconvert("kpc"))
+
     bins = 1 + np.arange(9).reshape(3, 3)
-    binning = _projected_binning(
-        min_x=-0.05,
-        min_y=-0.05,
-        x_extent=0.1,
-        y_extent=0.1,
-        y_axis_pa=0.5,
-        bins=bins,
+    binning_pc = _projected_binning(
+        min_x=-0.05, min_y=-0.05, x_extent=0.1, y_extent=0.1, y_axis_pa=0.5,
+        bins=bins, coord_unit="pc",
     )
-    distance = u.Quantity(30.5, "Mpc")
-
-    angular_mass = mge.get_projected_mass(binning)
-    physical_mass = mge.angular_to_physical(distance).get_projected_mass(
-        binning.angular_to_physical(distance)
+    # Same physical grid, re-expressed in kpc (1 kpc = 1000 pc).
+    binning_kpc = _projected_binning(
+        min_x=-0.05e-3, min_y=-0.05e-3, x_extent=0.1e-3, y_extent=0.1e-3,
+        y_axis_pa=0.5, bins=bins, coord_unit="kpc",
     )
 
-    assert jnp.allclose(
-        angular_mass.ustrip("Lsun"), physical_mass.ustrip("Lsun"), rtol=1e-6
-    )
+    mass_pc = mge_pc.get_projected_mass(binning_pc)
+    mass_kpc = mge_kpc.get_projected_mass(binning_kpc)
+
+    assert jnp.allclose(mass_pc.ustrip("Lsun"), mass_kpc.ustrip("Lsun"), rtol=1e-6)
 
 
 def test_get_projected_mass_is_jit_compatible():
@@ -1274,8 +1315,8 @@ def test_get_projected_mass_is_jit_compatible():
     static Python `int`, precomputed at construction time.
     """
     mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array([0.01, 0.02]), "rad"),
+        I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array([0.01, 0.02]), "pc"),
         q=u.Quantity(jnp.array([0.7, 0.9]), ""),
         PA_twist=u.Quantity(jnp.array([0.0, 0.3]), "rad"),
         major_axis_pa=u.Quantity(0.0, "rad"),

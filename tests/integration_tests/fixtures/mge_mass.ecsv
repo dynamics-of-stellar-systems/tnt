@@ -2,7 +2,7 @@
 # ---
 # datatype:
 # - name: I
-#   unit: Msun / arcsec2
+#   unit: Msun / pc2
 #   datatype: float64
 # - name: sigma
 #   unit: arcsec
