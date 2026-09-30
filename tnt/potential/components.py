@@ -72,35 +72,60 @@ class ResolvedPotentialComponent(NamedTuple):
         _check_parameter_set_structure(
             parameter_values, self.raw_dimensions, path=self.path, stage="raw"
         )
-        valid = jnp.asarray(True)
-        for value in parameter_values.values():
-            valid = valid & jnp.isfinite(value.ustrip(value.unit))
-        for name, constraint in self.raw_constraints.items():
-            valid = valid & constraint.valid(parameter_values[name], parameter_values)
-        return valid
+        return _parameter_values_valid(parameter_values, self.raw_constraints)
 
     def build_with_validity(
         self,
         parameter_values: Mapping[str, Quantity],
         cosmological_parameters: Mapping[str, Quantity],
     ) -> tuple[AbstractPotentialComponent, jax.Array]:
-        """Build a native Galax component and return its JAX validity flag.
+        """Build a Galax component and return its JAX validity flag.
 
-        Only native Galax components are supported while conversion and MGE
-        deprojection are made traceable. Callers must condition numerical use
-        of an invalid component on the flag.
+        Native parameters and traceable registered conversions are supported;
+        MGE deprojection remains unsupported. Conversion first probes native
+        validity without differentiation, then runs differentiably only for
+        valid proposals. Invalid converted proposals contain zero placeholders
+        in the converter's output units, never a usable physical model.
+        Callers must condition numerical use of any component on the flag.
         """
-        if (
-            self.convert is not None
-            or self.component_cls is not GalaxPotentialComponent
-        ):
+        if self.component_cls is not GalaxPotentialComponent:
             raise NotImplementedError(
                 f"Traced construction is not implemented for {self.path}."
             )
         raw = dict(parameter_values)
         valid = self._raw_parameters_valid(raw)
+        if self.convert is None:
+            canonical = raw
+        else:
+
+            def convert(values: dict[str, Quantity]) -> dict[str, Quantity]:
+                canonical = self.convert(
+                    values, cosmological_parameters, self.extra_fields.get("mge")
+                )
+                _check_parameter_set_structure(
+                    canonical,
+                    self.canonical_dimensions,
+                    path=self.path,
+                    stage="converted",
+                )
+                return canonical
+
+            # Abstract evaluation establishes units/dtypes without numerical
+            # conversion. Both conditional branches need identical structure.
+            shape = jax.eval_shape(convert, raw)
+            placeholder = jax.tree.map(
+                lambda value: jnp.zeros(value.shape, dtype=value.dtype), shape
+            )
+            probe = jax.lax.stop_gradient(
+                jax.lax.cond(valid, convert, lambda _: placeholder, raw)
+            )
+            valid = valid & _parameter_values_valid(probe, self.canonical_constraints)
+            # A zero cotangent through an invalid conversion can still produce
+            # NaN gradients. Keep that conversion outside the differentiated
+            # path rather than masking its result after it has run.
+            canonical = jax.lax.cond(valid, convert, lambda _: placeholder, raw)
         component = self.component_cls._build(
-            raw, cosmological_parameters, self.extra_fields
+            canonical, cosmological_parameters, self.extra_fields
         )
         return component, valid
 
@@ -120,7 +145,7 @@ class ResolvedPotentialComponent(NamedTuple):
         `tnt.potential`'s module docstring); constraints convert only as needed
         for a comparison. MGE geometry validation remains owned by the eager
         deprojection in the four composite types' `_build` methods.
-        Validation converts scalar values to Python numbers, so `build` is an
+        Validation uses Python boolean checks, so `build` is an
         eager runtime boundary and must remain outside `jax.jit`/`jax.vmap`
         traces; only the resulting potential enters compiled numerical work.
 
@@ -159,6 +184,18 @@ class ResolvedPotentialComponent(NamedTuple):
         return self.component_cls._build(
             canonical, cosmological_parameters, self.extra_fields
         )
+
+
+def _parameter_values_valid(
+    values: Mapping[str, Quantity], constraints: Mapping[str, ParameterConstraint]
+) -> jax.Array:
+    """Combine finiteness and registered bounds for structurally checked values."""
+    valid = jnp.asarray(True)
+    for value in values.values():
+        valid = valid & jnp.isfinite(value.ustrip(value.unit))
+    for name, constraint in constraints.items():
+        valid = valid & constraint.valid(values[name], values)
+    return valid
 
 
 def _check_parameter_set_contract(

@@ -225,10 +225,19 @@
   `ResolvedPotentialComponent._raw_parameters_valid()` checks static
   names/types/dimensions/shapes before tracing and returns a JAX scalar flag
   for finite raw values and registered bounds. `Potential.build_with_validity()`
-  composes native Galax components and their flags inside a single JAX trace;
+  composes Galax components and their flags inside a single JAX trace,
+  including traceable registered conversions such as NFW's `concentration_m200`;
   a false flag requires JAX conditional execution before evaluating derived
-  quantities. Conversion, MGE deprojection, and iterator/prior integration
-  remain eager or unfinished.
+  quantities. Registered conversions first check raw validity, then probe
+  native finiteness and constraints without differentiation. Only proposals
+  passing both checks run the differentiable conversion. This prevents
+  invalid derived values from contaminating gradients even when raw values
+  are finite and positive. Abstract evaluation supplies the output units and
+  dtypes for zero placeholders used by invalid converted components; these
+  are not usable physical models. Converters must themselves support JAX
+  tracing, and their output names/types/dimensions/scalar shapes remain hard
+  contract checks. MGE deprojection and iterator/prior integration remain
+  eager or unfinished; proposal batching is still deferred.
 - Eager constraint diagnostics and traced validity evaluate the same JAX
   predicates at the proposed value's active precision; converting eager values
   to Python floats would change half-open bound decisions in float32. For

@@ -132,13 +132,18 @@ the core radius by more than `eps**(1/5)` of the larger radius, where
 `eps` is the active floating-point precision's machine epsilon. Near-equal
 radii are rejected because the potential calculation loses gradient accuracy.
 
-For native `galax` components, `Potential.build_with_validity` provides a
+For `galax` components, `Potential.build_with_validity` provides a
 compiled-build path that returns the potential and a JAX boolean indicating
 whether its proposed numerical parameters are valid. Configuration structure
 errors still raise during setup. A caller must use the boolean to condition
 any derived calculation: a potential returned with a false flag is not a
-valid physical model. Registered parameterization conversions and MGE
-deprojections still use the eager build path.
+valid physical model. Native parameters and traceable registered conversions
+are supported, including NFW's `concentration_m200`. Conversions check both
+raw and converted parameter validity before allowing differentiation;
+invalid converted components contain zero placeholders in the converter's
+output units. This also rejects proposals whose positive raw values overflow
+or otherwise produce invalid native parameters. MGE deprojections still use
+the eager build path, and batched proposal construction remains deferred.
 
 ### MGE composite types
 
