@@ -213,14 +213,39 @@
   Python control flow (`bool(...)` and `.nonzero()`) and raises
   `MGEDeprojectionError`, so `deproject_triaxial()` and
   `deproject_oblate()` are deliberately not `jax.jit`/`jax.vmap`
-  traceable. This is acceptable while model evaluation itself remains eager:
-  `ModelIterator._evaluate()` catches Python exceptions and returns a
-  variable-length `list[Model]`, while orbit integration and weight solving
-  are still scaffolding. Revisit deprojection validity and `_evaluate()`
-  failure handling together when orbit integration is implemented and TNT
-  chooses whether models are individually jitted or evaluated as a masked,
-  vectorized batch. Do not design a separate JAX validity mechanism before
-  that execution strategy is known.
+  traceable. `ModelIterator._evaluate()` currently catches Python exceptions
+  and returns a variable-length `list[Model]`, while orbit integration and
+  weight solving are still scaffolding. Issue #72 replaces proposal-dependent
+  exceptions with one traced validity result shared by the prior and iterator;
+  the first implementation targets one proposal, with batching deferred.
+- Issue #72 fixes the execution target as one proposal evaluated inside a JAX
+  trace. `ParameterConstraint.valid()` now exposes JAX scalar predicates for
+  registered numeric bounds and same-component relationships; eager
+  `violation()` uses those same predicates for its diagnostics.
+  `ResolvedPotentialComponent._raw_parameters_valid()` checks static
+  names/types/dimensions/shapes before tracing and returns a JAX scalar flag
+  for finite raw values and registered bounds. `Potential.build_with_validity()`
+  composes Galax components and their flags inside a single JAX trace,
+  including traceable registered conversions such as NFW's `concentration_m200`;
+  a false flag requires JAX conditional execution before evaluating derived
+  quantities. Registered conversions first check raw validity, then probe
+  native finiteness and constraints without differentiation. Only proposals
+  passing both checks run the differentiable conversion. This prevents
+  invalid derived values from contaminating gradients even when raw values
+  are finite and positive. Abstract evaluation supplies the output units and
+  dtypes for zero placeholders used by invalid converted components; these
+  are not usable physical models. Converters must themselves support JAX
+  tracing, and their output names/types/dimensions/scalar shapes remain hard
+  contract checks. MGE deprojection and iterator/prior integration remain
+  eager or unfinished; proposal batching is still deferred.
+- Eager constraint diagnostics and traced validity evaluate the same JAX
+  predicates at the proposed value's active precision; converting eager values
+  to Python floats would change half-open bound decisions in float32. For
+  `StoneOstriker15Potential`, `r_h > r_c` also requires
+  `(r_h - r_c) / max(abs(r_h), abs(r_c)) > eps**(1/5)` at that precision.
+  The upstream potential formula subtracts nearly equal terms and otherwise
+  yields unreliable gradients close to equal radii. This numerical guard is
+  shared by eager and traced construction.
 - Intel macOS is not a native TNT target because current JAX releases do not
   provide `jaxlib` wheels for that platform. Use the Linux `x86_64`
   development container there instead.
@@ -635,13 +660,23 @@
   runtime-family packages. Configuration validation imports runtime-family
   registries to obtain their authoritative schemas, so importing the
   configuration package can load JAX, Equinox, and galax.
-  `_nfw_concentration_m200`/its inverse retain `Quantity` arithmetic rather
-  than eagerly stripping every input to a bare float in one specific unit --
-  `unxt` composes/converts units automatically through the whole chain
-  (verified: mixing `H` in `km / (s Mpc)` with
-  `_newtonian_gravitational_constant()` in `m3 / (kg s2)` and `M_200` in `Msun`
-  still gives the correct `r_s`/`m`), so `H` works in whatever unit it is
-  declared in. The forward converter cube-roots the volume's numeric value
+  `_nfw_concentration_m200`/its inverse use `Quantity` arithmetic with local
+  `Msun`, `kpc`, and `Myr` units for critical density and radius calculations.
+  This keeps float32 reverse-mode intermediates representable even for `H`
+  declared in `1 / s`; declared inputs remain unchanged. The native mass
+  retains its input mass unit and the forward scale radius is in `kpc`.
+  `_nfw_g` uses a Taylor series through c**10 below c=0.01, avoiding small-c
+  cancellation in both conversions. The characteristic-mass quotient has a
+  custom JAX derivative that avoids g(c)**2 in the denominator. Unrepresentable
+  native values or mass/concentration derivative coefficients invalidate the
+  conversion (eager errors or a false traced flag); derivative representability
+  is checked in `Msun` and `kpc` so equivalent declared mass units agree.
+  A JAX optimization barrier preserves the local H conversion during JIT
+  compilation, preventing arithmetic reassociation from recreating underflow.
+  Independent decimal
+  references test small-c values and gradients, including both sides of the
+  series switch in x32/x64. The forward converter cube-roots the volume's
+  numeric value
   and attaches the cube-root unit: directly raising a volume `Quantity` to
   `1/3` fails under a batched JAX trace. The forward conversion leaves the
   native quantities in the units produced by that arithmetic;

@@ -21,12 +21,13 @@ reused across every proposed point in parameter space; see
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from typing import Any, ClassVar, NamedTuple, Self
 
 import equinox as eqx
 import galax.potential
+import jax
+import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import LightMGE, MassMGE
@@ -64,6 +65,70 @@ class ResolvedPotentialComponent(NamedTuple):
     extra_fields: dict[str, Any]
     path: str
 
+    def _raw_parameters_valid(
+        self, parameter_values: Mapping[str, Quantity]
+    ) -> jax.Array:
+        """JAX boolean for raw numerical values after static contract checks."""
+        _check_parameter_set_structure(
+            parameter_values, self.raw_dimensions, path=self.path, stage="raw"
+        )
+        return _parameter_values_valid(parameter_values, self.raw_constraints)
+
+    def build_with_validity(
+        self,
+        parameter_values: Mapping[str, Quantity],
+        cosmological_parameters: Mapping[str, Quantity],
+    ) -> tuple[AbstractPotentialComponent, jax.Array]:
+        """Build a Galax component and return its JAX validity flag.
+
+        Native parameters and traceable registered conversions are supported;
+        MGE deprojection remains unsupported. Conversion first probes native
+        validity without differentiation, then runs differentiably only for
+        valid proposals. Invalid converted proposals contain zero placeholders
+        in the converter's output units, never a usable physical model.
+        Callers must condition numerical use of any component on the flag.
+        """
+        if self.component_cls is not GalaxPotentialComponent:
+            raise NotImplementedError(
+                f"Traced construction is not implemented for {self.path}."
+            )
+        raw = dict(parameter_values)
+        valid = self._raw_parameters_valid(raw)
+        if self.convert is None:
+            canonical = raw
+        else:
+
+            def convert(values: dict[str, Quantity]) -> dict[str, Quantity]:
+                canonical = self.convert(
+                    values, cosmological_parameters, self.extra_fields.get("mge")
+                )
+                _check_parameter_set_structure(
+                    canonical,
+                    self.canonical_dimensions,
+                    path=self.path,
+                    stage="converted",
+                )
+                return canonical
+
+            # Abstract evaluation establishes units/dtypes without numerical
+            # conversion. Both conditional branches need identical structure.
+            shape = jax.eval_shape(convert, raw)
+            placeholder = jax.tree.map(
+                lambda value: jnp.zeros(value.shape, dtype=value.dtype), shape
+            )
+            probe = jax.lax.stop_gradient(
+                jax.lax.cond(valid, convert, lambda _: placeholder, raw)
+            )
+            valid = valid & _parameter_values_valid(probe, self.canonical_constraints)
+            # A zero cotangent through an invalid conversion can still produce
+            # NaN gradients. Keep that conversion outside the differentiated
+            # path rather than masking its result after it has run.
+            canonical = jax.lax.cond(valid, convert, lambda _: placeholder, raw)
+        component = self.component_cls._build(
+            canonical, cosmological_parameters, self.extra_fields
+        )
+        return component, valid
+
     def build(
         self,
         parameter_values: Mapping[str, Quantity],
@@ -80,7 +145,7 @@ class ResolvedPotentialComponent(NamedTuple):
         `tnt.potential`'s module docstring); constraints convert only as needed
         for a comparison. MGE geometry validation remains owned by the eager
         deprojection in the four composite types' `_build` methods.
-        Validation converts scalar values to Python numbers, so `build` is an
+        Validation uses Python boolean checks, so `build` is an
         eager runtime boundary and must remain outside `jax.jit`/`jax.vmap`
         traces; only the resulting potential enters compiled numerical work.
 
@@ -121,6 +186,18 @@ class ResolvedPotentialComponent(NamedTuple):
         )
 
 
+def _parameter_values_valid(
+    values: Mapping[str, Quantity], constraints: Mapping[str, ParameterConstraint]
+) -> jax.Array:
+    """Combine finiteness and registered bounds for structurally checked values."""
+    valid = jnp.asarray(True)
+    for value in values.values():
+        valid = valid & jnp.isfinite(value.ustrip(value.unit))
+    for name, constraint in constraints.items():
+        valid = valid & constraint.valid(values[name], values)
+    return valid
+
+
 def _check_parameter_set_contract(
     values: Mapping[str, Quantity],
     dimensions: Mapping[str, str],
@@ -128,7 +205,24 @@ def _check_parameter_set_contract(
     path: str,
     stage: str,
 ) -> None:
-    """Check the generator/converter contract for one parameter mapping."""
+    """Check static structure and eager finiteness of one parameter mapping."""
+    _check_parameter_set_structure(values, dimensions, path=path, stage=stage)
+    for name, value in values.items():
+        if not bool(jnp.isfinite(value.ustrip(value.unit))):
+            raise InvalidPotentialParametersError(
+                f"Invalid {stage} value for {path}.parameters.{name}: "
+                f"{value} must be finite."
+            )
+
+
+def _check_parameter_set_structure(
+    values: Mapping[str, Quantity],
+    dimensions: Mapping[str, str],
+    *,
+    path: str,
+    stage: str,
+) -> None:
+    """Check names, Quantity types, dimensions, and scalar shapes before tracing."""
     expected = set(dimensions)
     actual = set(values)
     if actual != expected:
@@ -161,10 +255,6 @@ def _check_parameter_set_contract(
             raise InvalidPotentialParametersError(
                 f"Invalid {stage} value for {label}: expected a scalar, "
                 f"got shape {getattr(stripped, 'shape', None)}."
-            )
-        if not math.isfinite(float(stripped)):
-            raise InvalidPotentialParametersError(
-                f"Invalid {stage} value for {label}: {value} must be finite."
             )
 
 

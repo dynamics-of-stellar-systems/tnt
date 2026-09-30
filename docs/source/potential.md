@@ -127,6 +127,23 @@ parameters, so either rotation direction is representable.
 Comparisons convert compatible units locally but do not normalize or replace a
 parameter's declared unit. MGE deprojection continues to own the more complex
 viewing-geometry checks that depend on the MGE data itself.
+For `StoneOstriker15Potential`, the halo radius must also be separated from
+the core radius by more than `eps**(1/5)` of the larger radius, where
+`eps` is the active floating-point precision's machine epsilon. Near-equal
+radii are rejected because the potential calculation loses gradient accuracy.
+
+For `galax` components, `Potential.build_with_validity` provides a
+compiled-build path that returns the potential and a JAX boolean indicating
+whether its proposed numerical parameters are valid. Configuration structure
+errors still raise during setup. A caller must use the boolean to condition
+any derived calculation: a potential returned with a false flag is not a
+valid physical model. Native parameters and traceable registered conversions
+are supported, including NFW's `concentration_m200`. Conversions check both
+raw and converted parameter validity before allowing differentiation;
+invalid converted components contain zero placeholders in the converter's
+output units. This also rejects proposals whose positive raw values overflow
+or otherwise produce invalid native parameters. MGE deprojections still use
+the eager build path, and batched proposal construction remains deferred.
 
 ### MGE composite types
 
@@ -231,7 +248,15 @@ potential:
   halo's epoch, not necessarily the present-day $H_0$):
   $\rho_\mathrm{crit} = 3 H^2 / (8\pi G)$,
   $r_{200} = (3 M_{200} / (4\pi \cdot 200 \rho_\mathrm{crit}))^{1/3}$,
-  $r_s = r_{200} / c$, $m = M_{200} / (\ln(1+c) - c/(1+c))$. The reverse
+  $r_s = r_{200} / c$, $m = M_{200} / (\ln(1+c) - c/(1+c))$. The
+  mass-shape calculation uses a Taylor series through $c^{10}$ for
+  $c < 0.01$ to avoid cancellation, with a custom derivative for the mass
+  quotient that avoids squaring the small denominator. Conversions with
+  unrepresentable native values or mass/concentration derivative coefficients
+  are rejected. Critical-density and radius calculations use local `Msun`,
+  `kpc`, and `Myr` units, including when $H$ is declared in inverse seconds,
+  to keep differentiation reliable in either precision. The native mass
+  retains its declared mass unit; the scale radius is in `kpc`. The reverse
   conversion, native `(m, r_s)` back to `(c, M_200)`, is implemented too --
   used to build `AllModels`' table columns -- but has no closed form:
   `rescale()` scales `m` while holding `r_s` fixed, which is *not* the same

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, Self
 
 import equinox as eqx
 import galax.potential
+import jax
+import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import LightMGE, MassMGE
@@ -76,6 +78,30 @@ class Potential(eqx.Module):
                 for name, component in resolved.items()
             }
         )
+
+    @classmethod
+    def build_with_validity(
+        cls,
+        resolved: Mapping[str, ResolvedPotentialComponent],
+        parameter_values: ParameterSet,
+        cosmological_parameters: Mapping[str, Quantity],
+    ) -> tuple[Self, jax.Array]:
+        """Build Galax components with one combined JAX validity flag.
+
+        Native parameters and traceable registered conversions are supported;
+        MGE deprojection remains unsupported. A false flag means the returned
+        potential must not be evaluated; use JAX conditional execution around
+        derived calculations.
+        """
+        components: dict[str, AbstractPotentialComponent] = {}
+        valid = jnp.asarray(True)
+        for name, component in resolved.items():
+            built, component_valid = component.build_with_validity(
+                parameter_values.get(name, {}), cosmological_parameters
+            )
+            components[name] = built
+            valid = valid & component_valid
+        return cls(components=components), valid
 
     @classmethod
     def from_settings(
