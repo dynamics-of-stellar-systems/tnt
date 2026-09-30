@@ -52,8 +52,12 @@ _REFERENCE_UNITS = {
     "frequency": "1 / s",
     "inverse_time": "1 / s",
     "mass_to_light": "kg / W",
-    "light_surface_brightness": "W / rad2",
-    "mass_surface_density": "kg / rad2",
+    # An MGE Gaussian's peak intensity `I`, per unit physical area (e.g.
+    # Lsun/pc2, Msun/pc2; Cappellari 2002). Its width `sigma` is the
+    # angular quantity, converted via `distance` -- see
+    # `tnt.mge.AbstractMGE.angular_to_physical`.
+    "light_surface_brightness": "W / m2",
+    "mass_surface_density": "kg / m2",
 }
 
 

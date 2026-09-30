@@ -35,17 +35,19 @@ class MGEDeprojectionError(ValueError):
     """
 
 
-def _per_steradian_unit(intensity_unit: au.UnitBase) -> au.UnitBase:
-    """`intensity_unit` (some ``X`` per solid angle) re-expressed as ``X`` per rad**2.
+def _rebased_unit(intensity_unit: au.UnitBase, length_unit: au.UnitBase) -> au.UnitBase:
+    """`intensity_unit` (some ``X`` per physical area) re-expressed as ``X`` per ``length_unit**2``.
 
-    Every angular base is swapped for `rad` at its existing power, so e.g.
-    ``Lsun / arcsec2`` becomes ``Lsun / rad2``. `uconvert`ing an intensity to
-    this makes `angular_to_physical`'s projection a plain division by
-    ``distance**2`` regardless of the unit it was declared in.
+    Every length base is swapped for `length_unit` at its existing power, so
+    e.g. ``Lsun / pc2`` re-based on ``kpc`` becomes ``Lsun / kpc2``.
+    `uconvert`ing an intensity to this makes `AbstractMGE.get_projected_mass`'s
+    per-pixel integral (carried out entirely in `coord_unit`, a
+    `ProjectedBinning`'s own declared coordinate unit) dimensionally
+    consistent regardless of which physical length unit `I` was declared in.
     """
     result = au.dimensionless_unscaled
     for base, power in zip(intensity_unit.bases, intensity_unit.powers, strict=True):
-        replacement = au.rad if base.physical_type == "angle" else base
+        replacement = length_unit if base.physical_type == "length" else base
         result = result * replacement**power
     return result
 
@@ -260,6 +262,10 @@ class AbstractMGE(eqx.Module):
     (`light_surface_brightness` or `mass_surface_density`). Not meant to be
     instantiated directly -- use `LightMGE` or `MassMGE`.
 
+    ``I`` is a physical surface density (e.g. Lsun/pc2, Msun/pc2), independent
+    of any assumed distance. ``sigma`` is declared angular and depends on
+    distance (see `angular_to_physical`).
+
     ``major_axis_pa`` is the on-sky position angle of the MGE's major axis --
     a standard astronomical PA, measured from north through east, in
     ``[0, 180)`` degrees (a major axis is an undirected line).
@@ -365,28 +371,27 @@ class AbstractMGE(eqx.Module):
         )
 
     def angular_to_physical(self, distance: Quantity) -> Self:
-        """Convert `sigma` and `I` from angular to physical (length) units.
+        """Convert `sigma` from angular to physical (length) units.
 
-        `q` (dimensionless) and `PA_twist` (an orientation angle, not a spatial size)
-        are unaffected and carried over unchanged.
+        `I` is already a physical surface density (e.g. Lsun/pc2, Msun/pc2),
+        so it's unaffected by `distance` and carried over unchanged, along
+        with `q` (dimensionless) and `PA_twist` (an orientation angle, not a
+        spatial size).
 
-        Works for any angular unit `sigma`/`I` were declared in: `sigma` goes
-        through the radian small-angle factor, and `I` (a density per solid
-        angle) is re-expressed per steradian before the plain division by
-        `distance**2`, so neither depends on `sigma` already being in radians.
+        Works for any angular unit `sigma` was declared in: it goes through
+        the radian small-angle factor, so this doesn't depend on `sigma`
+        already being in radians.
 
         Args:
             distance: The distance to the object.
 
         Returns:
-            A new MGE with `sigma` in `distance`'s unit and `I` converted to match.
+            A new MGE with `sigma` in `distance`'s unit; `I` unchanged.
         """
         sigma_physical = quantity_conversions.angular_to_physical(self.sigma, distance)
-        I_per_steradian = self.I.uconvert(_per_steradian_unit(self.I.unit))
-        I_physical = I_per_steradian * Quantity(1.0, "rad2") / distance**2
 
         return type(self)(
-            I=I_physical,
+            I=self.I,
             sigma=sigma_physical,
             q=self.q,
             PA_twist=self.PA_twist,
@@ -414,10 +419,8 @@ class AbstractMGE(eqx.Module):
         Args:
             binning: The projected-plane aperture grid and pixel-to-bin
                 assignment to integrate this MGE over. Its coordinates
-                (`min_x`, `min_y`, `x_extent`, `y_extent`) must be
-                dimensionally consistent with `sigma` -- both angular, or
-                both converted to the same physical unit via
-                `angular_to_physical`/`ProjectedBinning.angular_to_physical`.
+                (`min_x`, `min_y`, `x_extent`, `y_extent`) must be physical
+                (length), matching `sigma` post-`angular_to_physical`.
 
         Returns:
             A `Quantity` of shape ``(n_bins,)`` giving each bin's total,
@@ -429,13 +432,14 @@ class AbstractMGE(eqx.Module):
                 coordinates aren't dimensionally consistent.
         """
         coord_unit = binning.min_x.unit
+        I_unit = _rebased_unit(self.I.unit, coord_unit)
 
         # Add a leading components axis: everything below broadcasts to
         # (G, Nx, Q, Ny).
         shape = (-1, 1, 1, 1)
         sigma = self.sigma.ustrip(coord_unit).reshape(shape)
         q = self.q.ustrip("").reshape(shape)
-        I = self.I.ustrip(self.I.unit).reshape(shape)
+        I = self.I.uconvert(I_unit).ustrip(I_unit).reshape(shape)
 
         # alpha: each Gaussian's major axis, as the "mathematical" angle
         # (counterclockwise in the grid's own (x, y) plane) the quadrature
@@ -474,7 +478,7 @@ class AbstractMGE(eqx.Module):
             pixel_mass.ravel(), binning.bins.ravel(), num_segments=binning.n_bins + 1
         )
 
-        mass_unit = self.I.unit * coord_unit**2
+        mass_unit = I_unit * coord_unit**2
         return Quantity(binned[1:], mass_unit)
 
     def deproject_oblate(self, inclination: Quantity) -> Deprojected3DMGE:
@@ -908,7 +912,7 @@ class AbstractMGE(eqx.Module):
 
 
 class LightMGE(AbstractMGE):
-    """An MGE of a surface-brightness distribution (``I`` in e.g. Lsun/arcsec2)."""
+    """An MGE of a surface-brightness distribution (``I`` in e.g. Lsun/pc2)."""
 
     _intensity_dimension: ClassVar[str] = "light_surface_brightness"
 
@@ -946,7 +950,7 @@ class LightMGE(AbstractMGE):
 
 
 class MassMGE(AbstractMGE):
-    """An MGE of a mass surface-density distribution (``I`` in e.g. Msun/arcsec2)."""
+    """An MGE of a mass surface-density distribution (``I`` in e.g. Msun/pc2)."""
 
     _intensity_dimension: ClassVar[str] = "mass_surface_density"
 

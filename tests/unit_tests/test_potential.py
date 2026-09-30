@@ -1019,7 +1019,7 @@ def test_nfw_component_plumbing_works_without_from_settings() -> None:
 
 def _circular_light_mge(I: list[float], sigma: list[float]) -> LightMGE:
     return LightMGE(
-        I=Quantity(jnp.array(I), "Lsun / rad2"),
+        I=Quantity(jnp.array(I), "Lsun / pc2"),
         sigma=Quantity(jnp.array(sigma), "rad"),
         q=Quantity(jnp.ones(len(I)), ""),
         PA_twist=Quantity(jnp.zeros(len(I)), "rad"),
@@ -1357,7 +1357,7 @@ def test_mge_component_build_raises_for_invalid_geometry_not_to_galax() -> None:
     # test_deproject_triaxial_convention_violating_geometry_raises in
     # tests/unit_tests/test_mge.py.
     light_mge = LightMGE(
-        I=Quantity(jnp.array([2.0]), "Lsun / rad2"),
+        I=Quantity(jnp.array([2.0]), "Lsun / pc2"),
         sigma=Quantity(jnp.array([1.5]), "rad"),
         q=Quantity(jnp.array([0.9]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
@@ -1485,7 +1485,7 @@ def test_triaxial_mass_mge_to_galax_uses_mge_mass_scale() -> None:
     unit_system = _internal_unit_system()
     distance = Quantity(30.0, "Mpc")
     mass_mge = MassMGE(
-        I=Quantity(jnp.array([1e2]), "Msun / rad2"),
+        I=Quantity(jnp.array([1e2]), "Msun / pc2"),
         sigma=Quantity(jnp.array([1.5]), "rad"),
         q=Quantity(jnp.array([1.0]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
@@ -1588,7 +1588,7 @@ def test_oblate_mge_build_raises_for_impossible_inclination_not_to_galax() -> No
     # q_obs = 0.5 with inclination 20 deg: cos(20 deg) ~ 0.94 > 0.5, so
     # q_obs < cos(i) and the axisymmetric deprojection has no real solution.
     flattened = LightMGE(
-        I=Quantity(jnp.array([2.0]), "Lsun / rad2"),
+        I=Quantity(jnp.array([2.0]), "Lsun / pc2"),
         sigma=Quantity(jnp.array([1.5]), "rad"),
         q=Quantity(jnp.array([0.5]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
@@ -1662,7 +1662,7 @@ def test_oblate_light_mge_to_galax_sums_every_component() -> None:
     unit_system = _internal_unit_system()
     distance = Quantity(30.0, "Mpc")
     light_mge = LightMGE(
-        I=Quantity(jnp.array([2.0, 0.5]), "Lsun / rad2"),
+        I=Quantity(jnp.array([2.0, 0.5]), "Lsun / pc2"),
         sigma=Quantity(jnp.array([1.5, 4.0]), "rad"),
         q=Quantity(jnp.array([0.6, 0.4]), ""),
         PA_twist=Quantity(jnp.array([0.0, 0.0]), "rad"),
@@ -1706,7 +1706,7 @@ def test_oblate_mass_mge_to_galax_uses_mge_mass_scale() -> None:
     unit_system = _internal_unit_system()
     distance = Quantity(30.0, "Mpc")
     mass_mge = MassMGE(
-        I=Quantity(jnp.array([1e2]), "Msun / rad2"),
+        I=Quantity(jnp.array([1e2]), "Msun / pc2"),
         sigma=Quantity(jnp.array([1.5]), "rad"),
         q=Quantity(jnp.array([1.0]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
