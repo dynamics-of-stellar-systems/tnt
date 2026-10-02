@@ -130,7 +130,10 @@ def _checked_shape_conversion(candidate: Callable, arguments: tuple) -> Any:
     result, checks = candidate(*arguments)
     for message, valid in checks.items():
         if not bool(valid):
-            raise MGEDeprojectionError(message)
+            coordinates = tuple(float(value) for value in arguments)
+            raise MGEDeprojectionError(
+                f"{message} Proposed coordinates: {coordinates!r}."
+            )
     return result
 
 
@@ -714,6 +717,17 @@ class AbstractMGE(eqx.Module):
     def _oblate_candidate(
         self, inclination: Quantity
     ) -> tuple[Deprojected3DMGE, jax.Array]:
+        q, geometry_valid = self._oblate_geometry(inclination)
+        model = Deprojected3DMGE(
+            I=self.I * (self.q.ustrip("") / (jnp.sqrt(2 * jnp.pi) * q)) / self.sigma,
+            sigma=self.sigma,
+            p=Quantity(jnp.ones_like(q), ""),
+            q=Quantity(q, ""),
+        )
+        return model, geometry_valid & _deprojected_valid(model)
+
+    def _oblate_geometry(self, inclination: Quantity) -> tuple[jax.Array, jax.Array]:
+        """Shared inclination geometry, independent of MGE normalization."""
         angle = inclination.ustrip("rad")
         cos_i, sin_i = jnp.cos(angle), jnp.sin(angle)
         observed = self.q.ustrip("")
@@ -722,12 +736,6 @@ class AbstractMGE(eqx.Module):
         # The exact spherical solution avoids cancellation and roundoff above
         # q=1. Safe operands also prevent a masked 0/0 from poisoning AD.
         q = jnp.sqrt(jnp.where(circular, 1, numerator)) / jnp.where(circular, 1, sin_i)
-        model = Deprojected3DMGE(
-            I=self.I * (observed / (jnp.sqrt(2 * jnp.pi) * q)) / self.sigma,
-            sigma=self.sigma,
-            p=Quantity(jnp.ones_like(q), ""),
-            q=Quantity(q, ""),
-        )
         eps = jnp.finfo(q.dtype).eps
         valid = (
             (inclination.ustrip("deg") > 0)
@@ -737,9 +745,8 @@ class AbstractMGE(eqx.Module):
             & jnp.all(
                 circular | (numerator > (observed**2 + cos_i**2) * jnp.sqrt(eps) / 50)
             )
-            & _deprojected_valid(model)
         )
-        return model, valid
+        return q, valid
 
     def inclination_from_q_min(self, q_min: float | jax.Array) -> Quantity:
         """The inclination giving the anchor component's intrinsic axial ratio.
@@ -783,9 +790,9 @@ class AbstractMGE(eqx.Module):
         den = 1 - q_min**2
         cos2_i = (q_obs**2 - q_min**2) / den
         inclination = Quantity(jnp.arccos(jnp.sqrt(cos2_i)), "rad")
-        model, deprojection_valid = self._oblate_candidate(inclination)
+        intrinsic, deprojection_valid = self._oblate_geometry(inclination)
         anchor = jnp.argmin(self.q.ustrip(""))
-        recovered = model.q.ustrip("")[anchor]
+        recovered = intrinsic[anchor]
         tolerance = _QMIN_ROUNDTRIP_TOL_FACTOR * jnp.sqrt(eps)
         checks = {
             "Oblate deprojection needs a flattened MGE; a circular MGE has no "

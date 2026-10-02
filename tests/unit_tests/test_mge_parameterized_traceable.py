@@ -437,3 +437,78 @@ def test_complete_mixed_proposal_combines_flags_and_guards_gradients(x64):
         bad_halo["halo"]["r_s"] = Quantity(0.0, "kpc")
         _, accepted = Potential.build_with_validity(resolved, bad_halo, {})
         assert not bool(accepted)
+
+
+@pytest.mark.parametrize("parameterization", ["q_min", "pqu", "T_maj_min"])
+@pytest.mark.parametrize("x64", [False, True])
+def test_frozen_conversion_is_rejected_even_when_its_values_are_correct(
+    parameterization, x64
+):
+    with jax.enable_x64(x64):
+        kind = (
+            "OblateMassMGEPotential"
+            if parameterization == "q_min"
+            else "TriaxialMassMGEPotential"
+        )
+        _, resolved, proposal, values = _setup(kind, parameterization)
+        original = resolved["stars"].convert_with_validity
+
+        def frozen(*args):
+            native, valid = original(*args)
+            native = {
+                name: value
+                if name == "mge_mass_scale"
+                else jax.lax.stop_gradient(value)
+                for name, value in native.items()
+            }
+            return native, valid
+
+        broken = {"stars": resolved["stars"]._replace(convert_with_validity=frozen)}
+        _, valid = jax.jit(
+            lambda x: Potential.build_with_validity(broken, proposal(x), {})
+        )(values)
+        assert not bool(valid)
+        with pytest.raises(ValueError, match="derivatives"):
+            Potential.build(broken, proposal(values), {})
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_q_min_conversion_does_not_validate_unscaled_template_mass(x64):
+    with jax.enable_x64(x64):
+        source, _, proposal, values = _setup("OblateLightMGEPotential", "q_min")
+        # The proposal and its derivatives are representable in declared and
+        # physical units, although the unscaled luminosity integral overflows.
+        intensity, normalization_unit = (
+            (1e305, "1e-290 Msun/Lsun") if x64 else (1e37, "1e-20 Msun/Lsun")
+        )
+        source = eqx.tree_at(
+            lambda m: m.I, source, Quantity(jnp.full(2, intensity), "Lsun/pc2")
+        )
+        resolved = Potential.resolve(
+            {
+                "stars": {
+                    "type": "OblateLightMGEPotential",
+                    "parameterization": "q_min",
+                    "mge": "m",
+                }
+            },
+            {"m": source},
+        )
+
+        def parameters(values):
+            result = proposal(values)
+            result["stars"]["ml"] = Quantity(values[0], normalization_unit)
+            return result
+
+        potential, valid = jax.jit(
+            lambda x: Potential.build_with_validity(resolved, parameters(x), {})
+        )(values)
+        assert bool(valid)
+        assert np.isfinite(
+            np.asarray(
+                potential.components["stars"].deprojected.component_masses.ustrip(
+                    "Msun"
+                )
+            )
+        ).all()
+        Potential.build(resolved, parameters(values), {})

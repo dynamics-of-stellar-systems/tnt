@@ -160,6 +160,11 @@ For shape parameterizations, the derivative probes cover the full chain
 from the original shape coordinates through converted viewing angles to
 intrinsic geometry, density, widths, and masses. A valid anchor alone is
 insufficient: every Gaussian must pass the construction checks.
+The constructed anchor shape must also recover the proposed coordinates
+with an identity Jacobian, within `50 * sqrt(eps)` in the declared coordinate
+units. This detects incorrect shape gradients even if forward and reverse
+differentiation agree. Shape conversion is independent of normalization;
+density and mass checks apply to the normalized proposal.
 Both forward and reverse automatic differentiation must produce finite
 derivatives and agree within the precision-dependent `50 * sqrt(eps)`
 tolerance, including an output/input-scaled roundoff allowance for zero

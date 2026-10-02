@@ -235,6 +235,12 @@
   angle outputs and the full raw-coordinate-to-intrinsic chain. Both modes must be
   finite and agree within `50*sqrt(eps)`, with an output/input-scaled roundoff
   allowance for zero derivatives (such as mass versus viewing angle).
+  For parameterized MGEs, the Jacobian of the constructed anchor shape back
+  to the proposed coordinates must also equal the identity within
+  `50*sqrt(eps)`, accounting for declared coordinate-unit scale. This catches
+  frozen or inaccurate shape derivatives shared by both differentiation modes.
+  Oblate conversion checks only geometry; density and mass checks use the
+  proposal's normalization rather than the unscaled luminosity template.
   Oblate cancellation and triaxial
   covariance-inversion conditioning/residual checks use `50*sqrt(eps)`
   relative error thresholds at active precision. Exactly circular projected

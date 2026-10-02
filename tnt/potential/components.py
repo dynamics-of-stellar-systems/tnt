@@ -30,7 +30,7 @@ import jax
 import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE
+from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, _T_Tmaj_Tmin_candidate
 from tnt.potential.registry import (
     _SUPPORTED_GALAX_TYPES,
     ForwardConverter,
@@ -239,7 +239,7 @@ class ResolvedPotentialComponent(NamedTuple):
                 )
                 raise InvalidPotentialParametersError(
                     f"Invalid construction for {self.path}: converted values or "
-                    "derivatives are not representable at this numerical precision."
+                    "derivatives are not reliable at this numerical precision."
                 )
             return component
         return self.component_cls._build(
@@ -257,6 +257,24 @@ def _build_mge_with_validity(
 ) -> tuple[AbstractPotentialComponent, jax.Array]:
     """Shared raw-to-intrinsic construction and derivative checks for MGEs."""
     mge = extra_fields["mge"]
+    shape_names = tuple(
+        name
+        for name in ("q_min", "p", "q", "u", "T", "T_maj", "T_min")
+        if name in parameters
+    )
+
+    def recovered_shape(model: Deprojected3DMGE) -> tuple[jax.Array, ...]:
+        """Recover the proposed anchor coordinates from the constructed MGE."""
+        if not shape_names:
+            return ()
+        anchor = jnp.argmin(mge.q.ustrip(""))
+        p, q = model.p.ustrip("")[anchor], model.q.ustrip("")[anchor]
+        if "q_min" in parameters:
+            return (q,)
+        u = (mge.sigma[anchor] / model.sigma[anchor]).ustrip("")
+        if "p" in parameters:
+            return p, q, u
+        return _T_Tmaj_Tmin_candidate(p, q, u, mge.q.ustrip("")[anchor])[0]
 
     def candidate(
         values: dict[str, Quantity],
@@ -294,6 +312,7 @@ def _build_mge_with_validity(
                 for value in (model.I, model.sigma, model.p, model.q, total)
             )
             + tuple(value.ustrip(value.unit) for value in canonical.values())
+            + recovered_shape(model)
             + (
                 model.I.ustrip("Msun / kpc3"),
                 model.sigma.ustrip("kpc"),
@@ -305,7 +324,7 @@ def _build_mge_with_validity(
         return tuple(jnp.asarray(value, dtype=float) for value in outputs)
 
     def probe(values: dict[str, Quantity]) -> jax.Array:
-        _, valid = candidate(values)
+        (canonical, _), valid = candidate(values)
         numbers = {
             key: jnp.asarray(
                 value.ustrip(value.unit),
@@ -334,6 +353,24 @@ def _build_mge_with_validity(
                 )
         for output in outputs[-3:]:
             valid = valid & jnp.all(output > 0)
+        # Forward/reverse agreement alone can miss a shared wrong derivative,
+        # notably a frozen conversion. The raw-to-intrinsic-to-raw map must
+        # have the identity Jacobian in the proposal's own coordinate units.
+        offset = 5 + len(canonical)
+        for index, coordinate in enumerate(shape_names, start=offset):
+            for name in numbers:
+                coefficient = (
+                    Quantity(1.0, parameters[name].unit).ustrip("")
+                    if name in shape_names
+                    else jnp.asarray(1.0)
+                )
+                expected = coefficient if name == coordinate else 0.0
+                tolerance = 50 * jnp.sqrt(jnp.finfo(outputs[index].dtype).eps)
+                for derivative in (forward[index][name], reverse[index][name]):
+                    valid = valid & (
+                        jnp.abs(derivative - expected)
+                        <= tolerance * jnp.abs(coefficient)
+                    )
         return valid
 
     shape = jax.eval_shape(candidate, parameters)[0]
