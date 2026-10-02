@@ -5,16 +5,15 @@ stellar mass distribution, a dark-matter halo, a central black hole, ...).
 A component is specified by its `type` and, optionally, a
 `parameterization` -- both discussed below.
 
-This part of TNT is under active development. Some of what's described below
-is signature-only scaffolding rather than a working implementation -- see
-[What's implemented today](#whats-implemented-today) and `tnt.potential`'s
-own module docstring for exactly what raises `NotImplementedError`.
+Potential construction, parameter conversion, evaluation, and rescaling are
+implemented. Orbit-library generation remains unimplemented; see
+[What's implemented today](#whats-implemented-today).
 
 ## Component types
 
 TNT potential components are backed by [`galax`](https://github.com/GalacticDynamics/galax), a JAX library for galactic dynamics. `potential.<name>.type` names one of a
 curated set of 25 `galax.potential` classes (e.g. `"NFWPotential"`);
-see `tnt.potential._SUPPORTED_GALAX_TYPES` for the exact list.
+see `tnt.potential.registry._SUPPORTED_GALAX_TYPES` for the exact list.
 
 Some `galax.potential` classes are not supported: abstract/base classes;
 pre-packaged multi-component bundles with no free parameters of their own,
@@ -144,13 +143,32 @@ raw and converted parameter validity before allowing differentiation;
 invalid converted components contain zero placeholders in the converter's
 output units. This also rejects proposals whose positive raw values overflow
 or otherwise produce invalid native parameters. All four MGE component types
-support native viewing angles and normalization inside one JAX trace.
-MGE `q_min`, `pqu`, and `T_maj_min` conversions remain eager; proposal batching
-and prior/model-iterator integration are deferred.
+support native viewing angles and normalization inside one JAX trace, including
+`q_min`, `pqu`, and `T_maj_min` parameter conversions. Proposal batching and
+prior/model-iterator integration are deferred.
 
-Native MGE construction validates the complete set of Gaussians: intrinsic
+The MGE-level `inclination_from_q_min_with_validity` method uses the same
+domain and round-trip checks as eager conversion. The edge-on `q_min == q'`
+limit has a finite angle but an unbounded conversion derivative and is
+rejected. Native edge-on inclination remains a supported viewing geometry.
+
+MGE construction validates the complete set of Gaussians: intrinsic
 `0 < q <= p <= 1`, positive finite density, width and mass, and finite
 construction derivatives in declared units and local `Msun`/`kpc` units.
+For shape parameterizations, the derivative probes cover the full chain
+from the original shape coordinates through converted viewing angles to
+intrinsic geometry, density, widths, and masses. A valid anchor alone is
+insufficient: every Gaussian must pass the construction checks.
+The constructed anchor shape must also recover the proposed coordinates
+with an identity Jacobian, within `50 * sqrt(eps)` in the declared coordinate
+units. This detects incorrect shape gradients even if forward and reverse
+differentiation agree. Shape conversion is independent of normalization;
+density and mass checks apply to the normalized proposal.
+Shape bounds use unit-free ratios, so equivalent declarations such as `0.6`
+and `60 percent` have the same domain. Gradients respect the declared
+coordinate scale, and reported raw shape parameters retain their declared units.
+Reporting inverse conversions remains eager. Compression recovery uses local
+`kpc` widths to avoid unit-dependent overflow during differentiation.
 Both forward and reverse automatic differentiation must produce finite
 derivatives and agree within the precision-dependent `50 * sqrt(eps)`
 tolerance, including an output/input-scaled roundoff allowance for zero
@@ -268,7 +286,7 @@ potential:
 
 - **Every curated type** (`parameterization` omitted): the component
   resolves and `to_galax()` (building the actual `galax` potential object)
-  works for every class in `tnt.potential._SUPPORTED_GALAX_TYPES` -- 25
+  works for every class in `tnt.potential.registry._SUPPORTED_GALAX_TYPES` -- 25
   classes, from ordinary single-component potentials (`PlummerPotential`,
   `NFWPotential`, `HernquistPotential`, ...) to triaxial and bar potentials.
   `rescale()` works for every native parameter of every curated class,
@@ -340,13 +358,14 @@ potential:
   data-independent parameter constraints; a genuine triaxial deprojection
   additionally needs `q < p` (`q == p` is the prolate limit) and, against the
   MGE, `max(q/q', p) < u <= min(p/q', 1)` (lower endpoints excluded, upper
-  endpoints `u = 1` and `u = p/q'` are valid limiting geometries). Anything
+  endpoints `u = 1` and `u = p/q'` are limiting geometries). Anything
   outside that -- or a domain so narrow no interior geometry is representable
   at the active JAX precision -- makes the build raise
   `InvalidPotentialParametersError` (recorded as an invalid model, not a
-  crash). Near the upper endpoints `u` is evaluated a small margin inside the
-  domain (`~1.4e-3` at float32, negligible at float64), so a declared `u = 1`
-  is honoured to that margin and `AllModels` reports the recovered value.
+  crash). Numerical acceptance also requires `u` to be separated from both
+  endpoints by the active `4*sqrt(eps)` margin. Values requiring clipping
+  are rejected because clipping would change the proposed shape and its
+  derivatives. `AllModels` reports the recovered intrinsic shape.
   Both directions are `AbstractMGE` methods (`triaxial_viewing_angles` and its
   inverse `triaxial_intrinsic_shape`, the anchor slice of
   `deproject_triaxial`), so a `(p, q, u)` config and its equivalent
@@ -364,12 +383,10 @@ potential:
   precision-margin, and singularity handling included. A requested
   `(T, T_maj, T_min)` is additionally accepted only if it round-trips
   through that conversion and back within a combined absolute+relative
-  tolerance (tight at float64, looser at float32) -- `pqu`'s own
-  precision-margin clamp on `u` is negligible in `(p, q, u)` space, but the
-  `T_maj_min` reparameterization's own divisions can amplify that same
-  clamp into a materially different requested shape; an accepted point that
-  fails this check raises the same `InvalidPotentialParametersError` as an
-  out-of-domain one, rather than silently building a different point.
+  tolerance (tight at float64, looser at float32). The reparameterization's
+  divisions can amplify errors in the recovered intrinsic shape. Points
+  failing this check raise the same `InvalidPotentialParametersError` as
+  out-of-domain points.
   `T_maj_min` is registered only for `TriaxialLightMGEPotential` and
   `TriaxialMassMGEPotential`, same as `pqu`.
 - **The oblate MGE types' `q_min` parameterization**: implemented, the
@@ -378,14 +395,15 @@ potential:
   component, `q_obs' = min(component q)`, via
   `q_obs'^2 = q_min^2 sin(i)^2 + cos(i)^2`. `q_min` must satisfy
   `0 < q_min <= 1` as a data-independent parameter constraint; against the
-  MGE it additionally needs `q_min <= q_obs'` (`q_min == q_obs'` is the
-  valid, inclusive edge-on limit `i = 90 deg`) and a non-circular anchor
+  MGE it additionally needs `q_min < q_obs'` and a non-circular anchor
   (`q_obs' < 1`). Anything outside that -- or a `q_min` too close to 1
   (spherical) to invert reliably at the active JAX precision -- makes the
   build raise `InvalidPotentialParametersError` (recorded as an invalid
-  model, not a crash). Both directions are `AbstractMGE` methods
+  model, not a crash). The edge-on equality has an unbounded conversion
+  derivative and is rejected; native edge-on inclination remains supported.
+  Both directions are `AbstractMGE` methods
   (`inclination_from_q_min` and its inverse `q_min_from_inclination`, which
-  reads the anchor's intrinsic `q` off a full `deproject_oblate` call), so a
+  reads the anchor's intrinsic `q` using shared oblate geometry checks), so a
   `q_min` config and its equivalent `inclination` config build an identical
   potential and `AllModels` reports either faithfully. `q_min` is registered
   only for `OblateLightMGEPotential` and `OblateMassMGEPotential`.

@@ -87,8 +87,9 @@ class Potential(eqx.Module):
     ) -> tuple[Self, jax.Array]:
         """Build one complete proposal with one scalar JAX validity flag.
 
-        Galax native parameters/traceable conversions and native parameters for
-        all four MGE component types are supported. A false flag means the
+        Galax native parameters/traceable conversions and all four MGE types,
+        including q_min, pqu and T_maj_min conversions, are supported.
+        A false flag means the
         returned potential must not be evaluated; use JAX conditional execution around
         derived calculations.
         """

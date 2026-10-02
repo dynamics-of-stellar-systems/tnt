@@ -34,7 +34,8 @@ from tnt.all_models import AllModels
 from tnt.configuration.compatibility import ConfigurationCompatibilityError
 from tnt.model_iterator import ModelIterator
 from tnt.model_search_state import ModelSearchState
-from tnt.potential import Potential, _nfw_concentration_m200, build_potential
+from tnt.potential import Potential, build_potential
+from tnt.potential.nfw import _nfw_concentration_m200
 from tnt.run_config_log import (
     RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY,
     TOTAL_RUNS_METADATA_KEY,

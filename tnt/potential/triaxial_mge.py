@@ -36,6 +36,7 @@ from typing import Any, ClassVar, Self
 
 import equinox as eqx
 import galax.potential
+import jax
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import (
@@ -249,15 +250,21 @@ def _galax_potential_from_deprojected(
 # these converters are just the parameterization-registry adapters.
 
 _PQU_SHAPE_CONSTRAINTS: dict[str, ParameterConstraint] = {
-    "p": ParameterConstraint(minimum=0.0, minimum_inclusive=False, maximum=1.0),
+    "p": ParameterConstraint(
+        minimum=0.0, minimum_inclusive=False, maximum=1.0, unit=""
+    ),
     # 0 < q <= p
     "q": ParameterConstraint(
-        minimum=0.0, minimum_inclusive=False, other_parameter="p", relation="<="
+        minimum=0.0,
+        minimum_inclusive=False,
+        other_parameter="p",
+        relation="<=",
+        unit="",
     ),
     # p < u <= 1 (data-independent floor of DYNAMITE's
     # max(q/q', p) < u <= min(p/q', 1); the q'-dependent parts are checked
     # against the MGE in `AbstractMGE.triaxial_viewing_angles`)
-    "u": ParameterConstraint(maximum=1.0, other_parameter="p", relation=">"),
+    "u": ParameterConstraint(maximum=1.0, other_parameter="p", relation=">", unit=""),
 }
 
 
@@ -286,15 +293,33 @@ def _pqu_to_tpp(
         )
     try:
         theta, phi, psi = mge.triaxial_viewing_angles(
-            float(raw["p"].ustrip("")),
-            float(raw["q"].ustrip("")),
-            float(raw["u"].ustrip("")),
+            raw["p"].ustrip(""),
+            raw["q"].ustrip(""),
+            raw["u"].ustrip(""),
         )
     except MGEDeprojectionError as error:
         raise InvalidPotentialParametersError(str(error)) from error
 
     mass = _mass_parameter_name(raw)
     return {mass: raw[mass], "theta": theta, "phi": phi, "psi": psi}
+
+
+def _pqu_to_tpp_with_validity(
+    raw: dict[str, Quantity],
+    cosmological_parameters: Mapping[str, Quantity],
+    mge: LightMGE | MassMGE | None,
+) -> tuple[dict[str, Quantity], jax.Array]:
+    """Guarded pqu adapter; numerical checks belong to the MGE."""
+    del cosmological_parameters
+    if mge is None:
+        raise InvalidPotentialParametersError(
+            "The 'pqu' parameterization requires an MGE component."
+        )
+    (theta, phi, psi), valid = mge.triaxial_viewing_angles_with_validity(
+        raw["p"].ustrip(""), raw["q"].ustrip(""), raw["u"].ustrip("")
+    )
+    mass = _mass_parameter_name(raw)
+    return {mass: raw[mass], "theta": theta, "phi": phi, "psi": psi}, valid
 
 
 def _tpp_to_pqu(
@@ -307,7 +332,7 @@ def _tpp_to_pqu(
 
     `AbstractMGE.triaxial_intrinsic_shape` -- the anchor-component slice of
     `deproject_triaxial`, the numerical inverse of `triaxial_viewing_angles`
-    (a boundary `u` comes back as the nudged value; see that method).
+    for accepted interior proposals.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register `pqu`
@@ -323,9 +348,9 @@ def _tpp_to_pqu(
         mass_value = mass_value.to(declared_units[mass])
     return {
         mass: mass_value,
-        "p": Quantity(p, ""),
-        "q": Quantity(q, ""),
-        "u": Quantity(u, ""),
+        "p": Quantity(p, "").to(declared_units.get("p", "")),
+        "q": Quantity(q, "").to(declared_units.get("q", "")),
+        "u": Quantity(u, "").to(declared_units.get("u", "")),
     }
 
 
@@ -334,6 +359,7 @@ def _register_pqu(type_name: str, mass_name: str, mass_dimension: str) -> None:
         type_name=type_name,
         name="pqu",
         convert=_pqu_to_tpp,
+        convert_with_validity=_pqu_to_tpp_with_validity,
         invert=_tpp_to_pqu,
         raw_dimensions={
             mass_name: mass_dimension,
@@ -363,7 +389,7 @@ _register_pqu("TriaxialMassMGEPotential", "mge_mass_scale", "dimensionless")
 # <-> `(p, q, u)` algebra itself.
 
 _TMAJMIN_SHAPE_CONSTRAINTS: dict[str, ParameterConstraint] = {
-    name: ParameterConstraint(minimum=0.0, maximum=1.0)
+    name: ParameterConstraint(minimum=0.0, maximum=1.0, unit="")
     for name in ("T", "T_maj", "T_min")
 }
 
@@ -389,15 +415,33 @@ def _tmajmin_to_tpp(
         )
     try:
         theta, phi, psi = mge.viewing_angles_from_T_Tmaj_Tmin(
-            float(raw["T"].ustrip("")),
-            float(raw["T_maj"].ustrip("")),
-            float(raw["T_min"].ustrip("")),
+            raw["T"].ustrip(""),
+            raw["T_maj"].ustrip(""),
+            raw["T_min"].ustrip(""),
         )
     except MGEDeprojectionError as error:
         raise InvalidPotentialParametersError(str(error)) from error
 
     mass = _mass_parameter_name(raw)
     return {mass: raw[mass], "theta": theta, "phi": phi, "psi": psi}
+
+
+def _tmajmin_to_tpp_with_validity(
+    raw: dict[str, Quantity],
+    cosmological_parameters: Mapping[str, Quantity],
+    mge: LightMGE | MassMGE | None,
+) -> tuple[dict[str, Quantity], jax.Array]:
+    """Guarded T_maj_min adapter using the MGE's shared shape checks."""
+    del cosmological_parameters
+    if mge is None:
+        raise InvalidPotentialParametersError(
+            "The 'T_maj_min' parameterization requires an MGE component."
+        )
+    (theta, phi, psi), valid = mge.viewing_angles_from_T_Tmaj_Tmin_with_validity(
+        raw["T"].ustrip(""), raw["T_maj"].ustrip(""), raw["T_min"].ustrip("")
+    )
+    mass = _mass_parameter_name(raw)
+    return {mass: raw[mass], "theta": theta, "phi": phi, "psi": psi}, valid
 
 
 def _tpp_to_tmajmin(
@@ -410,8 +454,7 @@ def _tpp_to_tmajmin(
     `AllModels`.
 
     `AbstractMGE.T_Tmaj_Tmin_from_viewing_angles` -- the numerical inverse of
-    `viewing_angles_from_T_Tmaj_Tmin` (a boundary value comes back nudged,
-    same as `pqu`'s `(p, q, u)`; see `triaxial_viewing_angles`).
+    `viewing_angles_from_T_Tmaj_Tmin` for accepted interior proposals.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register this
@@ -427,9 +470,9 @@ def _tpp_to_tmajmin(
         mass_value = mass_value.to(declared_units[mass])
     return {
         mass: mass_value,
-        "T": Quantity(T, ""),
-        "T_maj": Quantity(T_maj, ""),
-        "T_min": Quantity(T_min, ""),
+        "T": Quantity(T, "").to(declared_units.get("T", "")),
+        "T_maj": Quantity(T_maj, "").to(declared_units.get("T_maj", "")),
+        "T_min": Quantity(T_min, "").to(declared_units.get("T_min", "")),
     }
 
 
@@ -438,6 +481,7 @@ def _register_tmajmin(type_name: str, mass_name: str, mass_dimension: str) -> No
         type_name=type_name,
         name="T_maj_min",
         convert=_tmajmin_to_tpp,
+        convert_with_validity=_tmajmin_to_tpp_with_validity,
         invert=_tpp_to_tmajmin,
         raw_dimensions={
             mass_name: mass_dimension,

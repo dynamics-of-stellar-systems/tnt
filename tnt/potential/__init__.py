@@ -1,15 +1,15 @@
 """Galactic potentials, assembled from named, `galax`-backed components.
 
 `potential.<name>.type` names either a curated `galax.potential` class (see
-`_SUPPORTED_GALAX_TYPES`, e.g. `"NFWPotential"`, `"PlummerPotential"`) or one
-of four TNT-specific MGE composite potentials -- triaxial
+`registry._SUPPORTED_GALAX_TYPES`, e.g. `"NFWPotential"`, `"PlummerPotential"`)
+or one of four TNT-specific MGE composite potentials -- triaxial
 (`"TriaxialLightMGEPotential"`/`"TriaxialMassMGEPotential"`) or oblate
 axisymmetric (`"OblateLightMGEPotential"`/`"OblateMassMGEPotential"`) -- each
 built from a named MGE, and pairs every supported class with each native
 parameter's mass-rescale exponent.
 `parameterization` is a separate, optional concern: when omitted,
 `parameters` use the resolved type's own native constructor kwargs, with
-physical dimensions read directly from `_SUPPORTED_GALAX_TYPES` (see
+physical dimensions read directly from `registry._SUPPORTED_GALAX_TYPES` (see
 `raw_parameter_dimensions`). When given, `parameterization` names a
 registered conversion from some other raw parameter convention into those
 same native fields.
@@ -24,9 +24,7 @@ is split from building it at a given point in parameter space
 `Potential`s from the same configuration -- e.g. `ModelIterator`, once per
 proposed point -- resolves once and reuses the result.
 
-This module is filled in incrementally, one object at a time -- the same
-approach already used for `ProjectedBinning`. `Potential.generate_orbit_library`
-remains `NotImplementedError`.
+`Potential.generate_orbit_library` remains `NotImplementedError`.
 
 Split across submodules by concern: `registry` (curated `galax` types, their
 native parameters' dimensions/mass-rescale exponents, and TNT component /
@@ -41,25 +39,17 @@ composite types, one sibling module per deprojection convention), and
 
 from __future__ import annotations
 
+from tnt.potential import nfw as _nfw  # noqa: F401 -- registers NFW parameterization
 from tnt.potential.components import (
     AbstractPotentialComponent,
     GalaxPotentialComponent,
     ResolvedPotentialComponent,
 )
 from tnt.potential.core import Potential, build_potential, raw_potential_parameters
-from tnt.potential.nfw import (
-    _nfw_concentration_m200 as _nfw_concentration_m200,
-)
-from tnt.potential.nfw import (
-    _nfw_concentration_m200_inverse as _nfw_concentration_m200_inverse,
-)
-from tnt.potential.nfw import _nfw_g as _nfw_g
-from tnt.potential.nfw import _solve_nfw_concentration as _solve_nfw_concentration
 from tnt.potential.oblate_mge import (
     OblateLightMGEPotential,
     OblateMassMGEPotential,
 )
-from tnt.potential.registry import _SUPPORTED_GALAX_TYPES as _SUPPORTED_GALAX_TYPES
 from tnt.potential.registry import (
     InvalidPotentialParametersError,
     NativeParameter,

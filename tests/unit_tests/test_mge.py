@@ -14,7 +14,7 @@ from tnt.mge import (
     LightMGE,
     MassMGE,
     MGEDeprojectionError,
-    _p_q_u_from_T_Tmaj_Tmin,
+    _p_q_u_candidate,
     _T_Tmaj_Tmin_from_p_q_u,
     build_mges,
     read_mge,
@@ -404,13 +404,12 @@ def test_inclination_from_q_min_and_q_min_from_inclination_are_inverses():
     assert q_min_r == pytest.approx(0.6, abs=1e-9)
 
 
-def test_inclination_from_q_min_at_the_anchor_edge_is_edge_on():
-    # q_min == q_obs' is the inclusive i = 90 deg (edge-on) limit.
+def test_inclination_from_q_min_rejects_the_edge_on_derivative_singularity():
+    # The angle is finite, but its derivative with respect to q_min is not.
     mge = _triaxial_anchor_mge()
 
-    inclination = mge.inclination_from_q_min(0.76)
-
-    assert inclination.ustrip("deg") == pytest.approx(90.0, abs=1e-9)
+    with pytest.raises(MGEDeprojectionError, match="unbounded conversion derivative"):
+        mge.inclination_from_q_min(0.76)
 
 
 def test_inclination_from_q_min_rejects_q_min_above_the_anchor():
@@ -430,10 +429,8 @@ def test_inclination_from_q_min_rejects_a_circular_anchor():
 
 
 def test_inclination_from_q_min_rejects_a_thin_disk_at_reduced_precision():
-    # PR-68 audit finding: deproject_oblate's own q**2 = q_obs**2 - cos(i)**2
-    # subtracts two nearly equal quantities whenever q_min is small relative
-    # to q_obs -- at float32, q_min = 0.001 against q_obs = 0.76 previously
-    # recovered ~0.00106249 (+6.2% relative error) without ever raising.
+    # Cancellation in q_obs**2 - cos(i)**2 makes this thin float32 proposal
+    # unreliable at the selected precision.
     with jax.enable_x64(False):
         mge = _single_component_light_mge(q_obs=0.76, psi=0.0)
         with pytest.raises(MGEDeprojectionError, match="precision boundary"):
@@ -441,10 +438,8 @@ def test_inclination_from_q_min_rejects_a_thin_disk_at_reduced_precision():
 
 
 def test_inclination_from_q_min_rejects_a_near_circular_anchor_at_reduced_precision():
-    # PR-68 audit finding: the same cancellation also triggers for an
-    # ordinary, non-thin q_min when the anchor itself is nearly circular --
-    # at float32, q_min = 0.6 against q_obs = 0.999999 previously recovered
-    # ~0.613572 (+2.26% relative error).
+    # A nearly circular observed anchor also loses reliable intrinsic-shape
+    # accuracy at float32, even when the requested q_min is not thin.
     with jax.enable_x64(False):
         mge = _single_component_light_mge(q_obs=0.999999, psi=0.0)
         with pytest.raises(MGEDeprojectionError, match="precision boundary"):
@@ -741,7 +736,9 @@ def test_triaxial_viewing_angles_reject_a_too_narrow_domain():
         (0.76, 0.85, 0.60, 0.93),  # interior, for contrast
     ],
 )
-def test_triaxial_viewing_angles_round_trip_at_both_precisions(x64, q_obs, p, q, u_in):
+def test_triaxial_viewing_angles_interior_and_boundary_at_both_precisions(
+    x64, q_obs, p, q, u_in
+):
     with jax.enable_x64(x64):
         mge = LightMGE(
             I=u.Quantity(jnp.array([1.0]), "Lsun / pc2"),
@@ -750,12 +747,15 @@ def test_triaxial_viewing_angles_round_trip_at_both_precisions(x64, q_obs, p, q,
             PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
             major_axis_pa=u.Quantity(0.0, "deg"),
         )
+        if u_in == 1.0 or u_in == p / q_obs:
+            with pytest.raises(MGEDeprojectionError, match="precision boundary"):
+                mge.triaxial_viewing_angles(p, q, u_in)
+            return
         theta, phi, psi = mge.triaxial_viewing_angles(p, q, u_in)
         p_r, q_r, u_r = mge.triaxial_intrinsic_shape(theta, phi, psi)
     tol = 1e-9 if x64 else 1e-4
     assert (p_r, q_r) == pytest.approx((p, q), abs=tol)
-    # a boundary u is honoured only to the precision-scaled margin
-    assert u_r == pytest.approx(u_in, abs=1e-6 if x64 else 3e-3)
+    assert u_r == pytest.approx(u_in, abs=tol)
 
 
 @pytest.mark.parametrize(
@@ -768,7 +768,10 @@ def test_T_Tmaj_Tmin_round_trips_through_p_q_u(p, q, u_, q_obs):
     assert 0.0 <= T_maj <= 1.0
     assert 0.0 <= T_min <= 1.0
 
-    p_r, q_r, u_r = _p_q_u_from_T_Tmaj_Tmin(T, T_maj, T_min, q_obs)
+    (p_r, q_r, u_r), checks = _p_q_u_candidate(
+        *(jnp.asarray(value, dtype=float) for value in (T, T_maj, T_min, q_obs))
+    )
+    assert all(bool(valid) for valid in checks.values())
 
     assert (p_r, q_r, u_r) == pytest.approx((p, q, u_), abs=1e-9)
 
@@ -781,12 +784,19 @@ def test_T_matches_the_ngc1453_value_from_quenneville_liepold_ma_2022():
     assert T == pytest.approx(0.33, abs=5e-3)
 
 
-def test_p_q_u_from_T_Tmaj_Tmin_rejects_a_degenerate_denominator():
+def test_p_q_u_candidate_flags_a_degenerate_denominator():
     # den = 1 - (1-T)*T_min - q_obs^2*T*T_maj == 0 at T=1, T_maj=1, q_obs^2=1... but
     # q_obs < 1 always for a flattened MGE, so drive den -> 0 via T_min instead:
     # (1-T)*T_min == 1 needs T=0, T_min=1 (T*T_maj term then vanishes since T=0).
+    _, checks = _p_q_u_candidate(
+        *(jnp.asarray(value, dtype=float) for value in (0.0, 0.5, 1.0, 0.76))
+    )
+    assert any(
+        "denominator" in message and not bool(valid)
+        for message, valid in checks.items()
+    )
     with pytest.raises(MGEDeprojectionError, match="denominator"):
-        _p_q_u_from_T_Tmaj_Tmin(T=0.0, T_maj=0.5, T_min=1.0, q_obs=0.76)
+        _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(0.0, 0.5, 1.0)
 
 
 def test_T_Tmaj_Tmin_and_viewing_angles_are_inverses():
@@ -821,39 +831,39 @@ def test_viewing_angles_from_T_Tmaj_Tmin_rejects_a_prolate_geometry():
         _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(1.0, 0.5, 0.5)
 
 
-def test_p_q_u_from_T_Tmaj_Tmin_rejects_a_zero_thickness_boundary():
+def test_p_q_u_candidate_flags_a_zero_thickness_boundary():
     # q_obs=0.5, (T, T_maj, T_min) = (0.5, 0.5, 0.375): den = 1 - 0.5*0.375 -
     # 0.25*0.5*0.5 = 0.75 exactly, giving q^2 = 1 - (1 - 0.25)/0.75 = 0.0
     # exactly -- a zero-thickness anchor, excluded by TNT's strict
     # `0 < q <= p <= 1` intrinsic-axis convention even though it's a
     # boundary rather than negative value.
-    with pytest.raises(MGEDeprojectionError, match="positive"):
-        _p_q_u_from_T_Tmaj_Tmin(T=0.5, T_maj=0.5, T_min=0.375, q_obs=0.5)
+    _, checks = _p_q_u_candidate(
+        *(jnp.asarray(value, dtype=float) for value in (0.5, 0.5, 0.375, 0.5))
+    )
+    assert any(
+        "positive" in message and not bool(valid) for message, valid in checks.items()
+    )
 
 
-def test_p_q_u_from_T_Tmaj_Tmin_accepts_the_adjacent_interior_point():
-    # One ULP-scale nudge off the exact zero-thickness boundary above should
-    # still deproject normally -- confirms the new q^2 > 0 check rejects
-    # only the boundary itself, not a neighbourhood around it.
-    p, q, u_ = _p_q_u_from_T_Tmaj_Tmin(T=0.5, T_maj=0.5, T_min=0.374, q_obs=0.5)
+def test_p_q_u_candidate_accepts_a_nearby_interior_point():
+    # Moving T_min from 0.375 to 0.374 gives strictly positive thickness.
+    (p, q, u_), checks = _p_q_u_candidate(
+        *(jnp.asarray(value, dtype=float) for value in (0.5, 0.5, 0.374, 0.5))
+    )
+    assert all(bool(valid) for valid in checks.values())
     assert 0.0 < q <= p <= 1.0
     assert 0.0 < u_ <= 1.0
 
 
-def test_viewing_angles_from_T_Tmaj_Tmin_rejects_a_clamped_boundary_point():
-    # Same point the PR-67 audit flagged: near the T -> 0 (oblate) limit,
-    # triaxial_viewing_angles's own eps-margin clamp on u moves u by only
-    # ~3e-8, but (T, T_maj, T_min) divides by (1 - p**2) and (p**2 - q**2),
-    # amplifying that into a recovered T_maj far from the one requested
-    # (0.1 requested vs. ~0.226 previously silently recovered). The
-    # round-trip check must reject this rather than build the wrong point.
+def test_viewing_angles_from_T_Tmaj_Tmin_rejects_a_precision_boundary():
+    # Near the oblate limit, the requested compression is too close to the
+    # singular boundary. Reject the proposal instead of clipping its shape.
     with pytest.raises(MGEDeprojectionError, match="precision boundary"):
         _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(1e-6, 0.1, 0.2)
 
 
 def test_viewing_angles_from_T_Tmaj_Tmin_accepts_an_ordinary_interior_point():
-    # The round-trip check must not reject points that aren't actually near
-    # a clamped boundary -- confirms it doesn't just reject everything.
+    # An ordinary interior shape must retain finite viewing angles.
     theta, phi, psi = _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(
         0.43, 0.49, 0.39
     )
@@ -863,15 +873,11 @@ def test_viewing_angles_from_T_Tmaj_Tmin_accepts_an_ordinary_interior_point():
 @pytest.mark.parametrize(
     ("T", "T_maj", "T_min"), [(0.1, 0.02, 0.2), (0.1, 0.03, 0.2), (0.05, 0.08, 0.2)]
 )
-def test_viewing_angles_from_T_Tmaj_Tmin_rejects_small_coordinate_drift_at_float32(
+def test_viewing_angles_from_T_Tmaj_Tmin_rejects_precision_limited_shapes_at_float32(
     T, T_maj, T_min
 ):
-    # PR-67 re-audit finding: a purely *absolute* round-trip tolerance is
-    # blind to a small requested coordinate -- at float32, T_maj = 0.02
-    # (etc.) previously recovered a value ~32%-168% larger, well under the
-    # old absolute-only bound (~0.0345), without ever raising. These same
-    # three points are genuinely fine at float64 (agree to ~1e-13) -- only
-    # float32 should reject them.
+    # These shapes are reliable at float64, but their conversion is too
+    # close to a numerical boundary for float32.
     with jax.enable_x64(True):
         mge = _triaxial_anchor_mge()  # anchor q' = 0.76
         theta, phi, psi = mge.viewing_angles_from_T_Tmaj_Tmin(T, T_maj, T_min)
