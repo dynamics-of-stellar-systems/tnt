@@ -60,6 +60,13 @@ configuration declares, so a reported value comes back in the parameterization
 *and* the unit the config actually specifies. `mge` as for `ForwardConverter`.
 """
 
+ValidityConverter = Callable[..., tuple[dict[str, Quantity], jax.Array]]
+"""Forward conversion with a scalar proposal-dependent numerical validity flag.
+
+Static output names, dimensions and shapes follow `ForwardConverter`'s
+contract. Invalid results are placeholders, never native physical parameters.
+"""
+
 
 class InvalidPotentialParametersError(ValueError):
     """A proposed parameter set cannot define a physically valid potential."""
@@ -210,6 +217,8 @@ class ParameterizationSpec(NamedTuple):
     """Each raw config parameter's physical dimension, for schema validation."""
     raw_constraints: dict[str, ParameterConstraint]
     """Physical-domain constraints on raw configuration parameters."""
+    convert_with_validity: ValidityConverter | None = None
+    """Optional guarded conversion sharing the eager converter's checks."""
 
 
 class NativeParameter(NamedTuple):
@@ -551,6 +560,7 @@ def register_parameterization(
     invert: InverseConverter,
     raw_dimensions: Mapping[str, str],
     raw_constraints: Mapping[str, ParameterConstraint],
+    convert_with_validity: ValidityConverter | None = None,
 ) -> None:
     """Register a non-native `parameterization` for `type_name` under `name`.
 
@@ -559,6 +569,11 @@ def register_parameterization(
     (`_validate_potential`) and runtime resolution can never disagree on which
     parameterizations exist, what parameters they take, or which raw domains
     they accept.
+
+    ``convert_with_validity`` optionally supplies a guarded forward conversion
+    using the eager converter's numerical predicates. MGE traced construction
+    requires it for a non-native parameterization and checks its native schema
+    and scalar boolean contract before probing the full construction chain.
 
     `type_name` must be either a curated native `galax` class
     (`_SUPPORTED_GALAX_TYPES`) or a registered TNT component type
@@ -599,6 +614,7 @@ def register_parameterization(
         invert,
         dict(raw_dimensions),
         dict(raw_constraints),
+        convert_with_validity,
     )
 
 

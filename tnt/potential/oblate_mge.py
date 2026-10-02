@@ -31,6 +31,7 @@ from typing import Any, ClassVar, Self
 
 import equinox as eqx
 import galax.potential
+import jax
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, MGEDeprojectionError
@@ -269,12 +270,30 @@ def _qmin_to_inclination(
             "The 'q_min' parameterization requires an MGE component."
         )
     try:
-        inclination = mge.inclination_from_q_min(float(raw["q_min"].ustrip("")))
+        inclination = mge.inclination_from_q_min(raw["q_min"].ustrip(""))
     except MGEDeprojectionError as error:
         raise InvalidPotentialParametersError(str(error)) from error
 
     mass = _mass_parameter_name(raw)
     return {mass: raw[mass], "inclination": inclination}
+
+
+def _qmin_to_inclination_with_validity(
+    raw: dict[str, Quantity],
+    cosmological_parameters: Mapping[str, Quantity],
+    mge: LightMGE | MassMGE | None,
+) -> tuple[dict[str, Quantity], jax.Array]:
+    """Guarded registry adapter using the eager conversion's JAX predicates."""
+    del cosmological_parameters
+    if mge is None:
+        raise InvalidPotentialParametersError(
+            "The 'q_min' parameterization requires an MGE component."
+        )
+    inclination, valid = mge.inclination_from_q_min_with_validity(
+        raw["q_min"].ustrip("")
+    )
+    mass = _mass_parameter_name(raw)
+    return {mass: raw[mass], "inclination": inclination}, valid
 
 
 def _inclination_to_qmin(
@@ -306,6 +325,7 @@ def _register_q_min(type_name: str, mass_name: str, mass_dimension: str) -> None
         type_name=type_name,
         name="q_min",
         convert=_qmin_to_inclination,
+        convert_with_validity=_qmin_to_inclination_with_validity,
         invert=_inclination_to_qmin,
         raw_dimensions={mass_name: mass_dimension, "q_min": "dimensionless"},
         raw_constraints={

@@ -144,18 +144,22 @@ raw and converted parameter validity before allowing differentiation;
 invalid converted components contain zero placeholders in the converter's
 output units. This also rejects proposals whose positive raw values overflow
 or otherwise produce invalid native parameters. All four MGE component types
-support native viewing angles and normalization inside one JAX trace.
-MGE `q_min`, `pqu`, and `T_maj_min` conversions remain eager; proposal batching
-and prior/model-iterator integration are deferred.
+support native viewing angles and normalization inside one JAX trace, including
+`q_min`, `pqu`, and `T_maj_min` parameter conversions. Proposal batching and
+prior/model-iterator integration are deferred.
 
 The MGE-level `inclination_from_q_min_with_validity` method uses the same
 domain and round-trip checks as eager conversion. The edge-on `q_min == q'`
 limit has a finite angle but an unbounded conversion derivative and is
 rejected. Native edge-on inclination remains a supported viewing geometry.
 
-Native MGE construction validates the complete set of Gaussians: intrinsic
+MGE construction validates the complete set of Gaussians: intrinsic
 `0 < q <= p <= 1`, positive finite density, width and mass, and finite
 construction derivatives in declared units and local `Msun`/`kpc` units.
+For shape parameterizations, the derivative probes cover the full chain
+from the original shape coordinates through converted viewing angles to
+intrinsic geometry, density, widths, and masses. A valid anchor alone is
+insufficient: every Gaussian must pass the construction checks.
 Both forward and reverse automatic differentiation must produce finite
 derivatives and agree within the precision-dependent `50 * sqrt(eps)`
 tolerance, including an output/input-scaled roundoff allowance for zero

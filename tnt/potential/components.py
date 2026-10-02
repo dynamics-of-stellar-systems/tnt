@@ -36,6 +36,7 @@ from tnt.potential.registry import (
     ForwardConverter,
     InvalidPotentialParametersError,
     ParameterConstraint,
+    ValidityConverter,
     component_type_names,
     get_component_class,
     get_parameterization,
@@ -64,6 +65,7 @@ class ResolvedPotentialComponent(NamedTuple):
     convert: ForwardConverter | None
     extra_fields: dict[str, Any]
     path: str
+    convert_with_validity: ValidityConverter | None = None
 
     def _raw_parameters_valid(
         self, parameter_values: Mapping[str, Quantity]
@@ -82,8 +84,8 @@ class ResolvedPotentialComponent(NamedTuple):
     ) -> tuple[AbstractPotentialComponent, jax.Array]:
         """Build a component and return its scalar JAX validity flag.
 
-        Galax native parameters/traceable conversions and native MGE parameters
-        are supported. MGE parameter conversions are deferred.
+        Galax and MGE native parameters and registered traceable conversions
+        are supported.
         Conversion first probes native validity without differentiation, then
         runs differentiably only for valid proposals. Invalid converted proposals
         contain zero placeholders in the converter's output units, never a
@@ -97,13 +99,12 @@ class ResolvedPotentialComponent(NamedTuple):
                 raise NotImplementedError(
                     f"Traced construction is not implemented for {self.path}."
                 )
-            if self.convert is not None:
-                raise NotImplementedError(
-                    "Traced MGE parameter conversions are not implemented "
-                    f"for {self.path}."
-                )
             return _build_mge_with_validity(
-                self.component_cls, raw, self.extra_fields, valid
+                self.component_cls,
+                raw,
+                self.extra_fields,
+                valid,
+                convert=self._mge_converter(cosmological_parameters),
             )
         if self.convert is None:
             canonical = raw
@@ -140,6 +141,37 @@ class ResolvedPotentialComponent(NamedTuple):
         )
         return component, valid
 
+    def _mge_converter(
+        self, cosmological_parameters: Mapping[str, Quantity]
+    ) -> ValidityConverter | None:
+        """Bind a guarded converter and enforce its native output contract."""
+        if self.convert is None:
+            return None
+        if self.convert_with_validity is None:
+            raise NotImplementedError(
+                f"No guarded MGE parameter converter is registered for {self.path}."
+            )
+
+        def convert(
+            values: dict[str, Quantity],
+        ) -> tuple[dict[str, Quantity], jax.Array]:
+            native, valid = self.convert_with_validity(
+                values, cosmological_parameters, self.extra_fields["mge"]
+            )
+            valid = jnp.asarray(valid)
+            if valid.shape != () or valid.dtype != jnp.bool_:
+                raise TypeError(
+                    f"The converter for {self.path} must return a scalar boolean flag."
+                )
+            _check_parameter_set_structure(
+                native, self.canonical_dimensions, path=self.path, stage="converted"
+            )
+            return native, valid & _parameter_values_valid(
+                native, self.canonical_constraints
+            )
+
+        return convert
+
     def build(
         self,
         parameter_values: Mapping[str, Quantity],
@@ -154,7 +186,7 @@ class ResolvedPotentialComponent(NamedTuple):
         converter's canonical output is checked again against the native
         component constraints. No unit-system normalization happens here (see
         `tnt.potential`'s module docstring); constraints convert only as needed
-        for a comparison. Native MGE construction shares its numerical checks
+        for a comparison. MGE construction shares its numerical checks
         with `build_with_validity`, including geometry and derivative checks.
         Validation uses Python boolean checks, so `build` is an
         eager runtime boundary and must remain outside `jax.jit`/`jax.vmap`
@@ -192,9 +224,13 @@ class ResolvedPotentialComponent(NamedTuple):
                 path=self.path,
                 stage="converted",
             )
-        if self.component_cls._native_mge and self.convert is None:
+        if self.component_cls._native_mge:
             component, valid = _build_mge_with_validity(
-                self.component_cls, canonical, self.extra_fields, jnp.asarray(True)
+                self.component_cls,
+                raw,
+                self.extra_fields,
+                jnp.asarray(True),
+                convert=self._mge_converter(cosmological_parameters),
             )
             if not bool(valid):
                 # Preserve the eager geometry diagnostics from the same checks.
@@ -216,40 +252,53 @@ def _build_mge_with_validity(
     parameters: dict[str, Quantity],
     extra_fields: dict[str, Any],
     raw_valid: jax.Array,
+    *,
+    convert: ValidityConverter | None = None,
 ) -> tuple[AbstractPotentialComponent, jax.Array]:
-    """Shared native construction for light/mass and oblate/triaxial MGEs."""
+    """Shared raw-to-intrinsic construction and derivative checks for MGEs."""
     mge = extra_fields["mge"]
 
     def candidate(
         values: dict[str, Quantity],
-    ) -> tuple[Deprojected3DMGE, jax.Array]:
+    ) -> tuple[tuple[dict[str, Quantity], Deprojected3DMGE], jax.Array]:
+        canonical, conversion_valid = (
+            (values, jnp.asarray(True)) if convert is None else convert(values)
+        )
         mass = (
-            mge.to_mass(values["ml"])
+            mge.to_mass(canonical["ml"])
             if isinstance(mge, LightMGE)
-            else mge.rescaled(values["mge_mass_scale"])
+            else mge.rescaled(canonical["mge_mass_scale"])
         )
-        if "inclination" in values:
-            mass._check_deprojection_structure(values["inclination"])
-            return mass._oblate_candidate(values["inclination"])
-        mass._check_deprojection_structure(
-            values["theta"], values["phi"], values["psi"]
-        )
-        return mass._triaxial_candidate(values["theta"], values["phi"], values["psi"])
+        if "inclination" in canonical:
+            mass._check_deprojection_structure(canonical["inclination"])
+            model, valid = mass._oblate_candidate(canonical["inclination"])
+        else:
+            mass._check_deprojection_structure(
+                canonical["theta"], canonical["phi"], canonical["psi"]
+            )
+            model, valid = mass._triaxial_candidate(
+                canonical["theta"], canonical["phi"], canonical["psi"]
+            )
+        return (canonical, model), conversion_valid & valid
 
     def numerical_outputs(numbers: dict[str, jax.Array]) -> tuple[jax.Array, ...]:
         values = {
             key: Quantity(number, parameters[key].unit)
             for key, number in numbers.items()
         }
-        model, _ = candidate(values)
+        (canonical, model), _ = candidate(values)
         total = model.component_masses
-        outputs = tuple(
-            value.ustrip(value.unit)
-            for value in (model.I, model.sigma, model.p, model.q, total)
-        ) + (
-            model.I.ustrip("Msun / kpc3"),
-            model.sigma.ustrip("kpc"),
-            total.ustrip("Msun"),
+        outputs = (
+            tuple(
+                value.ustrip(value.unit)
+                for value in (model.I, model.sigma, model.p, model.q, total)
+            )
+            + tuple(value.ustrip(value.unit) for value in canonical.values())
+            + (
+                model.I.ustrip("Msun / kpc3"),
+                model.sigma.ustrip("kpc"),
+                total.ustrip("Msun"),
+            )
         )
         # Fixed columns may be integer-valued (notably oblate widths).
         # Reverse differentiation requires real floating-point outputs.
@@ -294,8 +343,8 @@ def _build_mge_with_validity(
         for x in jax.tree.leaves((parameters, mge, raw_valid))
     ):
         valid = raw_valid & probe(parameters) if bool(raw_valid) else jnp.asarray(False)
-        model = candidate(parameters)[0] if bool(valid) else placeholder
-        return component_cls(parameters=parameters, mge=mge, deprojected=model), valid
+        canonical, model = candidate(parameters)[0] if bool(valid) else placeholder
+        return component_cls(parameters=canonical, mge=mge, deprojected=model), valid
     # Invalid normalization/angles must never enter differentiated scaling or
     # deprojection, including 0 * inf in a reverse-mode cotangent.
     geometry_valid = jax.lax.cond(
@@ -305,10 +354,10 @@ def _build_mge_with_validity(
         jax.tree.map(jax.lax.stop_gradient, parameters),
     )
     valid = raw_valid & geometry_valid
-    deprojected = jax.lax.cond(
+    canonical, deprojected = jax.lax.cond(
         valid, lambda values: candidate(values)[0], lambda _: placeholder, parameters
     )
-    return component_cls(parameters=parameters, mge=mge, deprojected=deprojected), valid
+    return component_cls(parameters=canonical, mge=mge, deprojected=deprojected), valid
 
 
 def _parameter_values_valid(
@@ -486,6 +535,7 @@ class AbstractPotentialComponent(eqx.Module):
 
         parameterization_name = settings.get("parameterization")
         convert: ForwardConverter | None = None
+        convert_with_validity: ValidityConverter | None = None
         if parameterization_name is not None:
             _string(parameterization_name, f"{path}.parameterization")
             spec = get_parameterization(kind, parameterization_name)
@@ -498,6 +548,7 @@ class AbstractPotentialComponent(eqx.Module):
                     f"implemented for type {kind!r}; implemented: {allowed}."
                 )
             convert = spec.convert
+            convert_with_validity = spec.convert_with_validity
 
         return ResolvedPotentialComponent(
             component_cls=component_cls,
@@ -508,6 +559,7 @@ class AbstractPotentialComponent(eqx.Module):
             convert=convert,
             extra_fields=component_cls._extra_fields(kind, settings, mges, path=path),
             path=path,
+            convert_with_validity=convert_with_validity,
         )
 
     @classmethod

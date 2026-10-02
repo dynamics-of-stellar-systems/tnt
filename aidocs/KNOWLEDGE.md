@@ -222,15 +222,17 @@
   system distance and preserves `I`. For fixed angular widths, total
   luminosity/mass scales with distance squared. Direct constructors may
   already carry physical widths. See `docs/source/data_preparation.md`.
-- Native MGE deprojection has paired eager and `with_validity` APIs.
+- MGE deprojection and shape conversion have paired eager and `with_validity` APIs.
   All four supported MGE potential types construct inside one JAX trace using
-  native normalization and viewing angles. The complete proposal returns one
+  native parameters or `q_min`, `pqu`, and `T_maj_min` parameterizations.
+  The complete proposal returns one
   scalar boolean; invalid intrinsic MGEs contain zeros and must not be used,
   including through `to_galax`, unless the flag is true. Eager and traced paths
   share intrinsic-axis, finite positive density/width/mass, and numerical
-  accuracy checks. Native potential construction additionally probes values
+  accuracy checks. MGE potential construction additionally probes values
   and both forward- and reverse-mode construction derivatives in declared and
-  local `Msun`/`kpc` units before allowing differentiation. Both modes must be
+  local `Msun`/`kpc` units before allowing differentiation, including native
+  angle outputs and the full raw-coordinate-to-intrinsic chain. Both modes must be
   finite and agree within `50*sqrt(eps)`, with an output/input-scaled roundoff
   allowance for zero derivatives (such as mass versus viewing angle).
   Oblate cancellation and triaxial
@@ -252,7 +254,7 @@
   values, and gradients; finite
   integrated mass alone is insufficient when reverse-mode intermediates
   overflow at the selected precision.
-  The native-MGE validity contract covers deprojection and construction
+  The MGE validity contract covers deprojection and construction
   values/derivatives. By explicit scope decision, it does not certify Galax's
   fixed-order potential quadrature. Galax's 50-point Gaussian quadrature can
   be inaccurate for very thin Gaussians: at oblate q=0.001 the normalized
@@ -263,8 +265,9 @@
   `AbstractMGE.inclination_from_q_min` and its `with_validity` counterpart
   share scalar JAX domain and round-trip checks. The edge-on `q_min == q'`
   limit is rejected because its conversion derivative is unbounded.
-  Potential adapters for MGE `q_min`, `pqu`, and `T_maj_min` remain eager; proposal
-  batching and prior/model-iterator integration are deferred.
+  Registry adapters for all three shape parameterizations provide guarded
+  conversions using these same checks. Proposal batching and
+  prior/model-iterator integration are deferred.
   `ModelIterator._evaluate()` still catches Python exceptions and returns a
   variable-length `list[Model]`; orbit integration and weight solving remain
   scaffolding.
@@ -543,11 +546,13 @@
   limiting profile. `MonariEtAl2016BarPotential.alpha` and its pattern speed
   `Omega` deliberately remain signed, including negative values.
 - Non-native parameterizations register via `registry.register_parameterization(
-  type_name=, name=, convert=, invert=, raw_dimensions=, raw_constraints=)` --
+  type_name=, name=, convert=, invert=, raw_dimensions=, raw_constraints=,
+  convert_with_validity=)` --
   one call, from the module owning the numerics (`tnt.potential.nfw` for
   `concentration_m200`, `tnt.potential.triaxial_mge` for `pqu`), mirroring
   `register_component`. It bundles the forward/inverse converters, config
-  parameter schema, and raw domain rules in a single `ParameterizationSpec`,
+  parameter schema, raw domain rules, and optional guarded forward converter
+  in a single `ParameterizationSpec`,
   so validation and runtime resolution can't disagree on which
   parameterizations exist. Read back via `get_parameterization(type, name)` /
   `parameterization_names(type)`. `type_name` may be a curated native `galax`
