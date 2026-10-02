@@ -740,7 +740,9 @@ def test_triaxial_viewing_angles_reject_a_too_narrow_domain():
         (0.76, 0.85, 0.60, 0.93),  # interior, for contrast
     ],
 )
-def test_triaxial_viewing_angles_round_trip_at_both_precisions(x64, q_obs, p, q, u_in):
+def test_triaxial_viewing_angles_interior_and_boundary_at_both_precisions(
+    x64, q_obs, p, q, u_in
+):
     with jax.enable_x64(x64):
         mge = LightMGE(
             I=u.Quantity(jnp.array([1.0]), "Lsun / pc2"),
@@ -749,12 +751,15 @@ def test_triaxial_viewing_angles_round_trip_at_both_precisions(x64, q_obs, p, q,
             PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
             major_axis_pa=u.Quantity(0.0, "deg"),
         )
+        if u_in == 1.0 or u_in == p / q_obs:
+            with pytest.raises(MGEDeprojectionError, match="precision boundary"):
+                mge.triaxial_viewing_angles(p, q, u_in)
+            return
         theta, phi, psi = mge.triaxial_viewing_angles(p, q, u_in)
         p_r, q_r, u_r = mge.triaxial_intrinsic_shape(theta, phi, psi)
     tol = 1e-9 if x64 else 1e-4
     assert (p_r, q_r) == pytest.approx((p, q), abs=tol)
-    # a boundary u is honoured only to the precision-scaled margin
-    assert u_r == pytest.approx(u_in, abs=1e-6 if x64 else 3e-3)
+    assert u_r == pytest.approx(u_in, abs=tol)
 
 
 @pytest.mark.parametrize(

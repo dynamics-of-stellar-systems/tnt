@@ -93,3 +93,155 @@ def test_shape_conversion_structure_errors_remain_errors():
         jax.jit(lambda x: angular.inclination_from_q_min_with_validity(x))(
             jnp.asarray(0.6)
         )
+
+
+def _projected_covariance(angles, shape):
+    """Independent sky projection of diag(1, p^2, q^2)/u^2."""
+    theta, phi, _psi = angles
+    p, q, u = shape
+    sky = np.array(
+        [
+            [np.sin(phi), -np.cos(phi), 0],
+            [np.cos(theta) * np.cos(phi), np.cos(theta) * np.sin(phi), -np.sin(theta)],
+        ]
+    )
+    intrinsic = np.diag([1, p**2, q**2]) / u**2
+    return sky @ intrinsic @ sky.T
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_pqu_and_tmajmin_angles_project_the_requested_covariance(x64):
+    with jax.enable_x64(x64):
+        mge = _mge(twist=0.3)
+        shape = jnp.array([0.85, 0.6, 0.93])
+        p, q, u = np.asarray(shape, dtype=float)
+        observed = float(mge.q.ustrip("")[0])
+        coordinates = jnp.array(
+            [
+                (1 - p**2) / (1 - q**2),
+                (1 - u**2) / (1 - p**2),
+                (u**2 * observed**2 - q**2) / (p**2 - q**2),
+            ]
+        )
+        reference = None
+        for convert, eager, values in (
+            (
+                mge.triaxial_viewing_angles_with_validity,
+                mge.triaxial_viewing_angles,
+                shape,
+            ),
+            (
+                mge.viewing_angles_from_T_Tmaj_Tmin_with_validity,
+                mge.viewing_angles_from_T_Tmaj_Tmin,
+                coordinates,
+            ),
+        ):
+
+            def evaluate(values, convert=convert):
+                angles, valid = convert(*values)
+                return jnp.stack([value.ustrip("rad") for value in angles]), valid
+
+            angles, valid = jax.jit(evaluate)(values)
+            assert bool(valid) and valid.shape == ()
+            assert np.isfinite(
+                np.asarray(jax.jit(jax.jacrev(lambda x: evaluate(x)[0]))(values))
+            ).all()
+            eager_angles = eager(*values)
+            np.testing.assert_allclose(
+                angles, [float(x.ustrip("rad")) for x in eager_angles], rtol=2e-5
+            )
+            local = np.asarray(angles, dtype=float).copy()
+            local[2] += float(mge.PA_twist.ustrip("rad")[0])
+            covariance = _projected_covariance(local, np.asarray(shape, dtype=float))
+            cs, sn = np.cos(local[2]), np.sin(local[2])
+            expected = np.array(
+                [
+                    [sn**2 + observed**2 * cs**2, (observed**2 - 1) * sn * cs],
+                    [(observed**2 - 1) * sn * cs, cs**2 + observed**2 * sn**2],
+                ]
+            )
+            np.testing.assert_allclose(covariance, expected, rtol=2e-5, atol=2e-6)
+            if reference is None:
+                reference = np.asarray(angles)
+            else:
+                np.testing.assert_allclose(angles, reference, rtol=2e-5, atol=2e-6)
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_triaxial_invalid_shapes_have_zero_finite_gradients(x64):
+    with jax.enable_x64(x64):
+        mge = _mge()
+        for convert, eager, proposals in (
+            (
+                mge.triaxial_viewing_angles_with_validity,
+                mge.triaxial_viewing_angles,
+                [
+                    [0.85, 0.85, 0.93],
+                    [0.85, 0.6, 0.65],
+                    [0.85, 0.6, 1.0],
+                    [0.99999999, 0.6, 1.0],
+                    [np.nan, 0.6, 0.93],
+                    [0.85, 0.6, np.inf],
+                ],
+            ),
+            (
+                mge.viewing_angles_from_T_Tmaj_Tmin_with_validity,
+                mge.viewing_angles_from_T_Tmaj_Tmin,
+                [
+                    [0, 0.5, 1],
+                    [1, 0.5, 0.5],
+                    [1e-6, 0.1, 0.2],
+                    [-0.1, 0.5, 0.5],
+                    [0.5, np.nan, 0.5],
+                    [0.5, 0.5, np.inf],
+                ],
+            ),
+        ):
+
+            def evaluate(values, convert=convert):
+                angles, valid = convert(*values)
+                return sum(x.ustrip("rad") for x in angles), valid
+
+            compiled = jax.jit(jax.value_and_grad(evaluate, has_aux=True))
+            for proposal in proposals:
+                values = jnp.array(proposal, dtype=float)
+                (result, valid), gradient = compiled(values)
+                assert not bool(valid)
+                assert float(result) == 0
+                np.testing.assert_array_equal(gradient, np.zeros(3))
+                with pytest.raises(MGEDeprojectionError):
+                    eager(*values)
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_tmajmin_precision_boundary_agrees_eagerly_and_traced(x64):
+    with jax.enable_x64(x64):
+        mge = _mge()
+        for values in ((0.1, 0.02, 0.2), (0.1, 0.03, 0.2), (0.05, 0.08, 0.2)):
+
+            def convert(values):
+                return mge.viewing_angles_from_T_Tmaj_Tmin_with_validity(*values)
+
+            _, valid = jax.jit(convert)(jnp.array(values))
+            assert bool(valid) == x64
+            if x64:
+                mge.viewing_angles_from_T_Tmaj_Tmin(*values)
+            else:
+                with pytest.raises(MGEDeprojectionError):
+                    mge.viewing_angles_from_T_Tmaj_Tmin(*values)
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_tmajmin_zero_thickness_is_rejected_without_invalid_gradient(x64):
+    with jax.enable_x64(x64):
+        mge = _mge(q_obs=0.5)
+
+        def convert(values):
+            angles, valid = mge.viewing_angles_from_T_Tmaj_Tmin_with_validity(*values)
+            return sum(x.ustrip("rad") for x in angles), valid
+
+        (value, valid), gradient = jax.jit(jax.value_and_grad(convert, has_aux=True))(
+            jnp.array([0.5, 0.5, 0.375])
+        )
+        assert not bool(valid) and float(value) == 0
+        np.testing.assert_array_equal(gradient, np.zeros(3))

@@ -585,13 +585,13 @@
   `triaxial_viewing_angles` additionally rejects a value violating `q < p`
   (prolate) or `max(q/q', p) < u <= min(p/q', 1)`, a degenerate weight, and a
   domain so narrow it has no representable interior point. The de Zeeuw &
-  Franx weights are singular exactly on the `u` boundaries; the *lower*
-  endpoints (`u = p`, `u = q/q'`) are excluded, the *upper* endpoints
-  (`u = 1`, `u = p/q'`) are inclusive limiting geometries evaluated one
-  margin of `4*sqrt(eps)` inside `min(p/q', 1)` -- `eps` for the working JAX
-  float type. At float32 that margin is `~1.4e-3`, so a declared `u = 1` is
-  honoured only to about that and `triaxial_intrinsic_shape` reports the
-  recovered value, not an exact `1`.
+  Franx weights are singular on the `u` boundaries. Numerical acceptance
+  requires `u > lo + max(lo, 1)*4*sqrt(eps)` and
+  `u < hi*(1 - 4*sqrt(eps))`, where `lo = max(q/q', p)` and
+  `hi = min(p/q', 1)`. Values requiring clipping are rejected: changing
+  the proposed compression would change the shape and its derivatives.
+  The paired `triaxial_viewing_angles_with_validity` method uses the same
+  scalar JAX predicates and returns zero angle placeholders on rejection.
 - `T_maj_min` (the same two triaxial MGE types): a second, bijective
   reparameterization of `pqu`'s own `(p, q, u)` as `(T, T_maj, T_min) in
   [0,1]^3` (Quenneville, Liepold & Ma 2022, ApJ 926:30, sec. 3 eqs. 3-4, 7),
@@ -608,10 +608,8 @@
   closed `[0,1]` `ParameterConstraint`; no pairwise relation is needed at
   schema level (unlike `pqu`'s `q <= p`).
   `viewing_angles_from_T_Tmaj_Tmin` additionally checks that its result
-  round-trips: `pqu`'s own `u`-margin clamp (previous bullet) is negligible
-  in `(p,q,u)` space, but `(T,T_maj,T_min)` divide by `1 - p**2` and
-  `p**2 - q**2`, so the same clamp can move the *requested* shape
-  coordinates far more than it moved `u`. Each coordinate is accepted only
+  round-trips: `(T,T_maj,T_min)` divide by `1 - p**2` and `p**2 - q**2`,
+  which amplify errors in the recovered intrinsic shape. Each coordinate is accepted only
   if it round-trips (forward then `T_Tmaj_Tmin_from_viewing_angles`) within
   `_TMAJMIN_ROUNDTRIP_ABS_TOL_FACTOR * eps + _TMAJMIN_ROUNDTRIP_REL_TOL_FACTOR
   * sqrt(eps) * |coordinate|` (a combined bound, not relative alone, since a
@@ -638,9 +636,9 @@
   (`ParameterConstraint`); `inclination_from_q_min` additionally rejects a
   circular anchor (`q_obs' == 1`), `q_min` outside `0 < q_min <= q_obs'`,
   and `q_min` too close to 1 to divide by reliably at the working precision
-  (`eps`-scaled, same style as `pqu`'s own guards). Unlike `pqu`'s `u`
-  boundary, `q_min == q_obs'` (edge-on, `i = 90 deg`) is not a singularity,
-  so it needs no precision margin.
+  (`eps`-scaled, same style as `pqu`'s own guards). The edge-on
+  `q_min == q_obs'` limit is rejected because the conversion derivative
+  is unbounded; a native edge-on inclination still constructs normally.
   The forward conversion also deprojects at the computed inclination and
   checks `abs(q_recovered - q_min) / q_min <= 50 * sqrt(eps)`, where `eps`
   is for the active JAX float type. This is a relative shape-error ceiling:
