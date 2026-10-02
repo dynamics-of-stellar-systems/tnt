@@ -104,7 +104,7 @@
   at `/workspace`; its macOS `.venv` is never used in the container because
   `UV_PROJECT_ENVIRONMENT` points to `/opt/tnt-venv` inside the image.
 - For this checkout's local macOS workflow, use Docker's `colima` context.
-  The local Colima VM has 2 GB of memory. Run scientific test suites
+  The local Colima VM has 4 GB of memory. Run scientific test suites
   sequentially, preferably in separate processes; do not run multiple JAX
   test processes in parallel. Accumulated compiled graphs can also exhaust
   memory within one process. The native MGE gradient tests clear JAX's
@@ -482,7 +482,7 @@
   distribution, scales uncertainties by the square root of `variance_scale`,
   and emits configured sampling warnings.
 - `potential.<name>.type` names one of a curated set of `galax.potential`
-  classes (`tnt.potential._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
+  classes (`tnt.potential.registry._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
   `PlummerPotential` -- 25 classes total), or one of four TNT-specific MGE
   composite types -- triaxial (`TriaxialLightMGEPotential`/
   `TriaxialMassMGEPotential`, `tnt/potential/triaxial_mge.py`) or oblate
@@ -614,8 +614,8 @@
   [0,1]^3` (Quenneville, Liepold & Ma 2022, ApJ 926:30, sec. 3 eqs. 3-4, 7),
   chosen for more uniform shape/viewing-geometry sampling, not a different
   deprojection. The `(T,T_maj,T_min) <-> (p,q,u)` algebra (given the anchor's
-  `q'`) is `tnt.mge._p_q_u_from_T_Tmaj_Tmin` / `_T_Tmaj_Tmin_from_p_q_u`,
-  each guarding its own denominator (`eps`-scaled) before dividing;
+  `q'`) uses `tnt.mge._p_q_u_candidate` / `_T_Tmaj_Tmin_candidate`,
+  each returning numerical predicates for its denominator and coordinates;
   `AbstractMGE.viewing_angles_from_T_Tmaj_Tmin` /
   `T_Tmaj_Tmin_from_viewing_angles` compose that with `triaxial_viewing_angles`
   / `triaxial_intrinsic_shape`, inheriting all of `pqu`'s domain/margin/
@@ -629,14 +629,9 @@
   which amplify errors in the recovered intrinsic shape. Each coordinate is accepted only
   if it round-trips (forward then `T_Tmaj_Tmin_from_viewing_angles`) within
   `_TMAJMIN_ROUNDTRIP_ABS_TOL_FACTOR * eps + _TMAJMIN_ROUNDTRIP_REL_TOL_FACTOR
-  * sqrt(eps) * |coordinate|` (a combined bound, not relative alone, since a
-  requested coordinate can legitimately be exactly `0`); otherwise
-  `MGEDeprojectionError`. At float64 this is essentially never triggered by
-  an ordinary point; at float32 it can reject points with a small
-  `T`/`T_maj`/`T_min` whose `(p,q,u)` sits close enough to `pqu`'s own
-  singular boundary -- calibrated against measured round-trip drift
-  (ordinary points stay under `~6e-6` relative at float32; degenerate ones
-  measured `32%-168%`), not guessed.
+  * sqrt(eps) * |coordinate|`. The absolute term allows roundoff near zero;
+  exceeding the bound raises `MGEDeprojectionError`. Small coordinates near
+  a singular boundary can fail this check at the selected precision.
 - `q_min` (the two oblate MGE types): the oblate counterpart of `pqu` --
   the anchor Gaussian's intrinsic axial ratio <-> the single global
   `inclination`, via `deproject_oblate`'s own relation `q_obs'^2 = q_min^2
@@ -658,7 +653,7 @@
   (`eps`-scaled, same style as `pqu`'s own guards). The edge-on
   `q_min == q_obs'` limit is rejected because the conversion derivative
   is unbounded; a native edge-on inclination still constructs normally.
-  The forward conversion also deprojects at the computed inclination and
+  The forward conversion also recovers geometry at the computed inclination and
   checks `abs(q_recovered - q_min) / q_min <= 50 * sqrt(eps)`, where `eps`
   is for the active JAX float type. This is a relative shape-error ceiling:
   approximately `7.45e-7` at float64 and `0.0173` (1.73%) at float32.
@@ -775,14 +770,14 @@
   `tnt.potential.raw_potential_parameters` use `invert` to report a
   `Potential`'s components back in their configuration's own
   parameterization (`Model.raw_parameters`, read by
-  `AllModels._model_row` for its table columns) -- necessary because
-  `Potential.rescale` only knows how to scale native `galax` parameters, so
+  `tnt.all_models._model_row` for its table columns) -- necessary because
+  `Potential.rescale` scales canonical component parameters, so
   the raw values must be recomputed from the rescaled native ones, not
   carried through unchanged. `concentration_m200`'s inverse has no closed
   form: `rescale` holds `r_s` fixed and scales only `m`, which is not the
   same as holding `c` fixed and scaling `M_200`, so recovering `c` means
   solving `c**3 / (ln(1+c) - c/(1+c)) = target` for `c` --
-  `tnt.potential._solve_nfw_concentration` does this via fixed-iteration
+  `tnt.potential.nfw._solve_nfw_concentration` does this via fixed-iteration
   bisection, relying on that function being verified (numerically) strictly
   monotonically increasing in `c`. Its gradients use the derivative of the
   solved equation, including when the inverse is batched. The fixed

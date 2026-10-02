@@ -210,46 +210,15 @@ def _triaxial_geometry_valid(
 # geometry and is rejected.
 _TRIAXIAL_WEIGHT_ATOL = 1e-9
 
-# `AbstractMGE.viewing_angles_from_T_Tmaj_Tmin`'s own round-trip accuracy
-# check: `(T, T_maj, T_min)` divide by `1 - p**2` and `p**2 - q**2`,
-# so roundoff in recovered `(p, q, u)` can move the shape coordinates
-# substantially even for an accepted interior compression (see that
-# function's own docstring, and `_p_q_u_from_T_Tmaj_Tmin`).
-#
-# Re-audit finding (PR 67): a purely *absolute* tolerance here (the first
-# version of this check) is blind to a small requested coordinate -- at
-# float32, `T_maj = 0.02` recovering `~0.054` (a 168% relative change) still
-# passed an absolute-only bound of `~0.0345`. Calibrated against measured
-# round-trip drift the same way as the oblate q_min check in this module
-# (PR 68): an ordinary interior point's drift stays below `~6e-6` relative
-# and `~6e-7` absolute at float32 (and far tighter at float64), while every
-# flagged bad case measured `32%-168%` relative. A combined
-# `atol + rtol * |target|` bound (not relative alone) is needed because
-# `T`/`T_maj`/`T_min` are inclusively bounded in `[0, 1]` and a requested
-# coordinate can legitimately be exactly `0`, where a purely relative test
-# is either meaningless or infinite.
+# Recovering T coordinates divides by 1 - p**2 and p**2 - q**2, amplifying
+# intrinsic-shape roundoff. Use a relative bound to protect small requested
+# coordinates and an absolute allowance for roundoff near zero.
 _TMAJMIN_ROUNDTRIP_REL_TOL_FACTOR = 50.0
 _TMAJMIN_ROUNDTRIP_ABS_TOL_FACTOR = 1e2
 
-# `AbstractMGE.inclination_from_q_min`'s own round-trip accuracy check.
-# `deproject_oblate`'s `q_intr = sqrt(q_obs**2 - cos(i)**2) / sin(i)` (used by
-# both the native `inclination` parameterization and, via
-# `q_min_from_inclination`, this round trip) subtracts two nearly equal
-# quantities whenever the requested `q_min` is small relative to `q_obs` --
-# `cos(i)**2` is then close to `q_obs**2` by construction (see
-# `inclination_from_q_min`'s own `cos2_i` formula) -- so a tiny rounding error
-# already present in `i` at the working precision can become a large
-# *relative* error in the recovered `q_min`. A relative tolerance (not
-# absolute, unlike `_TRIAXIAL_WEIGHT_ATOL`) is the right test here
-# specifically because the failure mode scales with how small the requested
-# `q_min` itself is, not with its absolute size. Scaled by `sqrt(eps)` rather
-# than `eps` itself for the same headroom-vs-sensitivity reason as
-# `triaxial_viewing_angles`'s own `4 * sqrt(eps)` margin. Calibrated against
-# measured round-trip drift, not guessed: an ordinary configuration (q_obs up
-# to 0.99, q_min down to 0.02) stays within ~5e-3 relative drift at float32
-# and ~2e-12 at float64, while every case the PR-68 audit flagged measured
-# 0.4%-6.2% -- `50 * sqrt(eps)` (~1.7% at float32, ~7.5e-7 at float64) sits
-# comfortably between the two at both precisions.
+# Oblate recovery subtracts q_obs**2 - cos(i)**2. Cancellation can produce
+# large relative errors for thin or nearly circular proposals. Bound the
+# recovered q_min's relative error by 50 sqrt(eps) at the active precision.
 _QMIN_ROUNDTRIP_TOL_FACTOR = 50.0
 
 
@@ -341,16 +310,6 @@ def _p_q_u_candidate(
         ),
     }
     return (jnp.sqrt(p2), jnp.sqrt(q2), jnp.sqrt(u2)), checks
-
-
-def _p_q_u_from_T_Tmaj_Tmin(
-    T: float, T_maj: float, T_min: float, q_obs: float
-) -> tuple[float, float, float]:
-    """Eager Quenneville et al. eq. 7 conversion, with shared JAX checks."""
-    result = _checked_shape_conversion(
-        _p_q_u_candidate, _shape_numbers(T, T_maj, T_min, q_obs)
-    )
-    return tuple(float(value) for value in result)
 
 
 def _T_Tmaj_Tmin_candidate(

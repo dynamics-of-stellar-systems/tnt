@@ -2,9 +2,9 @@
 
 `Potential.generate_orbit_library` remains `NotImplementedError` (see
 `tnt.potential`'s module docstring); these tests cover what's actually
-implemented: dynamic derivation from galax's own `ParameterField` metadata,
-type/parameterization resolution, the fully-working Plummer/NFW native-mode
-paths, and the four MGE composite types' `to_galax`.
+implemented: curated metadata against galax's own `ParameterField` declarations,
+type/parameterization resolution, eager and traced numerical validation,
+NFW and MGE conversions, and potential evaluation and rescaling.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from unxt import Quantity
 
 from tnt.mge import LightMGE, MassMGE, MGEDeprojectionError
 from tnt.potential import (
-    _SUPPORTED_GALAX_TYPES,
     AbstractPotentialComponent,
     GalaxPotentialComponent,
     OblateLightMGEPotential,
@@ -31,19 +30,22 @@ from tnt.potential import (
     Potential,
     TriaxialLightMGEPotential,
     TriaxialMassMGEPotential,
-    _nfw_concentration_m200,
-    _nfw_concentration_m200_inverse,
-    _nfw_g,
-    _solve_nfw_concentration,
     build_potential,
     raw_parameter_dimensions,
     raw_potential_parameters,
 )
 from tnt.potential import registry as _registry_module
-from tnt.potential.nfw import _newtonian_gravitational_constant
+from tnt.potential.nfw import (
+    _newtonian_gravitational_constant,
+    _nfw_concentration_m200,
+    _nfw_concentration_m200_inverse,
+    _nfw_g,
+    _solve_nfw_concentration,
+)
 from tnt.potential.oblate_mge import _inclination_to_qmin, _qmin_to_inclination
 from tnt.potential.registry import (
     _COMPONENT_REGISTRY,
+    _SUPPORTED_GALAX_TYPES,
     ParameterConstraint,
     parameter_constraints,
     register_component,
@@ -60,7 +62,7 @@ def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
     """Each of `galax_type`'s native constructor parameters' physical dimension.
 
     Derived from galax's own `ParameterField(dimensions=...)` metadata,
-    independently of `tnt.potential._SUPPORTED_GALAX_TYPES` -- this is what
+    independently of `tnt.potential.registry._SUPPORTED_GALAX_TYPES` -- this is what
     `test_supported_galax_types_covers_every_curated_class_parameter`
     cross-checks the curated table against.
     """
@@ -3054,12 +3056,9 @@ def test_T_maj_min_domain_invalid_value_is_rejected_at_build_time() -> None:
         )
 
 
-def test_T_maj_min_rejects_a_point_the_domain_clamp_would_silently_move() -> None:
-    # PR-67 audit finding: near the T -> 0 (oblate) limit,
-    # triaxial_viewing_angles's own eps-margin clamp on u moved the recovered
-    # (T, T_maj, T_min) far from the requested point (0.1 requested vs.
-    # ~0.226 previously recovered for T_maj) without ever raising -- the
-    # config-layer build must now reject it as an invalid model instead.
+def test_T_maj_min_rejects_a_precision_boundary_at_build_time() -> None:
+    # Near the oblate limit, construction must reject a shape requiring
+    # compression clipping, which would alter its values and derivatives.
     mge = _triaxial_light_mge()  # anchor q' = 0.76
     resolved = AbstractPotentialComponent.resolve(
         {
@@ -3086,12 +3085,8 @@ def test_T_maj_min_rejects_a_point_the_domain_clamp_would_silently_move() -> Non
 
 
 def test_T_maj_min_rejects_a_zero_thickness_boundary_at_build_time() -> None:
-    # PR-67 audit finding: an exact zero-thickness anchor (q^2 == 0) is a
-    # real value that previously passed the forward conversion's own
-    # `0 <= q^2 <= 1` check, only sometimes caught later by
-    # `deproject_triaxial`'s general check depending on unrelated
-    # floating-point rounding. Now rejected explicitly and deterministically
-    # at the source.
+    # An exact zero-thickness anchor violates the strict q > 0 convention
+    # and must be rejected during construction.
     mge = LightMGE(
         I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
         sigma=Quantity(jnp.array([1.0]), "kpc"),
@@ -3245,12 +3240,9 @@ def test_q_min_domain_invalid_value_is_rejected_at_build_time() -> None:
         )
 
 
-def test_q_min_rejects_a_thin_disk_the_cancellation_would_silently_move() -> None:
-    # PR-68 audit finding: deproject_oblate's own q**2 = q_obs**2 - cos(i)**2
-    # subtracts two nearly equal quantities whenever q_min is small relative
-    # to q_obs -- at float32, q_min = 0.001 against q_obs = 0.76 previously
-    # recovered ~0.00106249 (+6.2% relative error) without ever raising. The
-    # config-layer build must now reject it as an invalid model instead.
+def test_q_min_rejects_a_precision_limited_thin_disk() -> None:
+    # Cancellation in q_obs**2 - cos(i)**2 makes this thin float32 proposal
+    # unreliable. Construction must reject it before evaluating a model.
     with jax.enable_x64(False):
         mge = LightMGE(
             I=Quantity(jnp.array([1.0]), "Lsun / pc2"),

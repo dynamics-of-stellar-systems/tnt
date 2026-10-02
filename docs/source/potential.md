@@ -5,16 +5,15 @@ stellar mass distribution, a dark-matter halo, a central black hole, ...).
 A component is specified by its `type` and, optionally, a
 `parameterization` -- both discussed below.
 
-This part of TNT is under active development. Some of what's described below
-is signature-only scaffolding rather than a working implementation -- see
-[What's implemented today](#whats-implemented-today) and `tnt.potential`'s
-own module docstring for exactly what raises `NotImplementedError`.
+Potential construction, parameter conversion, evaluation, and rescaling are
+implemented. Orbit-library generation remains unimplemented; see
+[What's implemented today](#whats-implemented-today).
 
 ## Component types
 
 TNT potential components are backed by [`galax`](https://github.com/GalacticDynamics/galax), a JAX library for galactic dynamics. `potential.<name>.type` names one of a
 curated set of 25 `galax.potential` classes (e.g. `"NFWPotential"`);
-see `tnt.potential._SUPPORTED_GALAX_TYPES` for the exact list.
+see `tnt.potential.registry._SUPPORTED_GALAX_TYPES` for the exact list.
 
 Some `galax.potential` classes are not supported: abstract/base classes;
 pre-packaged multi-component bundles with no free parameters of their own,
@@ -287,7 +286,7 @@ potential:
 
 - **Every curated type** (`parameterization` omitted): the component
   resolves and `to_galax()` (building the actual `galax` potential object)
-  works for every class in `tnt.potential._SUPPORTED_GALAX_TYPES` -- 25
+  works for every class in `tnt.potential.registry._SUPPORTED_GALAX_TYPES` -- 25
   classes, from ordinary single-component potentials (`PlummerPotential`,
   `NFWPotential`, `HernquistPotential`, ...) to triaxial and bar potentials.
   `rescale()` works for every native parameter of every curated class,
