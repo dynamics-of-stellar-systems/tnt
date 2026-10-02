@@ -260,7 +260,10 @@
   reference by about 0.7%, and its q derivative by about 95%, even with a
   well-resolved float64 deprojection. Potential-quadrature accuracy needs
   separate work; do not treat a true construction flag as that guarantee.
-  MGE `q_min`, `pqu`, and `T_maj_min` conversions remain eager; proposal
+  `AbstractMGE.inclination_from_q_min` and its `with_validity` counterpart
+  share scalar JAX domain and round-trip checks. The edge-on `q_min == q'`
+  limit is rejected because its conversion derivative is unbounded.
+  Potential adapters for MGE `q_min`, `pqu`, and `T_maj_min` remain eager; proposal
   batching and prior/model-iterator integration are deferred.
   `ModelIterator._evaluate()` still catches Python exceptions and returns a
   variable-length `list[Model]`; orbit integration and weight solving remain

@@ -148,6 +148,11 @@ support native viewing angles and normalization inside one JAX trace.
 MGE `q_min`, `pqu`, and `T_maj_min` conversions remain eager; proposal batching
 and prior/model-iterator integration are deferred.
 
+The MGE-level `inclination_from_q_min_with_validity` method uses the same
+domain and round-trip checks as eager conversion. The edge-on `q_min == q'`
+limit has a finite angle but an unbounded conversion derivative and is
+rejected. Native edge-on inclination remains a supported viewing geometry.
+
 Native MGE construction validates the complete set of Gaussians: intrinsic
 `0 < q <= p <= 1`, positive finite density, width and mass, and finite
 construction derivatives in declared units and local `Msun`/`kpc` units.

@@ -107,6 +107,48 @@ def _guard_deprojection(
     return result, valid
 
 
+def _shape_numbers(*values: float | jax.Array) -> tuple[jax.Array, ...]:
+    """Check scalar real structure, then use the configured JAX precision."""
+    result = []
+    for value in values:
+        number = jnp.asarray(value)
+        if number.ndim != 0 or not (
+            jnp.issubdtype(number.dtype, jnp.integer)
+            or jnp.issubdtype(number.dtype, jnp.floating)
+        ):
+            raise TypeError("MGE shape coordinates must be real scalars.")
+        result.append(jnp.asarray(number, dtype=float))
+    return tuple(result)
+
+
+def _checks_valid(checks: Mapping[str, jax.Array]) -> jax.Array:
+    """Combine the numerical predicates also used for eager diagnostics."""
+    return jnp.all(jnp.stack(tuple(checks.values())))
+
+
+def _checked_shape_conversion(candidate: Callable, arguments: tuple) -> Any:
+    """Raise the first failed authoritative check at the eager boundary."""
+    result, checks = candidate(*arguments)
+    for message, valid in checks.items():
+        if not bool(valid):
+            raise MGEDeprojectionError(message)
+    return result
+
+
+def _guard_shape_conversion(
+    candidate: Callable, arguments: tuple
+) -> tuple[Any, jax.Array]:
+    """Detach numerical checks and differentiate only accepted conversions."""
+    shape = jax.eval_shape(lambda args: candidate(*args)[0], arguments)
+    placeholder = jax.tree.map(lambda x: jnp.zeros(x.shape, x.dtype), shape)
+    _, checks = candidate(*jax.tree.map(jax.lax.stop_gradient, arguments))
+    valid = _checks_valid(checks)
+    result = jax.lax.cond(
+        valid, lambda args: candidate(*args)[0], lambda _: placeholder, arguments
+    )
+    return result, valid
+
+
 def _triaxial_geometry_valid(
     theta: jax.Array,
     phi: jax.Array,
@@ -701,7 +743,7 @@ class AbstractMGE(eqx.Module):
         )
         return model, valid
 
-    def inclination_from_q_min(self, q_min: float) -> Quantity:
+    def inclination_from_q_min(self, q_min: float | jax.Array) -> Quantity:
         """The inclination giving the anchor component's intrinsic axial ratio.
 
         Inverts `deproject_oblate`'s own relation, ``q_obs**2 = q_min**2 *
@@ -712,8 +754,9 @@ class AbstractMGE(eqx.Module):
 
         ``cos(i)**2 = (q_obs'**2 - q_min**2) / (1 - q_min**2)``.
 
-        ``q_min == q_obs'`` is the inclusive edge-on limit (``i = 90 deg``),
-        not a singularity; ``q_min -> 1`` (a near-spherical anchor) is.
+        The edge-on limit ``q_min == q_obs'`` has a finite angle but an
+        unbounded conversion derivative, and is rejected. A near-spherical
+        anchor and thin intrinsic shapes can also be numerically unreliable.
 
         Raises:
             MGEDeprojectionError: If this MGE's anchor is circular
@@ -724,43 +767,45 @@ class AbstractMGE(eqx.Module):
                 ``q_min`` accurately at the resulting inclination (see
                 `_QMIN_ROUNDTRIP_TOL_FACTOR`).
         """
-        q_obs, _ = self._triaxial_anchor()
-        if not q_obs < 1.0:
-            raise MGEDeprojectionError(
-                f"Oblate deprojection needs a flattened MGE (anchor q' = "
-                f"{q_obs:g}); a circular MGE has no inclination to solve for."
-            )
-        if not 0.0 < q_min <= q_obs:
-            raise MGEDeprojectionError(
-                f"q_min = {q_min:g} has no oblate deprojection for this MGE "
-                f"(anchor q' = {q_obs:g}): requires 0 < q_min <= q'."
-            )
-        eps = float(jnp.finfo(jnp.result_type(float)).eps)
-        den = 1.0 - q_min * q_min
-        if den < eps:
-            raise MGEDeprojectionError(
-                f"q_min = {q_min:g} is too close to 1 (spherical) to "
-                "deproject reliably at this numerical precision."
-            )
-        cos2_i = min(max((q_obs * q_obs - q_min * q_min) / den, 0.0), 1.0)
-        inclination = Quantity(math.acos(math.sqrt(cos2_i)), "rad")
+        self._check_deprojection_structure(Quantity(0.0, "rad"))
+        return _checked_shape_conversion(self._q_min_candidate, _shape_numbers(q_min))
 
-        # Verify the round trip instead of trusting it silently: reject
-        # rather than construct a substantially different intrinsic shape
-        # (see `_QMIN_ROUNDTRIP_TOL_FACTOR`'s own definition).
-        q_min_r = self.q_min_from_inclination(inclination)
-        tolerance = _QMIN_ROUNDTRIP_TOL_FACTOR * math.sqrt(eps)
-        relative_drift = abs(q_min_r - q_min) / q_min
-        if relative_drift > tolerance:
-            raise MGEDeprojectionError(
-                f"q_min = {q_min:g}, q' = {q_obs:g}: too close to a "
-                "numerical-precision boundary in deproject_oblate's own "
-                "q**2 = q_obs**2 - cos(i)**2 cancellation to represent "
-                f"accurately (round-trip recovers q_min = {q_min_r:g}, "
-                f"relative drift {relative_drift:g} exceeds tolerance "
-                f"{tolerance:g})."
-            )
-        return inclination
+    def inclination_from_q_min_with_validity(
+        self, q_min: float | jax.Array
+    ) -> tuple[Quantity, jax.Array]:
+        """Convert one intrinsic anchor ratio, with zero invalid placeholders."""
+        self._check_deprojection_structure(Quantity(0.0, "rad"))
+        return _guard_shape_conversion(self._q_min_candidate, _shape_numbers(q_min))
+
+    def _q_min_candidate(
+        self, q_min: jax.Array
+    ) -> tuple[Quantity, dict[str, jax.Array]]:
+        q_obs, _ = self._triaxial_anchor()
+        eps = jnp.finfo(q_min.dtype).eps
+        den = 1 - q_min**2
+        cos2_i = (q_obs**2 - q_min**2) / den
+        inclination = Quantity(jnp.arccos(jnp.sqrt(cos2_i)), "rad")
+        model, deprojection_valid = self._oblate_candidate(inclination)
+        anchor = jnp.argmin(self.q.ustrip(""))
+        recovered = model.q.ustrip("")[anchor]
+        tolerance = _QMIN_ROUNDTRIP_TOL_FACTOR * jnp.sqrt(eps)
+        checks = {
+            "Oblate deprojection needs a flattened MGE; a circular MGE has no "
+            "inclination to solve for.": (q_obs > 0) & (q_obs < 1),
+            "q_min has no oblate deprojection: requires 0 < q_min <= q'.": (
+                jnp.isfinite(q_min) & (q_min > 0) & (q_min <= q_obs)
+            ),
+            "The edge-on q_min == q' limit has an unbounded conversion derivative.": (
+                q_min < q_obs
+            ),
+            "q_min is too close to 1 to deproject reliably at this numerical "
+            "precision boundary.": den >= eps,
+            "q_min is too close to a numerical-precision boundary in oblate "
+            "deprojection to represent accurately (round-trip drift).": (
+                deprojection_valid & (jnp.abs(recovered - q_min) <= tolerance * q_min)
+            ),
+        }
+        return inclination, checks
 
     def q_min_from_inclination(self, inclination: Quantity) -> float:
         """The anchor component's intrinsic axial ratio at this inclination.
@@ -885,7 +930,7 @@ class AbstractMGE(eqx.Module):
             theta.ustrip("rad"), phi.ustrip("rad"), psi_r, self.q.ustrip("")
         )
 
-    def _triaxial_anchor(self) -> tuple[float, float]:
+    def _triaxial_anchor(self) -> tuple[jax.Array, jax.Array]:
         """``(q', PA_twist)`` of the flattest Gaussian -- the ``(p, q, u)`` anchor.
 
         The van den Bosch relations pin the triaxial viewing geometry to one
@@ -896,8 +941,8 @@ class AbstractMGE(eqx.Module):
         anchor.
         """
         q = self.q.ustrip("")
-        anchor = int(jnp.argmin(q))
-        return float(q[anchor]), float(self.PA_twist.ustrip("rad")[anchor])
+        anchor = jnp.argmin(q)
+        return q[anchor], self.PA_twist.ustrip("rad")[anchor]
 
     def triaxial_viewing_angles(
         self, p: float, q: float, u: float

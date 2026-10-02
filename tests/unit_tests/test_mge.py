@@ -404,13 +404,12 @@ def test_inclination_from_q_min_and_q_min_from_inclination_are_inverses():
     assert q_min_r == pytest.approx(0.6, abs=1e-9)
 
 
-def test_inclination_from_q_min_at_the_anchor_edge_is_edge_on():
-    # q_min == q_obs' is the inclusive i = 90 deg (edge-on) limit.
+def test_inclination_from_q_min_rejects_the_edge_on_derivative_singularity():
+    # The angle is finite, but its derivative with respect to q_min is not.
     mge = _triaxial_anchor_mge()
 
-    inclination = mge.inclination_from_q_min(0.76)
-
-    assert inclination.ustrip("deg") == pytest.approx(90.0, abs=1e-9)
+    with pytest.raises(MGEDeprojectionError, match="unbounded conversion derivative"):
+        mge.inclination_from_q_min(0.76)
 
 
 def test_inclination_from_q_min_rejects_q_min_above_the_anchor():
