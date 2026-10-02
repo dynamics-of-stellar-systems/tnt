@@ -21,7 +21,7 @@ TYPES = [
 @pytest.fixture(autouse=True)
 def _release_compilation_cache():
     # These tests compile distinct whole-proposal gradient graphs in x32/x64.
-    # Bound their memory footprint on the 2 GB Linux development environment.
+    # Bound their memory footprint in the Linux development environment.
     jax.clear_caches()
     yield
     jax.clear_caches()

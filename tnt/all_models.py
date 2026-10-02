@@ -5,7 +5,8 @@ column per potential-component parameter (value + unit, named after the
 resolved configuration's own parameterization, e.g. `"bh.m"`, `"stars.ml"`,
 or NFW's `"dh.c"`/`"dh.M_200"` under `concentration_m200` -- see
 `Model.raw_parameters` -- always present, since a proposed point's
-parameters are known before evaluation), boolean `valid_potential`/
+parameters are known before evaluation), a cumulative `iteration` number,
+boolean `valid_potential`/
 `orblib_done`/`weights_done` flags (see `Model`'s docstring), and one column
 per `Model.chi2` key (e.g. `"chi2"`,
 `"kinchi2"`) once at least one appended model has `weights_done`. A model

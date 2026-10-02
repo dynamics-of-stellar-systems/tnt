@@ -1,7 +1,4 @@
-"""One evaluated point in the model search: a potential and its solved weights.
-
-Signature-only scaffold.
-"""
+"""One proposed model-search point and the outcome of its evaluation."""
 
 from __future__ import annotations
 
@@ -28,12 +25,10 @@ class Model(eqx.Module):
     being evaluated, known before orbit integration starts.
     `ModelIterator._evaluate` is responsible for setting `valid_potential`/
     `orblib_done`/`weights_done` (and `weights`/`chi2`) to reflect what
-    actually happened: `valid_potential` is `False` if `potential` itself
-    couldn't be built, `orblib_done` is `False` if orbit integration itself
-    failed (implies `valid_potential` is `True` -- orbit integration was
-    only attempted because building the potential succeeded), and
-    `weights_done` is `False` if weight solving failed on its single
-    attempt (implies `orblib_done`).
+    actually happened: `valid_potential` is `True` only if construction
+    succeeded, `orblib_done` is `True` only if integration then succeeded,
+    and `weights_done` is `True` only if weight solving completed its single
+    attempt. An earlier failure leaves every later-stage flag `False`.
     """
 
     potential: Potential | None
@@ -56,7 +51,7 @@ class Model(eqx.Module):
     weights: OrbitWeights | None
     chi2: dict[str, float] | None
     iteration: int
-    """The 0-based `ModelIterator.run` search round that produced this model.
+    """The cumulative, 0-based search round that produced this model.
 
     Every model from one round -- including any `potential_rescalings`
     models -- shares the same `iteration`. Lets `AllModels.n_iterations`

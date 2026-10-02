@@ -10,7 +10,7 @@ each piece's inputs matching what it actually uses.
 
 Everything here -- including `from_configuration` and both
 `minimum_delta_chi2` stopping modes -- is implemented, but only down to what
-it delegates to: `build_potential`, `Potential.generate_orbit_library`,
+it delegates to: `Potential.generate_orbit_library`,
 `AbstractWeightSolver.solve`, `OrbitLibrary.rescaled`,
 `build_weight_solver`, `build_orbit_sampler`, and `build_orbit_dithering`
 are themselves still unimplemented, so `from_configuration`'s result can't
