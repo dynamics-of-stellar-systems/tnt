@@ -135,7 +135,7 @@ class ParameterConstraint(NamedTuple):
 
     def valid(self, value: Quantity, siblings: Mapping[str, Quantity]) -> jax.Array:
         """JAX scalar boolean for this constraint, including finite values."""
-        unit = self.unit or value.unit
+        unit = value.unit if self.unit is None else self.unit
         number = value.ustrip(unit)
         other = (
             siblings[self.other_parameter].ustrip(unit)
@@ -155,7 +155,7 @@ class ParameterConstraint(NamedTuple):
         caller must first verify the parameter mapping's names, types,
         dimensions, scalar shapes, and finite values.
         """
-        unit = self.unit or value.unit
+        unit = value.unit if self.unit is None else self.unit
         try:
             number = value.ustrip(unit)
         except (TypeError, ValueError):

@@ -271,7 +271,10 @@ def _build_mge_with_validity(
         p, q = model.p.ustrip("")[anchor], model.q.ustrip("")[anchor]
         if "q_min" in parameters:
             return (q,)
-        u = (mge.sigma[anchor] / model.sigma[anchor]).ustrip("")
+        observed_widths = jax.lax.optimization_barrier(
+            jnp.asarray(mge.sigma.ustrip("kpc"), dtype=float)
+        )
+        u = observed_widths[anchor] / model.gaussian_widths.ustrip("kpc")[anchor]
         if "p" in parameters:
             return p, q, u
         return _T_Tmaj_Tmin_candidate(p, q, u, mge.q.ustrip("")[anchor])[0]

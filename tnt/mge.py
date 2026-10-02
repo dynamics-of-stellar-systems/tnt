@@ -815,14 +815,18 @@ class AbstractMGE(eqx.Module):
     def q_min_from_inclination(self, inclination: Quantity) -> float:
         """The anchor component's intrinsic axial ratio at this inclination.
 
-        The numerical inverse of `inclination_from_q_min`: deprojects the
-        whole MGE (`deproject_oblate`) and reads off the anchor component's
-        own intrinsic `q`, reusing all of that method's unit/`PA_twist`/
-        domain validation rather than duplicating it.
+        The eager numerical inverse of `inclination_from_q_min` uses the
+        shared oblate geometry checks without integrating the unscaled
+        template's mass. Construction validates the proposal's normalization.
         """
-        deprojected = self.deproject_oblate(inclination)
+        self._check_deprojection_structure(inclination)
+        intrinsic, valid = self._oblate_geometry(inclination)
+        if not bool(valid):
+            raise MGEDeprojectionError(
+                "No reliable oblate geometry at this inclination and precision."
+            )
         anchor = int(jnp.argmin(self.q.ustrip("")))
-        return float(deprojected.q[anchor].ustrip(""))
+        return float(intrinsic[anchor])
 
     def deproject_triaxial(
         self, theta: Quantity, phi: Quantity, psi: Quantity
@@ -1040,8 +1044,8 @@ class AbstractMGE(eqx.Module):
         """The flattest Gaussian's intrinsic ``(p, q, u)`` at these viewing angles.
 
         The anchor-component slice of `deproject_triaxial`, and the numerical
-        inverse of `triaxial_viewing_angles` -- exact for an interior geometry,
-        for accepted interior proposals. Compression values requiring clipping
+        inverse of `triaxial_viewing_angles` for accepted interior proposals.
+        Compression values requiring clipping
         are rejected by `triaxial_viewing_angles`.
         The anchor's ``PA_twist`` is folded back into ``psi`` by
         `_triaxial_component_ratios`, same as for every other Gaussian.

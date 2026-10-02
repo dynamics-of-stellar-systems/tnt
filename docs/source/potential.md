@@ -165,6 +165,11 @@ with an identity Jacobian, within `50 * sqrt(eps)` in the declared coordinate
 units. This detects incorrect shape gradients even if forward and reverse
 differentiation agree. Shape conversion is independent of normalization;
 density and mass checks apply to the normalized proposal.
+Shape bounds use unit-free ratios, so equivalent declarations such as `0.6`
+and `60 percent` have the same domain. Gradients respect the declared
+coordinate scale, and reported raw shape parameters retain their declared units.
+Reporting inverse conversions remains eager. Compression recovery uses local
+`kpc` widths to avoid unit-dependent overflow during differentiation.
 Both forward and reverse automatic differentiation must produce finite
 derivatives and agree within the precision-dependent `50 * sqrt(eps)`
 tolerance, including an output/input-scaled roundoff allowance for zero
@@ -399,7 +404,7 @@ potential:
   derivative and is rejected; native edge-on inclination remains supported.
   Both directions are `AbstractMGE` methods
   (`inclination_from_q_min` and its inverse `q_min_from_inclination`, which
-  reads the anchor's intrinsic `q` off a full `deproject_oblate` call), so a
+  reads the anchor's intrinsic `q` using shared oblate geometry checks), so a
   `q_min` config and its equivalent `inclination` config build an identical
   potential and `AllModels` reports either faithfully. `q_min` is registered
   only for `OblateLightMGEPotential` and `OblateMassMGEPotential`.

@@ -239,6 +239,10 @@
   to the proposed coordinates must also equal the identity within
   `50*sqrt(eps)`, accounting for declared coordinate-unit scale. This catches
   frozen or inaccurate shape derivatives shared by both differentiation modes.
+  MGE shape bounds compare unit-free ratios, including scaled dimensionless
+  units such as percent. The inverse reporting adapters restore the declared
+  shape-coordinate units. An explicit empty constraint unit means unit-free
+  comparison; only `None` selects the proposed value's own unit.
   Oblate conversion checks only geometry; density and mass checks use the
   proposal's normalization rather than the unscaled luminosity template.
   Oblate cancellation and triaxial
@@ -532,8 +536,10 @@
   schema and constraints. This is deliberately eager Python boundary logic,
   before a potential object enters JAX/Equinox numerical work; it does not
   mutate or normalize the parameter's declared unit. MGE data-dependent
-  deprojection geometry remains validated by the MGE composite `_build()`
-  methods. Native `galax` constraints live beside dimension/rescale metadata in
+  deprojection geometry and construction derivatives use the same numerical
+  checks as `build_with_validity`; the MGE composite `_build()` methods preserve
+  eager geometry diagnostics. Native `galax` constraints live beside
+  dimension/rescale metadata in
   `_SUPPORTED_GALAX_TYPES`; TNT composite constraints live on each component's
   `_constraints`; parameterization raw constraints live in the same registered
   `ParameterizationSpec` as its converters and schema. Registration rejects
@@ -639,9 +645,11 @@
   `deproject_oblate` requires every component's twist to be zero). Both
   directions are `AbstractMGE` methods: `inclination_from_q_min(q_min) ->
   inclination` and its inverse `q_min_from_inclination(inclination) ->
-  q_min`, which reads the anchor's own intrinsic `q` off a full
-  `deproject_oblate` call rather than duplicating that method's unit/twist/
-  domain validation. `_qmin_to_inclination` / `_inclination_to_qmin` in
+  q_min`, which reads the anchor's intrinsic `q` using shared oblate geometry
+  checks without integrating the unscaled template's mass. The inverse
+  reporting conversions remain eager. Compression recovery during construction
+  uses local `kpc` widths to keep differentiation reliable across equivalent
+  declared units. `_qmin_to_inclination` / `_inclination_to_qmin` in
   `tnt.potential.oblate_mge` are the registry adapters, mirroring
   `_pqu_to_tpp` / `_tpp_to_pqu`. Data-independent bound: `0 < q_min <= 1`
   (`ParameterConstraint`); `inclination_from_q_min` additionally rejects a

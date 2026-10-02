@@ -242,7 +242,7 @@ def _galax_potential_from_oblate_deprojected(
 # just the parameterization-registry adapters.
 
 _QMIN_CONSTRAINT = ParameterConstraint(
-    minimum=0.0, minimum_inclusive=False, maximum=1.0
+    minimum=0.0, minimum_inclusive=False, maximum=1.0, unit=""
 )
 
 
@@ -317,7 +317,10 @@ def _inclination_to_qmin(
     mass_value = native[mass]
     if mass in declared_units:
         mass_value = mass_value.to(declared_units[mass])
-    return {mass: mass_value, "q_min": Quantity(q_min, "")}
+    return {
+        mass: mass_value,
+        "q_min": Quantity(q_min, "").to(declared_units.get("q_min", "")),
+    }
 
 
 def _register_q_min(type_name: str, mass_name: str, mass_dimension: str) -> None:

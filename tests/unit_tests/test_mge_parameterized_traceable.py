@@ -10,7 +10,7 @@ from scipy.integrate import quad
 from unxt import Quantity, unitsystem
 
 from tnt.mge import LightMGE
-from tnt.potential import Potential
+from tnt.potential import Potential, raw_potential_parameters
 
 PATHS = [
     ("OblateLightMGEPotential", "q_min"),
@@ -512,3 +512,131 @@ def test_q_min_conversion_does_not_validate_unscaled_template_mass(x64):
             )
         ).all()
         Potential.build(resolved, parameters(values), {})
+        settings = {
+            "stars": {
+                "type": "OblateLightMGEPotential",
+                "parameterization": "q_min",
+                "parameters": {
+                    "ml": {"unit": normalization_unit},
+                    "q_min": {"unit": ""},
+                },
+            }
+        }
+        reported = raw_potential_parameters(settings, potential, {})["stars"]
+        assert float(reported["q_min"].ustrip("")) == pytest.approx(0.6, rel=2e-5)
+
+
+@pytest.mark.parametrize(("kind", "parameterization"), PATHS)
+def test_scaled_dimensionless_shape_bounds_and_reporting(kind, parameterization):
+    _, resolved, proposal, values = _setup(kind, parameterization)
+    raw = proposal(values)["stars"]
+    for name in NAMES[parameterization]:
+        raw[name] = raw[name].uconvert("percent")
+    assert bool(resolved["stars"]._raw_parameters_valid(raw))
+    key = NAMES[parameterization][0]
+    bad = {**raw, key: Quantity(150.0, "percent")}
+    assert not bool(resolved["stars"]._raw_parameters_valid(bad))
+    with pytest.raises(ValueError):
+        resolved["stars"].build(bad, {})
+    potential = Potential.build(resolved, {"stars": raw}, {})
+    settings = {
+        "stars": {
+            "type": kind,
+            "parameterization": parameterization,
+            "parameters": {
+                name: {"unit": str(value.unit)} for name, value in raw.items()
+            },
+        }
+    }
+    reported = raw_potential_parameters(settings, potential, {})["stars"]
+    for name in NAMES[parameterization]:
+        assert reported[name].unit == raw[name].unit
+        assert float(reported[name].ustrip("percent")) == pytest.approx(
+            float(raw[name].ustrip("percent")), rel=1e-6
+        )
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_percentage_proposal_preserves_physical_values_and_scaled_gradients(x64):
+    with jax.enable_x64(x64):
+        _, resolved, proposal, values = _setup("TriaxialMassMGEPotential", "T_maj_min")
+
+        def evaluate(values, percentage):
+            raw = proposal(values)
+            if percentage:
+                for index, name in enumerate(NAMES["T_maj_min"], start=1):
+                    raw["stars"][name] = Quantity(values[index], "percent")
+            potential, valid = Potential.build_with_validity(resolved, raw, {})
+            # A shape-dependent intrinsic density measures the conversion
+            # chain without involving Galax's separate quadrature contract.
+            density = jax.lax.cond(
+                valid,
+                lambda: jnp.sum(
+                    potential.components["stars"].deprojected.I.ustrip("Msun/kpc3")
+                ),
+                lambda: jnp.asarray(-1.0),
+            )
+            return density, valid
+
+        reference, gradient = jax.jit(
+            jax.value_and_grad(lambda x: evaluate(x, False), has_aux=True)
+        )(values)
+        percentages = values.at[1:].multiply(100)
+        (density, valid), scaled_gradient = jax.jit(
+            jax.value_and_grad(lambda x: evaluate(x, True), has_aux=True)
+        )(percentages)
+        assert bool(valid) and bool(reference[1])
+        assert float(density) == pytest.approx(float(reference[0]), rel=2e-5)
+        np.testing.assert_allclose(
+            scaled_gradient * jnp.array([1, 100, 100, 100]), gradient, rtol=2e-4
+        )
+
+
+@pytest.mark.parametrize("parameterization", ["pqu", "T_maj_min"])
+@pytest.mark.parametrize("x64", [False, True])
+def test_large_width_compression_recovery_in_equivalent_units(parameterization, x64):
+    with jax.enable_x64(x64):
+        source, _, proposal, values = _setup(
+            "TriaxialMassMGEPotential", parameterization
+        )
+        results = []
+        for unit in ("kpc", "km"):
+            mge = eqx.tree_at(
+                lambda m: m.sigma,
+                source,
+                Quantity(jnp.array([1000.0, 3000.0]), "kpc").uconvert(unit),
+            )
+            resolved = Potential.resolve(
+                {
+                    "stars": {
+                        "type": "TriaxialMassMGEPotential",
+                        "parameterization": parameterization,
+                        "mge": "m",
+                    }
+                },
+                {"m": mge},
+            )
+
+            def evaluate(x, resolved=resolved):
+                potential, valid = Potential.build_with_validity(
+                    resolved, proposal(x), {}
+                )
+                density = jax.lax.cond(
+                    valid,
+                    lambda: jnp.sum(
+                        potential.components["stars"].deprojected.I.ustrip("Msun/kpc3")
+                    ),
+                    lambda: jnp.asarray(-1.0),
+                )
+                return density, valid
+
+            (density, valid), gradient = jax.jit(
+                jax.value_and_grad(evaluate, has_aux=True)
+            )(values)
+            assert bool(valid)
+            Potential.build(resolved, proposal(values), {})
+            assert np.isfinite(np.asarray(gradient)).all()
+            results.append((float(density), np.asarray(gradient)))
+            jax.clear_caches()
+        assert results[0][0] == pytest.approx(results[1][0], rel=2e-5)
+        np.testing.assert_allclose(results[0][1], results[1][1], rtol=2e-4)
