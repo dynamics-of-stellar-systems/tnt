@@ -149,19 +149,17 @@ MGE `q_min`, `pqu`, and `T_maj_min` conversions remain eager; proposal batching
 and prior/model-iterator integration are deferred.
 
 Native MGE construction validates the complete set of Gaussians: intrinsic
-`0 < q <= p <= 1`, positive finite density, width and mass, and finite
-construction derivatives in declared units and local `Msun`/`kpc` units.
-Both forward and reverse automatic differentiation must produce finite
-derivatives and agree within the precision-dependent `50 * sqrt(eps)`
-tolerance, including an output/input-scaled roundoff allowance for zero
-derivatives. A finite mass is insufficient if reverse differentiation
-overflows internally. Gaussian masses are calculated locally in `Msun` and
+`0 < q <= p <= 1`, positive finite density, width and mass in declared units and local `Msun`/`kpc` units.
+Validity does not certify
+construction derivatives: forward/reverse derivative agreement is tested in
+focused regression cases, not recomputed for every proposal.
+Gaussian masses are calculated locally in `Msun` and
 `kpc`; width factors are multiplied with density rather than first cubing a
 width in its declared unit. The conversion boundary is preserved during
 compilation. Gaussian widths are also converted to `kpc` before Galax forms
 their powers. These local calculations preserve stored MGE columns and
-proposal units, including integer-valued input columns; numerical derivative
-checks and Gaussian-width arithmetic use floating-point arrays. Equivalent
+proposal units, including integer-valued input columns; Gaussian-width arithmetic
+uses floating-point arrays. Equivalent
 physical widths in `pc`, `kpc`, and `km` give the same construction and numerical
 results within rounding error.
 Oblate deprojection rejects cancellation in `q_obs**2 - cos(i)**2` when its

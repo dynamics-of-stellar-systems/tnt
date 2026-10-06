@@ -228,11 +228,9 @@
   scalar boolean; invalid intrinsic MGEs contain zeros and must not be used,
   including through `to_galax`, unless the flag is true. Eager and traced paths
   share intrinsic-axis, finite positive density/width/mass, and numerical
-  accuracy checks. Native potential construction additionally probes values
-  and both forward- and reverse-mode construction derivatives in declared and
-  local `Msun`/`kpc` units before allowing differentiation. Both modes must be
-  finite and agree within `50*sqrt(eps)`, with an output/input-scaled roundoff
-  allowance for zero derivatives (such as mass versus viewing angle).
+  accuracy checks. Native potential construction additionally probes positive
+  finite values in local `Msun`/`kpc` units. It does not compute or certify
+  construction derivatives on each proposal; regression tests cover gradients.
   Oblate cancellation and triaxial
   covariance-inversion conditioning/residual checks use `50*sqrt(eps)`
   relative error thresholds at active precision. Exactly circular projected
@@ -245,15 +243,14 @@
   density/width products, and preserves the conversion boundary against
   compiler reassociation. Its shared `gaussian_widths` property supplies
   floating-point `kpc` widths to both Galax factories with the same conversion
-  boundary. Stored MGE columns and proposal units remain unchanged. Numerical
-  derivative checks and Gaussian-width arithmetic use floating-point arrays
+  boundary. Stored MGE columns and proposal units remain unchanged.
+  Gaussian-width arithmetic uses floating-point arrays
   even when fixed input columns contain integers. Equivalent physical widths
   in `pc`, `kpc`, and `km` must yield consistent validity, mass, potential
   values, and gradients; finite
-  integrated mass alone is insufficient when reverse-mode intermediates
-  overflow at the selected precision.
+  integrated mass alone does not guarantee representable derivatives.
   The native-MGE validity contract covers deprojection and construction
-  values/derivatives. By explicit scope decision, it does not certify Galax's
+  values. By explicit scope decision, it does not certify Galax's
   fixed-order potential quadrature. Galax's 50-point Gaussian quadrature can
   be inaccurate for very thin Gaussians: at oblate q=0.001 the normalized
   central potential differs from the analytic arccos(q)/sqrt(1-q**2)
