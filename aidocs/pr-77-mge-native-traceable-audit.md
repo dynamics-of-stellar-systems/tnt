@@ -50,6 +50,37 @@ This document remains as the review handoff; remove it before merging, per the
 project workflow. Lint and documentation verification are recorded in the
 implementation commit.
 
+### Before/after benchmark (2026-10-06)
+
+The native-construction test file averaged **920.25 seconds before** and
+**204.54 seconds after** the Q1/Q2 implementation: **4.50× faster**, a **77.8%**
+runtime reduction, saving approximately **11 minutes 56 seconds per run**.
+
+Compared revisions `b46b0c06563646ecbdb9205c2d21ea7f2bf781c5` (before) and
+`f448e5fe2d6910551f56878bc11dd3719de0c817` (after). Each revision ran twice,
+sequentially in before–after–after–before order. Each run used a fresh Colima
+Linux x86_64 container, a read-only source mount, the same pinned image
+(`sha256:37ae2dab37655a2590f2a9003cddff9a1b132cab6f89e69e9ce30d2f264c0727`),
+and `JAX_ENABLE_COMPILATION_CACHE=false`. Compilation time is included.
+
+```sh
+python -m pytest -q tests/unit_tests/test_mge_native_traceable.py --durations=10 -p no:cacheprovider
+```
+
+| Run | Tests passed | Pytest runtime (seconds) |
+| --- | ---: | ---: |
+| Before 1 | 47 | 951.40 |
+| After 1 | 39 | 208.05 |
+| After 2 | 39 | 201.02 |
+| Before 2 | 47 | 889.09 |
+
+All four runs passed. This measures the combined implementation and test
+coverage changes in this one file, whose test count decreased from 47 to 39;
+it does not establish a full-repository speedup or isolate the implementation
+gain with identical tests. Two repeats provide an estimate, not statistical
+certainty. No other containers were running at the benchmark start; other
+host activity was not controlled.
+
 ## Questions from Prash
 
 ### Q1 — Should `build_with_validity` replace `build_potential` entirely?
