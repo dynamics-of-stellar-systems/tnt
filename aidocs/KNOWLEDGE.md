@@ -527,14 +527,14 @@
   `_constraints`; parameterization raw constraints live in the same registered
   `ParameterizationSpec` as its converters and schema. Registration rejects
   constraint names or relationships that disagree with their owning schema.
-  `components._check_parameter_set_contract()` separately enforces the
-  generator/converter pipeline contract; each `ParameterConstraint.violation()`
-  owns its bound and relationship evaluation. Physical-domain and well-formed
-  `Quantity` failures raise `InvalidPotentialParametersError`, which
-  `ModelIterator._evaluate()` records as an invalid model alongside
-  `MGEDeprojectionError`. A non-`Quantity` value remains an uncaught `TypeError`
-  because it indicates a programming error rather than a physically invalid
-  proposed point.
+  `components._check_parameter_set_structure()` enforces the
+  generator/converter structure contract. Each `ParameterConstraint.valid()`
+  owns its numerical bound and relationship predicates; `violation()` uses
+  those predicates for standalone diagnostics. Numerical proposal failures
+  return `valid=False`, which `ModelIterator._evaluate()` records as an
+  invalid model. Malformed names, shapes, types, and dimensions remain static
+  setup errors and propagate to the caller, including
+  `InvalidPotentialParametersError` and `TypeError`.
   TNT's chosen physical policy is strict positivity for every mass, MGE
   normalization (`ml`/`mge_mass_scale`), and scale length, including parameters
   such as Miyamoto-Nagai `a`; zero does not disable a component or select a
@@ -561,7 +561,7 @@
   trailing optional `mge` arg -- `None` for a curated native `galax` type,
   else the component's own `tnt.mge` MGE (every MGE composite type stores it
   in a field named `mge`) -- supplied generically, not per type:
-  `ResolvedPotentialComponent.build` passes `extra_fields.get("mge")` to the
+  `ResolvedPotentialComponent.build_with_validity` passes `extra_fields.get("mge")` to the
   forward converter, `AbstractPotentialComponent.raw_parameters` passes
   `getattr(self, "mge", None)` -- the same value, off the built component --
   to the inverse one. `pqu` uses it for `q' = min(component q)` and the
@@ -576,8 +576,10 @@
   `triaxial_viewing_angles` and back in by `triaxial_intrinsic_shape`, so
   `(p, q, u)` keep their meaning for a twisted MGE. Ties for min `q'` break by
   component order. `_pqu_to_tpp` / `_tpp_to_pqu` in `tnt.potential.triaxial_mge`
-  are thin registry adapters that re-raise `MGEDeprojectionError` as
-  `InvalidPotentialParametersError`. A `pqu` config and its equivalent
+  share traceable numerical candidates with the standalone scientific methods.
+  Failed forward conversions produce nonfinite angles for the shared builder
+  to reject with `valid=False`; standalone methods retain diagnostic exceptions.
+  A `pqu` config and its equivalent
   `(theta, phi, psi)` config build an identical potential. Data-independent
   bounds (`0 < q <= p <= 1`, `p < u <= 1`) are `ParameterConstraint`s;
   `triaxial_viewing_angles` additionally rejects a value violating `q < p`
@@ -614,7 +616,8 @@
   `_TMAJMIN_ROUNDTRIP_ABS_TOL_FACTOR * eps + _TMAJMIN_ROUNDTRIP_REL_TOL_FACTOR
   * sqrt(eps) * |coordinate|` (a combined bound, not relative alone, since a
   requested coordinate can legitimately be exactly `0`); otherwise
-  `MGEDeprojectionError`. At float64 this is essentially never triggered by
+  the standalone method raises `MGEDeprojectionError`, while the potential
+  builder returns `valid=False`. At float64 this is essentially never triggered by
   an ordinary point; at float32 it can reject points with a small
   `T`/`T_maj`/`T_min` whose `(p,q,u)` sits close enough to `pqu`'s own
   singular boundary -- calibrated against measured round-trip drift
@@ -643,8 +646,8 @@
   checks `abs(q_recovered - q_min) / q_min <= 50 * sqrt(eps)`, where `eps`
   is for the active JAX float type. This is a relative shape-error ceiling:
   approximately `7.45e-7` at float64 and `0.0173` (1.73%) at float32.
-  Exceeding it raises `MGEDeprojectionError`, translated by the adapter to
-  `InvalidPotentialParametersError`. Thin or nearly circular configurations
+  Exceeding it raises `MGEDeprojectionError` in the standalone method and
+  returns `valid=False` from the potential builder. Thin or nearly circular configurations
   can fail this check even inside the mathematical domain. Reporting uses
   the recovered shape, so accepted values need not equal inputs exactly.
 - `parameterization` is a separate, optional field controlling how config
@@ -744,8 +747,9 @@
   component's resolved state. TNT does not support an NFW
   `(c, f) -> (m, r_s)` "concentration + mass fraction" parameterization
   (`f = M_200 / M*_TOT`, `M*_TOT` derived from the stellar MGE component)
-  because `Potential.from_settings` resolves each component independently in
-  one pass, so no component-local converter can see another component's
+  because `Potential.resolve` resolves each component independently and
+  `Potential.build_with_validity` converts it using only its own inputs,
+  so no component-local converter can see another component's
   resolved mass. That kind of cross-component
   relationship belongs to the parameter generator/search space rather than
   potential construction; it must not be shoehorned into `parameterization`.

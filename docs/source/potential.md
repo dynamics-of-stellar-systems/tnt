@@ -321,13 +321,14 @@ potential:
   give incorrect zero gradients.
 - **All four MGE composite types**: implemented. The named MGE is
   deprojected -- triaxial types under `theta`/`phi`/`psi`
-  (`AbstractMGE.deproject_triaxial`), oblate axisymmetric types under a
-  single `inclination` (`AbstractMGE.deproject_oblate`) -- once, when the
+  (`AbstractMGE.deproject_triaxial_with_validity`), oblate axisymmetric types under a
+  single `inclination` (`AbstractMGE.deproject_oblate_with_validity`) -- when the
   component itself is built from a proposed point in parameter space, not
   lazily inside `to_galax()`, so an invalid viewing geometry
-  (`tnt.mge.MGEDeprojectionError`, for a deprojection with no real solution
-  or intrinsic axial ratios outside TNT's `0 < q <= p <= 1` convention)
-  surfaces there, before anything downstream is attempted. `to_galax()` then
+  (a deprojection with no real solution or intrinsic axial ratios outside
+  TNT's `0 < q <= p <= 1` convention) returns `valid=False` before
+  anything downstream is attempted. Standalone diagnostic deprojection
+  methods still raise `tnt.mge.MGEDeprojectionError`. `to_galax()` then
   sums one `galax.potential.TriaxialGaussianPotential` /
   `AxisymmetricGaussianPotential` per Gaussian component. TNT uses these
   native `galax` Gaussian potentials and `CompositePotential` directly rather
@@ -352,9 +353,9 @@ potential:
   MGE, `max(q/q', p) < u <= min(p/q', 1)` (lower endpoints excluded, upper
   endpoints `u = 1` and `u = p/q'` are valid limiting geometries). Anything
   outside that -- or a domain so narrow no interior geometry is representable
-  at the active JAX precision -- makes the build raise
-  `InvalidPotentialParametersError` (recorded as an invalid model, not a
-  crash). Near the upper endpoints `u` is evaluated a small margin inside the
+  at the active JAX precision -- makes the build return `valid=False`,
+  which the iterator records as an invalid model. Near the upper endpoints
+  `u` is evaluated a small margin inside the
   domain (`~1.4e-3` at float32, negligible at float64), so a declared `u = 1`
   is honoured to that margin and `AllModels` reports the recovered value.
   Both directions are `AbstractMGE` methods (`triaxial_viewing_angles` and its
@@ -392,8 +393,8 @@ potential:
   valid, inclusive edge-on limit `i = 90 deg`) and a non-circular anchor
   (`q_obs' < 1`). Anything outside that -- or a `q_min` too close to 1
   (spherical) to invert reliably at the active JAX precision -- makes the
-  build raise `InvalidPotentialParametersError` (recorded as an invalid
-  model, not a crash). Both directions are `AbstractMGE` methods
+  build return `valid=False`, which the iterator records as an invalid
+  model. Both directions are `AbstractMGE` methods
   (`inclination_from_q_min` and its inverse `q_min_from_inclination`, which
   reads the anchor's intrinsic `q` off a full `deproject_oblate` call), so a
   `q_min` config and its equivalent `inclination` config build an identical

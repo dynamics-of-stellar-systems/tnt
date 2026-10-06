@@ -10,18 +10,19 @@ intrinsic placeholder. `to_galax` must only be called for valid proposals.
 Both types also accept `parameterization: "pqu"`, replacing `theta/phi/psi`
 with the intrinsic axis ratios `p = B/A`, `q = C/A` and the compression `u`
 of the triaxial-Schwarzschild / DYNAMITE-successor literature (van den Bosch
-et al. 2008, MNRAS 385, 647). `_pqu_to_tpp` / `_tpp_to_pqu` are thin adapters
-over `AbstractMGE.triaxial_viewing_angles` / `triaxial_intrinsic_shape`,
-which own the conversion (anchored at `q' = min(component q)`) and its
-inverse.
+et al. 2008, MNRAS 385, 647). `_pqu_to_tpp` shares its forward numerical
+candidate with `AbstractMGE.triaxial_viewing_angles`; `_tpp_to_pqu` uses
+`triaxial_intrinsic_shape` for the inverse. The conversion is anchored at
+`q' = min(component q)`.
 
 `parameterization: "T_maj_min"` is a second option, over the same
 `(p, q, u)` anchor but reparameterized as `(T, T_maj, T_min) in [0, 1]^3`
 for more uniform shape/viewing-geometry sampling (Quenneville, Liepold & Ma
 2022, ApJ 926:30, sec. 3). `_tmajmin_to_tpp` / `_tpp_to_tmajmin` are the
-matching thin adapters, over `AbstractMGE.viewing_angles_from_T_Tmaj_Tmin` /
-`T_Tmaj_Tmin_from_viewing_angles`, which themselves convert to/from `(p, q, u)`
-and delegate the rest to `triaxial_viewing_angles` / `triaxial_intrinsic_shape`.
+matching adapters, sharing the forward numerical candidate with
+`AbstractMGE.viewing_angles_from_T_Tmaj_Tmin` and using
+`T_Tmaj_Tmin_from_viewing_angles` for the inverse. Both directions convert
+through `(p, q, u)` and share its viewing-geometry rules.
 """
 
 from __future__ import annotations
@@ -237,13 +238,13 @@ def _pqu_to_tpp(
     cosmological_parameters: Mapping[str, Quantity],
     mge: LightMGE | MassMGE | None,
 ) -> dict[str, Quantity]:
-    """Adapt `(p, q, u)` -> `(theta, phi, psi)` via `triaxial_viewing_angles`.
+    """Adapt `(p, q, u)` -> `(theta, phi, psi)` via the shared angle candidate.
 
     The data-independent `(p, q, u)` bounds (`0 < q <= p <= 1`, `p < u <= 1`)
     are enforced by the parameterization's `raw_constraints` before this runs;
-    the MGE-dependent domain and every singular geometry are the MGE method's
-    business. Failed numerical conversions return nonfinite angles for the
-    shared builder to reject before differentiable construction.
+    the MGE-dependent domain and singular geometries use the same predicates
+    as `triaxial_viewing_angles`. Failed numerical conversions return nonfinite
+    angles for the shared builder to reject before differentiable construction.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register `pqu`
@@ -345,7 +346,7 @@ def _tmajmin_to_tpp(
     The data-independent `(T, T_maj, T_min)` bounds (each in `[0, 1]`) are
     enforced by the parameterization's `raw_constraints` before this runs;
     the MGE-dependent domain and every singular geometry are
-    shared numerical candidate's business. Failed numerical conversions return
+    the shared numerical candidate's business. Failed numerical conversions return
     nonfinite angles for the shared builder to reject.
     """
     del cosmological_parameters

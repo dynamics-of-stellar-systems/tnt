@@ -1165,7 +1165,7 @@ def test_triaxial_mge_pqu_rejects_a_native_viewing_angle(tmp_path: Path) -> None
 
 
 # NB: an out-of-domain static value (e.g. q > p) is not rejected at config-prep
-# -- ParameterConstraints are enforced at ResolvedPotentialComponent.build,
+# -- ParameterConstraints are enforced at build_with_validity via its flag,
 # see test_potential.py::test_pqu_domain_invalid_value_is_rejected_at_build_time.
 
 

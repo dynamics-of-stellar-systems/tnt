@@ -266,9 +266,9 @@ class AbstractPotentialComponent(eqx.Module):
         proposed point in parameter space -- a caller building many
         `Potential`s from the same configuration (e.g. `ModelIterator`,
         once per proposed `ParameterSet`) should call this once and reuse
-        the result via `ResolvedPotentialComponent.build`, rather than
+        the result via `ResolvedPotentialComponent.build_with_validity`, rather than
         re-deriving it every time. `Potential.resolve` calls this
-        internally for one-shot construction.
+        internally to resolve the complete potential's static structure.
 
         Args:
             settings: One resolved `potential.<name>` entry: `type`, an
@@ -385,7 +385,7 @@ class AbstractPotentialComponent(eqx.Module):
     ) -> dict[str, Quantity]:
         """This component's parameters in the resolved config's own parameterization.
 
-        The inverse of `ResolvedPotentialComponent.build`'s conversion, so
+        The inverse of `ResolvedPotentialComponent.build_with_validity`'s conversion, so
         `AllModels` can report every component the way its configuration
         actually specifies it, regardless of `rescale`. `parameters` already
         *is* the raw, parameterization-independent representation when no
@@ -396,7 +396,7 @@ class AbstractPotentialComponent(eqx.Module):
         off `self` (every MGE composite type stores its MGE in a field named
         `mge`; `None` for a curated native `galax` type, which never carries
         one) -- `ForwardConverter`'s matching argument comes from
-        `ResolvedPotentialComponent.build`'s `extra_fields`, before a
+        `ResolvedPotentialComponent.build_with_validity`'s `extra_fields`, before a
         component exists to read it from.
 
         Args:

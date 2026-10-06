@@ -81,7 +81,16 @@ gain with identical tests. Two repeats provide an estimate, not statistical
 certainty. No other containers were running at the benchmark start; other
 host activity was not controlled.
 
-## Questions from Prash
+## Original review snapshot (head `7f78f98`)
+
+The following questions, findings, recommendations, and verification results
+are preserved from the original review. Q1/Q2 have been resolved and F1–F5
+addressed by the implementation response above; the source locations and API
+descriptions below refer to the reviewed head, not the current implementation.
+The remaining follow-up scope is iterator batching, prior integration, and
+Galax potential-quadrature accuracy.
+
+## Questions from Prash (resolved)
 
 ### Q1 — Should `build_with_validity` replace `build_potential` entirely?
 
@@ -301,7 +310,7 @@ python -m pytest -q tests/unit_tests/test_potential.py
   note that "the full repository test suite was not run for the final
   correction"); did not run `ruff`/Sphinx independently in this pass.
 
-## Scope and follow-up
+## Original scope and follow-up (superseded)
 
 Only this audit document was added to the branch. Implementation fixes,
 posting review comments, and merging are separate follow-up actions. Q1 and

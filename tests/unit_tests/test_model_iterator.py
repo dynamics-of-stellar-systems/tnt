@@ -220,11 +220,11 @@ def test_evaluate_logs_and_flags_invalid_potential_build(
 ) -> None:
     iterator = _make_iterator()
 
-    def _raise_invalid(resolved, parameter_values, cosmological_parameters):
+    def _invalid_build(resolved, parameter_values, cosmological_parameters):
         return object(), False
 
     monkeypatch.setattr(
-        model_iterator_module.Potential, "build_with_validity", _raise_invalid
+        model_iterator_module.Potential, "build_with_validity", _invalid_build
     )
 
     with caplog.at_level(logging.WARNING, logger="tnt.model_iterator"):

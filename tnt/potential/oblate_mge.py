@@ -14,9 +14,9 @@ intrinsic placeholder. `to_galax` must only be called for valid proposals.
 Both types also accept `parameterization: "q_min"`, replacing `inclination`
 with the intrinsic axial ratio of the flattest observed (anchor) Gaussian
 component, `q_min <= q' = min(component q)`. `_qmin_to_inclination` /
-`_inclination_to_qmin` are thin adapters over
-`AbstractMGE.inclination_from_q_min` / `q_min_from_inclination`, which own
-the conversion and its inverse -- the oblate counterpart of
+`_inclination_to_qmin` share the forward numerical candidate with
+`AbstractMGE.inclination_from_q_min` and use `q_min_from_inclination` for
+the inverse -- the oblate counterpart of
 `triaxial_mge`'s `pqu`.
 """
 
@@ -226,13 +226,13 @@ def _qmin_to_inclination(
     cosmological_parameters: Mapping[str, Quantity],
     mge: LightMGE | MassMGE | None,
 ) -> dict[str, Quantity]:
-    """Adapt ``q_min`` -> ``inclination`` via `AbstractMGE.inclination_from_q_min`.
+    """Adapt ``q_min`` -> ``inclination`` via the shared inclination candidate.
 
     The data-independent `q_min` bound (`0 < q_min <= 1`) is enforced by the
     parameterization's `raw_constraints` before this runs; the MGE-dependent
-    domain and every singular geometry are `inclination_from_q_min`'s
-    business. Failed numerical conversions return nonfinite angles for the
-    shared builder to reject before differentiable construction.
+    domain and singular geometries use the same predicates as
+    `inclination_from_q_min`. Failed numerical conversions return nonfinite
+    angles for the shared builder to reject before differentiable construction.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register this

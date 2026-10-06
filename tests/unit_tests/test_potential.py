@@ -329,7 +329,7 @@ def test_raw_parameter_dimensions_covers_all_three_sources() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_from_settings_rejects_unrecognized_type() -> None:
+def test_resolve_rejects_unrecognized_type() -> None:
     with pytest.raises(
         ValueError, match="Unsupported potential.dh.type 'NotAPotential'"
     ):
@@ -340,9 +340,9 @@ def test_from_settings_rejects_unrecognized_type() -> None:
         )
 
 
-def test_from_settings_rejects_a_real_but_uncurated_galax_class() -> None:
+def test_resolve_rejects_a_real_but_uncurated_galax_class() -> None:
     # MultipolePotential is a real galax.potential class -- unlike
-    # test_from_settings_rejects_unrecognized_type's made-up name -- but
+    # test_resolve_rejects_unrecognized_type's made-up name -- but
     # isn't in _SUPPORTED_GALAX_TYPES (its required l_max: int
     # hyperparameter isn't representable by this module's scalar-Quantity
     # schema). Curating supported classes makes this fail clearly during
@@ -357,7 +357,7 @@ def test_from_settings_rejects_a_real_but_uncurated_galax_class() -> None:
         )
 
 
-def test_from_settings_resolves_a_real_galax_class_name() -> None:
+def test_resolve_resolves_a_real_galax_class_name() -> None:
     resolved = AbstractPotentialComponent.resolve(
         {"type": "NFWPotential", "parameters": {}},
         {},
@@ -681,7 +681,7 @@ def test_frequency_amplitude_domain_and_signed_pattern_speed_are_distinct() -> N
     assert component.parameters["Omega"].ustrip("km / (s kpc)") == -40.0
 
 
-def test_from_settings_rejects_unimplemented_parameterization() -> None:
+def test_resolve_rejects_unimplemented_parameterization() -> None:
     with pytest.raises(NotImplementedError, match="'bogus' is not implemented"):
         AbstractPotentialComponent.resolve(
             {
@@ -1282,7 +1282,7 @@ def test_nfw_concentration_m200_inverse_is_self_consistent_after_rescale() -> No
 
 # ---------------------------------------------------------------------------
 # raw_potential_parameters: reporting a Potential in its own configured
-# parameterization, the inverse of Potential.from_settings.
+# parameterization, the inverse of Potential.build_with_validity.
 # ---------------------------------------------------------------------------
 
 
@@ -1439,11 +1439,11 @@ def test_potential_composes_every_declared_component() -> None:
 
 
 # ---------------------------------------------------------------------------
-# NFW plumbing, independent of the parameterization gap.
+# NFW component rescaling and Galax conversion.
 # ---------------------------------------------------------------------------
 
 
-def test_nfw_component_plumbing_works_without_from_settings() -> None:
+def test_direct_nfw_component_rescales_and_converts_to_galax() -> None:
     unit_system = _internal_unit_system()
     component = GalaxPotentialComponent(
         galax_type="NFWPotential",
@@ -1462,7 +1462,7 @@ def test_nfw_component_plumbing_works_without_from_settings() -> None:
 
 
 # ---------------------------------------------------------------------------
-# MGE composite types: from_settings resolution and to_galax.
+# MGE composite types: resolution, guarded construction, and to_galax.
 #
 # The basic to_galax viewing-angle tests below deliberately use q=1
 # (circular) components with a known nonsingular viewing geometry. They
@@ -2004,7 +2004,7 @@ def test_mge_component_build_flags_invalid_geometry_before_to_galax() -> None:
     # 0 < q <= p <= 1) for this q_obs=0.9 MGE.
     good_angles = {**bad_angles, "psi": Quantity(-1.08, "rad")}
 
-    # Raises from build() itself, before to_galax() is ever reached.
+    # Returns a false construction flag before to_galax() is ever reached.
     assert not bool(
         resolved.build_with_validity(
             {"ml": Quantity(5.0, "Msun / Lsun"), **bad_angles},
@@ -2012,9 +2012,7 @@ def test_mge_component_build_flags_invalid_geometry_before_to_galax() -> None:
         )[1]
     )
 
-    # A component that *did* build successfully can't have to_galax() raise
-    # it -- deprojection already happened, and was already validated, at
-    # build time.
+    # A valid component reaches to_galax() with its deprojection already checked.
     component = _valid_build(
         resolved.build_with_validity(
             {"ml": Quantity(5.0, "Msun / Lsun"), **good_angles},
@@ -2151,7 +2149,7 @@ def test_triaxial_mass_mge_to_galax_uses_mge_mass_scale() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Oblate axisymmetric MGE composite types: same _build/to_galax wiring as the
+# Oblate axisymmetric MGE composite types: same guarded build/to_galax wiring as the
 # triaxial pair, under a single `inclination` instead of theta/phi/psi.
 #
 # `AbstractMGE.deproject_oblate` has a real solution for any component
