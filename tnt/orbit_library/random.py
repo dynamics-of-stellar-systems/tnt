@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import ClassVar
 
+import galax.potential as gp
 import jax.numpy as jnp
 
-from tnt.orbit_library.base import AbstractOrbitDithering, AbstractOrbitSampler
-
-if TYPE_CHECKING:
-    from tnt.potential import Potential
+from tnt.orbit_library.base import AbstractOrbitSampler
 
 
 class RandomOrbitSampler(AbstractOrbitSampler):
@@ -27,9 +25,5 @@ class RandomOrbitSampler(AbstractOrbitSampler):
     def n_bundles(self) -> int:
         raise NotImplementedError
 
-    def generate_ics(
-        self,
-        potential: Potential,
-        dithering: AbstractOrbitDithering,
-    ) -> jnp.ndarray:
+    def generate_ics(self, potential: gp.AbstractPotential) -> jnp.ndarray:
         raise NotImplementedError

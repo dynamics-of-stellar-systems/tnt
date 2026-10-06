@@ -1,9 +1,12 @@
 """Shared orbit-sampler/dithering contracts, `OrbitLibrary`, and their builders.
 
-Signature-only scaffold: every method raises `NotImplementedError`. Concrete
-`AbstractOrbitSampler` subclasses live one per sibling module
-(`tnt.orbit_library.grid`, `tnt.orbit_library.random`); `build_orbit_sampler`
-dispatches on `orbit_library_settings.orbit_sampler.type` once implemented.
+Signature-only scaffold apart from `generate_ics`'s own dispatch glue:
+concrete `AbstractOrbitSampler.n_bundles`/`generate_ics` still raise
+`NotImplementedError` for everything but `StationaryGridOrbitSampler`, and
+`build_orbit_sampler`/`build_orbit_dithering` remain unimplemented. Concrete
+samplers live one per sibling module (`tnt.orbit_library.grid`,
+`tnt.orbit_library.random`, `tnt.orbit_library.stationary_grid`), the same
+split `tnt.potential` uses for its own composite types.
 """
 
 from __future__ import annotations
@@ -12,8 +15,9 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 import equinox as eqx
+import galax.potential as gp
 import jax.numpy as jnp
-from unxt import Quantity
+from unxt import AbstractUnitSystem, Quantity
 
 if TYPE_CHECKING:
     from tnt.potential import Potential
@@ -24,8 +28,8 @@ class AbstractOrbitSampler(eqx.Module):
 
     `_type` matches `orbit_library_settings.orbit_sampler.type`. Concrete
     subclasses hold their own resolved settings as fields (e.g.
-    `GridOrbitSampler.nE`), built once by `build_orbit_sampler` rather than
-    re-reading `orbit_library_settings` on every call.
+    `StationaryGridOrbitSampler.nE`), built once by `build_orbit_sampler`
+    rather than re-reading `orbit_library_settings` on every call.
     """
 
     _type: ClassVar[str]
@@ -34,23 +38,22 @@ class AbstractOrbitSampler(eqx.Module):
         """Total number of orbit bundles this scheme produces."""
         raise NotImplementedError
 
-    def generate_ics(
-        self,
-        potential: Potential,
-        dithering: AbstractOrbitDithering,
-    ) -> jnp.ndarray:
-        """Generate every bundle's dithered initial conditions.
+    def generate_ics(self, potential: gp.AbstractPotential) -> jnp.ndarray:
+        """Generate every bundle's initial conditions.
 
         Args:
-            potential: The potential orbits will be integrated in --
-                initial conditions (e.g. energies, turning points)
-                generally depend on its shape.
-            dithering: Determines how many closely-spaced orbits
-                (`dithering.n_orbits_per_bundle()`) to generate per bundle.
+            potential: The already-built `galax` potential orbits will be
+                integrated in (the module-level `generate_ics` below builds
+                this from a `tnt.potential.Potential` and a unit system) --
+                initial conditions (e.g. energies, turning points) generally
+                depend on its shape.
 
         Returns:
-            A `(self.n_bundles(), dithering.n_orbits_per_bundle(), 6)` array
-            of phase-space initial conditions `(x, y, z, vx, vy, vz)`.
+            A `(self.n_bundles(), 6)` array of phase-space bundle-centre
+            initial conditions `(x, y, z, vx, vy, vz)`. Dithering each
+            bundle into several closely-spaced orbits
+            (`AbstractOrbitDithering`) is a separate, not-yet-implemented
+            concern -- see that class's docstring.
         """
         raise NotImplementedError
 
@@ -96,6 +99,25 @@ def build_orbit_dithering(
     `orbit_library_settings.dithering`.
     """
     raise NotImplementedError
+
+
+def generate_ics(
+    potential: Potential,
+    unit_system: AbstractUnitSystem,
+    orbit_sampler: AbstractOrbitSampler,
+) -> jnp.ndarray:
+    """Generate an orbit sampler's bundle-centre initial conditions in one
+    `Potential`.
+
+    A free function, not a `Potential` method -- like `build_potential` and
+    `raw_potential_parameters` in `tnt.potential.core`, this needs
+    config-level context (`unit_system`) beyond the potential's own
+    identity. Builds the `galax` potential (`potential.to_galax(unit_system)`)
+    once and hands it to `orbit_sampler.generate_ics` -- the one place
+    `unit_system` is needed at all; `AbstractOrbitSampler.generate_ics`
+    itself only ever takes the already-built `galax` potential.
+    """
+    return orbit_sampler.generate_ics(potential.to_galax(unit_system))
 
 
 class OrbitLibrary(eqx.Module):
