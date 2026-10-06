@@ -6,14 +6,10 @@ angle (`AbstractMGE.deproject_oblate`) -- the oblate-axisymmetric sibling of
 `tnt.potential.triaxial_mge`. TNT's axisymmetric deprojection is the oblate
 convention only (`p = B/A = 1`, `q = C/A <= 1`); a prolate spheroid, whose
 long axis is the symmetry axis, needs a different relation and would get its
-own `Prolate...` types (tracked as a non-urgent follow-up). Deprojection
-happens once, in `_build` -- not lazily inside `to_galax()` -- so an invalid
-inclination (`tnt.mge.MGEDeprojectionError`, or a `ValueError` for an
-inclination outside `(0, 90]` deg), or an MGE with nonzero `PA_twist`
-(`ValueError` -- an axisymmetric system has no isophote twist), surfaces
-right there, before anything downstream is attempted. Same rationale and
-shape as `triaxial_mge`; kept separate so each module is about one
-deprojection convention.
+own `Prolate...` types (tracked as a non-urgent follow-up).
+The shared `build_with_validity` builder deprojects and checks the MGE
+before any numerical use. Invalid proposals return a false flag and a zero
+intrinsic placeholder. `to_galax` must only be called for valid proposals.
 
 Both types also accept `parameterization: "q_min"`, replacing `inclination`
 with the intrinsic axial ratio of the flattest observed (anchor) Gaussian
@@ -31,9 +27,10 @@ from typing import Any, ClassVar, Self
 
 import equinox as eqx
 import galax.potential
+import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, MGEDeprojectionError
+from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, _conversion_valid
 from tnt.potential.components import AbstractPotentialComponent
 from tnt.potential.registry import (
     InvalidPotentialParametersError,
@@ -59,7 +56,7 @@ _INCLINATION_CONSTRAINT = ParameterConstraint(
 class OblateLightMGEPotential(AbstractPotentialComponent):
     """An oblate axisymmetric potential from a light MGE, via its `ml` parameter.
 
-    `_build` converts the light MGE to mass via `ml`, deprojects it under
+    The shared builder converts the light MGE to mass via `ml`, deprojects it under
     the single `inclination` angle (`AbstractMGE.deproject_oblate`), and
     stores the result as `deprojected`; `to_galax` sums one
     `galax.potential.AxisymmetricGaussianPotential` per Gaussian component
@@ -97,19 +94,6 @@ class OblateLightMGEPotential(AbstractPotentialComponent):
             )
         }
 
-    @classmethod
-    def _build(
-        cls,
-        parameters: dict[str, Quantity],
-        cosmological_parameters: Mapping[str, Quantity],
-        extra_fields: dict[str, Any],
-    ) -> Self:
-        del cosmological_parameters
-        mge = extra_fields["mge"]
-        mass_mge = mge.to_mass(parameters["ml"])
-        deprojected = mass_mge.deproject_oblate(parameters["inclination"])
-        return cls(parameters=parameters, mge=mge, deprojected=deprojected)
-
     def to_galax(
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
@@ -135,7 +119,7 @@ class OblateMassMGEPotential(AbstractPotentialComponent):
     `mge_mass_scale` is the analogue of a light MGE's `ml` for a component
     whose shape template is already in mass units (see
     `tnt.potential.triaxial_mge.TriaxialMassMGEPotential` for why it can
-    still move under `rescale` even when `fixed`). `_build`/`to_galax`
+    still move under `rescale` even when `fixed`). `build_with_validity`/`to_galax`
     otherwise follow the same path as `OblateLightMGEPotential` -- see its
     docstring.
     """
@@ -170,19 +154,6 @@ class OblateMassMGEPotential(AbstractPotentialComponent):
             )
         }
 
-    @classmethod
-    def _build(
-        cls,
-        parameters: dict[str, Quantity],
-        cosmological_parameters: Mapping[str, Quantity],
-        extra_fields: dict[str, Any],
-    ) -> Self:
-        del cosmological_parameters
-        mge = extra_fields["mge"]
-        mass_mge = mge.rescaled(parameters["mge_mass_scale"])
-        deprojected = mass_mge.deproject_oblate(parameters["inclination"])
-        return cls(parameters=parameters, mge=mge, deprojected=deprojected)
-
     def to_galax(
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
@@ -210,7 +181,7 @@ def _galax_potential_from_oblate_deprojected(
     """Sum one `galax.potential.AxisymmetricGaussianPotential` per Gaussian component.
 
     An oblate axisymmetric deprojection (`tnt.mge.AbstractMGE.deproject_oblate`,
-    called once in `_build`, before this) always gives intrinsic `p = 1`, so
+    called by the shared builder, before this) always gives intrinsic `p = 1`, so
     each Gaussian needs only `q2` -- `galax.potential.AxisymmetricGaussianPotential`
     is exactly the `q1 = 1` special case of the `TriaxialGaussianPotential`
     that `tnt.potential.triaxial_mge._galax_potential_from_deprojected` uses
@@ -260,18 +231,19 @@ def _qmin_to_inclination(
     The data-independent `q_min` bound (`0 < q_min <= 1`) is enforced by the
     parameterization's `raw_constraints` before this runs; the MGE-dependent
     domain and every singular geometry are `inclination_from_q_min`'s
-    business, re-raised here as `InvalidPotentialParametersError` so
-    `ModelIterator` records an invalid model rather than crashing.
+    business. Failed numerical conversions return nonfinite angles for the
+    shared builder to reject before differentiable construction.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register this
         raise InvalidPotentialParametersError(
             "The 'q_min' parameterization requires an MGE component."
         )
-    try:
-        inclination = mge.inclination_from_q_min(float(raw["q_min"].ustrip("")))
-    except MGEDeprojectionError as error:
-        raise InvalidPotentialParametersError(str(error)) from error
+    inclination, checks = mge._inclination_candidate(raw["q_min"].ustrip(""))
+    inclination = Quantity(
+        jnp.where(_conversion_valid(checks), inclination.ustrip("rad"), jnp.nan),
+        "rad",
+    )
 
     mass = _mass_parameter_name(raw)
     return {mass: raw[mass], "inclination": inclination}

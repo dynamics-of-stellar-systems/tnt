@@ -10,7 +10,7 @@ each piece's inputs matching what it actually uses.
 
 Everything here -- including `from_configuration` and both
 `minimum_delta_chi2` stopping modes -- is implemented, but only down to what
-it delegates to: `build_potential`, `Potential.generate_orbit_library`,
+it delegates to: `Potential.build_with_validity`, `Potential.generate_orbit_library`,
 `AbstractWeightSolver.solve`, `OrbitLibrary.rescaled`,
 `build_weight_solver`, `build_orbit_sampler`, and `build_orbit_dithering`
 are themselves still unimplemented, so `from_configuration`'s result can't
@@ -38,7 +38,7 @@ from tnt.configuration.compatibility import (
 )
 from tnt.configuration.core import CONFIG_REPOSITORY_DIRECTORY, preserve_run
 from tnt.kinematics import AbstractKinematics, build_kinematics
-from tnt.mge import MGEDeprojectionError, build_mges
+from tnt.mge import build_mges
 from tnt.model import Model
 from tnt.orbit_library import (
     AbstractOrbitDithering,
@@ -54,10 +54,8 @@ from tnt.parameter_generator import (
 )
 from tnt.populations import Populations, build_populations
 from tnt.potential import (
-    InvalidPotentialParametersError,
     Potential,
     ResolvedPotentialComponent,
-    build_potential,
     raw_potential_parameters,
 )
 from tnt.run_config_log import (
@@ -81,7 +79,7 @@ class ModelIterator:
     `resolved_potential` is `potential_settings`' fixed per-run static
     structure (types, MGE references), resolved once via
     `tnt.potential.Potential.resolve` rather than re-derived on every
-    proposed point -- see `tnt.potential.build_potential`.
+    proposed point -- see `tnt.potential.Potential.build_with_validity`.
     """
 
     potential_settings: Mapping[str, Mapping[str, Any]]
@@ -431,12 +429,11 @@ class ModelIterator:
 
         Sets `Model.valid_potential`/`orblib_done`/`weights_done` (and
         `weights`/`chi2`) to reflect what actually happened, per `Model`'s own
-        docstring, rather than assuming success. `build_potential` failing
-        with `MGEDeprojectionError` (an invalid MGE viewing geometry) or
-        `InvalidPotentialParametersError` (a proposed point outside its
-        component's physical domain) is recorded as an invalid model. A
-        failed orbit integration or
-        weight solve, distinct from that, is caught as a bare `Exception` --
+        docstring, rather than assuming success. `Potential.build_with_validity`
+        returning a false flag is recorded as an invalid model without
+        evaluating its placeholder. Static setup errors propagate to the caller.
+        A failed orbit integration or weight solve, distinct from that, is
+        caught as a bare `Exception` --
         there's no narrower exception type established anywhere else in the
         codebase yet for either failure, so this is a placeholder pending one.
         Deliberately makes only one attempt at each; configuration requires
@@ -449,14 +446,13 @@ class ModelIterator:
         which proposed point a given `OrbitLibrary` belongs to (see module
         docstring).
         """
-        try:
-            potential = build_potential(
-                self.resolved_potential,
-                parameters,
-                self.cosmological_parameters,
+        potential, valid = Potential.build_with_validity(
+            self.resolved_potential, parameters, self.cosmological_parameters
+        )
+        if not bool(valid):
+            _LOGGER.warning(
+                "Invalid potential for %s: numerical validation failed", parameters
             )
-        except (MGEDeprojectionError, InvalidPotentialParametersError) as error:
-            _LOGGER.warning("Invalid potential for %s: %s", parameters, error)
             return [_invalid_potential_model(parameters)]
 
         try:

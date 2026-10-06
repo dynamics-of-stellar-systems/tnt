@@ -42,8 +42,9 @@ ForwardConverter = Callable[..., dict[str, Quantity]]
 `mge` is the component's own `tnt.mge` MGE when it has one -- every MGE
 composite type stores it in a field named `mge`, `None` for a curated native
 `galax` type, which never carries one. Supplied generically, not per type:
-`ResolvedPotentialComponent.build` passes `self.extra_fields.get("mge")` to
-this (forward) converter; `AbstractPotentialComponent.raw_parameters` passes
+`ResolvedPotentialComponent.build_with_validity` passes
+`self.extra_fields.get("mge")` to this (forward) converter;
+`AbstractPotentialComponent.raw_parameters` passes
 `getattr(self, "mge", None)` -- the same value, read off the built component
 instead -- to the matching `InverseConverter`. The `pqu` parameterization
 needs it for `q' = min(component q)` and the anchor twist; `concentration_m200`

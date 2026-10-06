@@ -353,7 +353,7 @@ def test_deproject_oblate_conserves_total_flux():
 def test_deproject_oblate_requires_physical_units():
     mge = _multi_component_light_mge()
 
-    with pytest.raises(ValueError, match="physical .length. sigma"):
+    with pytest.raises(ValueError, match="MGE sigma must describe length"):
         mge.deproject_oblate(u.Quantity(90.0, "deg"))
 
 
@@ -540,7 +540,7 @@ def test_deproject_triaxial_conserves_total_flux():
 def test_deproject_triaxial_requires_physical_units():
     mge = _multi_component_light_mge()
 
-    with pytest.raises(ValueError, match="physical .length. sigma"):
+    with pytest.raises(ValueError, match="MGE sigma must describe length"):
         mge.deproject_triaxial(
             theta=u.Quantity(1.0, "rad"),
             phi=u.Quantity(1.0, "rad"),

@@ -257,11 +257,18 @@
   reference by about 0.7%, and its q derivative by about 95%, even with a
   well-resolved float64 deprojection. Potential-quadrature accuracy needs
   separate work; do not treat a true construction flag as that guarantee.
-  MGE `q_min`, `pqu`, and `T_maj_min` conversions remain eager; proposal
-  batching and prior/model-iterator integration are deferred.
-  `ModelIterator._evaluate()` still catches Python exceptions and returns a
-  variable-length `list[Model]`; orbit integration and weight solving remain
-  scaffolding.
+  MGE `q_min`, `pqu`, and `T_maj_min` conversions are traceable. The standalone
+  scientific methods and registry adapters share numerical candidates and
+  predicates, including anchor twists, endpoint margins and round-trip checks.
+  `Potential.build_with_validity` is the only potential construction interface;
+  `build_potential`, `Potential.build`, `Potential.from_settings`, component
+  `build`, and the four MGE `_build` factories have been removed.
+  `ModelIterator._evaluate()` checks the scalar flag before any use of the
+  potential, logs a generic numerical-validation rejection with raw parameters,
+  and records an invalid model. Static setup errors propagate. Construction
+  supports `vmap`; iterator batching and prior integration remain deferred.
+  The iterator still returns a variable-length `list[Model]`; orbit integration
+  and weight solving remain scaffolding.
 - Issue #72 fixes the execution target as one proposal evaluated inside a JAX
   trace. `ParameterConstraint.valid()` now exposes JAX scalar predicates for
   registered numeric bounds and same-component relationships; eager
@@ -281,7 +288,7 @@
   dtypes for zero placeholders used by invalid converted components; these
   are not usable physical models. Converters must themselves support JAX
   tracing, and their output names/types/dimensions/scalar shapes remain hard
-  contract checks. Iterator/prior integration and proposal batching are deferred.
+  contract checks. Iterator batching and prior integration are deferred.
 - Eager constraint diagnostics and traced validity evaluate the same JAX
   predicates at the proposed value's active precision; converting eager values
   to Python floats would change half-open bound decisions in float32. For
@@ -289,7 +296,7 @@
   `(r_h - r_c) / max(abs(r_h), abs(r_c)) > eps**(1/5)` at that precision.
   The upstream potential formula subtracts nearly equal terms and otherwise
   yields unreliable gradients close to equal radii. This numerical guard is
-  shared by eager and traced construction.
+  shared by ordinary and compiled calls to the same builder.
 - Intel macOS is not a native TNT target because current JAX releases do not
   provide `jaxlib` wheels for that platform. Use the Linux `x86_64`
   development container there instead.
@@ -510,15 +517,12 @@
   declared -- intentional TNT policy, for a complete/reproducible
   model-table schema.
 - Runtime potential construction owns value/domain validation.
-  `ResolvedPotentialComponent.build()` checks that every raw parameter is an
-  exactly named, dimensionally correct, scalar, finite `Quantity`, applies the
-  resolved type/parameterization's physical-domain constraints, runs any
-  forward converter, and repeats the checks against the canonical native
-  schema and constraints. This is deliberately eager Python boundary logic,
-  before a potential object enters JAX/Equinox numerical work; it does not
-  mutate or normalize the parameter's declared unit. MGE data-dependent
-  deprojection geometry remains validated by the MGE composite `_build()`
-  methods. Native `galax` constraints live beside dimension/rescale metadata in
+  `ResolvedPotentialComponent.build_with_validity()` checks exactly named,
+  dimensionally correct scalar `Quantity` inputs as static setup, then returns
+  a flag for finiteness and physical-domain checks before/after conversion.
+  It does not normalize declared units. MGE construction and standalone
+  deprojection share `_guard_construction` for detached probing and conditional
+  differentiable construction. Native `galax` constraints live beside metadata in
   `_SUPPORTED_GALAX_TYPES`; TNT composite constraints live on each component's
   `_constraints`; parameterization raw constraints live in the same registered
   `ParameterizationSpec` as its converters and schema. Registration rejects
@@ -688,8 +692,8 @@
   can therefore use `H` without depending on `units.internal`.
   `cosmological_parameters` is
   threaded from `Configuration` through `ModelIterator` (a stored field, set
-  in `from_configuration`) into `build_potential`. The internal unit system
-  follows a separate path and is retained for `Potential.to_galax()`. Since
+  in `from_configuration`) into `Potential.build_with_validity`.
+  The internal unit system follows a separate path and is retained for `Potential.to_galax()`. Since
   configuration preparation
   preserves declared quantities as `{value, unit}` rather than stripping
   them (see the units-handling entries above), `ModelIterator.from_configuration`
@@ -713,7 +717,7 @@
   cancellation in both conversions. The characteristic-mass quotient has a
   custom JAX derivative that avoids g(c)**2 in the denominator. Unrepresentable
   native values or mass/concentration derivative coefficients invalidate the
-  conversion (eager errors or a false traced flag); derivative representability
+  conversion (a false validity flag); derivative representability
   is checked in `Msun` and `kpc` so equivalent declared mass units agree.
   A JAX optimization barrier preserves the local H conversion during JIT
   compilation, preventing arithmetic reassociation from recreating underflow.

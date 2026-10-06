@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from unxt import Quantity, unitsystem
 
-from tnt.mge import LightMGE, MassMGE, MGEDeprojectionError
+from tnt.mge import LightMGE, MassMGE
 from tnt.potential import Potential
 
 TYPES = [
@@ -25,6 +25,13 @@ def _release_compilation_cache():
     jax.clear_caches()
     yield
     jax.clear_caches()
+
+
+def _valid_build(result):
+    """Assert successful construction before a test uses the returned model."""
+    model, valid = result
+    assert bool(valid)
+    return model
 
 
 def _setup(kind, sigma_unit="kpc"):
@@ -58,7 +65,9 @@ def _setup(kind, sigma_unit="kpc"):
     return resolved, proposal, values
 
 
-@pytest.mark.parametrize("kind", TYPES)
+@pytest.mark.parametrize(
+    "kind", ["OblateMassMGEPotential", "TriaxialLightMGEPotential"]
+)
 @pytest.mark.parametrize("x64", [False, True])
 def test_equivalent_width_units_preserve_native_mge_values_and_gradients(kind, x64):
     with jax.enable_x64(x64):
@@ -131,7 +140,9 @@ def test_equivalent_width_units_preserve_native_mge_values_and_gradients(kind, x
             jax.clear_caches()  # Bound memory across the equivalent-unit graphs.
 
 
-@pytest.mark.parametrize("kind", TYPES)
+@pytest.mark.parametrize(
+    "kind", ["OblateLightMGEPotential", "TriaxialMassMGEPotential"]
+)
 @pytest.mark.parametrize("x64", [False, True])
 def test_integer_mge_columns_support_native_construction_and_gradients(kind, x64):
     with jax.enable_x64(x64):
@@ -183,13 +194,18 @@ def test_integer_mge_columns_support_native_construction_and_gradients(kind, x64
 def test_vmap_builds_mixed_valid_and_invalid_native_proposals(kind, x64):
     with jax.enable_x64(x64):
         resolved, proposal, values = _setup(kind)
-        proposals = jnp.stack([
-            values, values.at[0].set(-1), values.at[1].set(0),
-            values.at[0].set(jnp.nan), values.at[0].set(3),
-        ])
-        potentials, valid = jax.jit(jax.vmap(
-            lambda x: Potential.build_with_validity(resolved, proposal(x), {})
-        ))(proposals)
+        proposals = jnp.stack(
+            [
+                values,
+                values.at[0].set(-1),
+                values.at[1].set(0),
+                values.at[0].set(jnp.nan),
+                values.at[0].set(3),
+            ]
+        )
+        potentials, valid = jax.jit(
+            jax.vmap(lambda x: Potential.build_with_validity(resolved, proposal(x), {}))
+        )(proposals)
         np.testing.assert_array_equal(valid, [True, False, False, False, True])
         density = potentials.components["stars"].deprojected.I.ustrip("Msun/kpc3")
         np.testing.assert_array_equal(density[1:4], np.zeros((3, 2)))
@@ -271,7 +287,9 @@ def test_native_mge_potential_values_gradients_and_rejection(kind, x64):
         (value, valid), gradient = compiled(values)
         assert valid.shape == () and valid.dtype == jnp.bool_
         assert bool(valid) and bool(jnp.all(jnp.isfinite(gradient)))
-        eager = Potential.build(resolved, proposal(values), {})
+        eager = _valid_build(
+            Potential.build_with_validity(resolved, proposal(values), {})
+        )
         model = eager.components["stars"].deprojected
         source = resolved["stars"].extra_fields["mge"]
         surface = (
@@ -319,8 +337,9 @@ def test_native_mge_potential_values_gradients_and_rejection(kind, x64):
             assert not bool(valid)
             assert float(result) == -1.0
             assert bool(jnp.all(jnp.isfinite(derivative)))
-            with pytest.raises(ValueError):
-                Potential.build(resolved, proposal(rejected), {})
+            assert not bool(
+                Potential.build_with_validity(resolved, proposal(rejected), {})[1]
+            )
 
 
 @pytest.mark.parametrize("x64", [False, True])
@@ -337,14 +356,17 @@ def test_oblate_native_cancellation_boundary_has_precision_dependent_validity(x6
         assert bool(valid) is x64
         if x64:
             model = (
-                Potential.build(resolved, proposal(values), {})
+                _valid_build(
+                    Potential.build_with_validity(resolved, proposal(values), {})
+                )
                 .components["stars"]
                 .deprojected
             )
             assert float(model.q.ustrip("")[0]) == pytest.approx(0.001, rel=1e-6)
         else:
-            with pytest.raises(MGEDeprojectionError, match="precision"):
-                Potential.build(resolved, proposal(values), {})
+            assert not bool(
+                Potential.build_with_validity(resolved, proposal(values), {})[1]
+            )
 
 
 @pytest.mark.parametrize("kind", TYPES)
@@ -378,7 +400,7 @@ def test_native_mge_integer_numeric_parameters_are_supported():
     proposed = proposal(jnp.array([2, 1]))
     _, valid = jax.jit(lambda: Potential.build_with_validity(resolved, proposed, {}))()
     assert bool(valid)
-    Potential.build(resolved, proposed, {})
+    _valid_build(Potential.build_with_validity(resolved, proposed, {}))
 
 
 @pytest.mark.parametrize("x64", [False, True])

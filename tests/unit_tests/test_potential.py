@@ -21,7 +21,7 @@ import unxt as u
 from galax.potential.params import ParameterField
 from unxt import Quantity
 
-from tnt.mge import LightMGE, MassMGE, MGEDeprojectionError
+from tnt.mge import LightMGE, MassMGE
 from tnt.potential import (
     _SUPPORTED_GALAX_TYPES,
     AbstractPotentialComponent,
@@ -35,7 +35,6 @@ from tnt.potential import (
     _nfw_concentration_m200_inverse,
     _nfw_g,
     _solve_nfw_concentration,
-    build_potential,
     raw_parameter_dimensions,
     raw_potential_parameters,
 )
@@ -54,6 +53,23 @@ from tnt.potential.triaxial_mge import (
     _tpp_to_pqu,
     _tpp_to_tmajmin,
 )
+
+
+def _valid_build(result):
+    """Assert successful construction before a test uses the returned model."""
+    model, valid = result
+    assert bool(valid)
+    return model
+
+
+def _build_component(cls, parameters, cosmology, extra_fields):
+    """Exercise the public construction contract in physical reference tests."""
+    resolved = cls.resolve(
+        {"type": cls._type, "mge": "m"},
+        {"m": extra_fields["mge"]},
+        path="potential.stars",
+    )
+    return _valid_build(resolved.build_with_validity(parameters, cosmology))
 
 
 def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
@@ -347,9 +363,11 @@ def test_from_settings_resolves_a_real_galax_class_name() -> None:
         {},
         path="potential.dh",
     )
-    component = resolved.build(
-        {"m": Quantity(1e11, "Msun"), "r_s": Quantity(10.0, "kpc")},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"m": Quantity(1e11, "Msun"), "r_s": Quantity(10.0, "kpc")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     assert isinstance(component, GalaxPotentialComponent)
     assert component.galax_type == "NFWPotential"
@@ -366,14 +384,12 @@ def test_native_parameter_domain_rejects_nonpositive_or_nonfinite_mass(
         {},
         path="potential.bh",
     )
-    message = "must be finite" if not jnp.isfinite(invalid) else "greater than"
-    with pytest.raises(
-        ValueError, match=rf"potential\.bh\.parameters\.m_tot.*{message}"
-    ):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {"m_tot": Quantity(invalid, "Msun"), "r_s": Quantity(1.0, "kpc")},
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
 def test_runtime_parameter_domain_requires_scalar_quantities_and_exact_names() -> None:
@@ -383,22 +399,28 @@ def test_runtime_parameter_domain_requires_scalar_quantities_and_exact_names() -
         path="potential.bh",
     )
     with pytest.raises(ValueError, match=r"expected a scalar, got shape \(1,\)"):
-        resolved.build(
-            {
-                "m_tot": Quantity(jnp.array([1.0]), "Msun"),
-                "r_s": Quantity(1.0, "kpc"),
-            },
-            _NO_COSMOLOGICAL_PARAMETERS,
+        _valid_build(
+            resolved.build_with_validity(
+                {
+                    "m_tot": Quantity(jnp.array([1.0]), "Msun"),
+                    "r_s": Quantity(1.0, "kpc"),
+                },
+                _NO_COSMOLOGICAL_PARAMETERS,
+            )
         )
     with pytest.raises(ValueError, match=r"missing \['r_s'\].*unexpected \['x'\]"):
-        resolved.build(
-            {"m_tot": Quantity(1.0, "Msun"), "x": Quantity(1.0, "kpc")},
-            _NO_COSMOLOGICAL_PARAMETERS,
+        _valid_build(
+            resolved.build_with_validity(
+                {"m_tot": Quantity(1.0, "Msun"), "x": Quantity(1.0, "kpc")},
+                _NO_COSMOLOGICAL_PARAMETERS,
+            )
         )
     with pytest.raises(ValueError, match=r"parameters\.r_s must describe length"):
-        resolved.build(
-            {"m_tot": Quantity(1.0, "Msun"), "r_s": Quantity(1.0, "s")},
-            _NO_COSMOLOGICAL_PARAMETERS,
+        _valid_build(
+            resolved.build_with_validity(
+                {"m_tot": Quantity(1.0, "Msun"), "r_s": Quantity(1.0, "s")},
+                _NO_COSMOLOGICAL_PARAMETERS,
+            )
         )
 
 
@@ -583,11 +605,9 @@ def test_analytic_profile_parameter_bounds_are_enforced(
         {},
         path="potential.halo",
     )
-    with pytest.raises(
-        ValueError,
-        match=rf"potential\.halo\.parameters\.{parameter_name}.*less than",
-    ):
-        resolved.build(parameters, _NO_COSMOLOGICAL_PARAMETERS)
+    assert not bool(
+        resolved.build_with_validity(parameters, _NO_COSMOLOGICAL_PARAMETERS)[1]
+    )
 
 
 def test_same_component_relationship_uses_compatible_declared_units() -> None:
@@ -596,15 +616,16 @@ def test_same_component_relationship_uses_compatible_declared_units() -> None:
         {},
         path="potential.cluster",
     )
-    with pytest.raises(ValueError, match=r"r_h.*must be >.*r_c"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {
                 "m_tot": Quantity(1.0e6, "Msun"),
                 "r_c": Quantity(1.0, "kpc"),
                 "r_h": Quantity(900.0, "pc"),
             },
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
 def test_leesuto_axis_order_is_enforced() -> None:
@@ -613,8 +634,8 @@ def test_leesuto_axis_order_is_enforced() -> None:
         {},
         path="potential.halo",
     )
-    with pytest.raises(ValueError, match=r"a1.*must be >=.*a2"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {
                 "m": Quantity(1.0e11, "Msun"),
                 "r_s": Quantity(10.0, "kpc"),
@@ -623,7 +644,8 @@ def test_leesuto_axis_order_is_enforced() -> None:
                 "a3": Quantity(0.7, ""),
             },
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
 def test_frequency_amplitude_domain_and_signed_pattern_speed_are_distinct() -> None:
@@ -632,27 +654,29 @@ def test_frequency_amplitude_domain_and_signed_pattern_speed_are_distinct() -> N
         {},
         path="potential.core",
     )
-    with pytest.raises(ValueError, match=r"omega.*greater than"):
-        oscillator.build(
-            {"omega": Quantity(0.0, "1 / Myr")},
-            _NO_COSMOLOGICAL_PARAMETERS,
-        )
+    assert not bool(
+        oscillator.build_with_validity(
+            {"omega": Quantity(0.0, "1 / Myr")}, _NO_COSMOLOGICAL_PARAMETERS
+        )[1]
+    )
 
     bar = AbstractPotentialComponent.resolve(
         {"type": "MonariEtAl2016BarPotential", "parameters": {}},
         {},
         path="potential.bar",
     )
-    component = bar.build(
-        {
-            "alpha": Quantity(-0.02, ""),
-            "R0": Quantity(8.0, "kpc"),
-            "v0": Quantity(220.0, "km / s"),
-            "Rb": Quantity(3.5, "kpc"),
-            "phi_b": Quantity(25.0, "deg"),
-            "Omega": Quantity(-40.0, "km / (s kpc)"),
-        },
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        bar.build_with_validity(
+            {
+                "alpha": Quantity(-0.02, ""),
+                "R0": Quantity(8.0, "kpc"),
+                "v0": Quantity(220.0, "km / s"),
+                "Rb": Quantity(3.5, "kpc"),
+                "phi_b": Quantity(25.0, "deg"),
+                "Omega": Quantity(-40.0, "km / (s kpc)"),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     assert component.parameters["Omega"].ustrip("km / (s kpc)") == -40.0
 
@@ -690,9 +714,10 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
         {},
         path="potential.dh",
     )
-    component = resolved.build(
-        {"c": Quantity(c, ""), "M_200": Quantity(m200, "Msun")},
-        {"H": h},
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"c": Quantity(c, ""), "M_200": Quantity(m200, "Msun")}, {"H": h}
+        )
     )
     m = component.parameters["m"].ustrip("Msun")
     r_s = component.parameters["r_s"].ustrip("kpc")
@@ -817,8 +842,10 @@ def test_traced_nfw_build_guards_conversion_and_preserves_gradients(
             c: jax.Array, mass_scale: jax.Array, hubble_scale: jax.Array
         ) -> jax.Array:
             native = (
-                Potential.build(
-                    resolved, proposed(c, mass_scale), cosmology(hubble_scale)
+                _valid_build(
+                    Potential.build_with_validity(
+                        resolved, proposed(c, mass_scale), cosmology(hubble_scale)
+                    )
                 )
                 .components["halo"]
                 .parameters
@@ -851,7 +878,13 @@ def test_traced_nfw_build_guards_conversion_and_preserves_gradients(
         arguments = (8.0, 1.0, 1.0)
         (value, valid), gradients = compiled(*map(jnp.asarray, arguments))
         assert bool(valid)
-        eager = evaluated(Potential.build(resolved, proposed(8.0, 1.0), cosmology(1.0)))
+        eager = evaluated(
+            _valid_build(
+                Potential.build_with_validity(
+                    resolved, proposed(8.0, 1.0), cosmology(1.0)
+                )
+            )
+        )
         assert float(value) == pytest.approx(float(eager), rel=1e-5)
         # Use the closed-form NFW potential for finite differences: galax's
         # default G can retain its import-time float32 precision under x64.
@@ -1031,7 +1064,7 @@ def test_traced_nfw_conversion_contract_errors_raise(malformed: str) -> None:
 
 
 @pytest.mark.parametrize("name", ["c", "M_200"])
-def test_nfw_parameterization_rejects_invalid_raw_values_before_conversion(
+def test_nfw_parameterization_rejects_invalid_raw_values(
     name: str,
 ) -> None:
     resolved = AbstractPotentialComponent.resolve(
@@ -1045,10 +1078,9 @@ def test_nfw_parameterization_rejects_invalid_raw_values_before_conversion(
     )
     raw = {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")}
     raw[name] = Quantity(0.0, raw[name].unit)
-    # Empty cosmology proves the raw-domain error occurs before the converter
-    # tries to read its required H value.
-    with pytest.raises(ValueError, match=rf"parameters\.{name}.*greater than"):
-        resolved.build(raw, {})
+    assert not bool(
+        resolved.build_with_validity(raw, {"H": Quantity(70.0, "km / (s Mpc)")})[1]
+    )
 
 
 def test_nfw_parameterization_validates_converted_native_values() -> None:
@@ -1061,11 +1093,12 @@ def test_nfw_parameterization_validates_converted_native_values() -> None:
         {},
         path="potential.halo",
     )
-    with pytest.raises(ValueError, match=r"converted.*parameters\.(m|r_s).*finite"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")},
             {"H": Quantity(0.0, "km / (s Mpc)")},
-        )
+        )[1]
+    )
 
 
 @pytest.mark.parametrize(
@@ -1095,16 +1128,19 @@ def test_nfw_parameterization_is_invariant_to_declared_units() -> None:
     m200 = Quantity(1.0e12, "Msun")
     h = Quantity(70.0, "km / (s Mpc)")
 
-    internal = resolved.build(
-        {"c": Quantity(8.0, ""), "M_200": m200.to("Msun")},
-        {"H": h.to("1 / Myr")},
+    internal = _valid_build(
+        resolved.build_with_validity(
+            {"c": Quantity(8.0, ""), "M_200": m200.to("Msun")}, {"H": h.to("1 / Myr")}
+        )
     )
-    differently_declared = resolved.build(
-        {
-            "c": Quantity(8.0, ""),
-            "M_200": Quantity(100.0, "1e10 Msun"),
-        },
-        {"H": h},
+    differently_declared = _valid_build(
+        resolved.build_with_validity(
+            {
+                "c": Quantity(8.0, ""),
+                "M_200": Quantity(100.0, "1e10 Msun"),
+            },
+            {"H": h},
+        )
     )
 
     assert differently_declared.parameters["m"].ustrip("Msun") == pytest.approx(
@@ -1264,7 +1300,11 @@ def test_raw_potential_parameters_uses_each_component_own_parameterization() -> 
         "bh": {"m_tot": Quantity(5.0, "Msun"), "r_s": Quantity(1e-3, "kpc")},
         "dh": {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")},
     }
-    potential = Potential.from_settings(settings, parameter_values, {}, {"H": h})
+    potential = _valid_build(
+        Potential.build_with_validity(
+            Potential.resolve(settings, {}), parameter_values, {"H": h}
+        )
+    )
 
     raw = raw_potential_parameters(settings, potential, {"H": h})
     assert set(raw["bh"]) == {"m_tot", "r_s"}
@@ -1293,9 +1333,11 @@ def test_plummer_to_galax_matches_closed_form_potential() -> None:
         {},
         path="potential.bh",
     )
-    component = resolved.build(
-        {"m_tot": Quantity(m_tot, "Msun"), "r_s": Quantity(r_s, "kpc")},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"m_tot": Quantity(m_tot, "Msun"), "r_s": Quantity(r_s, "kpc")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     galax_potential = component.to_galax(unit_system)
 
@@ -1315,20 +1357,24 @@ def test_plummer_potential_is_invariant_to_declared_parameter_units() -> None:
     resolved = Potential.resolve(settings, {})
     mass = Quantity(5.0, "Msun")
 
-    internal = Potential.build(
-        resolved,
-        {"bh": {"m_tot": mass, "r_s": Quantity(1.0, "kpc")}},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    internal = _valid_build(
+        Potential.build_with_validity(
+            resolved,
+            {"bh": {"m_tot": mass, "r_s": Quantity(1.0, "kpc")}},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     ).to_galax(unit_system)
-    differently_declared = Potential.build(
-        resolved,
-        {
-            "bh": {
-                "m_tot": Quantity(float(mass.ustrip("kg")), "kg"),
-                "r_s": Quantity(1000.0, "pc"),
-            }
-        },
-        _NO_COSMOLOGICAL_PARAMETERS,
+    differently_declared = _valid_build(
+        Potential.build_with_validity(
+            resolved,
+            {
+                "bh": {
+                    "m_tot": Quantity(float(mass.ustrip("kg")), "kg"),
+                    "r_s": Quantity(1000.0, "pc"),
+                }
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     ).to_galax(unit_system)
 
     xyz = Quantity(jnp.array([2.0, 0.0, 0.0]), "kpc")
@@ -1347,9 +1393,11 @@ def test_plummer_rescale_scales_only_the_mass_parameter() -> None:
         {},
         path="potential.bh",
     )
-    component = resolved.build(
-        {"m_tot": Quantity(5.0, "Msun"), "r_s": Quantity(1e-3, "kpc")},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"m_tot": Quantity(5.0, "Msun"), "r_s": Quantity(1e-3, "kpc")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     rescaled = component.rescale(2.0)
     assert rescaled.parameters["m_tot"].ustrip("Msun") == pytest.approx(10.0)
@@ -1367,7 +1415,11 @@ def test_potential_composes_every_declared_component() -> None:
         "halo": {"m_tot": Quantity(100.0, "Msun"), "r_s": Quantity(1.0, "kpc")},
     }
     resolved = Potential.resolve(settings, {})
-    potential = build_potential(resolved, parameter_values, _NO_COSMOLOGICAL_PARAMETERS)
+    potential = _valid_build(
+        Potential.build_with_validity(
+            resolved, parameter_values, _NO_COSMOLOGICAL_PARAMETERS
+        )
+    )
     assert set(potential.components) == {"bh", "halo"}
 
     galax_potential = potential.to_galax(unit_system)
@@ -1418,7 +1470,7 @@ def test_nfw_component_plumbing_works_without_from_settings() -> None:
 # these tests isolate to_galax's wiring (mass-to-light/mass-scale conversion,
 # deprojection, per-component TriaxialGaussianPotential construction, and
 # CompositePotential summation) against galax's independent GaussianPotential.
-# Invalid geometries raise MGEDeprojectionError during component build;
+# Invalid geometries return a false flag during component construction;
 # genuinely triaxial validity and axis mapping are covered separately below
 # and by test_mge.py's forward-projection round-trip tests.
 # ---------------------------------------------------------------------------
@@ -1651,9 +1703,11 @@ def test_raw_parameters_dispatches_generically_for_a_newly_registered_type(
         {"mge_lum": light_mge},
         path="potential.stars",
     )
-    component = resolved.build(
-        {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
 
     raw = component.raw_parameters("doubled_ml", {}, _NO_COSMOLOGICAL_PARAMETERS)
@@ -1664,24 +1718,28 @@ def test_raw_parameters_dispatches_generically_for_a_newly_registered_type(
 def test_raw_parameters_dispatch_key_differs_for_galax_vs_tnt_types() -> None:
     # GalaxPotentialComponent looks itself up by galax_type; a registered TNT
     # component type by its own _type -- both via _registry_type_name().
-    galax_component = AbstractPotentialComponent.resolve(
-        {"type": "PlummerPotential", "parameters": {}}, {}, path="potential.bh"
-    ).build(
-        {"m_tot": Quantity(1.0e5, "Msun"), "r_s": Quantity(1.0, "kpc")},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    galax_component = _valid_build(
+        AbstractPotentialComponent.resolve(
+            {"type": "PlummerPotential", "parameters": {}}, {}, path="potential.bh"
+        ).build_with_validity(
+            {"m_tot": Quantity(1.0e5, "Msun"), "r_s": Quantity(1.0, "kpc")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     assert galax_component._registry_type_name() == "PlummerPotential"
 
     light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
         Quantity(30.0, "Mpc")
     )
-    oblate_component = AbstractPotentialComponent.resolve(
-        {"type": "OblateLightMGEPotential", "mge": "mge_lum", "parameters": {}},
-        {"mge_lum": light_mge},
-        path="potential.stars",
-    ).build(
-        {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    oblate_component = _valid_build(
+        AbstractPotentialComponent.resolve(
+            {"type": "OblateLightMGEPotential", "mge": "mge_lum", "parameters": {}},
+            {"mge_lum": light_mge},
+            path="potential.stars",
+        ).build_with_validity(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     assert oblate_component._registry_type_name() == "OblateLightMGEPotential"
 
@@ -1769,8 +1827,9 @@ def test_vogelsberger_upper_bound_agrees_in_eager_and_traced_builds(
 
     with jax.enable_x64(x64_enabled):
         boundary = jnp.asarray(3**0.5)
-        with pytest.raises(ValueError, match=r"q1.*less than"):
-            Potential.build(resolved, proposed(boundary), {})
+        assert not bool(
+            Potential.build_with_validity(resolved, proposed(boundary), {})[1]
+        )
         _, eager_valid = Potential.build_with_validity(resolved, proposed(boundary), {})
         traced_valid = jax.jit(
             lambda q1: Potential.build_with_validity(resolved, proposed(q1), {})[1]
@@ -1807,10 +1866,13 @@ def test_stone_ostriker_precision_margin_matches_eager_and_traced_builds(
         ]:
             radius = jnp.asarray(radius_pc)
             if expected_valid:
-                Potential.build(resolved, proposed(radius), {})
+                _valid_build(
+                    Potential.build_with_validity(resolved, proposed(radius), {})
+                )
             else:
-                with pytest.raises(ValueError, match=r"r_h.*too close"):
-                    Potential.build(resolved, proposed(radius), {})
+                assert not bool(
+                    Potential.build_with_validity(resolved, proposed(radius), {})[1]
+                )
             assert bool(traced_valid(radius)) is expected_valid
 
 
@@ -1880,9 +1942,11 @@ def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
         {"mge_lum": light_mge},
         path="potential.stars",
     )
-    component = resolved.build(
-        {"ml": Quantity(5.0, "Msun / Lsun"), **_VIEWING_ANGLES},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **_VIEWING_ANGLES},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     assert isinstance(component, TriaxialLightMGEPotential)
     assert component.mge is light_mge
@@ -1902,14 +1966,15 @@ def test_light_mge_mass_to_light_ratio_must_be_positive() -> None:
         {"mge_lum": light_mge},
         path="potential.stars",
     )
-    with pytest.raises(ValueError, match=r"parameters\.ml.*greater than"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {"ml": Quantity(0.0, "Msun / Lsun"), **_VIEWING_ANGLES},
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
-def test_mge_component_build_raises_for_invalid_geometry_not_to_galax() -> None:
+def test_mge_component_build_flags_invalid_geometry_before_to_galax() -> None:
     # theta=0.3, phi=0.96, psi=0.1 with q_obs=0.9 is a known finite-but-
     # convention-violating deprojection (q > p), see
     # test_deproject_triaxial_convention_violating_geometry_raises in
@@ -1940,18 +2005,21 @@ def test_mge_component_build_raises_for_invalid_geometry_not_to_galax() -> None:
     good_angles = {**bad_angles, "psi": Quantity(-1.08, "rad")}
 
     # Raises from build() itself, before to_galax() is ever reached.
-    with pytest.raises(MGEDeprojectionError):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {"ml": Quantity(5.0, "Msun / Lsun"), **bad_angles},
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
     # A component that *did* build successfully can't have to_galax() raise
     # it -- deprojection already happened, and was already validated, at
     # build time.
-    component = resolved.build(
-        {"ml": Quantity(5.0, "Msun / Lsun"), **good_angles},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **good_angles},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     component.to_galax(_internal_unit_system())
 
@@ -1961,7 +2029,8 @@ def test_triaxial_light_mge_to_galax_matches_spherical_gaussian() -> None:
     distance = Quantity(30.0, "Mpc")
     light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
     ml = Quantity(5.0, "Msun / Lsun")
-    component = TriaxialLightMGEPotential._build(
+    component = _build_component(
+        TriaxialLightMGEPotential,
         {"ml": ml, **_VIEWING_ANGLES},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -2004,7 +2073,8 @@ def test_triaxial_light_mge_to_galax_sums_every_component() -> None:
         distance
     )
     ml = Quantity(5.0, "Msun / Lsun")
-    component = TriaxialLightMGEPotential._build(
+    component = _build_component(
+        TriaxialLightMGEPotential,
         {"ml": ml, **_VIEWING_ANGLES},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -2050,7 +2120,8 @@ def test_triaxial_mass_mge_to_galax_uses_mge_mass_scale() -> None:
         major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(distance)
     mge_mass_scale = Quantity(3.0, "")
-    component = TriaxialMassMGEPotential._build(
+    component = _build_component(
+        TriaxialMassMGEPotential,
         {"mge_mass_scale": mge_mass_scale, **_VIEWING_ANGLES},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": mass_mge},
@@ -2110,9 +2181,11 @@ def test_oblate_mge_component_resolve_and_build_stores_the_referenced_mge() -> N
         {"mge_lum": light_mge},
         path="potential.stars",
     )
-    component = resolved.build(
-        {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     assert isinstance(component, OblateLightMGEPotential)
     assert component.mge is light_mge
@@ -2132,17 +2205,18 @@ def test_oblate_mge_inclination_domain_is_checked_before_deprojection() -> None:
         {"mge_lum": light_mge},
         path="potential.stars",
     )
-    with pytest.raises(ValueError, match=r"inclination.*at most 90.*deg"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {
                 "ml": Quantity(5.0, "Msun / Lsun"),
                 "inclination": Quantity(jnp.pi, "rad"),
             },
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
-def test_oblate_mge_build_raises_for_impossible_inclination_not_to_galax() -> None:
+def test_oblate_mge_build_flags_impossible_inclination_before_to_galax() -> None:
     # q_obs = 0.5 with inclination 20 deg: cos(20 deg) ~ 0.94 > 0.5, so
     # q_obs < cos(i) and the axisymmetric deprojection has no real solution.
     flattened = LightMGE(
@@ -2162,16 +2236,19 @@ def test_oblate_mge_build_raises_for_impossible_inclination_not_to_galax() -> No
         path="potential.stars",
     )
 
-    with pytest.raises(MGEDeprojectionError):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {"ml": Quantity(5.0, "Msun / Lsun"), "inclination": Quantity(20.0, "deg")},
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
     # An inclination that *does* deproject builds and to_galax()es fine.
-    component = resolved.build(
-        {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     component.to_galax(_internal_unit_system())
 
@@ -2181,7 +2258,8 @@ def test_oblate_light_mge_to_galax_matches_spherical_gaussian() -> None:
     distance = Quantity(30.0, "Mpc")
     light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
     ml = Quantity(5.0, "Msun / Lsun")
-    component = OblateLightMGEPotential._build(
+    component = _build_component(
+        OblateLightMGEPotential,
         {"ml": ml, **_INCLINATION},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -2227,7 +2305,8 @@ def test_oblate_light_mge_to_galax_sums_every_component() -> None:
         major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(distance)
     ml = Quantity(5.0, "Msun / Lsun")
-    component = OblateLightMGEPotential._build(
+    component = _build_component(
+        OblateLightMGEPotential,
         {"ml": ml, **_INCLINATION},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -2271,7 +2350,8 @@ def test_oblate_mass_mge_to_galax_uses_mge_mass_scale() -> None:
         major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(distance)
     mge_mass_scale = Quantity(3.0, "")
-    component = OblateMassMGEPotential._build(
+    component = _build_component(
+        OblateMassMGEPotential,
         {"mge_mass_scale": mge_mass_scale, **_INCLINATION},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": mass_mge},
@@ -2304,7 +2384,8 @@ def test_oblate_light_mge_rescale_scales_to_galax_without_recompute() -> None:
     distance = Quantity(30.0, "Mpc")
     light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
     ml = Quantity(5.0, "Msun / Lsun")
-    component = OblateLightMGEPotential._build(
+    component = _build_component(
+        OblateLightMGEPotential,
         {"ml": ml, **_INCLINATION},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -2348,7 +2429,8 @@ def test_oblate_light_mge_to_galax_flattened_cross_checks() -> None:
         major_axis_pa=Quantity(0.0, "deg"),
     )
     ml = Quantity(5.0, "Msun / Lsun")
-    component = OblateLightMGEPotential._build(
+    component = _build_component(
+        OblateLightMGEPotential,
         {"ml": ml, "inclination": Quantity(70.0, "deg")},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -2425,8 +2507,11 @@ def test_triaxial_light_mge_to_galax_density_matches_analytic_along_each_axis() 
         "psi": Quantity(0.0, "rad"),
     }
     ml = Quantity(5.0, "Msun / Lsun")
-    component = TriaxialLightMGEPotential._build(
-        {"ml": ml, **angles}, _NO_COSMOLOGICAL_PARAMETERS, {"mge": mge}
+    component = _build_component(
+        TriaxialLightMGEPotential,
+        {"ml": ml, **angles},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": mge},
     )
     potential = component.to_galax(unit_system)
 
@@ -2455,7 +2540,8 @@ def test_triaxial_light_mge_rescale_scales_to_galax_without_ml_recompute() -> No
     distance = Quantity(30.0, "Mpc")
     light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
     ml = Quantity(5.0, "Msun / Lsun")
-    component = TriaxialLightMGEPotential._build(
+    component = _build_component(
+        TriaxialLightMGEPotential,
         {"ml": ml, **_VIEWING_ANGLES},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -2599,14 +2685,16 @@ def _build_pqu_component(
         {"m": mge},
         path="potential.stars",
     )
-    return resolved.build(
-        {
-            mass_name: Quantity(1.0, mass_unit),
-            "p": Quantity(p, ""),
-            "q": Quantity(q, ""),
-            "u": Quantity(u, ""),
-        },
-        _NO_COSMOLOGICAL_PARAMETERS,
+    return _valid_build(
+        resolved.build_with_validity(
+            {
+                mass_name: Quantity(1.0, mass_unit),
+                "p": Quantity(p, ""),
+                "q": Quantity(q, ""),
+                "u": Quantity(u, ""),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
 
 
@@ -2676,10 +2764,21 @@ def test_pqu_rejects_a_domain_too_narrow_to_deproject() -> None:
     # point at the working precision, the build must reject explicitly rather
     # than divide by zero.
     mge = _triaxial_light_mge()  # anchor q' = 0.76
-    with pytest.raises(
-        _registry_module.InvalidPotentialParametersError, match="too narrow"
-    ):
-        _build_pqu_component("TriaxialLightMGEPotential", mge, 0.99999999, 0.60, 1.0)
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": "TriaxialLightMGEPotential", "parameterization": "pqu", "mge": "m"},
+        {"m": mge},
+        path="potential.stars",
+    )
+    _, valid = resolved.build_with_validity(
+        {
+            "ml": Quantity(1.0, "Msun/Lsun"),
+            "p": Quantity(0.99999999, ""),
+            "q": Quantity(0.6, ""),
+            "u": Quantity(1.0, ""),
+        },
+        {},
+    )
+    assert not bool(valid)
 
 
 def test_pqu_u_equal_to_one_is_reliable_at_reduced_precision() -> None:
@@ -2806,8 +2905,8 @@ def test_pqu_to_tpp_rejects_geometries_outside_the_mge_dependent_domain(
         "ml": Quantity(1.0, "Msun / Lsun"),
         **{k: Quantity(v, "") for k, v in bad.items()},
     }
-    with pytest.raises(_registry_module.InvalidPotentialParametersError, match=reason):
-        _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+    assert bool(jnp.isnan(native["theta"].ustrip("rad")))
 
 
 def test_pqu_to_tpp_rejects_a_circular_mge() -> None:
@@ -2818,14 +2917,12 @@ def test_pqu_to_tpp_rejects_a_circular_mge() -> None:
         PA_twist=Quantity(jnp.zeros(1), "rad"),
         major_axis_pa=Quantity(0.0, "deg"),
     )
-    with pytest.raises(
-        _registry_module.InvalidPotentialParametersError, match="circular MGE"
-    ):
-        _pqu_to_tpp(
-            {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU},
-            _NO_COSMOLOGICAL_PARAMETERS,
-            circular,
-        )
+    native = _pqu_to_tpp(
+        {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        circular,
+    )
+    assert bool(jnp.isnan(native["theta"].ustrip("rad")))
 
 
 def test_pqu_parameterization_is_registered_for_both_triaxial_mge_types() -> None:
@@ -2871,8 +2968,10 @@ def test_pqu_config_builds_the_same_deprojection_as_the_equivalent_angles(
         {"m": mge},
         path="potential.stars",
     )
-    pqu_component = pqu_resolved.build(
-        {mass_name: mass_value, **_PQU}, _NO_COSMOLOGICAL_PARAMETERS
+    pqu_component = _valid_build(
+        pqu_resolved.build_with_validity(
+            {mass_name: mass_value, **_PQU}, _NO_COSMOLOGICAL_PARAMETERS
+        )
     )
 
     angles = _pqu_to_tpp(
@@ -2883,9 +2982,11 @@ def test_pqu_config_builds_the_same_deprojection_as_the_equivalent_angles(
         {"m": mge},
         path="potential.stars",
     )
-    tpp_component = tpp_resolved.build(
-        {mass_name: mass_value, **{k: angles[k] for k in ("theta", "phi", "psi")}},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    tpp_component = _valid_build(
+        tpp_resolved.build_with_validity(
+            {mass_name: mass_value, **{k: angles[k] for k in ("theta", "phi", "psi")}},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
 
     for attr in ("I", "sigma", "p", "q"):
@@ -2910,7 +3011,11 @@ def test_pqu_raw_potential_parameters_round_trips_and_survives_rescale() -> None
         }
     }
     values = {"stars": {"ml": Quantity(4.0, "Msun / Lsun"), **_PQU}}
-    potential = Potential.from_settings(settings, values, {"m": mge}, {})
+    potential = _valid_build(
+        Potential.build_with_validity(
+            Potential.resolve(settings, {"m": mge}), values, {}
+        )
+    )
 
     raw = raw_potential_parameters(settings, potential, {})["stars"]
     assert set(raw) == {"ml", "p", "q", "u"}
@@ -2938,8 +3043,8 @@ def test_pqu_domain_invalid_value_is_rejected_at_build_time() -> None:
         {"m": mge},
         path="potential.stars",
     )
-    with pytest.raises(ValueError, match=r"parameters\.q"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {
                 "ml": Quantity(1.0, "Msun / Lsun"),
                 "p": Quantity(0.6, ""),
@@ -2947,7 +3052,8 @@ def test_pqu_domain_invalid_value_is_rejected_at_build_time() -> None:
                 "u": Quantity(0.9, ""),
             },
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
 # (T, T_maj, T_min) equivalent to _PQU, against _triaxial_light_mge()'s q' = 0.76
@@ -3016,8 +3122,10 @@ def test_T_maj_min_config_builds_the_same_deprojection_as_pqu(
         {"m": mge},
         path="potential.stars",
     )
-    tmajmin_component = tmajmin_resolved.build(
-        {mass_name: mass_value, **_TMAJMIN}, _NO_COSMOLOGICAL_PARAMETERS
+    tmajmin_component = _valid_build(
+        tmajmin_resolved.build_with_validity(
+            {mass_name: mass_value, **_TMAJMIN}, _NO_COSMOLOGICAL_PARAMETERS
+        )
     )
 
     pqu_resolved = AbstractPotentialComponent.resolve(
@@ -3025,8 +3133,10 @@ def test_T_maj_min_config_builds_the_same_deprojection_as_pqu(
         {"m": mge},
         path="potential.stars",
     )
-    pqu_component = pqu_resolved.build(
-        {mass_name: mass_value, **_PQU}, _NO_COSMOLOGICAL_PARAMETERS
+    pqu_component = _valid_build(
+        pqu_resolved.build_with_validity(
+            {mass_name: mass_value, **_PQU}, _NO_COSMOLOGICAL_PARAMETERS
+        )
     )
 
     for attr in ("I", "sigma", "p", "q"):
@@ -3051,7 +3161,11 @@ def test_T_maj_min_raw_potential_parameters_round_trips_and_survives_rescale() -
         }
     }
     values = {"stars": {"ml": Quantity(4.0, "Msun / Lsun"), **_TMAJMIN}}
-    potential = Potential.from_settings(settings, values, {"m": mge}, {})
+    potential = _valid_build(
+        Potential.build_with_validity(
+            Potential.resolve(settings, {"m": mge}), values, {}
+        )
+    )
 
     raw = raw_potential_parameters(settings, potential, {})["stars"]
     assert set(raw) == {"ml", "T", "T_maj", "T_min"}
@@ -3079,8 +3193,8 @@ def test_T_maj_min_domain_invalid_value_is_rejected_at_build_time() -> None:
         {"m": mge},
         path="potential.stars",
     )
-    with pytest.raises(ValueError, match=r"parameters\.T_maj"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {
                 "ml": Quantity(1.0, "Msun / Lsun"),
                 "T": Quantity(0.5, ""),
@@ -3088,7 +3202,8 @@ def test_T_maj_min_domain_invalid_value_is_rejected_at_build_time() -> None:
                 "T_min": Quantity(0.5, ""),
             },
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
 def test_T_maj_min_rejects_a_point_the_domain_clamp_would_silently_move() -> None:
@@ -3108,10 +3223,8 @@ def test_T_maj_min_rejects_a_point_the_domain_clamp_would_silently_move() -> Non
         {"m": mge},
         path="potential.stars",
     )
-    with pytest.raises(
-        _registry_module.InvalidPotentialParametersError, match="precision boundary"
-    ):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {
                 "ml": Quantity(1.0, "Msun / Lsun"),
                 "T": Quantity(1e-6, ""),
@@ -3119,7 +3232,8 @@ def test_T_maj_min_rejects_a_point_the_domain_clamp_would_silently_move() -> Non
                 "T_min": Quantity(0.2, ""),
             },
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
 def test_T_maj_min_rejects_a_zero_thickness_boundary_at_build_time() -> None:
@@ -3146,10 +3260,8 @@ def test_T_maj_min_rejects_a_zero_thickness_boundary_at_build_time() -> None:
         {"m": mge},
         path="potential.stars",
     )
-    with pytest.raises(
-        _registry_module.InvalidPotentialParametersError, match="positive"
-    ):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {
                 "ml": Quantity(1.0, "Msun / Lsun"),
                 "T": Quantity(0.5, ""),
@@ -3157,7 +3269,8 @@ def test_T_maj_min_rejects_a_zero_thickness_boundary_at_build_time() -> None:
                 "T_min": Quantity(0.375, ""),
             },
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
 # q_min = 0.6 against _triaxial_light_mge()'s anchor q' = 0.76 (its zero
@@ -3211,8 +3324,10 @@ def test_q_min_config_builds_the_same_deprojection_as_inclination(
         {"m": mge},
         path="potential.stars",
     )
-    qmin_component = qmin_resolved.build(
-        {mass_name: mass_value, **_QMIN}, _NO_COSMOLOGICAL_PARAMETERS
+    qmin_component = _valid_build(
+        qmin_resolved.build_with_validity(
+            {mass_name: mass_value, **_QMIN}, _NO_COSMOLOGICAL_PARAMETERS
+        )
     )
 
     inclination = _qmin_to_inclination(
@@ -3223,8 +3338,11 @@ def test_q_min_config_builds_the_same_deprojection_as_inclination(
         {"m": mge},
         path="potential.stars",
     )
-    incl_component = incl_resolved.build(
-        {mass_name: mass_value, "inclination": inclination}, _NO_COSMOLOGICAL_PARAMETERS
+    incl_component = _valid_build(
+        incl_resolved.build_with_validity(
+            {mass_name: mass_value, "inclination": inclination},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
 
     for attr in ("I", "sigma", "p", "q"):
@@ -3249,7 +3367,11 @@ def test_q_min_raw_potential_parameters_round_trips_and_survives_rescale() -> No
         }
     }
     values = {"stars": {"ml": Quantity(4.0, "Msun / Lsun"), **_QMIN}}
-    potential = Potential.from_settings(settings, values, {"m": mge}, {})
+    potential = _valid_build(
+        Potential.build_with_validity(
+            Potential.resolve(settings, {"m": mge}), values, {}
+        )
+    )
 
     raw = raw_potential_parameters(settings, potential, {})["stars"]
     assert set(raw) == {"ml", "q_min"}
@@ -3275,11 +3397,12 @@ def test_q_min_domain_invalid_value_is_rejected_at_build_time() -> None:
         {"m": mge},
         path="potential.stars",
     )
-    with pytest.raises(ValueError, match=r"parameters\.q_min"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {"ml": Quantity(1.0, "Msun / Lsun"), "q_min": Quantity(1.5, "")},
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
 def test_q_min_rejects_a_thin_disk_the_cancellation_would_silently_move() -> None:
@@ -3306,11 +3429,9 @@ def test_q_min_rejects_a_thin_disk_the_cancellation_would_silently_move() -> Non
             {"m": mge},
             path="potential.stars",
         )
-        with pytest.raises(
-            _registry_module.InvalidPotentialParametersError,
-            match="precision boundary",
-        ):
-            resolved.build(
+        assert not bool(
+            resolved.build_with_validity(
                 {"ml": Quantity(1.0, "Msun / Lsun"), "q_min": Quantity(0.001, "")},
                 _NO_COSMOLOGICAL_PARAMETERS,
-            )
+            )[1]
+        )

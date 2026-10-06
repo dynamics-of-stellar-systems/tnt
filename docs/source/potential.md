@@ -132,8 +132,8 @@ the core radius by more than `eps**(1/5)` of the larger radius, where
 `eps` is the active floating-point precision's machine epsilon. Near-equal
 radii are rejected because the potential calculation loses gradient accuracy.
 
-`Potential.build_with_validity` provides a
-compiled-build path that returns the potential and a JAX boolean indicating
+`Potential.build_with_validity` is the single construction interface. It returns
+the potential and a JAX boolean indicating
 whether its proposed numerical parameters are valid. One complete proposal
 must contain exactly the resolved component names. Names, real scalar types,
 array shapes, and unit dimensions remain setup errors. A caller must use the boolean to condition
@@ -145,11 +145,23 @@ invalid converted components contain zero placeholders in the converter's
 output units. This also rejects proposals whose positive raw values overflow
 or otherwise produce invalid native parameters. All four MGE component types
 support native viewing angles and normalization inside one JAX trace.
-MGE `q_min`, `pqu`, and `T_maj_min` conversions remain eager; proposal batching
-and prior/model-iterator integration are deferred.
+MGE `q_min`, `pqu`, and `T_maj_min` conversions are also traceable, with the
+same anchor selection, endpoint margins and round-trip accuracy checks as the
+standalone scientific conversions. `ModelIterator` calls this interface once
+per proposal and checks the flag before orbit integration. Invalid proposals
+are recorded with their raw parameters and a generic numerical-validation
+warning; static setup errors propagate. Batched construction via `jax.vmap`
+is tested, but iterator batching and prior integration remain future work.
+
+Migration: replace `build_potential(...)` or `Potential.build(...)` with
+`potential, valid = Potential.build_with_validity(...)` and check `valid`
+before using the result. `Potential.from_settings(...)` is removed; call
+`Potential.resolve(settings, mges)` once, then reuse its result with the builder.
+Standalone calls can use `if bool(valid)`; compiled calls need JAX control flow.
 
 Native MGE construction validates the complete set of Gaussians: intrinsic
-`0 < q <= p <= 1`, positive finite density, width and mass in declared units and local `Msun`/`kpc` units.
+`0 < q <= p <= 1`, positive finite density, width and mass in declared units
+and local `Msun`/`kpc` units.
 Validity does not certify
 construction derivatives: forward/reverse derivative agreement is tested in
 focused regression cases, not recomputed for every proposal.
@@ -173,7 +185,7 @@ guards, not clipping or normalization of physical parameters. Exactly circular
 projected rows use their analytic spherical solution to avoid roundoff beyond
 `q=1` or `u=1`.
 
-Eager construction uses the same numerical predicates and raises diagnostics.
+Standalone MGE deprojection methods retain diagnostics from shared predicates.
 Invalid traced MGEs contain zero intrinsic placeholders; callers must condition
 all use, including `to_galax`, on the combined flag. Physical surface intensity
 is preserved; deprojection conserves `2*pi*I*sigma_observed**2*q_observed` per
@@ -365,9 +377,9 @@ potential:
   tolerance (tight at float64, looser at float32) -- `pqu`'s own
   precision-margin clamp on `u` is negligible in `(p, q, u)` space, but the
   `T_maj_min` reparameterization's own divisions can amplify that same
-  clamp into a materially different requested shape; an accepted point that
-  fails this check raises the same `InvalidPotentialParametersError` as an
-  out-of-domain one, rather than silently building a different point.
+  clamp into a materially different requested shape; a point that
+  fails this check returns `valid=False`, just like an
+  out-of-domain proposal, rather than silently building a different point.
   `T_maj_min` is registered only for `TriaxialLightMGEPotential` and
   `TriaxialMassMGEPotential`, same as `pqu`.
 - **The oblate MGE types' `q_min` parameterization**: implemented, the

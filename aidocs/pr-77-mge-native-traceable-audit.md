@@ -7,6 +7,49 @@
 - Reviewed head: `7f78f98c4248c0c5ef47c97d6912e21f1867a159`
 - PR base (merge-base with `main`): `a5285b4687d74824a531b83c44f15537046f89cd`
 
+## Implementation response (2026-10-06)
+
+The audit below describes the reviewed head above. Thomas subsequently approved
+one shared builder, removal of routine derivative cross-checks, completion of
+all registered MGE parameterizations, and iterator migration.
+
+- **Q2 / F4:** commit `51e15ad` removes full forward/reverse construction
+  Jacobians from each proposal. Geometry and value representability checks
+  remain. Validity no longer promises construction derivative agreement.
+- **Q1 / F1:** `Potential.build_with_validity` replaces `build_potential`,
+  `Potential.build`, `Potential.from_settings`, component `build`, and the
+  private MGE construction factories. There is no diagnostic fallback call.
+  The iterator checks the flag before numerical use, records rejected raw
+  parameters, and logs a generic numerical-validation failure. Static setup
+  errors propagate instead of being recorded as rejected proposals.
+- **Q1 completion:** `q_min`, `pqu`, and `T_maj_min` are traceable for both light
+  and mass components. Shared candidates preserve anchor selection/twist,
+  numerical endpoint margins, and shape round-trip checks. Iterator processing
+  remains one proposal at a time; batching is not required to retire the old
+  construction interface. Prior integration remains separate work.
+- **F2 / F5:** oblate domain predicates are shared with standalone diagnostics;
+  the duplicate physical-width checks are removed in favor of the structural
+  unit validator. Standalone scientific conversions also share the same
+  numerical candidates as the registered converters.
+- **F3:** `_guard_construction` owns detached probing, placeholder construction,
+  and conditional differentiation for conversions and MGE deprojection/building.
+  Ordinary and compiled execution use the same candidate and predicates.
+- **Test cost:** mixed valid/invalid `vmap` coverage covers all four native
+  types and all six registered MGE type/parameterization combinations at both
+  precisions. Unit and integer-column gradient tests use representative types;
+  focused shape-gradient tests remain, including direct versus compiled
+  differentiation and finite-difference references. No full-suite speedup
+  factor is claimed without a comparable baseline measurement.
+
+Final affected tests: **404 passed** in sequential Colima processes: 115 MGE,
+39 native-construction, 15 converted-construction, and 235 potential/iterator/
+model-search tests. The full repository test suite was not run. Existing JAX
+precision and upstream deprecation warnings remain.
+
+This document remains as the review handoff; remove it before merging, per the
+project workflow. Lint and documentation verification are recorded in the
+implementation commit.
+
 ## Questions from Prash
 
 ### Q1 — Should `build_with_validity` replace `build_potential` entirely?

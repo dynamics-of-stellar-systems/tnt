@@ -3,14 +3,9 @@
 `TriaxialLightMGEPotential`/`TriaxialMassMGEPotential` build a potential
 from a named Multi-Gaussian Expansion, deprojected under global viewing
 angles `theta`/`phi`/`psi` (see `_galax_potential_from_deprojected`).
-Deprojection happens once, in `_build`, when the component is constructed
-from a proposed point in parameter space -- not lazily inside `to_galax()`
--- so an invalid viewing geometry (`tnt.mge.MGEDeprojectionError`) surfaces
-right there, before anything downstream (like orbit integration) is
-attempted. The oblate axisymmetric counterparts, built on
-`galax.potential.AxisymmetricGaussianPotential`, live in the sibling
-`tnt.potential.oblate_mge` module, so this one stays specifically about the
-triaxial case.
+The shared `build_with_validity` builder deprojects and checks the MGE
+before any numerical use. Invalid proposals return a false flag and a zero
+intrinsic placeholder. `to_galax` must only be called for valid proposals.
 
 Both types also accept `parameterization: "pqu"`, replacing `theta/phi/psi`
 with the intrinsic axis ratios `p = B/A`, `q = C/A` and the compression `u`
@@ -36,13 +31,14 @@ from typing import Any, ClassVar, Self
 
 import equinox as eqx
 import galax.potential
+import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import (
     Deprojected3DMGE,
     LightMGE,
     MassMGE,
-    MGEDeprojectionError,
+    _conversion_valid,
 )
 from tnt.potential.components import AbstractPotentialComponent
 from tnt.potential.registry import (
@@ -59,7 +55,7 @@ from tnt.validation import _required_string, _resolve_typed_reference
 class TriaxialLightMGEPotential(AbstractPotentialComponent):
     """A triaxial potential from a light MGE, via its `ml` parameter.
 
-    `_build` converts the light MGE to mass via `ml`, deprojects it under
+    The shared builder converts the light MGE to mass via `ml`, deprojects it under
     the shared, global viewing angles `theta`/`phi`/`psi`
     (`AbstractMGE.deproject_triaxial`), and stores the result as
     `deprojected`; `to_galax` sums one
@@ -100,21 +96,6 @@ class TriaxialLightMGEPotential(AbstractPotentialComponent):
             )
         }
 
-    @classmethod
-    def _build(
-        cls,
-        parameters: dict[str, Quantity],
-        cosmological_parameters: Mapping[str, Quantity],
-        extra_fields: dict[str, Any],
-    ) -> Self:
-        del cosmological_parameters
-        mge = extra_fields["mge"]
-        mass_mge = mge.to_mass(parameters["ml"])
-        deprojected = mass_mge.deproject_triaxial(
-            parameters["theta"], parameters["phi"], parameters["psi"]
-        )
-        return cls(parameters=parameters, mge=mge, deprojected=deprojected)
-
     def to_galax(
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
@@ -140,7 +121,7 @@ class TriaxialMassMGEPotential(AbstractPotentialComponent):
     `mge_mass_scale` is the analogue of a light MGE's `ml` for a component
     whose shape template is already in mass units: a normalization on top
     of an otherwise-fixed mass map, typically left `fixed` (see `rescale`'s
-    docstring for why it can still move regardless). `_build`/`to_galax`,
+    docstring for why it can still move regardless). `build_with_validity`/`to_galax`,
     and `parameterization: "pqu"`, otherwise follow the same path as
     `TriaxialLightMGEPotential` -- see its docstring.
     """
@@ -174,21 +155,6 @@ class TriaxialMassMGEPotential(AbstractPotentialComponent):
             )
         }
 
-    @classmethod
-    def _build(
-        cls,
-        parameters: dict[str, Quantity],
-        cosmological_parameters: Mapping[str, Quantity],
-        extra_fields: dict[str, Any],
-    ) -> Self:
-        del cosmological_parameters
-        mge = extra_fields["mge"]
-        mass_mge = mge.rescaled(parameters["mge_mass_scale"])
-        deprojected = mass_mge.deproject_triaxial(
-            parameters["theta"], parameters["phi"], parameters["psi"]
-        )
-        return cls(parameters=parameters, mge=mge, deprojected=deprojected)
-
     def to_galax(
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
@@ -216,7 +182,7 @@ def _galax_potential_from_deprojected(
     """Sum one `galax.potential.TriaxialGaussianPotential` per Gaussian component.
 
     Converts an already-deprojected intrinsic MGE
-    (`tnt.mge.AbstractMGE.deproject_triaxial`, called once in `_build`,
+    (`tnt.mge.AbstractMGE.deproject_triaxial`, called by the shared builder,
     before this) directly into a `galax` composite potential -- its
     density, `rho = rho_0 * exp(-xi^2/2)`, `xi^2 = x^2/r_s^2 + y^2/(q1
     r_s)^2 + z^2/(q2 r_s)^2`, matches `Deprojected3DMGE`'s own exactly (`r_s
@@ -276,22 +242,23 @@ def _pqu_to_tpp(
     The data-independent `(p, q, u)` bounds (`0 < q <= p <= 1`, `p < u <= 1`)
     are enforced by the parameterization's `raw_constraints` before this runs;
     the MGE-dependent domain and every singular geometry are the MGE method's
-    business, re-raised here as `InvalidPotentialParametersError` so
-    `ModelIterator` records an invalid model rather than crashing.
+    business. Failed numerical conversions return nonfinite angles for the
+    shared builder to reject before differentiable construction.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register `pqu`
         raise InvalidPotentialParametersError(
             "The 'pqu' parameterization requires an MGE component."
         )
-    try:
-        theta, phi, psi = mge.triaxial_viewing_angles(
-            float(raw["p"].ustrip("")),
-            float(raw["q"].ustrip("")),
-            float(raw["u"].ustrip("")),
+    angles, checks = mge._viewing_angles_candidate(
+        raw["p"].ustrip(""), raw["q"].ustrip(""), raw["u"].ustrip("")
+    )
+    theta, phi, psi = (
+        Quantity(
+            jnp.where(_conversion_valid(checks), angle.ustrip("rad"), jnp.nan), "rad"
         )
-    except MGEDeprojectionError as error:
-        raise InvalidPotentialParametersError(str(error)) from error
+        for angle in angles
+    )
 
     mass = _mass_parameter_name(raw)
     return {mass: raw[mass], "theta": theta, "phi": phi, "psi": psi}
@@ -378,23 +345,23 @@ def _tmajmin_to_tpp(
     The data-independent `(T, T_maj, T_min)` bounds (each in `[0, 1]`) are
     enforced by the parameterization's `raw_constraints` before this runs;
     the MGE-dependent domain and every singular geometry are
-    `AbstractMGE.viewing_angles_from_T_Tmaj_Tmin`'s business, re-raised here
-    as `InvalidPotentialParametersError` so `ModelIterator` records an
-    invalid model rather than crashing.
+    shared numerical candidate's business. Failed numerical conversions return
+    nonfinite angles for the shared builder to reject.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register this
         raise InvalidPotentialParametersError(
             "The 'T_maj_min' parameterization requires an MGE component."
         )
-    try:
-        theta, phi, psi = mge.viewing_angles_from_T_Tmaj_Tmin(
-            float(raw["T"].ustrip("")),
-            float(raw["T_maj"].ustrip("")),
-            float(raw["T_min"].ustrip("")),
+    angles, checks = mge._T_viewing_angles_candidate(
+        raw["T"].ustrip(""), raw["T_maj"].ustrip(""), raw["T_min"].ustrip("")
+    )
+    theta, phi, psi = (
+        Quantity(
+            jnp.where(_conversion_valid(checks), angle.ustrip("rad"), jnp.nan), "rad"
         )
-    except MGEDeprojectionError as error:
-        raise InvalidPotentialParametersError(str(error)) from error
+        for angle in angles
+    )
 
     mass = _mass_parameter_name(raw)
     return {mass: raw[mass], "theta": theta, "phi": phi, "psi": psi}
