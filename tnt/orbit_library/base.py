@@ -1,6 +1,9 @@
-"""Orbit libraries integrated in a `tnt.potential.Potential`.
+"""Shared orbit-sampler/dithering contracts, `OrbitLibrary`, and their builders.
 
-Signature-only scaffold: every method raises `NotImplementedError`.
+Signature-only scaffold: every method raises `NotImplementedError`. Concrete
+`AbstractOrbitSampler` subclasses live one per sibling module
+(`tnt.orbit_library.grid`, `tnt.orbit_library.random`); `build_orbit_sampler`
+dispatches on `orbit_library_settings.orbit_sampler.type` once implemented.
 """
 
 from __future__ import annotations
@@ -49,55 +52,6 @@ class AbstractOrbitSampler(eqx.Module):
             A `(self.n_bundles(), dithering.n_orbits_per_bundle(), 6)` array
             of phase-space initial conditions `(x, y, z, vx, vy, vz)`.
         """
-        raise NotImplementedError
-
-
-class GridOrbitSampler(AbstractOrbitSampler):
-    """Box + tube + counter-rotating-tube grid over (E, I2, I3).
-
-    `n_bundles` is `3 * nE * nI2 * nI3`: a box-orbit library and a
-    tube-orbit library, each of size `nE * nI2 * nI3`, plus a
-    counter-rotating copy of the tube library.
-    """
-
-    _type: ClassVar[str] = "Grid"
-    logrmin: float
-    logrmax: float
-    nE: int
-    nI2: int
-    nI3: int
-
-    def n_bundles(self) -> int:
-        raise NotImplementedError
-
-    def generate_ics(
-        self,
-        potential: Potential,
-        dithering: AbstractOrbitDithering,
-    ) -> jnp.ndarray:
-        raise NotImplementedError
-
-
-class RandomOrbitSampler(AbstractOrbitSampler):
-    """Orbit bundles from randomly sampled initial conditions.
-
-    Fields beyond `logrmin`/`logrmax` are still undecided -- only `type`,
-    `logrmin`, and `logrmax` are validated so far
-    (`tnt.configuration.validation._validate_orbit_sampler`).
-    """
-
-    _type: ClassVar[str] = "Random"
-    logrmin: float
-    logrmax: float
-
-    def n_bundles(self) -> int:
-        raise NotImplementedError
-
-    def generate_ics(
-        self,
-        potential: Potential,
-        dithering: AbstractOrbitDithering,
-    ) -> jnp.ndarray:
         raise NotImplementedError
 
 
