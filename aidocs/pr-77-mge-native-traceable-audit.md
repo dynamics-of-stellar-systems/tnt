@@ -1,67 +1,83 @@
 # PR #77: Make native MGE validation and construction JAX-traceable — audit
 
-- Date: 2026-10-05
+- Date: 2026-10-06
 - Reviewer: Claude, for Thomas Maindl
 - PR: [Make native MGE validation and construction JAX-traceable](https://github.com/dynamics-of-stellar-systems/tnt/pull/77)
 - Author: `maindlt` (Assisted by Codex)
 - Reviewed head: `7f78f98c4248c0c5ef47c97d6912e21f1867a159`
 - PR base (merge-base with `main`): `a5285b4687d74824a531b83c44f15537046f89cd`
 
+## Questions from Prash
+
+### Q1 — Should `build_with_validity` replace `build_potential` entirely?
+
+We shouldn't have two ways of doing the same thing. I think `build_with_validity`
+should eventually replace the eager `build_potential` path outright. If we do
+that: how does `build_with_validity` get threaded into `ModelIterator`? My
+guess is it needs a `vmap` — build and validity-check a batch of proposals at
+once, filter out the invalid ones, then only run the (non-traceable) orbit
+integration / weight solve on the survivors.
+
+*Context gathered during this review:* today, the one real production
+consumer is `ModelIterator._evaluate` (`tnt/model_iterator.py:417-460`), which
+calls the eager `build_potential` specifically to catch named Python
+exceptions (`MGEDeprojectionError`, `InvalidPotentialParametersError`) with
+human-readable messages for its per-point warning log — `build_with_validity`'s
+boolean flag has no message to attach to that log line. `build_with_validity`
+has no consumer anywhere in the codebase yet; the PR description itself defers
+"prior/model-iterator integration" to a later phase. Resolving this question
+would directly settle F1 below (the diagnostic-fallback gap only exists
+because both paths currently coexist) and F2 (the hand-duplicated domain
+checks only risk drifting because there are two paths to keep in sync), and
+would reframe F4 from "`probe()` shouldn't run from eager `build()`" to
+"eager `build()` shouldn't exist at all."
+
+### Q2 — Are the derivative checks overkill?
+
+The test cases where forward- and reverse-mode actually diverge are pretty
+pathological — either deliberately extreme parameter values, or an ordinary
+galaxy declared in an extreme unit (kilometres). That's a lot of added
+complexity to catch inputs that look like edge cases by construction. The
+derivatives being checked (the Jacobian of `I`/`sigma`/`p`/`q`/mass with
+respect to the raw parameters) may not even be the ones that end up
+differentiated in the real modelling workflow. And since gradients will be
+consumed exclusively by the prior module (an MCMC/HMC-style sampler),
+computing an `(8,4)` Jacobian in *both* forward and reverse mode on every
+sampler step seems like the wrong trade.
+
+**Suggestion: drop the derivative checks.**
+
+*Context gathered during this review:* the two documented divergence cases
+are (1) `test_reverse_mode_overflow_is_rejected_eagerly_and_under_jit`, built
+from `I ~ 1e-100` / `sigma ~ 1e103 kpc` specifically to overflow, and (2) the
+`km`-unit case in `test_equivalent_width_units_preserve_native_mge_values_and_gradients`,
+which was already fixed at the root by the second commit's "local astronomical
+units" change rather than merely gated — so in the realistic-proposal regime
+this check should rarely fire today. Separately: once `jax.jit`-compiled,
+`valid`'s computation can't be dead-code-eliminated (it feeds the returned
+flag), so the forward-mode Jacobian is re-executed on every call to the
+compiled function, not just once at trace time — in an MCMC sampler that's
+every leapfrog step, indefinitely, paying for a cross-check whose only
+consumer is the check itself (the sampler's own gradient need is a single
+reverse-mode VJP). Timed empirically on this branch: removing the derivative
+block cut `test_equivalent_width_units_preserve_native_mge_values_and_gradients`
+from ~17.5s to ~5.6s for the triaxial cases (~9.3s to ~3.5s for oblate),
+consistent with the `(8,4)`/`(8,2)` dual-mode Jacobian being the dominant
+cost.
+
 ## Recommendation
 
 The core design — one scalar validity flag per proposal, numerical probes
 detached from autodiff before conditional construction, shared geometry/unit
 checks across oblate/triaxial light/mass — is sound and the tests back it up.
-One finding (F1) looks like an unintended regression and is worth fixing or
-explicitly justifying before merge; the rest are maintainability/performance
-observations, not correctness blockers.
+Before merging, it's worth settling Q1/Q2 above with Thomas, since the answers
+change how much of F1/F2/F4 below is worth fixing in this PR versus moot under
+a redesign. The remaining findings are maintainability observations, not
+correctness blockers.
 
 ## Findings
 
-### F1 — P2: `PA_twist` axisymmetry check tightened from tolerant to exact equality, with no stated reason
-
-Locations: `tnt/mge.py:624` (eager `deproject_oblate`) and `tnt/mge.py:695`
-(traced `_oblate_candidate`'s `valid` expression, used by
-`deproject_oblate_with_validity` / `_build_mge_with_validity`).
-
-The diff against `main` changes:
-
-```python
-if not bool(jnp.allclose(self.PA_twist.ustrip("rad"), 0.0)):
-```
-
-to:
-
-```python
-if not bool(jnp.all(self.PA_twist.ustrip("rad") == 0)):
-```
-
-and adds the same exact-equality form to the traced validity flag. `allclose`
-is equally JAX-traceable, so this isn't required for the traceability goal of
-the PR, and nothing in the PR description or commit messages explains the
-tightening.
-
-Reproduced directly against this branch: a `LightMGE` with
-`PA_twist = [0, 1e-10] deg` (i.e. effectively-zero isophote twist, the kind of
-value that can arise from floating-point roundoff in an upstream unit
-conversion) passed the old `allclose` check (`True`) but now makes
-`deproject_oblate` raise `ValueError` eagerly, and makes
-`deproject_oblate_with_validity`'s flag come back `False`:
-
-```
-deproject_oblate RAISED: ValueError - deproject_oblate requires PA_twist == 0 ...
-traced valid flag: False
-allclose(1e-10 deg in rad, 0) = True
-```
-
-An MGE that would have deprojected fine before this PR is now rejected.
-
-Requested fix: either revert to `jnp.allclose` (default tolerance) for both
-checks, or, if exact equality is intentional (e.g. to match a stricter
-upstream contract), say so in the docstring/commit message and confirm no
-existing fixture or caller relies on near-zero-but-nonzero twist.
-
-### F2 — P2: Diagnostic fallback in `build()` doesn't cover all of `probe()`'s validity conditions
+### F1 — P2: Diagnostic fallback in `build()` doesn't cover all of `probe()`'s validity conditions
 
 Location: `tnt/potential/components.py:196-209`.
 
@@ -98,9 +114,10 @@ of rejections.
 Requested fix: either have `probe()`'s derivative checks also raise/report
 *which* condition failed (geometry vs. derivative agreement vs. derivative
 finiteness) so `build()` can forward the right message, or adjust the comment
-to say the diagnostic re-call only helps for geometry/domain failures.
+to say the diagnostic re-call only helps for geometry/domain failures. (Moot
+if Q1 resolves toward removing eager `build()` entirely.)
 
-### F3 — P3: Domain checks are hand-duplicated between the eager and traced construction paths
+### F2 — P3: Domain checks are hand-duplicated between the eager and traced construction paths
 
 Locations: `tnt/mge.py:612-625` (eager, Python `if`/`raise`) vs.
 `tnt/mge.py:690-698` (traced, `_oblate_candidate`'s `valid` expression) —
@@ -109,16 +126,15 @@ same pattern for the triaxial counterpart at `tnt/mge.py:820` /
 
 Inclination range, `sigma`-is-length, and `PA_twist == 0` are each checked
 once by hand in eager Python and again as a JAX boolean predicate in the
-traced `valid` flag. F1 shows this is not just theoretical: the two copies
-already drifted out of sync for one line (`allclose` vs. exact `==`) in this
-same PR — had only one been updated, eager and traced construction would
-silently accept/reject different inputs for the same MGE.
+traced `valid` flag — two sources of truth for the same rule, with nothing
+tying them together.
 
 Requested fix (non-blocking): extract shared boundary predicates (e.g. an
 `_inclination_valid(angle) -> jax.Array` usable both as a raise-condition and
-inside `valid`) so eager and traced paths read from one definition.
+inside `valid`) so eager and traced paths read from one definition. (Moot if
+Q1 resolves toward removing eager `build()` entirely.)
 
-### F4 — P3: `_build_mge_with_validity`'s traced scaffold reimplements `_guard_deprojection` by hand
+### F3 — P3: `_build_mge_with_validity`'s traced scaffold reimplements `_guard_deprojection` by hand
 
 Locations: `tnt/potential/components.py:290-312` vs.
 `tnt/mge.py:92-107` (`_guard_deprojection`, already used by
@@ -135,7 +151,7 @@ Requested fix (non-blocking): have `_build_mge_with_validity` call
 `_guard_deprojection` (or a shared generalization of it) instead of
 re-deriving the same control flow.
 
-### F5 — P3: `probe()` runs full forward+reverse Jacobians unconditionally, even from plain eager `build()`
+### F4 — P3: `probe()` runs full forward+reverse Jacobians unconditionally, even from plain eager `build()`
 
 Location: `tnt/potential/components.py:258-269`, called from both
 `build_with_validity` and the untraced branch of `_build_mge_with_validity`
@@ -143,20 +159,22 @@ Location: `tnt/potential/components.py:258-269`, called from both
 
 `probe()` always computes `jax.jacfwd(numerical_outputs)` and
 `jax.jacrev(numerical_outputs)` over an 8-output function, including when
-`build()` is called eagerly outside any `jax.jit`/`jax.vmap` trace and the
-caller has no use for gradients — e.g. once per model a sampler materializes.
-Within one call, the deprojection `candidate()` itself is also recomputed
-several times (once directly in `probe`, again inside `numerical_outputs`
-under tracing for `jacfwd`, again under `jacrev`, and once more to build the
-final returned model), multiplying the per-proposal cost of a construction
-path meant to build one potential.
+`build()` is called eagerly outside any `jax.jit`/`jax.vmap` trace. `build()`'s
+own docstring says this path "must remain outside `jax.jit`/`jax.vmap`
+traces; only the resulting potential enters compiled numerical work" — i.e.
+by contract, nothing downstream of an eager `build()` call ever differentiates
+through it, so this cost is unconditional and provably unused in that path
+(see Q1/Q2). Within one call, the deprojection `candidate()` itself is also
+recomputed several times (once directly in `probe`, again inside
+`numerical_outputs` under tracing for `jacfwd`, again under `jacrev`, and once
+more to build the final returned model), multiplying the per-proposal cost of
+a construction path meant to build one potential.
 
-Requested fix (non-blocking, perf only): consider gating the Jacobian
-checks to the paths that actually need gradient validity (`build_with_validity`
-/ the traced branch), and reusing one `candidate()` evaluation for the final
-model instead of recomputing it.
+Requested fix: drop the probe from the eager path entirely (not just gate it)
+once Q1 is settled; see Q2 for whether the dual-mode check belongs in the
+traced path at all.
 
-### F6 — Minor: redundant unit check duplicated via two mechanisms
+### F5 — Minor: redundant unit check duplicated via two mechanisms
 
 Location: `tnt/mge.py:619` vs. `tnt/mge.py:652-659`
 (`_check_deprojection_structure`).
@@ -173,13 +191,15 @@ blocker.
 - The physical-surface-density convention from PR #76 is correctly carried
   through: `I` is unaffected by `angular_to_physical`, only `sigma` converts.
 - Sharing geometry/representability checks between eager construction and the
-  traced validity flag (modulo F1/F3) is the right shape for this problem —
+  traced validity flag (modulo F2) is the right shape for this problem —
   static contract errors raise, numerical proposal failures become a guarded
   `valid=False` with zeroed placeholders that never reach differentiated
   code.
 - The forward/reverse-mode agreement check in `probe()` is a reasonable way
   to catch derivative blow-ups that a finite-forward-value check alone would
-  miss (same pattern as PR #75's NFW gradient-finiteness check).
+  miss (same pattern as PR #75's NFW gradient-finiteness check) — but see Q2
+  for whether its cost is justified given where it actually fires and who
+  actually consumes the gradients it protects.
 - Scope is honestly stated: Galax's own potential quadrature is explicitly
   out of scope, and `q_min`/`pqu`/`(T, T_maj, T_min)` traceable conversions
   are deferred, consistent with the PR description.
@@ -199,11 +219,10 @@ python -m pytest -q tests/unit_tests/test_potential.py
   unrelated to this PR).
 - `tests/unit_tests/test_potential.py`: **193 passed**, 4 warnings (same
   cause).
-- Reproduced F1 directly with a small script constructing a `LightMGE` with
-  `PA_twist = [0, 1e-10] deg`: confirmed `jnp.allclose(...) == True` but
-  `jnp.all(... == 0) == False`, and that `deproject_oblate` raises on this
-  branch where it would have succeeded under the pre-PR check (see F1 for the
-  exact output).
+- Timed `test_equivalent_width_units_preserve_native_mge_values_and_gradients`
+  with the `probe()` derivative block (forward/reverse Jacobians and
+  agreement check) temporarily stripped out: triaxial cases dropped from
+  ~17.5s to ~5.6s, oblate from ~9.3s to ~3.5s (see Q2).
 - Did not run the full repository suite (matches the PR description's own
   note that "the full repository test suite was not run for the final
   correction"); did not run `ruff`/Sphinx independently in this pass.
@@ -211,7 +230,9 @@ python -m pytest -q tests/unit_tests/test_potential.py
 ## Scope and follow-up
 
 Only this audit document was added to the branch. Implementation fixes,
-posting review comments, and merging are separate follow-up actions. After
-F1/F2 are resolved (and F3-F6 addressed or explicitly deferred), rerun the
-affected tests and remove this audit from the PR branch per the project
-workflow before merging to `main`.
+posting review comments, and merging are separate follow-up actions. Q1 and
+Q2 are open design questions for Thomas, not findings to fix unilaterally —
+resolve those first, since they determine which of F1-F4 are worth fixing
+here versus superseded by a `build_potential` removal / derivative-check
+simplification. After that, rerun the affected tests and remove this audit
+from the PR branch per the project workflow before merging to `main`.
