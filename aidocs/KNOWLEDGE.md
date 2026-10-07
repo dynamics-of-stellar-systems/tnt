@@ -103,6 +103,14 @@
   development environment used from Intel macOS. The host checkout is mounted
   at `/workspace`; its macOS `.venv` is never used in the container because
   `UV_PROJECT_ENVIRONMENT` points to `/opt/tnt-venv` inside the image.
+- For this checkout's local macOS workflow, use Docker's `colima` context.
+  The local Colima VM has 2 GB of memory. Run scientific test suites
+  sequentially, preferably in separate processes; do not run multiple JAX
+  test processes in parallel. Accumulated compiled graphs can also exhaust
+  memory within one process. The native MGE gradient tests clear JAX's
+  compilation caches between cases to bound their memory use.
+  Example: `docker --context colima compose run --rm dev pytest -q
+  tests/unit_tests/test_mge.py`.
 - Run `docker compose build` after dependency or container-definition changes.
   Normal source edits are immediately visible without rebuilding.
 - Use `docker compose run --rm dev <command>` for Linux validation, for example
@@ -214,24 +222,65 @@
   system distance and preserves `I`. For fixed angular widths, total
   luminosity/mass scales with distance squared. Direct constructors may
   already carry physical widths. See `docs/source/data_preparation.md`.
-- MGE deprojection enforces TNT's intrinsic-axis convention
-  `0 < q <= p <= 1` eagerly. `_check_axial_ratios()` converts JAX results to
-  Python control flow (`bool(...)` and `.nonzero()`) and raises
-  `MGEDeprojectionError`, so `deproject_triaxial()` and
-  `deproject_oblate()` are deliberately not `jax.jit`/`jax.vmap`
-  traceable. `ModelIterator._evaluate()` currently catches Python exceptions
-  and returns a variable-length `list[Model]`, while orbit integration and
-  weight solving are still scaffolding. Issue #72 replaces proposal-dependent
-  exceptions with one traced validity result shared by the prior and iterator;
-  the first implementation targets one proposal, with batching deferred.
+- Native MGE deprojection has paired eager and `with_validity` APIs.
+  All four supported MGE potential types construct inside one JAX trace using
+  native normalization and viewing angles. The complete proposal returns one
+  scalar boolean; invalid intrinsic MGEs contain zeros and must not be used,
+  including through `to_galax`, unless the flag is true. Eager and traced paths
+  share intrinsic-axis, finite positive density/width/mass, and numerical
+  accuracy checks. Native potential construction additionally probes positive
+  finite values in local `Msun`/`kpc` units. It does not compute or certify
+  construction derivatives on each proposal; regression tests cover gradients
+  for representable proposals (equivalent units, integer columns,
+  finite-difference comparisons) only. An extreme MGE column value can pass
+  as valid with a non-finite gradient.
+  Oblate cancellation and triaxial
+  covariance-inversion conditioning/residual checks use `50*sqrt(eps)`
+  relative error thresholds at active precision. Exactly circular projected
+  rows use the analytic spherical result, avoiding roundoff beyond q=1 or u=1;
+  see `docs/source/potential.md`.
+  Surface intensity stays physical and projected total mass is conserved.
+  `Deprojected3DMGE.component_masses` owns the intrinsic Gaussian mass
+  calculation shared by validation and both Galax construction paths. It
+  converts locally to `kpc` and `Msun` (or `Lsun` for luminosity), interleaves
+  density/width products, and preserves the conversion boundary against
+  compiler reassociation. Its shared `gaussian_widths` property supplies
+  floating-point `kpc` widths to both Galax factories with the same conversion
+  boundary. Stored MGE columns and proposal units remain unchanged.
+  Gaussian-width arithmetic uses floating-point arrays
+  even when fixed input columns contain integers. Equivalent physical widths
+  in `pc`, `kpc`, and `km` must yield consistent validity, mass, potential
+  values, and gradients; finite
+  integrated mass alone does not guarantee representable derivatives.
+  The native-MGE validity contract covers deprojection and construction
+  values. By explicit scope decision, it does not certify Galax's
+  fixed-order potential quadrature. Galax's 50-point Gaussian quadrature can
+  be inaccurate for very thin Gaussians: at oblate q=0.001 the normalized
+  central potential differs from the analytic arccos(q)/sqrt(1-q**2)
+  reference by about 0.7%, and its q derivative by about 95%, even with a
+  well-resolved float64 deprojection. Potential-quadrature accuracy needs
+  separate work; do not treat a true construction flag as that guarantee.
+  MGE `q_min`, `pqu`, and `T_maj_min` conversions are traceable. The standalone
+  scientific methods and registry adapters share numerical candidates and
+  predicates, including anchor twists, endpoint margins and round-trip checks.
+  `Potential.build_with_validity` is the only potential construction interface;
+  `build_potential`, `Potential.build`, `Potential.from_settings`, component
+  `build`, and the four MGE `_build` factories have been removed.
+  `ModelIterator._evaluate()` checks the scalar flag before any use of the
+  potential, logs a generic numerical-validation rejection with raw parameters,
+  and records an invalid model. Static setup errors propagate. Construction
+  supports `vmap`; iterator batching and prior integration remain deferred.
+  The iterator still returns a variable-length `list[Model]`; orbit integration
+  and weight solving remain scaffolding.
 - Issue #72 fixes the execution target as one proposal evaluated inside a JAX
   trace. `ParameterConstraint.valid()` now exposes JAX scalar predicates for
   registered numeric bounds and same-component relationships; eager
   `violation()` uses those same predicates for its diagnostics.
   `ResolvedPotentialComponent._raw_parameters_valid()` checks static
   names/types/dimensions/shapes before tracing and returns a JAX scalar flag
-  for finite raw values and registered bounds. `Potential.build_with_validity()`
-  composes Galax components and their flags inside a single JAX trace,
+  for finite raw values and registered bounds. A complete proposal must contain
+  exactly the resolved component names. `Potential.build_with_validity()`
+  composes native Galax and MGE components and their flags inside a JAX trace,
   including traceable registered conversions such as NFW's `concentration_m200`;
   a false flag requires JAX conditional execution before evaluating derived
   quantities. Registered conversions first check raw validity, then probe
@@ -242,8 +291,7 @@
   dtypes for zero placeholders used by invalid converted components; these
   are not usable physical models. Converters must themselves support JAX
   tracing, and their output names/types/dimensions/scalar shapes remain hard
-  contract checks. MGE deprojection and iterator/prior integration remain
-  eager or unfinished; proposal batching is still deferred.
+  contract checks. Iterator batching and prior integration are deferred.
 - Eager constraint diagnostics and traced validity evaluate the same JAX
   predicates at the proposed value's active precision; converting eager values
   to Python floats would change half-open bound decisions in float32. For
@@ -251,7 +299,7 @@
   `(r_h - r_c) / max(abs(r_h), abs(r_c)) > eps**(1/5)` at that precision.
   The upstream potential formula subtracts nearly equal terms and otherwise
   yields unreliable gradients close to equal radii. This numerical guard is
-  shared by eager and traced construction.
+  shared by ordinary and compiled calls to the same builder.
 - Intel macOS is not a native TNT target because current JAX releases do not
   provide `jaxlib` wheels for that platform. Use the Linux `x86_64`
   development container there instead.
@@ -472,27 +520,24 @@
   declared -- intentional TNT policy, for a complete/reproducible
   model-table schema.
 - Runtime potential construction owns value/domain validation.
-  `ResolvedPotentialComponent.build()` checks that every raw parameter is an
-  exactly named, dimensionally correct, scalar, finite `Quantity`, applies the
-  resolved type/parameterization's physical-domain constraints, runs any
-  forward converter, and repeats the checks against the canonical native
-  schema and constraints. This is deliberately eager Python boundary logic,
-  before a potential object enters JAX/Equinox numerical work; it does not
-  mutate or normalize the parameter's declared unit. MGE data-dependent
-  deprojection geometry remains validated by the MGE composite `_build()`
-  methods. Native `galax` constraints live beside dimension/rescale metadata in
+  `ResolvedPotentialComponent.build_with_validity()` checks exactly named,
+  dimensionally correct scalar `Quantity` inputs as static setup, then returns
+  a flag for finiteness and physical-domain checks before/after conversion.
+  It does not normalize declared units. MGE construction and standalone
+  deprojection share `_guard_construction` for detached probing and conditional
+  differentiable construction. Native `galax` constraints live beside metadata in
   `_SUPPORTED_GALAX_TYPES`; TNT composite constraints live on each component's
   `_constraints`; parameterization raw constraints live in the same registered
   `ParameterizationSpec` as its converters and schema. Registration rejects
   constraint names or relationships that disagree with their owning schema.
-  `components._check_parameter_set_contract()` separately enforces the
-  generator/converter pipeline contract; each `ParameterConstraint.violation()`
-  owns its bound and relationship evaluation. Physical-domain and well-formed
-  `Quantity` failures raise `InvalidPotentialParametersError`, which
-  `ModelIterator._evaluate()` records as an invalid model alongside
-  `MGEDeprojectionError`. A non-`Quantity` value remains an uncaught `TypeError`
-  because it indicates a programming error rather than a physically invalid
-  proposed point.
+  `components._check_parameter_set_structure()` enforces the
+  generator/converter structure contract. Each `ParameterConstraint.valid()`
+  owns its numerical bound and relationship predicates; `violation()` uses
+  those predicates for standalone diagnostics. Numerical proposal failures
+  return `valid=False`, which `ModelIterator._evaluate()` records as an
+  invalid model. Malformed names, shapes, types, and dimensions remain static
+  setup errors and propagate to the caller, including
+  `InvalidPotentialParametersError` and `TypeError`.
   TNT's chosen physical policy is strict positivity for every mass, MGE
   normalization (`ml`/`mge_mass_scale`), and scale length, including parameters
   such as Miyamoto-Nagai `a`; zero does not disable a component or select a
@@ -519,7 +564,7 @@
   trailing optional `mge` arg -- `None` for a curated native `galax` type,
   else the component's own `tnt.mge` MGE (every MGE composite type stores it
   in a field named `mge`) -- supplied generically, not per type:
-  `ResolvedPotentialComponent.build` passes `extra_fields.get("mge")` to the
+  `ResolvedPotentialComponent.build_with_validity` passes `extra_fields.get("mge")` to the
   forward converter, `AbstractPotentialComponent.raw_parameters` passes
   `getattr(self, "mge", None)` -- the same value, off the built component --
   to the inverse one. `pqu` uses it for `q' = min(component q)` and the
@@ -534,8 +579,10 @@
   `triaxial_viewing_angles` and back in by `triaxial_intrinsic_shape`, so
   `(p, q, u)` keep their meaning for a twisted MGE. Ties for min `q'` break by
   component order. `_pqu_to_tpp` / `_tpp_to_pqu` in `tnt.potential.triaxial_mge`
-  are thin registry adapters that re-raise `MGEDeprojectionError` as
-  `InvalidPotentialParametersError`. A `pqu` config and its equivalent
+  share traceable numerical candidates with the standalone scientific methods.
+  Failed forward conversions produce nonfinite angles for the shared builder
+  to reject with `valid=False`; standalone methods retain diagnostic exceptions.
+  A `pqu` config and its equivalent
   `(theta, phi, psi)` config build an identical potential. Data-independent
   bounds (`0 < q <= p <= 1`, `p < u <= 1`) are `ParameterConstraint`s;
   `triaxial_viewing_angles` additionally rejects a value violating `q < p`
@@ -572,7 +619,8 @@
   `_TMAJMIN_ROUNDTRIP_ABS_TOL_FACTOR * eps + _TMAJMIN_ROUNDTRIP_REL_TOL_FACTOR
   * sqrt(eps) * |coordinate|` (a combined bound, not relative alone, since a
   requested coordinate can legitimately be exactly `0`); otherwise
-  `MGEDeprojectionError`. At float64 this is essentially never triggered by
+  the standalone method raises `MGEDeprojectionError`, while the potential
+  builder returns `valid=False`. At float64 this is essentially never triggered by
   an ordinary point; at float32 it can reject points with a small
   `T`/`T_maj`/`T_min` whose `(p,q,u)` sits close enough to `pqu`'s own
   singular boundary -- calibrated against measured round-trip drift
@@ -601,8 +649,8 @@
   checks `abs(q_recovered - q_min) / q_min <= 50 * sqrt(eps)`, where `eps`
   is for the active JAX float type. This is a relative shape-error ceiling:
   approximately `7.45e-7` at float64 and `0.0173` (1.73%) at float32.
-  Exceeding it raises `MGEDeprojectionError`, translated by the adapter to
-  `InvalidPotentialParametersError`. Thin or nearly circular configurations
+  Exceeding it raises `MGEDeprojectionError` in the standalone method and
+  returns `valid=False` from the potential builder. Thin or nearly circular configurations
   can fail this check even inside the mathematical domain. Reporting uses
   the recovered shape, so accepted values need not equal inputs exactly.
 - `parameterization` is a separate, optional field controlling how config
@@ -650,8 +698,8 @@
   can therefore use `H` without depending on `units.internal`.
   `cosmological_parameters` is
   threaded from `Configuration` through `ModelIterator` (a stored field, set
-  in `from_configuration`) into `build_potential`. The internal unit system
-  follows a separate path and is retained for `Potential.to_galax()`. Since
+  in `from_configuration`) into `Potential.build_with_validity`.
+  The internal unit system follows a separate path and is retained for `Potential.to_galax()`. Since
   configuration preparation
   preserves declared quantities as `{value, unit}` rather than stripping
   them (see the units-handling entries above), `ModelIterator.from_configuration`
@@ -675,7 +723,7 @@
   cancellation in both conversions. The characteristic-mass quotient has a
   custom JAX derivative that avoids g(c)**2 in the denominator. Unrepresentable
   native values or mass/concentration derivative coefficients invalidate the
-  conversion (eager errors or a false traced flag); derivative representability
+  conversion (a false validity flag); derivative representability
   is checked in `Msun` and `kpc` so equivalent declared mass units agree.
   A JAX optimization barrier preserves the local H conversion during JIT
   compilation, preventing arithmetic reassociation from recreating underflow.
@@ -702,8 +750,9 @@
   component's resolved state. TNT does not support an NFW
   `(c, f) -> (m, r_s)` "concentration + mass fraction" parameterization
   (`f = M_200 / M*_TOT`, `M*_TOT` derived from the stellar MGE component)
-  because `Potential.from_settings` resolves each component independently in
-  one pass, so no component-local converter can see another component's
+  because `Potential.resolve` resolves each component independently and
+  `Potential.build_with_validity` converts it using only its own inputs,
+  so no component-local converter can see another component's
   resolved mass. That kind of cross-component
   relationship belongs to the parameter generator/search space rather than
   potential construction; it must not be shoehorned into `parameterization`.

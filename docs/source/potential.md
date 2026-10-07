@@ -132,18 +132,69 @@ the core radius by more than `eps**(1/5)` of the larger radius, where
 `eps` is the active floating-point precision's machine epsilon. Near-equal
 radii are rejected because the potential calculation loses gradient accuracy.
 
-For `galax` components, `Potential.build_with_validity` provides a
-compiled-build path that returns the potential and a JAX boolean indicating
-whether its proposed numerical parameters are valid. Configuration structure
-errors still raise during setup. A caller must use the boolean to condition
+`Potential.build_with_validity` is the single construction interface. It returns
+the potential and a JAX boolean indicating
+whether its proposed numerical parameters are valid. One complete proposal
+must contain exactly the resolved component names. Names, real scalar types,
+array shapes, and unit dimensions remain setup errors. A caller must use the boolean to condition
 any derived calculation: a potential returned with a false flag is not a
 valid physical model. Native parameters and traceable registered conversions
 are supported, including NFW's `concentration_m200`. Conversions check both
 raw and converted parameter validity before allowing differentiation;
 invalid converted components contain zero placeholders in the converter's
 output units. This also rejects proposals whose positive raw values overflow
-or otherwise produce invalid native parameters. MGE deprojections still use
-the eager build path, and batched proposal construction remains deferred.
+or otherwise produce invalid native parameters. All four MGE component types
+support native viewing angles and normalization inside one JAX trace.
+MGE `q_min`, `pqu`, and `T_maj_min` conversions are also traceable, with the
+same anchor selection, endpoint margins and round-trip accuracy checks as the
+standalone scientific conversions. `ModelIterator` calls this interface once
+per proposal and checks the flag before orbit integration. Invalid proposals
+are recorded with their raw parameters and a generic numerical-validation
+warning; static setup errors propagate. Batched construction via `jax.vmap`
+is tested, but iterator batching and prior integration remain future work.
+
+Migration: replace `build_potential(...)` or `Potential.build(...)` with
+`potential, valid = Potential.build_with_validity(...)` and check `valid`
+before using the result. `Potential.from_settings(...)` is removed; call
+`Potential.resolve(settings, mges)` once, then reuse its result with the builder.
+Standalone calls can use `if bool(valid)`; compiled calls need JAX control flow.
+
+Native MGE construction validates the complete set of Gaussians: intrinsic
+`0 < q <= p <= 1`, positive finite density, width and mass in declared units
+and local `Msun`/`kpc` units.
+Validity does not certify
+construction derivatives: forward/reverse derivative agreement is tested in
+focused regression cases, not recomputed for every proposal.
+Gaussian masses are calculated locally in `Msun` and
+`kpc`; width factors are multiplied with density rather than first cubing a
+width in its declared unit. The conversion boundary is preserved during
+compilation. Gaussian widths are also converted to `kpc` before Galax forms
+their powers. These local calculations preserve stored MGE columns and
+proposal units, including integer-valued input columns; Gaussian-width arithmetic
+uses floating-point arrays. Equivalent
+physical widths in `pc`, `kpc`, and `km` give the same construction and numerical
+results within rounding error.
+Oblate deprojection rejects cancellation in `q_obs**2 - cos(i)**2` when its
+roundoff estimate exceeds `50 * sqrt(eps)` relative error. Triaxial deprojection
+checks the conditioning of the map from intrinsic diagonal covariance to sky
+covariance and verifies the recovered sky covariance. The relative roundoff
+estimate for the smallest intrinsic variance and the residual relative to the
+smallest observed variance must each stay within `50 * sqrt(eps)`. Here `eps`
+is machine epsilon at the active precision. These are conservative accuracy
+guards, not clipping or normalization of physical parameters. Exactly circular
+projected rows use their analytic spherical solution to avoid roundoff beyond
+`q=1` or `u=1`.
+
+Standalone MGE deprojection methods retain diagnostics from shared predicates.
+Invalid traced MGEs contain zero intrinsic placeholders; callers must condition
+all use, including `to_galax`, on the combined flag. Physical surface intensity
+is preserved; deprojection conserves `2*pi*I*sigma_observed**2*q_observed` per
+Gaussian. Validity covers construction, rather than every possible subsequent
+calculation at arbitrary coordinates or in arbitrary units. In particular,
+the flag does not certify Galax's fixed-order Gaussian potential quadrature.
+Very thin Gaussians can have inaccurate potential values and gradients even
+when native deprojection and construction are reliable; quadrature accuracy
+is a separate numerical concern.
 
 ### MGE composite types
 
@@ -270,13 +321,14 @@ potential:
   give incorrect zero gradients.
 - **All four MGE composite types**: implemented. The named MGE is
   deprojected -- triaxial types under `theta`/`phi`/`psi`
-  (`AbstractMGE.deproject_triaxial`), oblate axisymmetric types under a
-  single `inclination` (`AbstractMGE.deproject_oblate`) -- once, when the
+  (`AbstractMGE.deproject_triaxial_with_validity`), oblate axisymmetric types under a
+  single `inclination` (`AbstractMGE.deproject_oblate_with_validity`) -- when the
   component itself is built from a proposed point in parameter space, not
   lazily inside `to_galax()`, so an invalid viewing geometry
-  (`tnt.mge.MGEDeprojectionError`, for a deprojection with no real solution
-  or intrinsic axial ratios outside TNT's `0 < q <= p <= 1` convention)
-  surfaces there, before anything downstream is attempted. `to_galax()` then
+  (a deprojection with no real solution or intrinsic axial ratios outside
+  TNT's `0 < q <= p <= 1` convention) returns `valid=False` before
+  anything downstream is attempted. Standalone diagnostic deprojection
+  methods still raise `tnt.mge.MGEDeprojectionError`. `to_galax()` then
   sums one `galax.potential.TriaxialGaussianPotential` /
   `AxisymmetricGaussianPotential` per Gaussian component. TNT uses these
   native `galax` Gaussian potentials and `CompositePotential` directly rather
@@ -301,9 +353,9 @@ potential:
   MGE, `max(q/q', p) < u <= min(p/q', 1)` (lower endpoints excluded, upper
   endpoints `u = 1` and `u = p/q'` are valid limiting geometries). Anything
   outside that -- or a domain so narrow no interior geometry is representable
-  at the active JAX precision -- makes the build raise
-  `InvalidPotentialParametersError` (recorded as an invalid model, not a
-  crash). Near the upper endpoints `u` is evaluated a small margin inside the
+  at the active JAX precision -- makes the build return `valid=False`,
+  which the iterator records as an invalid model. Near the upper endpoints
+  `u` is evaluated a small margin inside the
   domain (`~1.4e-3` at float32, negligible at float64), so a declared `u = 1`
   is honoured to that margin and `AllModels` reports the recovered value.
   Both directions are `AbstractMGE` methods (`triaxial_viewing_angles` and its
@@ -326,9 +378,9 @@ potential:
   tolerance (tight at float64, looser at float32) -- `pqu`'s own
   precision-margin clamp on `u` is negligible in `(p, q, u)` space, but the
   `T_maj_min` reparameterization's own divisions can amplify that same
-  clamp into a materially different requested shape; an accepted point that
-  fails this check raises the same `InvalidPotentialParametersError` as an
-  out-of-domain one, rather than silently building a different point.
+  clamp into a materially different requested shape; a point that
+  fails this check returns `valid=False`, just like an
+  out-of-domain proposal, rather than silently building a different point.
   `T_maj_min` is registered only for `TriaxialLightMGEPotential` and
   `TriaxialMassMGEPotential`, same as `pqu`.
 - **The oblate MGE types' `q_min` parameterization**: implemented, the
@@ -341,8 +393,8 @@ potential:
   valid, inclusive edge-on limit `i = 90 deg`) and a non-circular anchor
   (`q_obs' < 1`). Anything outside that -- or a `q_min` too close to 1
   (spherical) to invert reliably at the active JAX precision -- makes the
-  build raise `InvalidPotentialParametersError` (recorded as an invalid
-  model, not a crash). Both directions are `AbstractMGE` methods
+  build return `valid=False`, which the iterator records as an invalid
+  model. Both directions are `AbstractMGE` methods
   (`inclination_from_q_min` and its inverse `q_min_from_inclination`, which
   reads the anchor's intrinsic `q` off a full `deproject_oblate` call), so a
   `q_min` config and its equivalent `inclination` config build an identical

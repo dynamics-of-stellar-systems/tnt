@@ -184,9 +184,7 @@ def test_build_mges_without_entries_returns_empty_dict(tmp_path):
 @pytest.mark.parametrize("bad_q", [0.0, -0.5, 1.5])
 def test_read_rejects_q_out_of_range(tmp_path, bad_q):
     bad_file = tmp_path / "bad_q.ecsv"
-    _write_ecsv(
-        bad_file, intensity_unit="Lsun / pc2", rows=[(1.0, 1.0, bad_q, 0.0)]
-    )
+    _write_ecsv(bad_file, intensity_unit="Lsun / pc2", rows=[(1.0, 1.0, bad_q, 0.0)])
 
     with pytest.raises(ValueError, match="q must satisfy 0 < q <= 1"):
         LightMGE.read(bad_file, u.Quantity(0.0, "deg"))
@@ -275,9 +273,7 @@ def test_to_mass_with_constant_ratio():
 
     assert isinstance(mass, MassMGE)
     assert mass.I.unit == u.unit("Msun / pc2")
-    assert jnp.allclose(
-        mass.I.ustrip("Msun / pc2"), light.I.ustrip("Lsun / pc2") * 2.5
-    )
+    assert jnp.allclose(mass.I.ustrip("Msun / pc2"), light.I.ustrip("Lsun / pc2") * 2.5)
     assert jnp.allclose(mass.sigma.ustrip("rad"), light.sigma.ustrip("rad"))
     assert jnp.allclose(mass.q.ustrip(""), light.q.ustrip(""))
     assert jnp.allclose(mass.PA_twist.ustrip("rad"), light.PA_twist.ustrip("rad"))
@@ -357,7 +353,7 @@ def test_deproject_oblate_conserves_total_flux():
 def test_deproject_oblate_requires_physical_units():
     mge = _multi_component_light_mge()
 
-    with pytest.raises(ValueError, match="physical .length. sigma"):
+    with pytest.raises(ValueError, match="MGE sigma must describe length"):
         mge.deproject_oblate(u.Quantity(90.0, "deg"))
 
 
@@ -544,7 +540,7 @@ def test_deproject_triaxial_conserves_total_flux():
 def test_deproject_triaxial_requires_physical_units():
     mge = _multi_component_light_mge()
 
-    with pytest.raises(ValueError, match="physical .length. sigma"):
+    with pytest.raises(ValueError, match="MGE sigma must describe length"):
         mge.deproject_triaxial(
             theta=u.Quantity(1.0, "rad"),
             phi=u.Quantity(1.0, "rad"),
@@ -613,29 +609,42 @@ def _forward_project_triaxial(
         (1.0, 0.9, 0.85, 0.5, 0.5),
     ],
 )
+@pytest.mark.parametrize("x64", [False, True])
 def test_deproject_triaxial_recovers_independent_forward_projection(
-    sigma_intr, p_intr, q_intr, theta, phi
+    sigma_intr, p_intr, q_intr, theta, phi, x64
 ):
     sigma_obs, q_obs, psi_prime = _forward_project_triaxial(
         sigma_intr, p_intr, q_intr, theta, phi
     )
-    mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0]), "Lsun / kpc2"),
-        sigma=u.Quantity(jnp.array([sigma_obs]), "kpc"),
-        q=u.Quantity(jnp.array([q_obs]), ""),
-        PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
-        major_axis_pa=u.Quantity(0.0, "deg"),
-    )
+    with jax.enable_x64(x64):
+        mge = LightMGE(
+            I=u.Quantity(jnp.array([5.0]), "Lsun / kpc2"),
+            sigma=u.Quantity(jnp.array([sigma_obs]), "kpc"),
+            q=u.Quantity(jnp.array([q_obs]), ""),
+            PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+            major_axis_pa=u.Quantity(0.0, "deg"),
+        )
 
-    deprojected = mge.deproject_triaxial(
-        theta=u.Quantity(theta, "rad"),
-        phi=u.Quantity(phi, "rad"),
-        psi=u.Quantity(psi_prime, "rad"),
-    )
+        deprojected = mge.deproject_triaxial(
+            theta=u.Quantity(theta, "rad"),
+            phi=u.Quantity(phi, "rad"),
+            psi=u.Quantity(psi_prime, "rad"),
+        )
 
-    assert jnp.allclose(deprojected.p.ustrip(""), p_intr, atol=1e-4)
-    assert jnp.allclose(deprojected.q.ustrip(""), q_intr, atol=1e-4)
-    assert jnp.allclose(deprojected.sigma.ustrip("kpc"), sigma_intr, atol=1e-4)
+        traced, valid = jax.jit(
+            lambda *args: mge.deproject_triaxial_with_validity(*args)
+        )(
+            u.Quantity(theta, "rad"),
+            u.Quantity(phi, "rad"),
+            u.Quantity(psi_prime, "rad"),
+        )
+        assert bool(valid)
+        assert jnp.allclose(traced.q.ustrip(""), q_intr, atol=1e-4)
+        assert jnp.allclose(traced.p.ustrip(""), p_intr, atol=1e-4)
+        assert jnp.allclose(traced.sigma.ustrip("kpc"), sigma_intr, atol=1e-4)
+        assert jnp.allclose(deprojected.p.ustrip(""), p_intr, atol=1e-4)
+        assert jnp.allclose(deprojected.q.ustrip(""), q_intr, atol=1e-4)
+        assert jnp.allclose(deprojected.sigma.ustrip("kpc"), sigma_intr, atol=1e-4)
 
 
 def test_deproject_triaxial_global_psi_and_pa_twist_are_additive():
@@ -918,9 +927,7 @@ def test_angular_to_physical_total_luminosity_scales_with_distance_squared():
             * intrinsic.p
             * intrinsic.q
         ).ustrip("Lsun")
-        expected = (
-            2 * jnp.pi * mge.I * physical.sigma**2 * mge.q
-        ).ustrip("Lsun")
+        expected = (2 * jnp.pi * mge.I * physical.sigma**2 * mge.q).ustrip("Lsun")
         assert jnp.allclose(total, expected, rtol=1e-6)
         totals.append(total)
 
@@ -1291,13 +1298,23 @@ def test_get_projected_mass_invariant_under_matching_physical_length_unit():
 
     bins = 1 + np.arange(9).reshape(3, 3)
     binning_pc = _projected_binning(
-        min_x=-0.05, min_y=-0.05, x_extent=0.1, y_extent=0.1, y_axis_pa=0.5,
-        bins=bins, coord_unit="pc",
+        min_x=-0.05,
+        min_y=-0.05,
+        x_extent=0.1,
+        y_extent=0.1,
+        y_axis_pa=0.5,
+        bins=bins,
+        coord_unit="pc",
     )
     # Same physical grid, re-expressed in kpc (1 kpc = 1000 pc).
     binning_kpc = _projected_binning(
-        min_x=-0.05e-3, min_y=-0.05e-3, x_extent=0.1e-3, y_extent=0.1e-3,
-        y_axis_pa=0.5, bins=bins, coord_unit="kpc",
+        min_x=-0.05e-3,
+        min_y=-0.05e-3,
+        x_extent=0.1e-3,
+        y_extent=0.1e-3,
+        y_axis_pa=0.5,
+        bins=bins,
+        coord_unit="kpc",
     )
 
     mass_pc = mge_pc.get_projected_mass(binning_pc)
@@ -1509,3 +1526,23 @@ def test_spherical_mass_grid_reusable_across_components_with_different_length_un
         np.array([3.0]), np.array([2000.0]), np.array([1.0]), np.array([1.0])
     )
     assert jnp.allclose(total, expected, rtol=1e-5)
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_native_triaxial_precision_boundary_from_independent_covariance(x64):
+    theta, phi = 1e-3, 0.4
+    _sigma, q_obs, psi = _forward_project_triaxial(2.0, 0.7, 0.5, theta, phi)
+    with jax.enable_x64(x64):
+        mge = _single_component_light_mge(q_obs=q_obs, psi=0.0)
+        angles = tuple(u.Quantity(v, "rad") for v in (theta, phi, psi))
+        model, valid = jax.jit(
+            lambda *args: mge.deproject_triaxial_with_validity(*args)
+        )(*angles)
+        assert bool(valid) is x64
+        if x64:
+            assert float(model.q.ustrip("")[0]) == pytest.approx(0.5, rel=1e-6)
+            mge.deproject_triaxial(*angles)
+        else:
+            with pytest.raises(MGEDeprojectionError, match="precision|0 < q"):
+                mge.deproject_triaxial(*angles)
+            assert bool(jnp.all(model.I.ustrip(model.I.unit) == 0))

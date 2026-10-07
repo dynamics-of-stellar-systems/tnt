@@ -6,7 +6,7 @@ native-galax types (`tnt.potential`), while these tests exercise
 `ModelIterator`'s own logic -- the generate/evaluate/record/stop loop,
 mass-scale rescaling, failure handling, and logging -- against small fakes
 standing in for `Potential`/`OrbitLibrary`/`AbstractWeightSolver`, with
-`build_potential` itself monkeypatched per test.
+`Potential.build_with_validity` itself monkeypatched per test.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import pytest
 import unxt as u
 
 import tnt.model_iterator as model_iterator_module
-from tnt.mge import LightMGE, MGEDeprojectionError
+from tnt.mge import LightMGE
 from tnt.model_iterator import ModelIterator
 from tnt.potential import Potential
 from tnt.run_config_log import (
@@ -167,13 +167,13 @@ def _isolate_run_archiving(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _patch_build_potential(
+def _patch_build_with_validity(
     monkeypatch: pytest.MonkeyPatch, potential: FakePotential
 ) -> None:
     monkeypatch.setattr(
-        model_iterator_module,
-        "build_potential",
-        lambda resolved, parameter_values, cosmological_parameters: potential,
+        model_iterator_module.Potential,
+        "build_with_validity",
+        lambda resolved, parameter_values, cosmological_parameters: (potential, True),
     )
 
 
@@ -186,7 +186,7 @@ def test_evaluate_returns_solved_model_on_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     iterator = _make_iterator()
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
 
     (model,) = iterator._evaluate({"bh": {"m": 1.0}})
 
@@ -200,7 +200,7 @@ def test_evaluate_logs_and_flags_orbit_integration_failure(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     iterator = _make_iterator()
-    _patch_build_potential(monkeypatch, FakePotential(fail_orbit_library=True))
+    _patch_build_with_validity(monkeypatch, FakePotential(fail_orbit_library=True))
 
     with caplog.at_level(logging.WARNING, logger="tnt.model_iterator"):
         (model,) = iterator._evaluate({"bh": {"m": 1.0}})
@@ -220,10 +220,12 @@ def test_evaluate_logs_and_flags_invalid_potential_build(
 ) -> None:
     iterator = _make_iterator()
 
-    def _raise_invalid(resolved, parameter_values, cosmological_parameters):
-        raise MGEDeprojectionError("bad viewing geometry")
+    def _invalid_build(resolved, parameter_values, cosmological_parameters):
+        return object(), False
 
-    monkeypatch.setattr(model_iterator_module, "build_potential", _raise_invalid)
+    monkeypatch.setattr(
+        model_iterator_module.Potential, "build_with_validity", _invalid_build
+    )
 
     with caplog.at_level(logging.WARNING, logger="tnt.model_iterator"):
         (model,) = iterator._evaluate({"bh": {"m": 1.0}})
@@ -278,16 +280,15 @@ def test_evaluate_records_domain_invalid_oblate_inclination(
     [record] = caplog.records
     assert "invalid potential" in record.message.lower()
     assert "inclination" in record.message
-    assert "at most 90" in record.message
+    assert "numerical validation failed" in record.message
 
 
 def test_evaluate_records_domain_invalid_pqu_deprojection(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     # (p, q, u) valid on their own (0 < q <= p <= 1, p < u <= 1) but with no
-    # triaxial deprojection for this MGE's q' -- `_pqu_to_tpp` raises
-    # InvalidPotentialParametersError, which `_evaluate` records rather than
-    # letting it crash the run.
+    # triaxial deprojection for this MGE's q'. The false validity flag
+    # must be recorded without attempting orbit integration.
     light_mge = LightMGE(
         I=u.Quantity(jnp.array([1.0]), "Lsun / pc2"),
         sigma=u.Quantity(jnp.array([1.0]), "rad"),
@@ -325,6 +326,13 @@ def test_evaluate_records_domain_invalid_pqu_deprojection(
     assert "invalid potential" in record.message.lower()
 
 
+def test_evaluate_propagates_missing_parameter_setup_error() -> None:
+    resolved = Potential.resolve({"bh": {"type": "PlummerPotential"}}, {})
+    iterator = _make_iterator(resolved_potential=resolved)
+    with pytest.raises(ValueError, match="missing.*r_s"):
+        iterator._evaluate({"bh": {"m_tot": u.Quantity(1.0, "Msun")}})
+
+
 def test_evaluate_does_not_record_a_non_quantity_programming_error() -> None:
     resolved = Potential.resolve(
         {"bh": {"type": "PlummerPotential", "parameters": {}}},
@@ -349,7 +357,7 @@ def test_evaluate_logs_and_flags_weight_solve_failure(
     iterator = _make_iterator(
         weight_solver=FakeWeightSolver(fail_on_mass=frozenset({1.0}))
     )
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
 
     with caplog.at_level(logging.WARNING, logger="tnt.model_iterator"):
         (model,) = iterator._evaluate({"bh": {"m": 1.0}})
@@ -373,7 +381,7 @@ def test_evaluate_adds_rescaled_models_without_duplicating_the_unscaled_point(
             "spacing": "linear",
         }
     )
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
 
     models = iterator._evaluate({"bh": {"m": 1.0}})
 
@@ -394,7 +402,7 @@ def test_evaluate_logs_mass_scale_of_a_failed_rescaled_model(
             "spacing": "linear",
         },
     )
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
 
     with caplog.at_level(logging.WARNING, logger="tnt.model_iterator"):
         models = iterator._evaluate({"bh": {"m": 1.0}})
@@ -534,7 +542,7 @@ def test_run_stops_when_generator_proposes_nothing(
 ) -> None:
     iterator = _make_iterator(parameter_generator=FakeParameterGenerator(n_rounds=2))
     monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
 
     with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):
         models, config_log = iterator.run()
@@ -555,7 +563,7 @@ def test_run_records_then_stops_when_initial_iteration_has_no_success(
         parameter_generator=generator,
         weight_solver=FakeWeightSolver(fail_on_mass=frozenset({1.0})),
     )
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
 
     with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):
         models, config_log = iterator.run()
@@ -574,7 +582,7 @@ def test_run_does_not_resume_an_all_failed_model_table(
     failing_iterator = _make_iterator(
         weight_solver=FakeWeightSolver(fail_on_mass=frozenset({1.0}))
     )
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
     models, config_log = failing_iterator.run()
 
     generator = FakeParameterGenerator(n_rounds=3)
@@ -606,7 +614,7 @@ def test_each_call_on_the_same_iterator_gets_a_new_run_id(
             "target_model_count": 10,
         },
     )
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
     models, config_log = iterator.run()
     assert iterator.run_id == 0
 
@@ -622,7 +630,7 @@ def test_run_rejects_mismatched_models_and_config_log_before_archiving(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     first_iterator = _make_iterator()
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
     models, _ = first_iterator.run()
     resumed_iterator = _make_iterator()
 
@@ -651,9 +659,12 @@ def test_run_continues_after_later_iteration_has_no_success(
         ]
     )
     monkeypatch.setattr(
-        model_iterator_module,
-        "build_potential",
-        lambda resolved, parameter_values, cosmological_parameters: next(potentials),
+        model_iterator_module.Potential,
+        "build_with_validity",
+        lambda resolved, parameter_values, cosmological_parameters: (
+            next(potentials),
+            True,
+        ),
     )
 
     with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):
@@ -677,7 +688,7 @@ def test_run_stops_starting_iterations_at_target_model_count(
         stopping_criteria={"n_new_iter": 10, "target_model_count": 2},
     )
     monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
 
     models, config_log = iterator.run()
 
@@ -698,7 +709,7 @@ def test_run_records_one_config_log_row_per_iteration_not_per_model(
         },
     )
     monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
 
     models, config_log = iterator.run()
 
@@ -719,7 +730,7 @@ def test_new_run_keeps_cumulative_labels_when_resuming(
         stopping_criteria={"n_new_iter": 2, "target_model_count": 10},
     )
     monkeypatch.setattr(ModelIterator, "_chi2_stopped_improving", lambda *_: False)
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
 
     models, config_log = first_iterator.run()
     assert len(models) == 2
@@ -741,7 +752,7 @@ def test_run_logs_improving_chi2_stopping_reason(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     iterator = _make_iterator(parameter_generator=FakeParameterGenerator(n_rounds=10))
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
 
     with caplog.at_level(logging.INFO, logger="tnt.model_iterator"):
         models, _ = iterator.run()
@@ -767,7 +778,7 @@ def test_run_disabled_chi2_threshold_leaves_iteration_limit_to_stop(
             "target_model_count": 10,
         },
     )
-    _patch_build_potential(monkeypatch, FakePotential(mass=1.0))
+    _patch_build_with_validity(monkeypatch, FakePotential(mass=1.0))
 
     models, _ = iterator.run()
 
