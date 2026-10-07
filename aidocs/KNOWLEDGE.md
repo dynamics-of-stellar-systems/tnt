@@ -230,7 +230,10 @@
   share intrinsic-axis, finite positive density/width/mass, and numerical
   accuracy checks. Native potential construction additionally probes positive
   finite values in local `Msun`/`kpc` units. It does not compute or certify
-  construction derivatives on each proposal; regression tests cover gradients.
+  construction derivatives on each proposal; regression tests cover gradients
+  for representable proposals (equivalent units, integer columns,
+  finite-difference comparisons) only. An extreme MGE column value can pass
+  as valid with a non-finite gradient.
   Oblate cancellation and triaxial
   covariance-inversion conditioning/residual checks use `50*sqrt(eps)`
   relative error thresholds at active precision. Exactly circular projected
