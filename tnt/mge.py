@@ -1415,7 +1415,7 @@ def build_mges(
     `tnt.potential`'s MGE composite components) needs physical `sigma` to
     build a 3D potential. `tnt.spatial_binnings.build_spatial_binnings` is
     converted to physical units the same way, so a consumer needing both
-    (e.g. a future `AbstractMGE.get_projected_mass` call) can assume
+    (e.g. an `AbstractMGE.get_projected_mass` call) can assume
     dimensional consistency without converting either itself. This
     deliberately takes already-resolved, plain-data inputs rather than a
     `tnt.configuration.Configuration`, since that class explicitly holds no
