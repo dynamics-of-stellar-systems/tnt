@@ -104,7 +104,7 @@
   at `/workspace`; its macOS `.venv` is never used in the container because
   `UV_PROJECT_ENVIRONMENT` points to `/opt/tnt-venv` inside the image.
 - For this checkout's local macOS workflow, use Docker's `colima` context.
-  The local Colima VM has 2 GB of memory. Run scientific test suites
+  The local Colima VM has 4 GB of memory. Run scientific test suites
   sequentially, preferably in separate processes; do not run multiple JAX
   test processes in parallel. Accumulated compiled graphs can also exhaust
   memory within one process. The native MGE gradient tests clear JAX's
