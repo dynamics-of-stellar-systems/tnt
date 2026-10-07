@@ -179,8 +179,8 @@ kinematic_data:
 {body}
 orbit_library_settings:
   orbit_sampler:
-    logrmin: -0.2
-    logrmax: 2.0
+    rmin: {{value: 0.8, unit: "kpc"}}
+    rmax: {{value: 100.0, unit: "kpc"}}
 {orbit_body}
 io_settings:
   input_directory: input
@@ -682,7 +682,7 @@ def test_read_defers_even_histogram_bin_count_to_runtime(tmp_path: Path) -> None
     assert config.data["kinematic_data"]["observed"]["histogram"]["bins"] == 100
 
 
-def test_read_rejects_orbit_grid_with_too_few_i2_values(
+def test_read_rejects_orbit_sampler_with_non_positive_ni2(
     tmp_path: Path,
 ) -> None:
     user_path = tmp_path / "user.yaml"
@@ -690,7 +690,7 @@ def test_read_rejects_orbit_grid_with_too_few_i2_values(
     _write_user_config(
         user_path,
         output_directory,
-        orbit_body="    nI2: 3\n",
+        orbit_body="    nI2: 0\n",
     )
 
     with pytest.raises(ValueError, match=r"orbit_library_settings\.orbit_sampler\.nI2"):

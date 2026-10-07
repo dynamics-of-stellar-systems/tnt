@@ -117,10 +117,10 @@ population_data: {}
 
 orbit_library_settings:
   orbit_sampler:
-    type: "Grid"
+    type: "StationaryGrid"
     nE: 6
-    nI2: 5
-    nI3: 4
+    nI1: 5
+    nI2: 4
   dithering:
     type: "Cubic"
     n_dither: 1
