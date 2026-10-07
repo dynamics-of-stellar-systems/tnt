@@ -1,12 +1,11 @@
 """Shared orbit-sampler/dithering contracts, `OrbitLibrary`, and their builders.
 
-Signature-only scaffold apart from `generate_ics`'s own dispatch glue:
-concrete `AbstractOrbitSampler.n_bundles`/`generate_ics` still raise
-`NotImplementedError` for everything but `StationaryGridOrbitSampler`, and
-`build_orbit_sampler`/`build_orbit_dithering` remain unimplemented. Concrete
-samplers live one per sibling module (`tnt.orbit_library.grid`,
-`tnt.orbit_library.random`, `tnt.orbit_library.stationary_grid`), the same
-split `tnt.potential` uses for its own composite types.
+`build_orbit_sampler`/`build_orbit_dithering` remain unimplemented, and
+`AbstractOrbitDithering`'s own concrete scheme isn't consumed by
+`generate_ics` yet. Concrete samplers live one per sibling module
+(`tnt.orbit_library.stationary_grid`, `.xz_grid_from_origin`,
+`.xz_grid_from_boundary`), the same split `tnt.potential` uses for its own
+composite types.
 """
 
 from __future__ import annotations
