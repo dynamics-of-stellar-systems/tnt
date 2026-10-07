@@ -19,6 +19,10 @@ class GridOrbitSampler(AbstractOrbitSampler):
     """
 
     _type: ClassVar[str] = "Grid"
+    # `generate_ics` already builds its own counter-rotating tube copy
+    # internally (see `n_bundles`'s own `3 *` factor) -- an external mirror
+    # on top would double-count it.
+    _add_reverse_copies: ClassVar[bool] = False
     logrmin: float
     logrmax: float
     nE: int

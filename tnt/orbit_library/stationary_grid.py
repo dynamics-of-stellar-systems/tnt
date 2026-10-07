@@ -39,6 +39,9 @@ class StationaryGridOrbitSampler(AbstractOrbitSampler):
     """
 
     _type: ClassVar[str] = "StationaryGrid"
+    # Box orbits have no definite sense of circulation to begin with --
+    # nothing to mirror.
+    _add_reverse_copies: ClassVar[bool] = False
     rmin: Quantity
     rmax: Quantity
     nE: int

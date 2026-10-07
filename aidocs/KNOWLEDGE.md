@@ -52,6 +52,44 @@
   registration is allowed; configuration preparation must not instantiate
   scientific objects, load scientific input data, or begin scientific
   execution.
+- `tnt/orbit_library/` keeps the abstract `AbstractOrbitSampler`/
+  `AbstractOrbitDithering` contracts, `OrbitLibrary`, and the
+  `build_orbit_sampler`/`build_orbit_dithering`/`generate_ics` entry points
+  in `base.py`; equipotential-search and launch-point numerics shared across
+  samplers in `common.py`; and one concrete `AbstractOrbitSampler` per
+  sibling module (`grid.py`, `random.py` -- unimplemented scaffolds;
+  `stationary_grid.py`, `xz_grid_from_origin.py`, `xz_grid_from_boundary.py`
+  -- implemented). `AbstractOrbitSampler.generate_ics` takes an
+  already-built `galax` potential, not a `tnt.potential.Potential`; the
+  module-level `generate_ics` in `base.py` is the one place a unit system
+  is needed, to build that `galax` potential once.
+
+## Orbit start-space sampling
+
+- Three implemented samplers, each producing one start-space population,
+  composable rather than bundled into one combined sampler:
+  `StationaryGridOrbitSampler` (box orbits only, `nE * nI1 * nI2` bundles,
+  each launched from rest on the equipotential at an open, bin-centred
+  `(theta, phi)` grid in `(0, pi/2)^2`); `XZGridFromOriginOrbitSampler`
+  (`(x, z)`-plane/tube orbits only, radii sampled directly over
+  `[r_floor, r_outer(theta)]` with no boundary search); and
+  `XZGridFromBoundaryOrbitSampler` (the same `(x, z)` population, but with
+  radii bracketed by a `boundin`/`boundmid` continuation search -- van den
+  Bosch et al. 2008, MNRAS 385, 647, sec. 4.3, ported from DYNAMITE's own
+  `orbitstart_f.f90`). All three share `rmin`/`rmax`/`nE`/`nI1`/`nI2`
+  fields and produce only the `+v_y` population; the counter-rotating
+  mirror and per-bundle dithering are separate, not-yet-implemented
+  concerns.
+- `XZGridFromBoundaryOrbitSampler` walks energy shells outermost-to-
+  innermost. From the first shell whose boundary search comes back
+  irregular, it delegates directly to `XZGridFromOriginOrbitSampler`'s own
+  `_single_shell_ics` for that shell and every shell inward of it, rather
+  than re-deriving the uniform-grid-to-the-centre fallback inline.
+- Verified directly against a real run of DYNAMITE's compiled `orbitstart`
+  Fortran binary, across four NGC6278-based viewing geometries (oblate,
+  mild/strong triaxial, near-prolate), six energy shells each from
+  `r = 0.01` to `100 kpc`: box orbits agree to 5-6 significant figures and
+  boundary-searched tube orbits to 3-4, in every shell and geometry.
 
 ## Angular reference frames
 

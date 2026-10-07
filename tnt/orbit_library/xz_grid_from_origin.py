@@ -88,6 +88,12 @@ class XZGridFromOriginOrbitSampler(AbstractOrbitSampler):
     """
 
     _type: ClassVar[str] = "XZGridFromOrigin"
+    # A static-potential orbit's counter-rotating partner is free (no
+    # re-integration): negate velocity at each recorded point, keep
+    # position -- valid because `F(x, t1-s) = F(x, s)` holds unconditionally
+    # for a time-independent potential (not generally true for a rotating
+    # pattern speed, not yet supported here).
+    _add_reverse_copies: ClassVar[bool] = True
     rmin: Quantity
     rmax: Quantity
     nE: int

@@ -408,11 +408,11 @@ def _minimize_tube_width(
     A hand-rolled, fixed-`_TUBE_SEARCH_N_ITER`-iteration golden-section
     search via `jax.lax.scan`, not `optimistix.minimise`/`GoldenSearch`:
     composing `optimistix`'s own generic solver loop with an objective that
-    itself contains a `jax.lax.while_loop` was found empirically to
-    compile/run far slower. Each step picks one of its two trial points via
-    `jax.lax.cond` -- not `jnp.where`, which would evaluate both (each a
-    full, expensive trial-orbit integration) every iteration regardless of
-    which one is kept.
+    itself contains a `jax.lax.while_loop` compiles and runs far slower.
+    Each step picks one of its two trial points via `jax.lax.cond` -- not
+    `jnp.where`, which would evaluate both (each a full, expensive
+    trial-orbit integration) every iteration regardless of which one is
+    kept.
 
     The width objective isn't guaranteed unimodal in `r` -- the result is
     clipped back into `[lo, hi]` regardless, so a poorly-behaved objective
@@ -740,6 +740,9 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
     """
 
     _type: ClassVar[str] = "XZGridFromBoundary"
+    # Same free velocity-flip mirror as `XZGridFromOriginOrbitSampler` --
+    # see that class's own field for the derivation and caveat.
+    _add_reverse_copies: ClassVar[bool] = True
     rmin: Quantity
     rmax: Quantity
     nE: int
@@ -768,13 +771,13 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
         theta_grid = (jnp.arange(self.nI1) + 0.5) * (jnp.pi / 2) / self.nI1
 
         # One energy shell's boundary search is independent of every
-        # other's, but `jax.vmap`-ing this whole per-shell search was found
-        # empirically catastrophic to compile (a `jax.lax.while_loop`
-        # itself calling `diffrax.diffeqsolve`-equivalent stepping, nested
-        # inside two levels of `jax.lax.scan`). A plain Python loop over
-        # shells instead, calling one `jax.jit`-compiled `per_shell`
-        # (compiled once, reused for every subsequent shell -- they all
-        # share the same `theta_grid`/`nI2` shape) avoids that blowup.
+        # other's, but `jax.vmap`-ing this whole per-shell search is
+        # catastrophic to compile (a `jax.lax.while_loop` itself calling
+        # `diffrax.diffeqsolve`-equivalent stepping, nested inside two
+        # levels of `jax.lax.scan`). A plain Python loop over shells
+        # instead, calling one `jax.jit`-compiled `per_shell` (compiled
+        # once, reused for every subsequent shell -- they all share the
+        # same `theta_grid`/`nI2` shape), avoids that blowup.
         @jax.jit
         def per_shell(
             energy: jnp.ndarray, r_x_axis: jnp.ndarray

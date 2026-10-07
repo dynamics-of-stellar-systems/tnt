@@ -30,9 +30,18 @@ class AbstractOrbitSampler(eqx.Module):
     subclasses hold their own resolved settings as fields (e.g.
     `StationaryGridOrbitSampler.nE`), built once by `build_orbit_sampler`
     rather than re-reading `orbit_library_settings` on every call.
+
+    `_add_reverse_copies` is fixed by which orbit family this sampler
+    produces, not a free modeling choice -- `True` for a sampler whose
+    orbits have a definite sense of circulation (an `(x, z)`-plane/tube
+    population needs its counter-rotating partner to allow net rotation in
+    the fit), `False` for one that doesn't (a box orbit has no such sense
+    to begin with). Every concrete subclass must declare it explicitly,
+    the same way `_type` has no default here.
     """
 
     _type: ClassVar[str]
+    _add_reverse_copies: ClassVar[bool]
 
     def n_bundles(self) -> int:
         """Total number of orbit bundles this scheme produces."""
@@ -109,7 +118,7 @@ def generate_ics(
     """Generate an orbit sampler's bundle-centre initial conditions in one
     `Potential`.
 
-    A free function, not a `Potential` method -- like `build_potential` and
+    A free function, not a `Potential` method -- like
     `raw_potential_parameters` in `tnt.potential.core`, this needs
     config-level context (`unit_system`) beyond the potential's own
     identity. Builds the `galax` potential (`potential.to_galax(unit_system)`)

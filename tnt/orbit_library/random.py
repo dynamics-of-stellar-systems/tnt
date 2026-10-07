@@ -19,6 +19,9 @@ class RandomOrbitSampler(AbstractOrbitSampler):
     """
 
     _type: ClassVar[str] = "Random"
+    # Provisional: fields and orbit-family composition are still undecided
+    # (see this class's own docstring), so there's nothing to mirror yet.
+    _add_reverse_copies: ClassVar[bool] = False
     logrmin: float
     logrmax: float
 
