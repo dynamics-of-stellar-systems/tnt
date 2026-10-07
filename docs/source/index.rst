@@ -18,6 +18,7 @@ documentation for details.
    data_preparation
    units
    potential
+   orbit_library
    logging
    model_search
    dynamite_users

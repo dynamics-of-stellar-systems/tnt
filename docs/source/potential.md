@@ -409,5 +409,7 @@ potential:
   `AllModels` reports the recovered ratio rather than the exact requested
   value. Use the default float64 setting when percent-level shape error is
   unacceptable.
-- **`Potential.generate_orbit_library`**: not implemented -- blocked on
-  `tnt.orbit_library`, itself still a full scaffold.
+- **`Potential.generate_orbit_library`**: not implemented. Orbit *sampling*
+  is implemented (see [Orbit library](orbit_library.md)); orbit
+  *integration* and weighting, which this method would orchestrate, are
+  not.
