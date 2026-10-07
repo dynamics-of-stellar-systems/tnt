@@ -3,11 +3,12 @@ origin out to the equipotential.
 
 At each `(energy, theta)`, samples radii directly over `[r_floor,
 r_outer(theta)]` -- no search for where tube-orbit support actually begins
-or ends, the kind a boundary-search sampler would do. This is exactly what
-an irregular energy shell already falls back to in that scheme (see
+or ends, the kind `xz_grid_from_boundary.py`'s boundary search does. This is
+exactly what an irregular energy shell there already falls back to (see
 `docs/source/orbit_sampling.md`'s "irregular shell" discussion): a uniform
 grid reaching to the centre, with no boundary search at all, made the rule
-here instead of the fallback for some shells.
+here instead of the fallback for some shells -- `_single_shell_ics` below is
+that same fallback, reused directly rather than reimplemented.
 
 Produces only the `+v_y` population -- the counter-rotating (`-v_y`) mirror
 is a later, post-integration concern (reversing an integrated trajectory
@@ -35,6 +36,42 @@ from tnt.orbit_library.common import (
 )
 
 
+def _single_shell_ics(
+    potential: gp.AbstractPotential,
+    energy: jnp.ndarray,
+    theta_grid: jnp.ndarray,
+    r_floor: jnp.ndarray,
+    r_ceiling: jnp.ndarray,
+    t0: Quantity,
+    nI2: int,
+) -> jnp.ndarray:
+    """One energy shell's `(x, z)`-plane grid: `len(theta_grid) * nI2` orbits.
+
+    At each `theta` in `theta_grid`, `nI2` orbits span `[r_floor,
+    r_outer(theta)]` via the "nearly closed" fractional spacing `(k - 0.9) /
+    (nI2 - 0.8)` -- landing exactly on `r_floor` has no special meaning, but
+    landing exactly on the equipotential is degenerate (`v_y = 0` there), so
+    neither endpoint is ever sampled exactly.
+    """
+    r_outer = jax.vmap(
+        lambda th: _equipotential_radius(
+            potential, _xz_direction(th), energy, r_floor, r_ceiling, t0
+        )
+    )(theta_grid)
+
+    frac = (jnp.arange(1, nI2 + 1) - 0.9) / (nI2 - 0.8)
+    r_grid = r_floor + frac[None, :] * (r_outer[:, None] - r_floor)
+
+    n_theta = theta_grid.shape[0]
+    shape = (n_theta, nI2)
+    theta_full = jnp.broadcast_to(theta_grid[:, None], shape).reshape(-1)
+    r_full = r_grid.reshape(-1)
+
+    return jax.vmap(lambda th, r: _xz_orbit_ic(potential, energy, th, r, t0))(
+        theta_full, r_full
+    )
+
+
 class XZGridFromOriginOrbitSampler(AbstractOrbitSampler):
     """A regular `(x, z)`-plane start space only: `nE * nI1 * nI2` orbits.
 
@@ -46,9 +83,8 @@ class XZGridFromOriginOrbitSampler(AbstractOrbitSampler):
     (`common._xz_orbit_ic`), at radii spanning `[r_floor, r_outer(theta)]`
     -- `r_floor` a fixed near-origin floor (not zero: a cuspy or
     BH-dominated potential has `v_y -> infinity` as `r -> 0`), `r_outer`
-    the equipotential radius in that direction. The radial sub-grid uses
-    `(k - 0.9) / (nI2 - 0.8)`, not `linspace(0, 1, nI2)`: landing exactly on
-    the equipotential is itself degenerate (`v_y = 0` there).
+    the equipotential radius in that direction. See `_single_shell_ics` for
+    the radial sub-grid formula.
     """
 
     _type: ClassVar[str] = "XZGridFromOrigin"
@@ -79,23 +115,9 @@ class XZGridFromOriginOrbitSampler(AbstractOrbitSampler):
 
         theta_grid = (jnp.arange(self.nI1) + 0.5) * (jnp.pi / 2) / self.nI1
 
-        e_grid, theta_full = (
-            a.reshape(-1) for a in jnp.meshgrid(energies, theta_grid, indexing="ij")
-        )
-        r_outer = jax.vmap(
-            lambda e, th: _equipotential_radius(
-                potential, _xz_direction(th), e, r_floor, r_ceiling, t0
+        ics = jax.vmap(
+            lambda e: _single_shell_ics(
+                potential, e, theta_grid, r_floor, r_ceiling, t0, self.nI2
             )
-        )(e_grid, theta_full).reshape(self.nE, self.nI1)
-
-        frac = (jnp.arange(1, self.nI2 + 1) - 0.9) / (self.nI2 - 0.8)
-        r_grid_xz = r_floor + frac[None, None, :] * (r_outer[:, :, None] - r_floor)
-
-        shape = (self.nE, self.nI1, self.nI2)
-        e_full = jnp.broadcast_to(energies[:, None, None], shape).reshape(-1)
-        theta_full_xz = jnp.broadcast_to(theta_grid[None, :, None], shape).reshape(-1)
-        r_full = r_grid_xz.reshape(-1)
-
-        return jax.vmap(lambda e, th, r: _xz_orbit_ic(potential, e, th, r, t0))(
-            e_full, theta_full_xz, r_full
-        )
+        )(energies)
+        return ics.reshape(-1, 6)

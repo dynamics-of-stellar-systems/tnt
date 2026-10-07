@@ -1,8 +1,9 @@
 """Numerics shared by every orbit-sampler variant.
 
-Equipotential search and launch-point formulas for both the stationary
-start space (box orbits, `stationary_grid.py`) and an `(x, z)`-plane start
-space (`xz_grid_from_origin.py`) -- nothing here is specific to either.
+Equipotential search and launch-point formulas for the stationary start
+space (box orbits, `stationary_grid.py`) and every `(x, z)`-plane start
+space (`xz_grid_from_origin.py`, `xz_grid_from_boundary.py`) -- nothing here
+is specific to any one of them.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import galax.potential as gp
+import jax
 import jax.numpy as jnp
 import optimistix as optx
 from unxt import Quantity
@@ -137,3 +139,51 @@ def _xz_orbit_ic(
     v_y_sq = jnp.clip(2.0 * (energy - _potential_at(potential, position, t0)), min=0.0)
     velocity = jnp.array([0.0, jnp.sqrt(v_y_sq), 0.0])
     return jnp.concatenate([position, velocity])
+
+
+def _v_circ(
+    potential: gp.AbstractPotential, r: jnp.ndarray, t0: Quantity
+) -> jnp.ndarray:
+    """The local circular velocity `sqrt(r * |dV/dr(r)|)` along the `x`-axis
+    (via autodiff). Deliberately not referenced to the potential's central
+    value (`V(0, 0, 0)`), which is singular for a cusped or point-mass
+    profile.
+    """
+
+    def v_of_r(radius: jnp.ndarray) -> jnp.ndarray:
+        return _potential_at(potential, radius * jnp.array([1.0, 0.0, 0.0]), t0)
+
+    dv_dr = jax.grad(v_of_r)(r)
+    return jnp.sqrt(r * jnp.abs(dv_dr))
+
+
+def _circular_period(
+    potential: gp.AbstractPotential, r: jnp.ndarray, t0: Quantity
+) -> jnp.ndarray:
+    """`2 * pi * r / v_circ(r)` -- the circular-orbit period at `r`, same
+    formula as `orbitstart_f.f90`'s own `tcirc`.
+    """
+    return 2.0 * jnp.pi * r / _v_circ(potential, r, t0)
+
+
+def _phase_space_derivs(potential: gp.AbstractPotential, t0: Quantity) -> Any:
+    """`diffrax.ODETerm`-compatible `(t, y, args) -> dy/dt`, `y = (x, y, z,
+    vx, vy, vz)`, for one `galax` potential.
+
+    Ignores `t`: every potential this sampler builds is static (no
+    explicit time dependence), so `potential.acceleration(q, t0)` at the
+    fixed reference `t0` already equals `potential.acceleration(q, t)` for
+    any `t` -- exact, not an approximation, for an autonomous system.
+    """
+    length_unit = potential.units["length"]
+    time_unit = potential.units["time"]
+    accel_unit = length_unit / time_unit**2
+
+    def derivs(_t: jnp.ndarray, y: jnp.ndarray, _args: None) -> jnp.ndarray:
+        position, velocity = y[:3], y[3:]
+        acceleration = potential.acceleration(
+            Quantity(position, length_unit), t0
+        ).ustrip(accel_unit)
+        return jnp.concatenate([velocity, acceleration])
+
+    return derivs

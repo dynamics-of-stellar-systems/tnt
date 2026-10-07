@@ -9,7 +9,11 @@ import jax.numpy as jnp
 import pytest
 from unxt import Quantity, unitsystem
 
-from tnt.orbit_library import StationaryGridOrbitSampler, XZGridFromOriginOrbitSampler
+from tnt.orbit_library import (
+    StationaryGridOrbitSampler,
+    XZGridFromBoundaryOrbitSampler,
+    XZGridFromOriginOrbitSampler,
+)
 
 UNITS = unitsystem("kpc", "Myr", "Msun", "rad")
 
@@ -170,3 +174,89 @@ def test_xz_theta_grid_is_open_and_bin_centred():
     theta = jnp.arctan2(position[:, 0], position[:, 2])
     half_pi = jnp.pi / 2
     assert bool(jnp.all((theta > 0) & (theta < half_pi)))
+
+
+def _triaxial_hernquist(q1: float = 0.8, q2: float = 0.6) -> gp.AbstractPotential:
+    """A genuinely triaxial test potential, away from axisymmetric degeneracy."""
+    return gp.TriaxialHernquistPotential(
+        m_tot=Quantity(1e11, "Msun"),
+        r_s=Quantity(2.0, "kpc"),
+        q1=q1,
+        q2=q2,
+        units="galactic",
+    )
+
+
+def _boundary_sampler(
+    nE: int = 2, nI1: int = 3, nI2: int = 3
+) -> XZGridFromBoundaryOrbitSampler:
+    return XZGridFromBoundaryOrbitSampler(
+        rmin=Quantity(0.1, "kpc"),
+        rmax=Quantity(10.0, "kpc"),
+        nE=nE,
+        nI1=nI1,
+        nI2=nI2,
+    )
+
+
+def test_xz_boundary_n_bundles_is_the_full_energy_angle_radius_grid():
+    sampler = _boundary_sampler(nE=2, nI1=3, nI2=4)
+    assert sampler.n_bundles() == 2 * 3 * 4
+
+
+def test_xz_boundary_orbits_are_confined_to_the_xz_plane_with_only_positive_vy():
+    sampler = _boundary_sampler()
+    ics = sampler.generate_ics(_triaxial_hernquist())
+    assert ics.shape == (sampler.n_bundles(), 6)
+    position, velocity = ics[:, :3], ics[:, 3:]
+    assert bool(jnp.all(position[:, 1] == 0.0))
+    assert bool(jnp.all(velocity[:, 0] == 0.0))
+    assert bool(jnp.all(velocity[:, 2] == 0.0))
+    assert bool(jnp.all(velocity[:, 1] >= 0.0))
+
+
+def test_xz_boundary_orbits_conserve_energy_per_shell():
+    sampler = _boundary_sampler()
+    potential = _triaxial_hernquist()
+    ics = sampler.generate_ics(potential)
+    position, velocity = ics[:, :3], ics[:, 3:]
+    t0 = Quantity(0.0, "Myr")
+    value = potential.potential(Quantity(position, "kpc"), t0).ustrip("kpc2/Myr2")
+    total_energy = value + 0.5 * velocity[:, 1] ** 2
+    shells = total_energy.reshape(sampler.nE, sampler.nI1 * sampler.nI2)
+    for shell in shells:
+        assert float(jnp.max(shell) - jnp.min(shell)) < 1e-6
+
+
+def test_xz_boundary_delegates_to_xz_grid_from_origin_once_a_shell_is_irregular():
+    # A strongly triaxial, near-prolate potential is where DYNAMITE's own
+    # clean four-region picture tends to break down -- a real shell here is
+    # expected to come back irregular, exercising the delegation path.
+    potential = _triaxial_hernquist(q1=0.65, q2=0.60)
+    sampler = _boundary_sampler(nE=3, nI1=3, nI2=3)
+    origin_sampler = XZGridFromOriginOrbitSampler(
+        rmin=sampler.rmin,
+        rmax=sampler.rmax,
+        nE=sampler.nE,
+        nI1=sampler.nI1,
+        nI2=sampler.nI2,
+    )
+    ics = sampler.generate_ics(potential)
+    origin_ics = origin_sampler.generate_ics(potential)
+
+    n_per_shell = sampler.nI1 * sampler.nI2
+    matches_origin = [
+        bool(
+            jnp.allclose(
+                ics[i * n_per_shell : (i + 1) * n_per_shell],
+                origin_ics[i * n_per_shell : (i + 1) * n_per_shell],
+            )
+        )
+        for i in range(sampler.nE)
+    ]
+    # At least one shell delegates; once one does, every shell inward of it
+    # (lower index -- shells are stored innermost-first) delegates too.
+    assert any(matches_origin)
+    last_delegated = len(matches_origin) - 1 - matches_origin[::-1].index(True)
+    assert all(matches_origin[: last_delegated + 1])
+    assert not any(matches_origin[last_delegated + 1 :])
