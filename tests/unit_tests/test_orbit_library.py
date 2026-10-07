@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import pytest
 from unxt import Quantity, unitsystem
 
-from tnt.orbit_library import StationaryGridOrbitSampler
+from tnt.orbit_library import StationaryGridOrbitSampler, XZGridFromOriginOrbitSampler
 
 UNITS = unitsystem("kpc", "Myr", "Msun", "rad")
 
@@ -103,3 +103,70 @@ def test_rmin_rmax_bound_the_energy_grid_radii():
     r = jnp.linalg.norm(ics[:, :3], axis=-1)
     assert float(r.min()) == pytest.approx(0.5, rel=1e-6)
     assert float(r.max()) == pytest.approx(30.0, rel=1e-6)
+
+
+def _xz_sampler(
+    nE: int = 3, nI1: int = 4, nI2: int = 5
+) -> XZGridFromOriginOrbitSampler:
+    return XZGridFromOriginOrbitSampler(
+        rmin=Quantity(0.5, "kpc"),
+        rmax=Quantity(30.0, "kpc"),
+        nE=nE,
+        nI1=nI1,
+        nI2=nI2,
+    )
+
+
+def test_xz_n_bundles_is_the_full_energy_angle_radius_grid():
+    sampler = _xz_sampler(nE=4, nI1=3, nI2=5)
+    assert sampler.n_bundles() == 4 * 3 * 5
+
+
+def test_xz_orbits_are_confined_to_the_xz_plane_with_only_positive_vy():
+    sampler = _xz_sampler()
+    ics = sampler.generate_ics(_flattened_potential())
+    assert ics.shape == (sampler.n_bundles(), 6)
+    position, velocity = ics[:, :3], ics[:, 3:]
+    assert bool(jnp.all(position[:, 1] == 0.0))
+    assert bool(jnp.all(velocity[:, 0] == 0.0))
+    assert bool(jnp.all(velocity[:, 2] == 0.0))
+    assert bool(jnp.all(velocity[:, 1] >= 0.0))
+
+
+def test_xz_orbits_conserve_energy_per_shell():
+    sampler = _xz_sampler(nE=3, nI1=4, nI2=5)
+    potential = _flattened_potential()
+    ics = sampler.generate_ics(potential)
+    position, velocity = ics[:, :3], ics[:, 3:]
+    t0 = Quantity(0.0, "Myr")
+    value = potential.potential(Quantity(position, "kpc"), t0).ustrip("kpc2/Myr2")
+    total_energy = value + 0.5 * velocity[:, 1] ** 2
+    shells = total_energy.reshape(sampler.nE, sampler.nI1 * sampler.nI2)
+    for shell in shells:
+        assert float(jnp.max(shell) - jnp.min(shell)) < 1e-9
+
+
+def test_xz_radii_are_strictly_increasing_and_never_reach_the_equipotential():
+    sampler = _xz_sampler(nE=2, nI1=2, nI2=6)
+    potential = _flattened_potential()
+    ics = sampler.generate_ics(potential)
+    r = jnp.linalg.norm(ics[:, :3], axis=-1)
+    v_y = ics[:, 4]
+    r_grid = r.reshape(sampler.nE, sampler.nI1, sampler.nI2)
+    for e_i in range(sampler.nE):
+        for th_i in range(sampler.nI1):
+            radii = r_grid[e_i, th_i]
+            assert bool(jnp.all(jnp.diff(radii) > 0))
+            assert float(radii[0]) > 0.0
+    # v_y = 0 exactly at the equipotential -- the radial grid should never
+    # land there (the "nearly closed" fractional spacing's whole point).
+    assert bool(jnp.all(v_y > 0.0))
+
+
+def test_xz_theta_grid_is_open_and_bin_centred():
+    sampler = _xz_sampler(nE=1, nI1=5, nI2=1)
+    ics = sampler.generate_ics(_flattened_potential())
+    position = ics[:, :3]
+    theta = jnp.arctan2(position[:, 0], position[:, 2])
+    half_pi = jnp.pi / 2
+    assert bool(jnp.all((theta > 0) & (theta < half_pi)))

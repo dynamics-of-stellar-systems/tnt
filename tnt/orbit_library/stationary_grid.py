@@ -9,113 +9,20 @@ to reserve the name for.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import ClassVar
 
 import galax.potential as gp
 import jax
 import jax.numpy as jnp
-import optimistix as optx
 from unxt import Quantity
 
 from tnt.orbit_library.base import AbstractOrbitSampler
-
-# `flip=False`, not `optimistix`'s default `flip="detect"`: `detect`'s
-# runtime bracket check doesn't batch correctly under `jax.vmap` (as of
-# optimistix 0.1.0). Safe here because the bracket order is known
-# analytically -- `r_lo` is always deep in the potential well (very negative
-# `potential - energy`), `r_hi` always far out (positive) -- so `flip=False`
-# is simply correct, not a workaround for the vmap issue.
-_EQUIPOTENTIAL_SOLVER = optx.Bisection(rtol=1e-10, atol=1e-12, flip=False)
-_EQUIPOTENTIAL_MAX_STEPS = 200
-
-# A fixed, direction- and energy-independent bracket for every equipotential
-# search: wide enough that the true root -- which varies with direction in a
-# non-spherical potential -- stays safely inside it for every (E, theta, phi)
-# this sampler ever requests, given a potential that increases monotonically
-# outward along every ray from the centre.
-_R_FLOOR_FACTOR = 1e-3
-_R_CEILING_FACTOR = 1e2
-
-
-def _energy_unit(potential: gp.AbstractPotential) -> Any:
-    return potential.units["length"] ** 2 / potential.units["time"] ** 2
-
-
-def _potential_at(
-    potential: gp.AbstractPotential, position: jnp.ndarray, t0: Quantity
-) -> jnp.ndarray:
-    """`potential.potential(position, t0)`, as a bare float in the potential's
-    own energy unit.
-
-    `position` is a plain, dimensionless `(3,)` array already expressed in
-    the potential's own length unit.
-    """
-    q = Quantity(position, potential.units["length"])
-    return potential.potential(q, t0).ustrip(_energy_unit(potential))
-
-
-def _equipotential_radius(
-    potential: gp.AbstractPotential,
-    direction: jnp.ndarray,
-    energy: jnp.ndarray,
-    r_lo: jnp.ndarray,
-    r_hi: jnp.ndarray,
-    t0: Quantity,
-) -> jnp.ndarray:
-    """The radius `r` along `direction` where `potential(r * direction) == energy`.
-
-    Bisected between `r_lo` and `r_hi`. `direction` is a unit vector; the
-    equipotential radius varies with it in a non-spherical potential -- this
-    is what makes the stationary start space's box orbits actually sample
-    the ellipsoidal equipotential surface, not a sphere.
-    """
-
-    def objective(r: jnp.ndarray, _args: None) -> jnp.ndarray:
-        return _potential_at(potential, r * direction, t0) - energy
-
-    solution = optx.root_find(
-        objective,
-        _EQUIPOTENTIAL_SOLVER,
-        y0=0.5 * (r_lo + r_hi),
-        options={"lower": r_lo, "upper": r_hi},
-        max_steps=_EQUIPOTENTIAL_MAX_STEPS,
-        throw=False,
-    )
-    return solution.value
-
-
-def _spherical_direction(theta: jnp.ndarray, phi: jnp.ndarray) -> jnp.ndarray:
-    """Unit vector at spherical angles `(theta, phi)` in the intrinsic frame.
-
-    `theta` from the `z`-axis (short axis), `phi` from the `x`-axis (long
-    axis) in the `x`-`y` plane -- restricted to one octant `[0, pi/2]^2`
-    (van den Bosch et al. 2008 sec. 4.5's eightfold symmetry).
-    """
-    sin_theta = jnp.sin(theta)
-    return jnp.array(
-        [sin_theta * jnp.cos(phi), sin_theta * jnp.sin(phi), jnp.cos(theta)]
-    )
-
-
-def _box_orbit_ic(
-    potential: gp.AbstractPotential,
-    energy: jnp.ndarray,
-    theta: jnp.ndarray,
-    phi: jnp.ndarray,
-    r_lo: jnp.ndarray,
-    r_hi: jnp.ndarray,
-    t0: Quantity,
-) -> jnp.ndarray:
-    """One stationary-start-space box orbit's `(x, y, z, vx, vy, vz)`.
-
-    Launched from rest exactly on the equipotential at `(energy, theta,
-    phi)` -- the defining condition for box-orbit support (Schwarzschild
-    1979): zero velocity everywhere, the point itself found by
-    `_equipotential_radius`.
-    """
-    direction = _spherical_direction(theta, phi)
-    r0 = _equipotential_radius(potential, direction, energy, r_lo, r_hi, t0)
-    return jnp.concatenate([r0 * direction, jnp.zeros(3)])
+from tnt.orbit_library.common import (
+    _R_CEILING_FACTOR,
+    _R_FLOOR_FACTOR,
+    _box_orbit_ic,
+    _potential_at,
+)
 
 
 class StationaryGridOrbitSampler(AbstractOrbitSampler):
