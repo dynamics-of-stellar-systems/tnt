@@ -319,3 +319,88 @@ resolve those first, since they determine which of F1-F4 are worth fixing
 here versus superseded by a `build_potential` removal / derivative-check
 simplification. After that, rerun the affected tests and remove this audit
 from the PR branch per the project workflow before merging to `main`.
+
+## Addendum: second-pass verification of the implementation response (2026-10-07)
+
+Checked out `origin/codex/mge-native-traceable` at `27219d6` (the four
+commits addressing Q1/Q2/F1-F5) and independently verified the claims above,
+rather than taking the implementation response at its word. Two things are
+confirmed as described; two are worth Thomas's attention before merge.
+
+**Confirmed working as described:**
+
+- `build_potential`/`Potential.build`/`Potential.from_settings`/component
+  `build` and the private construction factories are gone; `grep` for
+  `build_potential` across `tnt/` finds nothing. `ModelIterator` now calls
+  `Potential.build_with_validity` exclusively (`tnt/model_iterator.py`).
+- The per-proposal `jax.jacfwd`/`jax.jacrev` cross-check in
+  `_build_mge_with_validity` is gone, replaced by a plain finiteness +
+  positivity check on `I`/`sigma`/`component_masses` in fixed units
+  (`tnt/potential/components.py:155-163`), with an explicit comment:
+  "Derivative correctness belongs in regression tests, not a pair of full
+  Jacobians recomputed for every proposed model."
+- Full affected-test run on this machine (396 tests: `test_mge.py`,
+  `test_mge_native_traceable.py`, `test_mge_parameterizations_traceable.py`,
+  `test_potential.py`, `test_model_iterator.py`): **all pass**, noticeably
+  faster than the original review's timings.
+
+**Finding — P2: the "regression tests cover gradients" claim isn't backed
+by a test for the specific case it names.**
+
+`aidocs/KNOWLEDGE.md` correctly discloses the narrower contract: "It does
+not compute or certify construction derivatives on each proposal; regression
+tests cover gradients," and "finite integrated mass alone does not
+guarantee representable derivatives." (`build_with_validity`'s docstring
+never promised derivative safety either, so there's no docstring regression
+here.)
+
+But no test in the current suite exercises the case that second sentence
+names -- extreme `I`/`sigma` *MGE column* values, as opposed to an extreme
+proposed scale parameter. The original
+`test_reverse_mode_overflow_is_rejected_eagerly_and_under_jit` covered this
+and is gone with no replacement. Reproduced directly:
+
+```python
+source = MassMGE(
+    I=Quantity(jnp.full(2, 1e-100), "Msun/kpc2"),
+    sigma=Quantity(jnp.full(2, 1e103), "kpc"),
+    ...
+)
+# Potential.build_with_validity(...) on this MGE:
+valid: True
+mass: 2.324778563656447e+107
+gradient: [inf, nan]
+```
+
+This matches KNOWLEDGE.md's own documented risk exactly -- not a hidden
+gap. The only shortfall is that "regression tests cover gradients" isn't
+backed by a test for this exact case. Suggested fix: correct that line in
+`aidocs/KNOWLEDGE.md` -- drop the claim, or scope it to what's actually
+covered. A documentation-accuracy fix, not a safety fix.
+
+**Smaller finding — P3: newly-traceable standalone conversions lost
+per-call diagnostic detail.**
+
+`triaxial_viewing_angles`, `inclination_from_q_min`, and the shared
+`_check_conversion`/`_oblate_domain_checks`/`_p_q_u_candidate`/
+`_viewing_angles_candidate` machinery that now backs them
+(`tnt/mge.py:292-305` and surrounding) raise `MGEDeprojectionError` with
+static strings keyed by a fixed `checks` dict, e.g. `"pqu requires
+0 < q < p <= 1; prolate q == p is singular."` — with no interpolated
+`(p, q, u)`/`q'`/inclination values. Before this round, these specific
+eager-only functions raised f-string messages with the actual rejected
+values (confirmed by diffing against the previously-reviewed head). This is
+a direct consequence of sharing one boolean-predicate dict between the eager
+and traced paths — reasonable given the goal, but worth a deliberate
+decision rather than an incidental side effect: either interpolate the
+values back in for the eager raise specifically (cheap, since it's outside
+any trace), or accept the loss and say so, since this makes a misconfigured
+DYNAMITE-style setup harder to debug from the error message alone.
+
+**Recommendation:** neither P2 nor P3 is a merge blocker -- the behavior
+Thomas's implementation accepted is correctly disclosed in KNOWLEDGE.md, and
+P2 is a one-line documentation-accuracy fix (correct the "regression tests
+cover gradients" claim), not a safety gap. P3 is a minor debuggability
+regression, non-blocking. An earlier draft of this addendum
+mischaracterized P2 as an undisclosed regression; that was wrong and is
+corrected above.
