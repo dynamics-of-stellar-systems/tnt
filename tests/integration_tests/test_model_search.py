@@ -4,7 +4,7 @@ Unlike tests/unit_tests/test_model_iterator.py (which fakes every
 collaborator), this builds the `ModelIterator` via the real
 `from_configuration`, against the real `Configuration`,
 `SinglePointParameterGenerator`, `AllModels`, `RunConfigLog`, and
-`build_potential` -- potential construction (including MGE composite
+`Potential.build_with_validity` -- potential construction (including MGE composite
 components and non-native parameterizations) is real end to end. Only
 `Potential.generate_orbit_library`, `build_weight_solver`,
 `build_orbit_sampler`, and `build_orbit_dithering` are faked, since orbit
@@ -22,6 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, NamedTuple
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -34,7 +35,7 @@ from tnt.all_models import AllModels
 from tnt.configuration.compatibility import ConfigurationCompatibilityError
 from tnt.model_iterator import ModelIterator
 from tnt.model_search_state import ModelSearchState
-from tnt.potential import Potential, build_potential
+from tnt.potential import Potential
 from tnt.potential.nfw import _nfw_concentration_m200
 from tnt.run_config_log import (
     RUN_IDS_WITHOUT_ITERATIONS_METADATA_KEY,
@@ -87,7 +88,7 @@ class EmptyParameterGenerator:
 def _fake_orbit_integration_and_weight_solving(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fake only what's still unimplemented: orbit integration and weight solving.
 
-    `build_potential`/`Potential` stay real -- see this module's docstring
+    `Potential.build_with_validity`/`Potential` stay real -- see this module's docstring
     for why `to_galax()` is never reached even so.
     """
 
@@ -126,18 +127,22 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
     assert parameter_space_settings["generator_type"] == "SinglePoint"
 
     captured_parameter_values: list[Any] = []
-    real_build_potential = model_iterator_module.build_potential
+    real_build_with_validity = model_iterator_module.Potential.build_with_validity
 
-    def spying_build_potential(
+    def spying_build_with_validity(
         resolved: Any,
         parameter_values: Any,
         cosmological_parameters: Any,
-    ) -> Potential:
+    ) -> tuple[Potential, jax.Array]:
         captured_parameter_values.append(parameter_values)
-        return real_build_potential(resolved, parameter_values, cosmological_parameters)
+        return real_build_with_validity(
+            resolved, parameter_values, cosmological_parameters
+        )
 
     monkeypatch.setattr(
-        model_iterator_module, "build_potential", spying_build_potential
+        model_iterator_module.Potential,
+        "build_with_validity",
+        spying_build_with_validity,
     )
     _fake_orbit_integration_and_weight_solving(monkeypatch)
 
@@ -236,7 +241,7 @@ def test_model_iterator_reports_real_potential_in_its_own_parameterization(
     """`raw_potential_parameters` reports every component correctly, real end to end.
 
     Unlike the test above (focused on the search loop itself, with a spy on
-    `build_potential`), this test's focus is `dh`'s non-native
+    `Potential.build_with_validity`), this test's focus is `dh`'s non-native
     `concentration_m200` parameterization -- confirming `AllModels`' table
     reports it (`dh.c`/`dh.M_200`) rather than galax's native `dh.m`/
     `dh.r_s`, correctly recomputed after every `potential_rescalings` variant
@@ -326,12 +331,13 @@ def test_potential_to_galax_succeeds_against_the_resolved_example_configuration(
 
     iterator = ModelIterator.from_configuration(config)
     (parameters,) = iterator.parameter_generator.generate_parameters(AllModels())
-    potential = build_potential(
+    potential, valid = Potential.build_with_validity(
         iterator.resolved_potential,
         parameters,
         iterator.cosmological_parameters,
     )
 
+    assert bool(valid)
     galax_potential = potential.to_galax(unit_system)
 
     xyz = Quantity(jnp.array([5.0, -3.0, 2.0]), "kpc")

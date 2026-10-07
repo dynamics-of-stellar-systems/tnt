@@ -42,8 +42,9 @@ ForwardConverter = Callable[..., dict[str, Quantity]]
 `mge` is the component's own `tnt.mge` MGE when it has one -- every MGE
 composite type stores it in a field named `mge`, `None` for a curated native
 `galax` type, which never carries one. Supplied generically, not per type:
-`ResolvedPotentialComponent.build` passes `self.extra_fields.get("mge")` to
-this (forward) converter; `AbstractPotentialComponent.raw_parameters` passes
+`ResolvedPotentialComponent.build_with_validity` passes
+`self.extra_fields.get("mge")` to this (forward) converter;
+`AbstractPotentialComponent.raw_parameters` passes
 `getattr(self, "mge", None)` -- the same value, read off the built component
 instead -- to the matching `InverseConverter`. The `pqu` parameterization
 needs it for `q' = min(component q)` and the anchor twist; `concentration_m200`
@@ -58,13 +59,6 @@ InverseConverter = Callable[..., dict[str, Quantity]]
 `declared_units` maps each raw parameter name to the unit string its
 configuration declares, so a reported value comes back in the parameterization
 *and* the unit the config actually specifies. `mge` as for `ForwardConverter`.
-"""
-
-ValidityConverter = Callable[..., tuple[dict[str, Quantity], jax.Array]]
-"""Forward conversion with a scalar proposal-dependent numerical validity flag.
-
-Static output names, dimensions and shapes follow `ForwardConverter`'s
-contract. Invalid results are placeholders, never native physical parameters.
 """
 
 
@@ -84,7 +78,9 @@ class ParameterConstraint(NamedTuple):
     """Bounds and an optional same-component parameter relationship.
 
     Numeric bounds are interpreted in ``unit`` when supplied, or in the
-    parameter value's own unit otherwise. Runtime validation independently
+    parameter value's own unit otherwise. An empty unit string means unit-free
+    ratios, so scaled dimensionless units such as percent compare correctly.
+    Runtime validation independently
     requires every potential parameter to be scalar and finite, including
     parameters with no additional constraint entry. When both
     ``other_parameter`` and ``relation`` are supplied, the rule is interpreted
@@ -217,8 +213,6 @@ class ParameterizationSpec(NamedTuple):
     """Each raw config parameter's physical dimension, for schema validation."""
     raw_constraints: dict[str, ParameterConstraint]
     """Physical-domain constraints on raw configuration parameters."""
-    convert_with_validity: ValidityConverter | None = None
-    """Optional guarded conversion sharing the eager converter's checks."""
 
 
 class NativeParameter(NamedTuple):
@@ -560,7 +554,6 @@ def register_parameterization(
     invert: InverseConverter,
     raw_dimensions: Mapping[str, str],
     raw_constraints: Mapping[str, ParameterConstraint],
-    convert_with_validity: ValidityConverter | None = None,
 ) -> None:
     """Register a non-native `parameterization` for `type_name` under `name`.
 
@@ -569,11 +562,6 @@ def register_parameterization(
     (`_validate_potential`) and runtime resolution can never disagree on which
     parameterizations exist, what parameters they take, or which raw domains
     they accept.
-
-    ``convert_with_validity`` optionally supplies a guarded forward conversion
-    using the eager converter's numerical predicates. MGE traced construction
-    requires it for a non-native parameterization and checks its native schema
-    and scalar boolean contract before probing the full construction chain.
 
     `type_name` must be either a curated native `galax` class
     (`_SUPPORTED_GALAX_TYPES`) or a registered TNT component type
@@ -614,7 +602,6 @@ def register_parameterization(
         invert,
         dict(raw_dimensions),
         dict(raw_constraints),
-        convert_with_validity,
     )
 
 

@@ -222,8 +222,9 @@ def test_parameterized_potential_values_gradients_and_rejections(
             assert float(gradient[index]) == pytest.approx(
                 expected_derivative, rel=2e-3, abs=1e-8
             )
-        eager = Potential.build(resolved, proposal(values), {})
-        _, eager_valid = Potential.build_with_validity(resolved, proposal(values), {})
+        eager, eager_valid = Potential.build_with_validity(
+            resolved, proposal(values), {}
+        )
         assert bool(eager_valid)
         projected = (
             2
@@ -248,12 +249,11 @@ def test_parameterized_potential_values_gradients_and_rejections(
         ]
         invalid += [values.at[1].set(np.nan)]
         if parameterization == "q_min":
-            invalid += [values.at[1].set(value) for value in (0, 0.76, 0.9)]
+            invalid += [values.at[1].set(value) for value in (0, 0.9)]
         elif parameterization == "pqu":
             invalid += [
                 values.at[2].set(0.85),
                 values.at[3].set(0.65),
-                values.at[3].set(1),
             ]
         else:
             invalid += [values.at[1].set(1), values.at[2].set(-0.1)]
@@ -261,8 +261,9 @@ def test_parameterized_potential_values_gradients_and_rejections(
             (result, accepted), derivative = compiled(rejected)
             assert not bool(accepted) and float(result) == -1
             np.testing.assert_array_equal(derivative, np.zeros(len(values)))
-            with pytest.raises(ValueError):
-                Potential.build(resolved, proposal(rejected), {})
+            assert not bool(
+                Potential.build_with_validity(resolved, proposal(rejected), {})[1]
+            )
         (again, accepted), again_gradient = compiled(values)
         assert bool(accepted) and float(again) == float(value)
         np.testing.assert_array_equal(again_gradient, gradient)
@@ -287,11 +288,10 @@ def test_parameterized_construction_precision_boundaries(parameterization, x64):
             lambda x: Potential.build_with_validity(resolved, proposal(x), {})
         )(values)
         assert bool(valid) == x64
-        if x64:
-            Potential.build(resolved, proposal(values), {})
-        else:
-            with pytest.raises(ValueError):
-                Potential.build(resolved, proposal(values), {})
+        assert (
+            bool(Potential.build_with_validity(resolved, proposal(values), {})[1])
+            == x64
+        )
 
 
 @pytest.mark.parametrize("parameterization", ["pqu", "T_maj_min"])
@@ -316,8 +316,7 @@ def test_valid_anchor_does_not_hide_an_invalid_other_gaussian(parameterization):
     assert not bool(valid)
     for leaf in jax.tree.leaves(potential.components["stars"].deprojected):
         np.testing.assert_array_equal(leaf, np.zeros(leaf.shape))
-    with pytest.raises(ValueError):
-        Potential.build(resolved, proposal(values), {})
+    assert not bool(Potential.build_with_validity(resolved, proposal(values), {})[1])
 
 
 @pytest.mark.parametrize("parameterization", ["q_min", "pqu", "T_maj_min"])
@@ -353,17 +352,14 @@ def test_parameterized_static_errors_raise_inside_trace(parameterization):
             )(jnp.asarray(0.0))
 
 
-def test_guarded_converter_output_structure_is_a_setup_contract():
+def test_converter_output_structure_is_a_setup_contract():
     _, resolved, proposal, values = _setup("OblateMassMGEPotential", "q_min")
     for output in (
         {"wrong": Quantity(1.0, "")},
         {"mge_mass_scale": Quantity(1.0, ""), "inclination": Quantity(1.0, "kpc")},
     ):
         component = resolved["stars"]._replace(
-            convert_with_validity=lambda *args, output=output: (
-                output,
-                jnp.asarray(True),
-            )
+            convert=lambda *args, output=output: output
         )
         with pytest.raises(ValueError):
             jax.jit(
@@ -371,16 +367,6 @@ def test_guarded_converter_output_structure_is_a_setup_contract():
                     {"stars": component}, proposal(x), {}
                 )
             )(values)
-    original = resolved["stars"].convert_with_validity
-    component = resolved["stars"]._replace(
-        convert_with_validity=lambda *args: (original(*args)[0], jnp.array([True]))
-    )
-    with pytest.raises(TypeError, match="scalar boolean"):
-        jax.jit(
-            lambda x: Potential.build_with_validity(
-                {"stars": component}, proposal(x), {}
-            )
-        )(values)
 
 
 @pytest.mark.parametrize("x64", [False, True])
@@ -441,35 +427,54 @@ def test_complete_mixed_proposal_combines_flags_and_guards_gradients(x64):
 
 @pytest.mark.parametrize("parameterization", ["q_min", "pqu", "T_maj_min"])
 @pytest.mark.parametrize("x64", [False, True])
-def test_frozen_conversion_is_rejected_even_when_its_values_are_correct(
+def test_parameterized_anchor_roundtrip_has_identity_shape_gradients(
     parameterization, x64
 ):
+    """Certify interior shape derivatives in tests rather than on each proposal."""
     with jax.enable_x64(x64):
         kind = (
             "OblateMassMGEPotential"
             if parameterization == "q_min"
             else "TriaxialMassMGEPotential"
         )
-        _, resolved, proposal, values = _setup(kind, parameterization)
-        original = resolved["stars"].convert_with_validity
+        source, resolved, proposal, values = _setup(kind, parameterization)
+        anchor = int(jnp.argmin(source.q.ustrip("")))
 
-        def frozen(*args):
-            native, valid = original(*args)
-            native = {
-                name: value
-                if name == "mge_mass_scale"
-                else jax.lax.stop_gradient(value)
-                for name, value in native.items()
-            }
-            return native, valid
+        def recovered(values):
+            potential, valid = Potential.build_with_validity(
+                resolved, proposal(values), {}
+            )
+            model = potential.components["stars"].deprojected
+            q = model.q.ustrip("")[anchor]
+            if parameterization == "q_min":
+                result = jnp.array([q])
+            else:
+                p = model.p.ustrip("")[anchor]
+                # Local widths avoid overflow in equivalent declared units.
+                u = (
+                    source.sigma.ustrip("kpc")[anchor]
+                    / model.sigma.ustrip("kpc")[anchor]
+                )
+                if parameterization == "pqu":
+                    result = jnp.array([p, q, u])
+                else:
+                    observed = source.q.ustrip("")[anchor]
+                    result = jnp.array(
+                        [
+                            (1 - p**2) / (1 - q**2),
+                            (1 - u**2) / (1 - p**2),
+                            ((u * observed) ** 2 - q**2) / (p**2 - q**2),
+                        ]
+                    )
+            return result, valid
 
-        broken = {"stars": resolved["stars"]._replace(convert_with_validity=frozen)}
-        _, valid = jax.jit(
-            lambda x: Potential.build_with_validity(broken, proposal(x), {})
-        )(values)
-        assert not bool(valid)
-        with pytest.raises(ValueError, match="derivatives"):
-            Potential.build(broken, proposal(values), {})
+        result, valid = jax.jit(recovered)(values)
+        assert bool(valid)
+        np.testing.assert_allclose(result, values[1:], rtol=2e-5, atol=1e-6)
+        expected = np.column_stack([np.zeros(len(values) - 1), np.eye(len(values) - 1)])
+        for differentiate in (jax.jacfwd, jax.jacrev):
+            gradient = jax.jit(differentiate(lambda x: recovered(x)[0]))(values)
+            np.testing.assert_allclose(gradient, expected, rtol=2e-4, atol=2e-5)
 
 
 @pytest.mark.parametrize("x64", [False, True])
@@ -511,7 +516,7 @@ def test_q_min_conversion_does_not_validate_unscaled_template_mass(x64):
                 )
             )
         ).all()
-        Potential.build(resolved, parameters(values), {})
+        assert bool(Potential.build_with_validity(resolved, parameters(values), {})[1])
         settings = {
             "stars": {
                 "type": "OblateLightMGEPotential",
@@ -536,9 +541,9 @@ def test_scaled_dimensionless_shape_bounds_and_reporting(kind, parameterization)
     key = NAMES[parameterization][0]
     bad = {**raw, key: Quantity(150.0, "percent")}
     assert not bool(resolved["stars"]._raw_parameters_valid(bad))
-    with pytest.raises(ValueError):
-        resolved["stars"].build(bad, {})
-    potential = Potential.build(resolved, {"stars": raw}, {})
+    assert not bool(resolved["stars"].build_with_validity(bad, {})[1])
+    potential, valid = Potential.build_with_validity(resolved, {"stars": raw}, {})
+    assert bool(valid)
     settings = {
         "stars": {
             "type": kind,
@@ -634,7 +639,9 @@ def test_large_width_compression_recovery_in_equivalent_units(parameterization, 
                 jax.value_and_grad(evaluate, has_aux=True)
             )(values)
             assert bool(valid)
-            Potential.build(resolved, proposal(values), {})
+            assert bool(
+                Potential.build_with_validity(resolved, proposal(values), {})[1]
+            )
             assert np.isfinite(np.asarray(gradient)).all()
             results.append((float(density), np.asarray(gradient)))
             jax.clear_caches()

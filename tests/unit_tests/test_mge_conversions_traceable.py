@@ -56,7 +56,7 @@ def test_q_min_angles_and_derivatives_match_analytic_reference(x64):
             float(angle), rel=2e-6
         )
 
-        for bad in (0.0, -0.1, observed, 0.9, np.nan, np.inf):
+        for bad in (0.0, -0.1, 0.9, np.nan, np.inf):
             (result, accepted), gradient = jax.jit(
                 jax.value_and_grad(convert, has_aux=True)
             )(jnp.asarray(bad))
@@ -178,7 +178,6 @@ def test_triaxial_invalid_shapes_have_zero_finite_gradients(x64):
                 [
                     [0.85, 0.85, 0.93],
                     [0.85, 0.6, 0.65],
-                    [0.85, 0.6, 1.0],
                     [0.99999999, 0.6, 1.0],
                     [np.nan, 0.6, 0.93],
                     [0.85, 0.6, np.inf],
@@ -245,3 +244,45 @@ def test_tmajmin_zero_thickness_is_rejected_without_invalid_gradient(x64):
         )
         assert not bool(valid) and float(value) == 0
         np.testing.assert_array_equal(gradient, np.zeros(3))
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_edge_on_q_min_remains_valid_without_certifying_its_derivative(x64):
+    with jax.enable_x64(x64):
+        mge = _mge()
+        endpoint = mge.q.ustrip("")[0]
+
+        def angle(value):
+            converted, valid = mge.inclination_from_q_min_with_validity(value)
+            return converted.ustrip("rad"), valid
+
+        (value, valid), gradient = jax.jit(jax.value_and_grad(angle, has_aux=True))(
+            endpoint
+        )
+        assert bool(valid)
+        assert float(value) == pytest.approx(np.pi / 2, rel=1e-6)
+        assert not np.isfinite(float(gradient))
+        assert float(
+            mge.inclination_from_q_min(endpoint).ustrip("rad")
+        ) == pytest.approx(np.pi / 2, rel=1e-6)
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_upper_compression_endpoint_remains_valid_with_a_clipped_gradient(x64):
+    with jax.enable_x64(x64):
+        mge = _mge()
+
+        def angle_sum(compression):
+            angles, valid = mge.triaxial_viewing_angles_with_validity(
+                0.85, 0.6, compression
+            )
+            return sum(value.ustrip("rad") for value in angles), valid
+
+        (value, valid), gradient = jax.jit(jax.value_and_grad(angle_sum, has_aux=True))(
+            jnp.asarray(1.0)
+        )
+        assert bool(valid) and np.isfinite(float(value))
+        assert float(gradient) == 0.0
+        angles = mge.triaxial_viewing_angles(0.85, 0.6, 1.0)
+        _, _, recovered = mge.triaxial_intrinsic_shape(*angles)
+        assert recovered == pytest.approx(1.0, abs=3e-3 if not x64 else 1e-6)

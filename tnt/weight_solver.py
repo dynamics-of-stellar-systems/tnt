@@ -58,7 +58,7 @@ class NNLSWeightSolver(AbstractWeightSolver):
     Which JAX option(s) `solver` picks between is still undecided (see
     `weight_solver_settings.nnls_solver` in `tnt.configuration.validation`);
     a jittable `solve` is one prerequisite for traced model evaluation.
-    `ModelIterator._evaluate` still uses eager potential construction,
+    `ModelIterator._evaluate` still uses a Python validity branch,
     Python exception handling, and a variable-length result list.
     """
 

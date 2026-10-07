@@ -104,7 +104,7 @@
   at `/workspace`; its macOS `.venv` is never used in the container because
   `UV_PROJECT_ENVIRONMENT` points to `/opt/tnt-venv` inside the image.
 - For this checkout's local macOS workflow, use Docker's `colima` context.
-  The local Colima VM has 4 GB of memory. Run scientific test suites
+  The local Colima VM has 2 GB of memory. Run scientific test suites
   sequentially, preferably in separate processes; do not run multiple JAX
   test processes in parallel. Accumulated compiled graphs can also exhaust
   memory within one process. The native MGE gradient tests clear JAX's
@@ -222,29 +222,18 @@
   system distance and preserves `I`. For fixed angular widths, total
   luminosity/mass scales with distance squared. Direct constructors may
   already carry physical widths. See `docs/source/data_preparation.md`.
-- MGE deprojection and shape conversion have paired eager and `with_validity` APIs.
+- Native MGE deprojection has paired eager and `with_validity` APIs.
   All four supported MGE potential types construct inside one JAX trace using
-  native parameters or `q_min`, `pqu`, and `T_maj_min` parameterizations.
-  The complete proposal returns one
+  native normalization and viewing angles. The complete proposal returns one
   scalar boolean; invalid intrinsic MGEs contain zeros and must not be used,
   including through `to_galax`, unless the flag is true. Eager and traced paths
   share intrinsic-axis, finite positive density/width/mass, and numerical
-  accuracy checks. MGE potential construction additionally probes values
-  and both forward- and reverse-mode construction derivatives in declared and
-  local `Msun`/`kpc` units before allowing differentiation, including native
-  angle outputs and the full raw-coordinate-to-intrinsic chain. Both modes must be
-  finite and agree within `50*sqrt(eps)`, with an output/input-scaled roundoff
-  allowance for zero derivatives (such as mass versus viewing angle).
-  For parameterized MGEs, the Jacobian of the constructed anchor shape back
-  to the proposed coordinates must also equal the identity within
-  `50*sqrt(eps)`, accounting for declared coordinate-unit scale. This catches
-  frozen or inaccurate shape derivatives shared by both differentiation modes.
-  MGE shape bounds compare unit-free ratios, including scaled dimensionless
-  units such as percent. The inverse reporting adapters restore the declared
-  shape-coordinate units. An explicit empty constraint unit means unit-free
-  comparison; only `None` selects the proposed value's own unit.
-  Oblate conversion checks only geometry; density and mass checks use the
-  proposal's normalization rather than the unscaled luminosity template.
+  accuracy checks. Native potential construction additionally probes positive
+  finite values in local `Msun`/`kpc` units. It does not compute or certify
+  construction derivatives on each proposal; regression tests cover gradients
+  for representable proposals (equivalent units, integer columns,
+  finite-difference comparisons) only. An extreme MGE column value can pass
+  as valid with a non-finite gradient.
   Oblate cancellation and triaxial
   covariance-inversion conditioning/residual checks use `50*sqrt(eps)`
   relative error thresholds at active precision. Exactly circular projected
@@ -257,30 +246,43 @@
   density/width products, and preserves the conversion boundary against
   compiler reassociation. Its shared `gaussian_widths` property supplies
   floating-point `kpc` widths to both Galax factories with the same conversion
-  boundary. Stored MGE columns and proposal units remain unchanged. Numerical
-  derivative checks and Gaussian-width arithmetic use floating-point arrays
+  boundary. Stored MGE columns and proposal units remain unchanged.
+  Gaussian-width arithmetic uses floating-point arrays
   even when fixed input columns contain integers. Equivalent physical widths
   in `pc`, `kpc`, and `km` must yield consistent validity, mass, potential
   values, and gradients; finite
-  integrated mass alone is insufficient when reverse-mode intermediates
-  overflow at the selected precision.
-  The MGE validity contract covers deprojection and construction
-  values/derivatives. By explicit scope decision, it does not certify Galax's
+  integrated mass alone does not guarantee representable derivatives.
+  The native-MGE validity contract covers deprojection and construction
+  values. By explicit scope decision, it does not certify Galax's
   fixed-order potential quadrature. Galax's 50-point Gaussian quadrature can
   be inaccurate for very thin Gaussians: at oblate q=0.001 the normalized
   central potential differs from the analytic arccos(q)/sqrt(1-q**2)
   reference by about 0.7%, and its q derivative by about 95%, even with a
   well-resolved float64 deprojection. Potential-quadrature accuracy needs
   separate work; do not treat a true construction flag as that guarantee.
-  `AbstractMGE.inclination_from_q_min` and its `with_validity` counterpart
-  share scalar JAX domain and round-trip checks. The edge-on `q_min == q'`
-  limit is rejected because its conversion derivative is unbounded.
-  Registry adapters for all three shape parameterizations provide guarded
-  conversions using these same checks. Proposal batching and
-  prior/model-iterator integration are deferred.
-  `ModelIterator._evaluate()` still catches Python exceptions and returns a
-  variable-length `list[Model]`; orbit integration and weight solving remain
-  scaffolding.
+  MGE `q_min`, `pqu`, and `T_maj_min` conversions are traceable. The standalone
+  scientific methods and registry adapters share numerical candidates and
+  predicates, including anchor twists, endpoint margins and round-trip checks.
+  Their standalone `with_validity` counterparts use the same
+  `_guard_construction` scaffold as potential construction. Numerical validity
+  does not certify derivatives: edge-on `q_min` remains accepted despite its
+  unbounded conversion derivative, and inclusive `pqu` compression endpoints
+  retain their precision-margin clamp and clipped compression derivative.
+  Regression tests cover interior recovered-shape identity derivatives and
+  these endpoint limitations; per-proposal derivative checks remain removed.
+  Shape constraints compare unit-free ratios, including percent declarations;
+  inverse reporting restores the declared shape-coordinate units. In
+  `ParameterConstraint`, `unit=""` means a unit-free comparison and only
+  `unit=None` selects the proposed value's own unit.
+  `Potential.build_with_validity` is the only potential construction interface;
+  `build_potential`, `Potential.build`, `Potential.from_settings`, component
+  `build`, and the four MGE `_build` factories have been removed.
+  `ModelIterator._evaluate()` checks the scalar flag before any use of the
+  potential, logs a generic numerical-validation rejection with raw parameters,
+  and records an invalid model. Static setup errors propagate. Construction
+  supports `vmap`; iterator batching and prior integration remain deferred.
+  The iterator still returns a variable-length `list[Model]`; orbit integration
+  and weight solving remain scaffolding.
 - Issue #72 fixes the execution target as one proposal evaluated inside a JAX
   trace. `ParameterConstraint.valid()` now exposes JAX scalar predicates for
   registered numeric bounds and same-component relationships; eager
@@ -300,7 +302,7 @@
   dtypes for zero placeholders used by invalid converted components; these
   are not usable physical models. Converters must themselves support JAX
   tracing, and their output names/types/dimensions/scalar shapes remain hard
-  contract checks. Iterator/prior integration and proposal batching are deferred.
+  contract checks. Iterator batching and prior integration are deferred.
 - Eager constraint diagnostics and traced validity evaluate the same JAX
   predicates at the proposed value's active precision; converting eager values
   to Python floats would change half-open bound decisions in float32. For
@@ -308,7 +310,7 @@
   `(r_h - r_c) / max(abs(r_h), abs(r_c)) > eps**(1/5)` at that precision.
   The upstream potential formula subtracts nearly equal terms and otherwise
   yields unreliable gradients close to equal radii. This numerical guard is
-  shared by eager and traced construction.
+  shared by ordinary and compiled calls to the same builder.
 - Intel macOS is not a native TNT target because current JAX releases do not
   provide `jaxlib` wheels for that platform. Use the Linux `x86_64`
   development container there instead.
@@ -482,7 +484,7 @@
   distribution, scales uncertainties by the square root of `variance_scale`,
   and emits configured sampling warnings.
 - `potential.<name>.type` names one of a curated set of `galax.potential`
-  classes (`tnt.potential.registry._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
+  classes (`tnt.potential._SUPPORTED_GALAX_TYPES`, e.g. `NFWPotential`,
   `PlummerPotential` -- 25 classes total), or one of four TNT-specific MGE
   composite types -- triaxial (`TriaxialLightMGEPotential`/
   `TriaxialMassMGEPotential`, `tnt/potential/triaxial_mge.py`) or oblate
@@ -529,42 +531,35 @@
   declared -- intentional TNT policy, for a complete/reproducible
   model-table schema.
 - Runtime potential construction owns value/domain validation.
-  `ResolvedPotentialComponent.build()` checks that every raw parameter is an
-  exactly named, dimensionally correct, scalar, finite `Quantity`, applies the
-  resolved type/parameterization's physical-domain constraints, runs any
-  forward converter, and repeats the checks against the canonical native
-  schema and constraints. This is deliberately eager Python boundary logic,
-  before a potential object enters JAX/Equinox numerical work; it does not
-  mutate or normalize the parameter's declared unit. MGE data-dependent
-  deprojection geometry and construction derivatives use the same numerical
-  checks as `build_with_validity`; the MGE composite `_build()` methods preserve
-  eager geometry diagnostics. Native `galax` constraints live beside
-  dimension/rescale metadata in
+  `ResolvedPotentialComponent.build_with_validity()` checks exactly named,
+  dimensionally correct scalar `Quantity` inputs as static setup, then returns
+  a flag for finiteness and physical-domain checks before/after conversion.
+  It does not normalize declared units. MGE construction and standalone
+  deprojection share `_guard_construction` for detached probing and conditional
+  differentiable construction. Native `galax` constraints live beside metadata in
   `_SUPPORTED_GALAX_TYPES`; TNT composite constraints live on each component's
   `_constraints`; parameterization raw constraints live in the same registered
   `ParameterizationSpec` as its converters and schema. Registration rejects
   constraint names or relationships that disagree with their owning schema.
-  `components._check_parameter_set_contract()` separately enforces the
-  generator/converter pipeline contract; each `ParameterConstraint.violation()`
-  owns its bound and relationship evaluation. Physical-domain and well-formed
-  `Quantity` failures raise `InvalidPotentialParametersError`, which
-  `ModelIterator._evaluate()` records as an invalid model alongside
-  `MGEDeprojectionError`. A non-`Quantity` value remains an uncaught `TypeError`
-  because it indicates a programming error rather than a physically invalid
-  proposed point.
+  `components._check_parameter_set_structure()` enforces the
+  generator/converter structure contract. Each `ParameterConstraint.valid()`
+  owns its numerical bound and relationship predicates; `violation()` uses
+  those predicates for standalone diagnostics. Numerical proposal failures
+  return `valid=False`, which `ModelIterator._evaluate()` records as an
+  invalid model. Malformed names, shapes, types, and dimensions remain static
+  setup errors and propagate to the caller, including
+  `InvalidPotentialParametersError` and `TypeError`.
   TNT's chosen physical policy is strict positivity for every mass, MGE
   normalization (`ml`/`mge_mass_scale`), and scale length, including parameters
   such as Miyamoto-Nagai `a`; zero does not disable a component or select a
   limiting profile. `MonariEtAl2016BarPotential.alpha` and its pattern speed
   `Omega` deliberately remain signed, including negative values.
 - Non-native parameterizations register via `registry.register_parameterization(
-  type_name=, name=, convert=, invert=, raw_dimensions=, raw_constraints=,
-  convert_with_validity=)` --
+  type_name=, name=, convert=, invert=, raw_dimensions=, raw_constraints=)` --
   one call, from the module owning the numerics (`tnt.potential.nfw` for
   `concentration_m200`, `tnt.potential.triaxial_mge` for `pqu`), mirroring
   `register_component`. It bundles the forward/inverse converters, config
-  parameter schema, raw domain rules, and optional guarded forward converter
-  in a single `ParameterizationSpec`,
+  parameter schema, and raw domain rules in a single `ParameterizationSpec`,
   so validation and runtime resolution can't disagree on which
   parameterizations exist. Read back via `get_parameterization(type, name)` /
   `parameterization_names(type)`. `type_name` may be a curated native `galax`
@@ -580,7 +575,7 @@
   trailing optional `mge` arg -- `None` for a curated native `galax` type,
   else the component's own `tnt.mge` MGE (every MGE composite type stores it
   in a field named `mge`) -- supplied generically, not per type:
-  `ResolvedPotentialComponent.build` passes `extra_fields.get("mge")` to the
+  `ResolvedPotentialComponent.build_with_validity` passes `extra_fields.get("mge")` to the
   forward converter, `AbstractPotentialComponent.raw_parameters` passes
   `getattr(self, "mge", None)` -- the same value, off the built component --
   to the inverse one. `pqu` uses it for `q' = min(component q)` and the
@@ -595,27 +590,29 @@
   `triaxial_viewing_angles` and back in by `triaxial_intrinsic_shape`, so
   `(p, q, u)` keep their meaning for a twisted MGE. Ties for min `q'` break by
   component order. `_pqu_to_tpp` / `_tpp_to_pqu` in `tnt.potential.triaxial_mge`
-  are thin registry adapters that re-raise `MGEDeprojectionError` as
-  `InvalidPotentialParametersError`. A `pqu` config and its equivalent
+  share traceable numerical candidates with the standalone scientific methods.
+  Failed forward conversions produce nonfinite angles for the shared builder
+  to reject with `valid=False`; standalone methods retain diagnostic exceptions.
+  A `pqu` config and its equivalent
   `(theta, phi, psi)` config build an identical potential. Data-independent
   bounds (`0 < q <= p <= 1`, `p < u <= 1`) are `ParameterConstraint`s;
   `triaxial_viewing_angles` additionally rejects a value violating `q < p`
   (prolate) or `max(q/q', p) < u <= min(p/q', 1)`, a degenerate weight, and a
   domain so narrow it has no representable interior point. The de Zeeuw &
-  Franx weights are singular on the `u` boundaries. Numerical acceptance
-  requires `u > lo + max(lo, 1)*4*sqrt(eps)` and
-  `u < hi*(1 - 4*sqrt(eps))`, where `lo = max(q/q', p)` and
-  `hi = min(p/q', 1)`. Values requiring clipping are rejected: changing
-  the proposed compression would change the shape and its derivatives.
-  The paired `triaxial_viewing_angles_with_validity` method uses the same
-  scalar JAX predicates and returns zero angle placeholders on rejection.
+  Franx weights are singular exactly on the `u` boundaries; the *lower*
+  endpoints (`u = p`, `u = q/q'`) are excluded, the *upper* endpoints
+  (`u = 1`, `u = p/q'`) are inclusive limiting geometries evaluated one
+  margin of `4*sqrt(eps)` inside `min(p/q', 1)` -- `eps` for the working JAX
+  float type. At float32 that margin is `~1.4e-3`, so a declared `u = 1` is
+  honoured only to about that and `triaxial_intrinsic_shape` reports the
+  recovered value, not an exact `1`.
 - `T_maj_min` (the same two triaxial MGE types): a second, bijective
   reparameterization of `pqu`'s own `(p, q, u)` as `(T, T_maj, T_min) in
   [0,1]^3` (Quenneville, Liepold & Ma 2022, ApJ 926:30, sec. 3 eqs. 3-4, 7),
   chosen for more uniform shape/viewing-geometry sampling, not a different
   deprojection. The `(T,T_maj,T_min) <-> (p,q,u)` algebra (given the anchor's
-  `q'`) uses `tnt.mge._p_q_u_candidate` / `_T_Tmaj_Tmin_candidate`,
-  each returning numerical predicates for its denominator and coordinates;
+  `q'`) is `tnt.mge._p_q_u_from_T_Tmaj_Tmin` / `_T_Tmaj_Tmin_from_p_q_u`,
+  each guarding its own denominator (`eps`-scaled) before dividing;
   `AbstractMGE.viewing_angles_from_T_Tmaj_Tmin` /
   `T_Tmaj_Tmin_from_viewing_angles` compose that with `triaxial_viewing_angles`
   / `triaxial_intrinsic_shape`, inheriting all of `pqu`'s domain/margin/
@@ -625,13 +622,21 @@
   closed `[0,1]` `ParameterConstraint`; no pairwise relation is needed at
   schema level (unlike `pqu`'s `q <= p`).
   `viewing_angles_from_T_Tmaj_Tmin` additionally checks that its result
-  round-trips: `(T,T_maj,T_min)` divide by `1 - p**2` and `p**2 - q**2`,
-  which amplify errors in the recovered intrinsic shape. Each coordinate is accepted only
+  round-trips: `pqu`'s own `u`-margin clamp (previous bullet) is negligible
+  in `(p,q,u)` space, but `(T,T_maj,T_min)` divide by `1 - p**2` and
+  `p**2 - q**2`, so the same clamp can move the *requested* shape
+  coordinates far more than it moved `u`. Each coordinate is accepted only
   if it round-trips (forward then `T_Tmaj_Tmin_from_viewing_angles`) within
   `_TMAJMIN_ROUNDTRIP_ABS_TOL_FACTOR * eps + _TMAJMIN_ROUNDTRIP_REL_TOL_FACTOR
-  * sqrt(eps) * |coordinate|`. The absolute term allows roundoff near zero;
-  exceeding the bound raises `MGEDeprojectionError`. Small coordinates near
-  a singular boundary can fail this check at the selected precision.
+  * sqrt(eps) * |coordinate|` (a combined bound, not relative alone, since a
+  requested coordinate can legitimately be exactly `0`); otherwise
+  the standalone method raises `MGEDeprojectionError`, while the potential
+  builder returns `valid=False`. At float64 this is essentially never triggered by
+  an ordinary point; at float32 it can reject points with a small
+  `T`/`T_maj`/`T_min` whose `(p,q,u)` sits close enough to `pqu`'s own
+  singular boundary -- calibrated against measured round-trip drift
+  (ordinary points stay under `~6e-6` relative at float32; degenerate ones
+  measured `32%-168%`), not guessed.
 - `q_min` (the two oblate MGE types): the oblate counterpart of `pqu` --
   the anchor Gaussian's intrinsic axial ratio <-> the single global
   `inclination`, via `deproject_oblate`'s own relation `q_obs'^2 = q_min^2
@@ -640,25 +645,26 @@
   `deproject_oblate` requires every component's twist to be zero). Both
   directions are `AbstractMGE` methods: `inclination_from_q_min(q_min) ->
   inclination` and its inverse `q_min_from_inclination(inclination) ->
-  q_min`, which reads the anchor's intrinsic `q` using shared oblate geometry
-  checks without integrating the unscaled template's mass. The inverse
-  reporting conversions remain eager. Compression recovery during construction
-  uses local `kpc` widths to keep differentiation reliable across equivalent
-  declared units. `_qmin_to_inclination` / `_inclination_to_qmin` in
+  q_min`, which reads the anchor's own intrinsic `q` using shared oblate
+  geometry checks rather than integrating the unscaled template's luminosity
+  or mass. Forward shape conversion is also geometry-only; construction checks
+  density and mass after the proposal's normalization. Unit/twist/domain rules
+  remain shared with deprojection. `_qmin_to_inclination` / `_inclination_to_qmin` in
   `tnt.potential.oblate_mge` are the registry adapters, mirroring
   `_pqu_to_tpp` / `_tpp_to_pqu`. Data-independent bound: `0 < q_min <= 1`
   (`ParameterConstraint`); `inclination_from_q_min` additionally rejects a
   circular anchor (`q_obs' == 1`), `q_min` outside `0 < q_min <= q_obs'`,
   and `q_min` too close to 1 to divide by reliably at the working precision
-  (`eps`-scaled, same style as `pqu`'s own guards). The edge-on
-  `q_min == q_obs'` limit is rejected because the conversion derivative
-  is unbounded; a native edge-on inclination still constructs normally.
-  The forward conversion also recovers geometry at the computed inclination and
+  (`eps`-scaled, same style as `pqu`'s own guards). Unlike `pqu`'s `u`
+  boundary, `q_min == q_obs'` (edge-on, `i = 90 deg`) needs no value-level
+  precision margin. Its inclination derivative is unbounded; acceptance
+  certifies numerical values only.
+  The forward conversion also deprojects at the computed inclination and
   checks `abs(q_recovered - q_min) / q_min <= 50 * sqrt(eps)`, where `eps`
   is for the active JAX float type. This is a relative shape-error ceiling:
   approximately `7.45e-7` at float64 and `0.0173` (1.73%) at float32.
-  Exceeding it raises `MGEDeprojectionError`, translated by the adapter to
-  `InvalidPotentialParametersError`. Thin or nearly circular configurations
+  Exceeding it raises `MGEDeprojectionError` in the standalone method and
+  returns `valid=False` from the potential builder. Thin or nearly circular configurations
   can fail this check even inside the mathematical domain. Reporting uses
   the recovered shape, so accepted values need not equal inputs exactly.
 - `parameterization` is a separate, optional field controlling how config
@@ -706,8 +712,8 @@
   can therefore use `H` without depending on `units.internal`.
   `cosmological_parameters` is
   threaded from `Configuration` through `ModelIterator` (a stored field, set
-  in `from_configuration`) into `build_potential`. The internal unit system
-  follows a separate path and is retained for `Potential.to_galax()`. Since
+  in `from_configuration`) into `Potential.build_with_validity`.
+  The internal unit system follows a separate path and is retained for `Potential.to_galax()`. Since
   configuration preparation
   preserves declared quantities as `{value, unit}` rather than stripping
   them (see the units-handling entries above), `ModelIterator.from_configuration`
@@ -731,7 +737,7 @@
   cancellation in both conversions. The characteristic-mass quotient has a
   custom JAX derivative that avoids g(c)**2 in the denominator. Unrepresentable
   native values or mass/concentration derivative coefficients invalidate the
-  conversion (eager errors or a false traced flag); derivative representability
+  conversion (a false validity flag); derivative representability
   is checked in `Msun` and `kpc` so equivalent declared mass units agree.
   A JAX optimization barrier preserves the local H conversion during JIT
   compilation, preventing arithmetic reassociation from recreating underflow.
@@ -758,8 +764,9 @@
   component's resolved state. TNT does not support an NFW
   `(c, f) -> (m, r_s)` "concentration + mass fraction" parameterization
   (`f = M_200 / M*_TOT`, `M*_TOT` derived from the stellar MGE component)
-  because `Potential.from_settings` resolves each component independently in
-  one pass, so no component-local converter can see another component's
+  because `Potential.resolve` resolves each component independently and
+  `Potential.build_with_validity` converts it using only its own inputs,
+  so no component-local converter can see another component's
   resolved mass. That kind of cross-component
   relationship belongs to the parameter generator/search space rather than
   potential construction; it must not be shoehorned into `parameterization`.
@@ -770,14 +777,14 @@
   `tnt.potential.raw_potential_parameters` use `invert` to report a
   `Potential`'s components back in their configuration's own
   parameterization (`Model.raw_parameters`, read by
-  `tnt.all_models._model_row` for its table columns) -- necessary because
-  `Potential.rescale` scales canonical component parameters, so
+  `AllModels._model_row` for its table columns) -- necessary because
+  `Potential.rescale` only knows how to scale native `galax` parameters, so
   the raw values must be recomputed from the rescaled native ones, not
   carried through unchanged. `concentration_m200`'s inverse has no closed
   form: `rescale` holds `r_s` fixed and scales only `m`, which is not the
   same as holding `c` fixed and scaling `M_200`, so recovering `c` means
   solving `c**3 / (ln(1+c) - c/(1+c)) = target` for `c` --
-  `tnt.potential.nfw._solve_nfw_concentration` does this via fixed-iteration
+  `tnt.potential._solve_nfw_concentration` does this via fixed-iteration
   bisection, relying on that function being verified (numerically) strictly
   monotonically increasing in `c`. Its gradients use the derivative of the
   solved equation, including when the inverse is batched. The fixed
