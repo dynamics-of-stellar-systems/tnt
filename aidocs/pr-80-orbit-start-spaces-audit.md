@@ -427,4 +427,24 @@ check is the expected cost, not a regression).
 
 ### Coverage and scope notes
 
-Not yet addressed.
+**Pin the source revision / preserve reference arrays -- addressed.** The
+four-geometry DYNAMITE comparison now lives in a separate, public repo,
+`dynamics-of-stellar-systems/tnt-dynamite-comparison` (`orbit-start-spaces/`
+directory) -- DYNAMITE itself is not a TNT test dependency, so this
+doesn't live here. It pins the exact DYNAMITE commit
+(`0bd10a9586936bf6b9bcfdcd3679477d812a01d0`), and commits DYNAMITE's own
+fully-resolved input (`parameters_pot.in` per geometry) and real
+`orbitstart` output (`begin[box].dat`) directly, alongside
+`run_comparison.py` (rebuilds the equivalent TNT potential from that same
+input and reruns both samplers) and a notebook visualising the result --
+not just author-supplied summary numbers. Rerun against the current,
+post-audit-fix code: box orbits still 5-6 significant figures; tube orbits
+now 4-5 in the typical (median) case, improved from the original 3-4 --
+consistent with findings 2/3/6 all directly affecting this same numerical
+path -- with one consistent ~3% worst case at the innermost shell's
+near-origin point, explained in that repo's own README rather than left
+as an open question.
+
+The other three notes (the crossing-cap comment, the fallback test's
+coverage gap, and `_outer_tube_boundary`'s wasted post-`broken`
+computation) are not yet addressed.
