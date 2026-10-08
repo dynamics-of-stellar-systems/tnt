@@ -675,25 +675,36 @@ def _outer_tube_boundary(
     # `orbitstart_f.f90:419-431`: `3 * nI3` steps, walked sequentially and
     # exited the instant an `x_tube`/`box` is found at `k >= 2` -- the
     # carry freezes (`broken`) from that point on. `rel_rbi` only updates
-    # on `z_tube` points seen *before* any break.
+    # on `z_tube` points seen *before* any break. `jax.lax.cond`, not
+    # `jnp.where`: once broken, every remaining step would otherwise still
+    # pay for a full `_classify_at` integration only to have its result
+    # discarded.
     n_scan = 3 * nI3
     k = jnp.arange(1, n_scan + 1)
     r_scan = boundin_top + (r_outer_top - boundin_top) * k / (n_scan + 1)
 
     def scan_step(carry: tuple, xs: tuple) -> tuple[tuple, None]:
-        broken, last_type, last_r, rel_rbi_acc = carry
+        broken, _last_type, _last_r, rel_rbi_acc = carry
         k_i, r_i = xs
-        type_i = _classify_at(
-            potential, energy, theta_top, r_i, classify_integration_time, t0
+
+        def already_broken(_: None) -> tuple:
+            return carry
+
+        def classify_and_update(_: None) -> tuple:
+            type_i = _classify_at(
+                potential, energy, theta_top, r_i, classify_integration_time, t0
+            )
+            is_break = (type_i == _ORBIT_TYPE_X_TUBE) | (type_i == _ORBIT_TYPE_BOX)
+            break_now = is_break & (k_i >= 2)
+            new_rel_rbi = jnp.where(
+                type_i == _ORBIT_TYPE_Z_TUBE, r_i / r_outer_top, rel_rbi_acc
+            )
+            return break_now, type_i, r_i, new_rel_rbi
+
+        new_carry = jax.lax.cond(
+            broken, already_broken, classify_and_update, operand=None
         )
-        is_break = (type_i == _ORBIT_TYPE_X_TUBE) | (type_i == _ORBIT_TYPE_BOX)
-        break_now = is_break & (k_i >= 2) & (~broken)
-        new_rel_rbi = jnp.where(
-            (type_i == _ORBIT_TYPE_Z_TUBE) & (~broken), r_i / r_outer_top, rel_rbi_acc
-        )
-        new_last_type = jnp.where(broken, last_type, type_i)
-        new_last_r = jnp.where(broken, last_r, r_i)
-        return (broken | break_now, new_last_type, new_last_r, new_rel_rbi), None
+        return new_carry, None
 
     init_scan = (
         jnp.asarray(False),
@@ -754,34 +765,44 @@ def _outer_tube_boundary(
     def step(carry: tuple, xs: tuple) -> tuple[tuple, jnp.ndarray]:
         prev_boundmid, prev_r_outer = carry
         theta_i, r_outer_i, idx_i = xs
-
-        # `orbitstart_f.f90:471`: the seed for the first real search step --
-        # the onset index itself is never really searched (its own result
-        # is masked out below), so the step immediately below it needs its
-        # `rbu`/`guess` built around the onset's own `r_outer`.
-        at_seed = idx_i == (effective_onset_idx - 1)
-        prev_boundmid = jnp.where(at_seed, r_outer_at_onset, prev_boundmid)
-        prev_r_outer = jnp.where(at_seed, r_outer_at_onset, prev_r_outer)
-
-        rbi_floor = jnp.maximum(rel_rbi * r_outer_i, boundin_max)
-        equipotential_margin = _OUTER_BOUNDARY_EQUIPOTENTIAL_MARGIN_FRACTION * r_outer_i
-        rbu = jnp.minimum(prev_boundmid, r_outer_i - equipotential_margin)
-        guess = jnp.clip(prev_boundmid / prev_r_outer * r_outer_i, rbi_floor, rbu)
-        rbi = jnp.maximum(guess * (1.0 - taper_fraction), rbi_floor)
-
-        lo = jnp.where(rbi >= rbu, r_floor, rbi)
-        hi = jnp.where(rbi >= rbu, r_outer_i, rbu)
-
-        boundmid_i = _minimize_tube_width(
-            potential, energy, theta_i, "x", lo, hi, t_ceiling, t0
-        )
         searched = idx_i < effective_onset_idx
-        result_i = jnp.where(searched, boundmid_i, r_outer_i)
-        new_carry = (
-            jnp.where(searched, boundmid_i, prev_boundmid),
-            jnp.where(searched, r_outer_i, prev_r_outer),
+
+        def do_search(_: None) -> tuple:
+            # `orbitstart_f.f90:471`: the seed for the first real search
+            # step -- the onset index itself is never really searched (it
+            # never reaches this branch: `at_seed` only coincides with
+            # `idx_i < effective_onset_idx`), so the step immediately below
+            # it needs its `rbu`/`guess` built around the onset's own
+            # `r_outer`.
+            at_seed = idx_i == (effective_onset_idx - 1)
+            boundmid = jnp.where(at_seed, r_outer_at_onset, prev_boundmid)
+            r_outer_prev = jnp.where(at_seed, r_outer_at_onset, prev_r_outer)
+
+            rbi_floor = jnp.maximum(rel_rbi * r_outer_i, boundin_max)
+            equipotential_margin = (
+                _OUTER_BOUNDARY_EQUIPOTENTIAL_MARGIN_FRACTION * r_outer_i
+            )
+            rbu = jnp.minimum(boundmid, r_outer_i - equipotential_margin)
+            guess = jnp.clip(boundmid / r_outer_prev * r_outer_i, rbi_floor, rbu)
+            rbi = jnp.maximum(guess * (1.0 - taper_fraction), rbi_floor)
+
+            lo = jnp.where(rbi >= rbu, r_floor, rbi)
+            hi = jnp.where(rbi >= rbu, r_outer_i, rbu)
+
+            boundmid_i = _minimize_tube_width(
+                potential, energy, theta_i, "x", lo, hi, t_ceiling, t0
+            )
+            return boundmid_i, r_outer_i
+
+        # `jax.lax.cond`, not `jnp.where`: a row past the onset has its
+        # `_minimize_tube_width` result -- ~60 full trial-orbit
+        # integrations -- discarded unconditionally below, so skip running
+        # it at all rather than computing and masking it.
+        new_boundmid, new_r_outer = jax.lax.cond(
+            searched, do_search, lambda _: (prev_boundmid, prev_r_outer), operand=None
         )
-        return new_carry, result_i
+        result_i = jnp.where(searched, new_boundmid, r_outer_i)
+        return (new_boundmid, new_r_outer), result_i
 
     init_carry = (r_outer_top, r_outer_top)
     _, boundmid_rest_desc = jax.lax.scan(

@@ -488,5 +488,28 @@ exercises the real search code the delegation test never runs):
 each new test runs real orbit-width integrations across every row, several
 times over for the perturbation check; a real cost, not a regression).
 
-The remaining note (`_outer_tube_boundary`'s wasted post-`broken`
-computation) is not yet addressed.
+**`_outer_tube_boundary`'s wasted post-`broken` computation -- fixed.**
+Confirmed two distinct sites, not one: the x-axis radial scan
+(`scan_step`) kept calling `_classify_at` -- a full orbit integration --
+every remaining step after `broken` went `True`, just blending the
+(unused) result away afterward; separately, the per-theta `boundmid`
+search (`step`) unconditionally called `_minimize_tube_width` (~60 trial
+integrations: 30 golden-section iterations, two per iteration) for every
+row past the onset, where `searched` is `False` and the result is
+discarded. Both replaced with `jax.lax.cond` that skips the expensive
+call outright once the flag says not to run it, rather than computing
+then masking -- the same pattern `_minimize_tube_width`'s own golden-
+section step already uses, and legitimate here because both loops are
+sequential `jax.lax.scan`s over theta rows, not `jax.vmap`-batched (a
+`cond` under `vmap` would run both branches regardless).
+
+No output changes expected or found: reran the full four-geometry
+DYNAMITE comparison (`tnt-dynamite-comparison/orbit-start-spaces/`)
+and got numerically identical results to before this change, confirming
+it's a pure performance change.
+
+`test_orbit_library.py`: 33 passed (unchanged), 66.16s (down from 77.86s,
+~15% faster -- a real but modest win given this suite's small `nE`/`nI2`
+fixtures; the saving scales with how far a shell's onset sits from the
+z-axis and how often a shell breaks early in the radial scan, so a larger
+production grid should see more.)
