@@ -104,7 +104,7 @@ class AbstractOrbitDithering(eqx.Module):
 
 
 class CubicOrbitDithering(AbstractOrbitDithering):
-    """`n_dither^3` orbits per bundle -- the current implementation."""
+    """Scaffold for cubic dithering with `n_dither^3` orbits per bundle."""
 
     _type: ClassVar[str] = "Cubic"
     n_dither: int

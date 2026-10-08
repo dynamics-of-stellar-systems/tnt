@@ -153,6 +153,15 @@ are recorded with their raw parameters and a generic numerical-validation
 warning; static setup errors propagate. Batched construction via `jax.vmap`
 is tested, but iterator batching and prior integration remain future work.
 
+The standalone shape methods also have traced `with_validity` counterparts:
+`inclination_from_q_min_with_validity`, `triaxial_viewing_angles_with_validity`,
+and `viewing_angles_from_T_Tmaj_Tmin_with_validity`. They share their numerical
+predicates with the diagnostic methods and return zero angle placeholders for
+invalid conversions. Callers must condition subsequent use on the flag.
+Shape bounds compare unit-free ratios: `0.6` and `60 percent` have the same
+domain, while gradients and reported raw parameters preserve the declared
+coordinate scale and units.
+
 Migration: replace `build_potential(...)` or `Potential.build(...)` with
 `potential, valid = Potential.build_with_validity(...)` and check `valid`
 before using the result. `Potential.from_settings(...)` is removed; call
@@ -165,6 +174,12 @@ and local `Msun`/`kpc` units.
 Validity does not certify
 construction derivatives: forward/reverse derivative agreement is tested in
 focused regression cases, not recomputed for every proposal.
+Accepted shape endpoints retain their value-validity policy: edge-on `q_min`
+has a finite inclination but an unbounded conversion derivative, and a `pqu`
+compression endpoint uses the precision margin described below, with a clipped
+compression derivative. A true flag therefore does not promise usable
+derivatives at these endpoints. Interior derivatives and endpoint limitations
+are covered by regression tests.
 Gaussian masses are calculated locally in `Msun` and
 `kpc`; width factors are multiplied with density rather than first cubing a
 width in its declared unit. The conversion boundary is preserved during
@@ -396,10 +411,13 @@ potential:
   build return `valid=False`, which the iterator records as an invalid
   model. Both directions are `AbstractMGE` methods
   (`inclination_from_q_min` and its inverse `q_min_from_inclination`, which
-  reads the anchor's intrinsic `q` off a full `deproject_oblate` call), so a
+  reads the anchor's intrinsic `q` using the shared oblate geometry checks), so a
   `q_min` config and its equivalent `inclination` config build an identical
   potential and `AllModels` reports either faithfully. `q_min` is registered
   only for `OblateLightMGEPotential` and `OblateMassMGEPotential`.
+  Shape conversion and inverse reporting check geometry independently of the
+  unscaled MGE template's integrated luminosity or mass; construction checks
+  density and mass after applying the proposal's normalization.
   Before accepting the converted inclination, TNT checks that the recovered
   intrinsic ratio differs from the requested `q_min` by no more than
   `50 * sqrt(eps)` **relative error**, using the active JAX precision.

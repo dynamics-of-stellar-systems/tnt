@@ -216,15 +216,21 @@ def _galax_potential_from_deprojected(
 # these converters are just the parameterization-registry adapters.
 
 _PQU_SHAPE_CONSTRAINTS: dict[str, ParameterConstraint] = {
-    "p": ParameterConstraint(minimum=0.0, minimum_inclusive=False, maximum=1.0),
+    "p": ParameterConstraint(
+        minimum=0.0, minimum_inclusive=False, maximum=1.0, unit=""
+    ),
     # 0 < q <= p
     "q": ParameterConstraint(
-        minimum=0.0, minimum_inclusive=False, other_parameter="p", relation="<="
+        minimum=0.0,
+        minimum_inclusive=False,
+        unit="",
+        other_parameter="p",
+        relation="<=",
     ),
     # p < u <= 1 (data-independent floor of DYNAMITE's
     # max(q/q', p) < u <= min(p/q', 1); the q'-dependent parts are checked
     # against the MGE in `AbstractMGE.triaxial_viewing_angles`)
-    "u": ParameterConstraint(maximum=1.0, other_parameter="p", relation=">"),
+    "u": ParameterConstraint(maximum=1.0, unit="", other_parameter="p", relation=">"),
 }
 
 
@@ -291,9 +297,9 @@ def _tpp_to_pqu(
         mass_value = mass_value.to(declared_units[mass])
     return {
         mass: mass_value,
-        "p": Quantity(p, ""),
-        "q": Quantity(q, ""),
-        "u": Quantity(u, ""),
+        "p": Quantity(p, "").to(declared_units.get("p", "")),
+        "q": Quantity(q, "").to(declared_units.get("q", "")),
+        "u": Quantity(u, "").to(declared_units.get("u", "")),
     }
 
 
@@ -331,7 +337,7 @@ _register_pqu("TriaxialMassMGEPotential", "mge_mass_scale", "dimensionless")
 # <-> `(p, q, u)` algebra itself.
 
 _TMAJMIN_SHAPE_CONSTRAINTS: dict[str, ParameterConstraint] = {
-    name: ParameterConstraint(minimum=0.0, maximum=1.0)
+    name: ParameterConstraint(minimum=0.0, maximum=1.0, unit="")
     for name in ("T", "T_maj", "T_min")
 }
 
@@ -395,9 +401,9 @@ def _tpp_to_tmajmin(
         mass_value = mass_value.to(declared_units[mass])
     return {
         mass: mass_value,
-        "T": Quantity(T, ""),
-        "T_maj": Quantity(T_maj, ""),
-        "T_min": Quantity(T_min, ""),
+        "T": Quantity(T, "").to(declared_units.get("T", "")),
+        "T_maj": Quantity(T_maj, "").to(declared_units.get("T_maj", "")),
+        "T_min": Quantity(T_min, "").to(declared_units.get("T_min", "")),
     }
 
 

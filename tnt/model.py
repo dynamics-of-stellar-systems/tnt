@@ -1,7 +1,4 @@
-"""One evaluated point in the model search: a potential and its solved weights.
-
-Signature-only scaffold.
-"""
+"""One proposed model-search point and the outcome of its evaluation."""
 
 from __future__ import annotations
 

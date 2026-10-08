@@ -25,9 +25,7 @@ is split from building it at a given point in parameter space
 `Potential`s from the same configuration -- e.g. `ModelIterator`, once per
 proposed point -- resolves once and reuses the result.
 
-This module is filled in incrementally, one object at a time -- the same
-approach already used for `ProjectedBinning`. `Potential.generate_orbit_library`
-remains `NotImplementedError`.
+`Potential.generate_orbit_library` remains `NotImplementedError`.
 
 Split across submodules by concern: `registry` (curated `galax` types, their
 native parameters' dimensions/mass-rescale exponents, and TNT component /
@@ -42,20 +40,13 @@ composite types, one sibling module per deprojection convention), and
 
 from __future__ import annotations
 
+import tnt.potential.nfw  # noqa: F401 -- register NFW parameterizations
 from tnt.potential.components import (
     AbstractPotentialComponent,
     GalaxPotentialComponent,
     ResolvedPotentialComponent,
 )
 from tnt.potential.core import Potential, raw_potential_parameters
-from tnt.potential.nfw import (
-    _nfw_concentration_m200 as _nfw_concentration_m200,
-)
-from tnt.potential.nfw import (
-    _nfw_concentration_m200_inverse as _nfw_concentration_m200_inverse,
-)
-from tnt.potential.nfw import _nfw_g as _nfw_g
-from tnt.potential.nfw import _solve_nfw_concentration as _solve_nfw_concentration
 from tnt.potential.oblate_mge import (
     OblateLightMGEPotential,
     OblateMassMGEPotential,
