@@ -279,7 +279,35 @@ top row) at the equipotential -- previously only index 0 was searched.
 `test_orbit_library.py`: 15 passed, 35.53s (consistent with the 35-38s
 range seen after findings 1 and 2; no meaningful change).
 
-### 4. [P2] Reject nonpositive radial limits
+### 4. [P2] Reject nonpositive radial limits -- fixed
+
+Confirmed: `_validate_orbit_sampler` only checked `rmin < rmax`, never
+`rmin > 0`, so `rmin=0`/`rmin=-1 kpc` both passed validation and silently
+produced non-finite energy-grid radii (`log10` of zero or a negative
+number) downstream, as the audit's reproduction showed.
+
+Fixed at both boundaries the audit called for:
+
+- `_validate_orbit_sampler` now separately checks `rmin > 0` before the
+  existing `rmin < rmax` check, with its own message.
+- `AbstractOrbitSampler` (the shared base every concrete sampler inherits)
+  now has a `__check_init__` enforcing `0 < rmin < rmax` in the samplers'
+  own reference length unit -- this runs on construction regardless of
+  whether a sampler is built through configuration at all, closing the
+  "public sampler construction/execution boundary" gap the audit named
+  (direct instantiation, e.g. in a test or a future `build_orbit_sampler`
+  caller, bypasses `_validate_orbit_sampler` entirely).
+
+Added tests for both boundaries: zero/negative `rmin` and `rmin == rmax`
+rejected at construction for all three concrete sampler types, an
+equivalent-unit case (`rmin` in `pc` numerically larger than `rmax` in
+`kpc`) to confirm the comparison isn't just on raw declared numbers, and
+the same zero/negative cases through `Configuration().read()`.
+
+`test_orbit_library.py`: 23 passed (15 + 8 new), 35.01s.
+`test_configuration.py`: unaffected by these changes alone; full combined
+run (`test_orbit_library.py` + `test_configuration.py`, including the new
+tests in both): 99 passed, 47.03s.
 
 ### 5. [P2] Reject or implement the boundary sampler's one-angle case
 

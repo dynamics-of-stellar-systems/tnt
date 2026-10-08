@@ -46,6 +46,58 @@ def _sampler(nE: int = 3, nI1: int = 4, nI2: int = 4) -> StationaryGridOrbitSamp
     )
 
 
+@pytest.mark.parametrize(
+    "sampler_type", [StationaryGridOrbitSampler, XZGridFromOriginOrbitSampler]
+)
+@pytest.mark.parametrize("bad_rmin", [0.0, -1.0])
+def test_sampler_construction_rejects_non_positive_rmin(sampler_type, bad_rmin: float):
+    with pytest.raises(ValueError, match="rmin"):
+        sampler_type(
+            rmin=Quantity(bad_rmin, "kpc"),
+            rmax=Quantity(30.0, "kpc"),
+            nE=3,
+            nI1=4,
+            nI2=4,
+        )
+
+
+@pytest.mark.parametrize("bad_rmin", [0.0, -1.0])
+def test_boundary_sampler_construction_rejects_non_positive_rmin(bad_rmin: float):
+    with pytest.raises(ValueError, match="rmin"):
+        XZGridFromBoundaryOrbitSampler(
+            rmin=Quantity(bad_rmin, "kpc"),
+            rmax=Quantity(30.0, "kpc"),
+            nE=3,
+            nI1=4,
+            nI2=4,
+        )
+
+
+def test_sampler_construction_rejects_rmin_at_or_above_rmax():
+    with pytest.raises(ValueError, match="rmin"):
+        StationaryGridOrbitSampler(
+            rmin=Quantity(30.0, "kpc"),
+            rmax=Quantity(30.0, "kpc"),
+            nE=3,
+            nI1=4,
+            nI2=4,
+        )
+
+
+def test_sampler_construction_rejects_mismatched_unit_rmin_above_rmax():
+    """An equivalent-unit rmin/rmax pair must compare correctly, not just by
+    their raw declared numbers.
+    """
+    with pytest.raises(ValueError, match="rmin"):
+        StationaryGridOrbitSampler(
+            rmin=Quantity(30_001.0, "pc"),
+            rmax=Quantity(30.0, "kpc"),
+            nE=3,
+            nI1=4,
+            nI2=4,
+        )
+
+
 def test_n_bundles_is_the_full_energy_angle_grid():
     sampler = _sampler(nE=4, nI1=3, nI2=5)
     assert sampler.n_bundles() == 4 * 3 * 5

@@ -18,6 +18,8 @@ import galax.potential as gp
 import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
+from tnt.units import reference_unit
+
 if TYPE_CHECKING:
     from tnt.potential import Potential
 
@@ -41,6 +43,26 @@ class AbstractOrbitSampler(eqx.Module):
 
     _type: ClassVar[str]
     _add_reverse_copies: ClassVar[bool]
+
+    def __check_init__(self) -> None:
+        """Enforce every sampler's shared `0 < rmin < rmax` radial domain.
+
+        Runs on construction regardless of how a sampler is built --
+        `_validate_orbit_sampler` enforces the same domain at the
+        configuration boundary, but a sampler built directly (e.g. in a
+        test, or once `build_orbit_sampler` exists and is called with
+        already-resolved values) does not go through that check. `rmin`
+        sets every sampler's radial search floor via `log10(rmin)`; zero or
+        negative values silently produce non-finite radii rather than an
+        explicit error.
+        """
+        length_unit = reference_unit("length")
+        rmin = self.rmin.ustrip(length_unit)
+        rmax = self.rmax.ustrip(length_unit)
+        if not (0 < rmin < rmax):
+            raise ValueError(
+                f"rmin ({self.rmin}) must be positive and less than rmax ({self.rmax})."
+            )
 
     def n_bundles(self) -> int:
         """Total number of orbit bundles this scheme produces."""

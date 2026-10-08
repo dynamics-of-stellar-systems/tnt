@@ -135,6 +135,7 @@ def _write_user_config(
     body: str = "",
     orbit_body: str = "",
     kinematics_type: str = "gauss_hermite",
+    orbit_rmin: float = 0.8,
 ) -> None:
     path.write_text(
         f"""
@@ -179,7 +180,7 @@ kinematic_data:
 {body}
 orbit_library_settings:
   orbit_sampler:
-    rmin: {{value: 0.8, unit: "kpc"}}
+    rmin: {{value: {orbit_rmin}, unit: "kpc"}}
     rmax: {{value: 100.0, unit: "kpc"}}
 {orbit_body}
 io_settings:
@@ -694,6 +695,20 @@ def test_read_rejects_orbit_sampler_with_non_positive_ni2(
     )
 
     with pytest.raises(ValueError, match=r"orbit_library_settings\.orbit_sampler\.nI2"):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+@pytest.mark.parametrize("bad_rmin", [0.0, -1.0])
+def test_read_rejects_non_positive_orbit_sampler_rmin(
+    tmp_path: Path, bad_rmin: float
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory, orbit_rmin=bad_rmin)
+
+    with pytest.raises(
+        ValueError, match=r"orbit_library_settings\.orbit_sampler\.rmin"
+    ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
 

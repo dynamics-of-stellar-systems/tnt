@@ -689,7 +689,10 @@ def _validate_orbit_sampler(settings: ConfigDict, path: str) -> None:
     rmin = declared_quantity(settings["rmin"], "length", f"{path}.rmin")
     rmax = declared_quantity(settings["rmax"], "length", f"{path}.rmax")
     length_unit = reference_unit("length")
-    if rmin.ustrip(length_unit) >= rmax.ustrip(length_unit):
+    rmin_value, rmax_value = rmin.ustrip(length_unit), rmax.ustrip(length_unit)
+    if rmin_value <= 0:
+        raise ValueError(f"{path}.rmin must be positive.")
+    if rmin_value >= rmax_value:
         raise ValueError(f"{path}.rmin must be less than rmax.")
     for key in ("nE", "nI1", "nI2"):
         value = _integer(settings[key], f"{path}.{key}")
