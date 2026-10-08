@@ -204,3 +204,43 @@ they do not modify TNT source.
   Their pre-existing scaffolds were not counted as regressions in this PR.
 
 Assisted by Codex (OpenAI).
+
+## Responses
+
+### 1. [P1] Stop the integration driver on failure or lack of progress -- fixed
+
+Confirmed by direct reproduction: a nonfinite-derivative injection that
+previously left the loop spinning now returns `inf` in well under a second.
+
+`_orbit_width_over_crossings`'s loop state now also carries a step-attempt
+counter and a `failed` flag. Each step checks `diffrax.is_okay` on both the
+solver's and the stepsize controller's result codes, and additionally treats
+a non-finite or non-advancing proposed next time as failure (this is what
+actually fires for the nonfinite-derivative case locally, since the default
+`PIDController` has no `dtmin` set and so never reports its own terminal
+`dt_min_reached`). `_TUBE_SEARCH_MAX_STEP_ATTEMPTS = 200_000` is a further,
+coarser ceiling on total step attempts (accepted and rejected combined) as
+defense in depth against a step that keeps being reported successful but
+never converges. On failure the function returns `inf`, the same "unusable
+trial point" signal already used for "no crossing found" -- so a failed
+trial degrades the enclosing golden-section search/classification rather
+than being reported as a physical boundary.
+
+`test_orbit_library.py`: 15 passed, 38.44s (was 37.22s; +1.2s, within normal
+run-to-run noise -- the added `is_okay`/finite checks are cheap scalar
+comparisons already available from existing return values, not new
+computation).
+
+### 2. [P2] Correct or explicitly justify the outer-search taper formula
+
+### 3. [P2] Preserve the outer-boundary angle before searching downward
+
+### 4. [P2] Reject nonpositive radial limits
+
+### 5. [P2] Reject or implement the boundary sampler's one-angle case
+
+### 6. [P2] Validate equipotential brackets and solved roots
+
+### Coverage and scope notes
+
+Not yet addressed.

@@ -98,6 +98,14 @@ _CROSSING_MAX_STEPS = 40
 # `_minimize_tube_width`'s own fixed golden-section iteration count.
 _TUBE_SEARCH_N_ITER = 30
 _GOLDEN_RATIO = (5.0**0.5 - 1.0) / 2.0
+# A generous ceiling on `_orbit_width_over_crossings`'s own step count --
+# accepted and rejected steps alike -- so a step the solver or stepsize
+# controller cannot resolve (a terminal `diffrax`/`optimistix` result, or a
+# proposed next time that is non-finite or fails to advance past the current
+# one) cannot spin the driving `while_loop` forever. Comfortably above the
+# few thousand steps a converging search needs to reach either
+# `_TUBE_SEARCH_N_CROSSINGS` crossings or `_TUBE_SEARCH_TIME_PERIODS`.
+_TUBE_SEARCH_MAX_STEP_ATTEMPTS = 200_000
 
 # Orbit family codes, matching `find_type`'s classification
 # (`orbitstart_f.f90:826-927`), zero-indexed: which angular-momentum
@@ -201,6 +209,17 @@ def _orbit_width_over_crossings(
     exactly on the tracked plane by construction (`_xz_orbit_ic` launches
     from it), so the tracked coordinate is exactly `0.0` at `t = 0` -- a
     trivial "crossing" from the launch itself, not a genuine return.
+
+    A step whose solver or stepsize-controller result is not `successful`,
+    whose proposed next time is non-finite, or that fails to advance past
+    the current time stops the loop immediately and returns `inf` -- the
+    same "unusable trial point" signal as finding no crossing at all, rather
+    than reporting partial crossings found before the failure as though they
+    were a reliable width. `_TUBE_SEARCH_MAX_STEP_ATTEMPTS` is a further,
+    coarser bound on top of this: a step that keeps getting accepted and
+    reported successful but never actually reaches `_TUBE_SEARCH_N_CROSSINGS`
+    or `t_ceiling` in a reasonable number of attempts is itself surfaced as a
+    failure rather than iterated on indefinitely.
     """
     plane_idx = 1 if plane == "y" else 0
     other_idx = 0 if plane == "y" else 1
@@ -220,7 +239,14 @@ def _orbit_width_over_crossings(
     def cond(state: tuple) -> jnp.ndarray:
         t = state[0]
         n_crossings = state[6]
-        return (n_crossings < _TUBE_SEARCH_N_CROSSINGS) & (t < t_ceiling)
+        attempts = state[10]
+        failed = state[11]
+        return (
+            (n_crossings < _TUBE_SEARCH_N_CROSSINGS)
+            & (t < t_ceiling)
+            & (attempts < _TUBE_SEARCH_MAX_STEP_ATTEMPTS)
+            & (~failed)
+        )
 
     def body(state: tuple) -> tuple:
         (
@@ -234,9 +260,11 @@ def _orbit_width_over_crossings(
             radius_min,
             radius_max,
             first,
+            attempts,
+            failed,
         ) = state
 
-        y1, y_error, dense_info, new_solver_state, _solver_result = solver.step(
+        y1, y_error, dense_info, new_solver_state, solver_result = solver.step(
             term, t, tnext, y, None, solver_state, made_jump
         )
         y_error = jax.tree_util.tree_map(
@@ -248,11 +276,17 @@ def _orbit_width_over_crossings(
             tnext_new,
             made_jump_new,
             controller_state_new,
-            _ctrl_result,
+            ctrl_result,
         ) = controller.adapt_step_size(
             t, tnext, y, y1, None, y_error, error_order, controller_state
         )
         tprev = jnp.minimum(tprev, t_ceiling)
+        step_failed = (
+            ~diffrax.is_okay(solver_result)
+            | ~diffrax.is_okay(ctrl_result)
+            | ~jnp.isfinite(tnext_new)
+            | (tnext_new <= tprev)
+        )
 
         keep = lambda accepted, rejected: jnp.where(keep_step, accepted, rejected)
         y_kept = jax.tree_util.tree_map(keep, y1, y)
@@ -298,6 +332,8 @@ def _orbit_width_over_crossings(
             new_min,
             new_max,
             new_first,
+            attempts + 1,
+            failed | step_failed,
         )
 
     init = (
@@ -311,11 +347,18 @@ def _orbit_width_over_crossings(
         jnp.asarray(jnp.inf),
         jnp.asarray(-jnp.inf),
         jnp.asarray(True),
+        jnp.asarray(0),
+        jnp.asarray(False),
     )
     final_state = jax.lax.while_loop(cond, body, init)
-    n_final, radius_min, radius_max = final_state[6], final_state[7], final_state[8]
+    n_final, radius_min, radius_max, failed_final = (
+        final_state[6],
+        final_state[7],
+        final_state[8],
+        final_state[11],
+    )
     width = radius_max - radius_min
-    return jnp.where(n_final > 0, width, jnp.inf)
+    return jnp.where((n_final > 0) & (~failed_final), width, jnp.inf)
 
 
 def _classify_orbit_type(
