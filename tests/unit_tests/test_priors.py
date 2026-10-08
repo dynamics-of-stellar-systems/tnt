@@ -310,3 +310,102 @@ def test_plugin_factor_on_enclosed_mass_concentrates_the_prior() -> None:
         _ENCLOSED_TARGET, abs=2 * _ENCLOSED_WIDTH
     )
     assert float(jnp.std(enclosed)) < 0.3 * float(jnp.std(prior_only_enclosed))
+
+
+# ---------------------------------------------------------------------------
+# The same build_potential() validity factor, now actually exercised: an
+# independent U(0, 1) prior on each of (p, q, u) routinely violates TNT's
+# 0 < q <= p <= 1, p < u <= 1 convention, unlike every other potential in
+# this file, which keeps its shape fixed at an already-valid point.
+# ---------------------------------------------------------------------------
+
+_POTENTIAL_PQU = {
+    "dh": {
+        "type": "NFWPotential",
+        "parameters": {
+            "m": {
+                "unit": "Msun",
+                "fixed": False,
+                "value": 1.0e12,
+                "prior": {"distribution": "LogUniform", "args": [1.0e10, 1.0e13]},
+            },
+            "r_s": {"unit": "kpc", "fixed": True, "value": 15.0},
+        },
+    },
+    "stars": {
+        "type": "TriaxialLightMGEPotential",
+        "parameterization": "pqu",
+        "mge": "stars_mge",
+        "parameters": {
+            "ml": {"unit": "Msun / Lsun", "fixed": True, "value": 5.0},
+            **{
+                name: {
+                    "fixed": False,
+                    "value": value,
+                    "prior": {"distribution": "Uniform", "args": [0.0, 1.0]},
+                }
+                for name, value in (("p", 0.85), ("q", 0.6), ("u", 0.93))
+            },
+        },
+    },
+}
+
+
+def _pqu_validity_and_enclosed_mass(resolved, p, q, u, m_halo):
+    parameters = {
+        "dh": {"m": Quantity(m_halo, "Msun"), "r_s": Quantity(15.0, "kpc")},
+        "stars": {
+            "ml": Quantity(5.0, "Msun / Lsun"),
+            "p": Quantity(p, ""),
+            "q": Quantity(q, ""),
+            "u": Quantity(u, ""),
+        },
+    }
+    built, valid = Potential.build_with_validity(resolved, parameters, {})
+    enclosed = gp.spherical_mass_enclosed(
+        built.to_galax(_UNITS), _R_10_KPC, _T0
+    ).ustrip("Msun")
+    return valid, enclosed
+
+
+def test_plugin_factor_on_enclosed_mass_rejects_invalid_pqu_shape_draws() -> None:
+    mges = {"stars_mge": _TRIAXIAL_MGE}
+    resolved = Potential.resolve(_POTENTIAL_PQU, mges)
+
+    prior_only = Prior(_POTENTIAL_PQU, {}, mges)
+    draws = prior_only.sample(jax.random.PRNGKey(1), num_samples=4000)
+    valid_prior, _ = jax.vmap(
+        lambda p, q, u, m: _pqu_validity_and_enclosed_mass(resolved, p, q, u, m)
+    )(draws["stars.p"], draws["stars.q"], draws["stars.u"], draws["dh.m"])
+    # Independent U(0, 1) draws land in the valid region only a small
+    # fraction of the time -- most of the unit cube violates the shape
+    # convention.
+    assert float(jnp.mean(valid_prior)) < 0.2
+
+    prior = Prior(
+        _POTENTIAL_PQU,
+        {"m_within_10kpc": _m_within_10kpc_plugin},
+        mges,
+        resolved_potential=resolved,
+        cosmological_parameters={"H": Quantity(70.0, "km / (s Mpc)")},
+        unit_system=_UNITS,
+    )
+    assert prior.has_factors() is True
+
+    samples = prior.sample(jax.random.PRNGKey(0), num_samples=1000, num_warmup=1000)
+    assert set(samples) == {"dh.m", "stars.p", "stars.q", "stars.u"}
+
+    valid, enclosed = jax.vmap(
+        lambda p, q, u, m: _pqu_validity_and_enclosed_mass(resolved, p, q, u, m)
+    )(samples["stars.p"], samples["stars.q"], samples["stars.u"], samples["dh.m"])
+
+    # The -inf validity factor keeps NUTS inside the valid region almost
+    # every draw, despite that region being a small, oddly-shaped slice of
+    # the (p, q, u) prior's own unit cube -- not just the trivial
+    # always-valid case every other potential in this file uses.
+    assert float(jnp.mean(valid)) > 0.95
+    # The plugin's own Normal factor still pulls M(< 10 kpc) to its target
+    # on top of that, exactly as it does when the shape is fixed.
+    assert float(jnp.mean(enclosed)) == pytest.approx(
+        _ENCLOSED_TARGET, abs=2 * _ENCLOSED_WIDTH
+    )
