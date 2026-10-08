@@ -231,7 +231,26 @@ run-to-run noise -- the added `is_okay`/finite checks are cheap scalar
 comparisons already available from existing return values, not new
 computation).
 
-### 2. [P2] Correct or explicitly justify the outer-search taper formula
+### 2. [P2] Correct or explicitly justify the outer-search taper formula -- fixed
+
+Confirmed directly against the reference source
+(`legacy_fortran/orbitstart_f.f90:482`, available locally): `r = ((1 -
+rel_rbi)/Ni3*3)`. Fortran's `/`/`*` share precedence and associate
+left-to-right, so this is `3*(1-rel_rbi)/Ni3`, not `(1-rel_rbi)/(3*Ni3)` --
+the translation had the `3` on the wrong side of the division. Fixed to
+`taper_fraction = 3.0 * (1.0 - rel_rbi) / nI2`.
+
+Reproduced the audit's own bracket-exclusion probe (`rel_rbi=.2`, radial
+count 3, unit outer radius, inner floor `.2`): the old formula gave a
+lower bound of `.91111`, excluding the stated minimum at `.5`; the fixed
+formula gives `.2` (the floor itself binds), restoring the full bracket.
+Re-ran the golden-section minimizer from this module unmodified against
+the audit's own `(r - .5)**2` width objective over the corrected bracket:
+converges to `.50000005`, not `.91111`.
+
+`test_orbit_library.py`: 15 passed, 35.03s (no meaningful change from
+finding 1's 38.44s or the original 37.22s baseline -- same search cost,
+just a correct bracket).
 
 ### 3. [P2] Preserve the outer-boundary angle before searching downward -- fixed
 

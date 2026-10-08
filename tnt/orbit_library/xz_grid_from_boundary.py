@@ -736,7 +736,10 @@ def _outer_tube_boundary(
     )
 
     boundin_max = jnp.max(boundin_grid)
-    taper_fraction = (1.0 - rel_rbi) / (3.0 * nI2)
+    # `orbitstart_f.f90:482`: `r = ((1 - rel_rbi)/Ni3*3)` -- Fortran's
+    # left-to-right `/`/`*` precedence makes this `3*(1-rel_rbi)/Ni3`, not
+    # `(1-rel_rbi)/(3*Ni3)`.
+    taper_fraction = 3.0 * (1.0 - rel_rbi) / nI2
 
     theta_desc2 = theta_grid[:-1][::-1]
     r_outer_desc2 = r_outer_grid[:-1][::-1]
