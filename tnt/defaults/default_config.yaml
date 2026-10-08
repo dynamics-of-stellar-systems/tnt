@@ -119,8 +119,8 @@ orbit_library_settings:
   orbit_sampler:
     type: "StationaryGrid"
     nE: 6
-    nI1: 5
-    nI2: 4
+    nI2: 5
+    nI3: 4
   dithering:
     type: "Cubic"
     n_dither: 1

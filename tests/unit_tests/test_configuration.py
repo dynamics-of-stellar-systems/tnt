@@ -683,7 +683,7 @@ def test_read_defers_even_histogram_bin_count_to_runtime(tmp_path: Path) -> None
     assert config.data["kinematic_data"]["observed"]["histogram"]["bins"] == 100
 
 
-def test_read_rejects_orbit_sampler_with_non_positive_ni2(
+def test_read_rejects_orbit_sampler_with_non_positive_ni3(
     tmp_path: Path,
 ) -> None:
     user_path = tmp_path / "user.yaml"
@@ -691,11 +691,47 @@ def test_read_rejects_orbit_sampler_with_non_positive_ni2(
     _write_user_config(
         user_path,
         output_directory,
-        orbit_body="    nI2: 0\n",
+        orbit_body="    nI3: 0\n",
     )
 
-    with pytest.raises(ValueError, match=r"orbit_library_settings\.orbit_sampler\.nI2"):
+    with pytest.raises(ValueError, match=r"orbit_library_settings\.orbit_sampler\.nI3"):
         Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_boundary_orbit_sampler_with_too_few_theta_rows(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        orbit_body='    type: "XZGridFromBoundary"\n    nI2: 3\n',
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"orbit_library_settings\.orbit_sampler\.nI2 must be at least 4",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_accepts_boundary_orbit_sampler_with_the_minimum_theta_rows(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        orbit_body='    type: "XZGridFromBoundary"\n    nI2: 4\n',
+    )
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    orbit_sampler = config.data["orbit_library_settings"]["orbit_sampler"]
+    assert orbit_sampler["type"] == "XZGridFromBoundary"
+    assert orbit_sampler["nI2"] == 4
 
 
 @pytest.mark.parametrize("bad_rmin", [0.0, -1.0])

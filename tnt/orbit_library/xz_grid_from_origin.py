@@ -43,13 +43,13 @@ def _single_shell_ics(
     r_floor: jnp.ndarray,
     r_ceiling: jnp.ndarray,
     t0: Quantity,
-    nI2: int,
+    nI3: int,
 ) -> jnp.ndarray:
-    """One energy shell's `(x, z)`-plane grid: `len(theta_grid) * nI2` orbits.
+    """One energy shell's `(x, z)`-plane grid: `len(theta_grid) * nI3` orbits.
 
-    At each `theta` in `theta_grid`, `nI2` orbits span `[r_floor,
+    At each `theta` in `theta_grid`, `nI3` orbits span `[r_floor,
     r_outer(theta)]` via the "nearly closed" fractional spacing `(k - 0.9) /
-    (nI2 - 0.8)` -- landing exactly on `r_floor` has no special meaning, but
+    (nI3 - 0.8)` -- landing exactly on `r_floor` has no special meaning, but
     landing exactly on the equipotential is degenerate (`v_y = 0` there), so
     neither endpoint is ever sampled exactly.
     """
@@ -59,11 +59,11 @@ def _single_shell_ics(
         )
     )(theta_grid)
 
-    frac = (jnp.arange(1, nI2 + 1) - 0.9) / (nI2 - 0.8)
+    frac = (jnp.arange(1, nI3 + 1) - 0.9) / (nI3 - 0.8)
     r_grid = r_floor + frac[None, :] * (r_outer[:, None] - r_floor)
 
     n_theta = theta_grid.shape[0]
-    shape = (n_theta, nI2)
+    shape = (n_theta, nI3)
     theta_full = jnp.broadcast_to(theta_grid[:, None], shape).reshape(-1)
     r_full = r_grid.reshape(-1)
 
@@ -73,12 +73,12 @@ def _single_shell_ics(
 
 
 class XZGridFromOriginOrbitSampler(AbstractOrbitSampler):
-    """A regular `(x, z)`-plane start space only: `nE * nI1 * nI2` orbits.
+    """A regular `(x, z)`-plane start space only: `nE * nI2 * nI3` orbits.
 
     `nE` energy shells between `rmin`/`rmax` (converted to the resolved
     potential's own length unit), each paired with an open, bin-centred
-    `nI1`-point grid of `theta in (0, pi/2)`. At each `(energy, theta)`,
-    `nI2` orbits are launched from `r * (sin(theta), 0, cos(theta))` with
+    `nI2`-point grid of `theta in (0, pi/2)`. At each `(energy, theta)`,
+    `nI3` orbits are launched from `r * (sin(theta), 0, cos(theta))` with
     velocity purely along `y`, from energy conservation
     (`common._xz_orbit_ic`), at radii spanning `[r_floor, r_outer(theta)]`
     -- `r_floor` a fixed near-origin floor (not zero: a cuspy or
@@ -97,11 +97,11 @@ class XZGridFromOriginOrbitSampler(AbstractOrbitSampler):
     rmin: Quantity
     rmax: Quantity
     nE: int
-    nI1: int
     nI2: int
+    nI3: int
 
     def n_bundles(self) -> int:
-        return self.nE * self.nI1 * self.nI2
+        return self.nE * self.nI2 * self.nI3
 
     def generate_ics(self, potential: gp.AbstractPotential) -> jnp.ndarray:
         t0 = Quantity(0.0, potential.units["time"])
@@ -119,11 +119,11 @@ class XZGridFromOriginOrbitSampler(AbstractOrbitSampler):
             x_axis_points
         )
 
-        theta_grid = (jnp.arange(self.nI1) + 0.5) * (jnp.pi / 2) / self.nI1
+        theta_grid = (jnp.arange(self.nI2) + 0.5) * (jnp.pi / 2) / self.nI2
 
         ics = jax.vmap(
             lambda e: _single_shell_ics(
-                potential, e, theta_grid, r_floor, r_ceiling, t0, self.nI2
+                potential, e, theta_grid, r_floor, r_ceiling, t0, self.nI3
             )
         )(energies)
         return ics.reshape(-1, 6)

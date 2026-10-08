@@ -2,9 +2,11 @@
 
 Box orbits only, launched from rest exactly on the equipotential surface
 (Schwarzschild 1979) -- no tube-orbit start space at all, unlike a combined
-sampler that would also need a third, radius-related grid dimension. Hence
-`nE`/`nI1`/`nI2` rather than `nE`/`nI2`/`nI3`: there's no "I3" dimension here
-to reserve the name for.
+sampler that would also need a radial grid dimension in addition to its two
+angles. `nE`/`nI2`/`nI3` match DYNAMITE's own field names and roles
+(`orbitstart_f.f90`'s `nEner`/`nI2`/`nI3`) across all three samplers --
+`nI2` always the (first, and here only) angular grid count, `nI3` always
+the second non-energy dimension, `phi` here rather than a radial count.
 """
 
 from __future__ import annotations
@@ -26,11 +28,11 @@ from tnt.orbit_library.common import (
 
 
 class StationaryGridOrbitSampler(AbstractOrbitSampler):
-    """A stationary start space only: `nE * nI1 * nI2` box orbits.
+    """A stationary start space only: `nE * nI2 * nI3` box orbits.
 
     `nE` energy shells between `rmin`/`rmax` (converted to the resolved
     potential's own length unit), each paired with an open, bin-centred
-    `nI1 * nI2` grid of `theta, phi in (0, pi/2)` -- never exactly `0` or
+    `nI2 * nI3` grid of `theta, phi in (0, pi/2)` -- never exactly `0` or
     `pi/2`, which would respectively collapse every `phi` to one duplicate
     point on the z-axis, or launch a box orbit exactly in the equatorial
     plane (able to pass through the centre of a cuspy potential). Every
@@ -45,11 +47,11 @@ class StationaryGridOrbitSampler(AbstractOrbitSampler):
     rmin: Quantity
     rmax: Quantity
     nE: int
-    nI1: int
     nI2: int
+    nI3: int
 
     def n_bundles(self) -> int:
-        return self.nE * self.nI1 * self.nI2
+        return self.nE * self.nI2 * self.nI3
 
     def generate_ics(self, potential: gp.AbstractPotential) -> jnp.ndarray:
         t0 = Quantity(0.0, potential.units["time"])
@@ -67,8 +69,8 @@ class StationaryGridOrbitSampler(AbstractOrbitSampler):
             x_axis_points
         )
 
-        theta_grid = (jnp.arange(self.nI1) + 0.5) * (jnp.pi / 2) / self.nI1
-        phi_grid = (jnp.arange(self.nI2) + 0.5) * (jnp.pi / 2) / self.nI2
+        theta_grid = (jnp.arange(self.nI2) + 0.5) * (jnp.pi / 2) / self.nI2
+        phi_grid = (jnp.arange(self.nI3) + 0.5) * (jnp.pi / 2) / self.nI3
 
         e_grid, theta_full, phi_full = (
             a.reshape(-1)

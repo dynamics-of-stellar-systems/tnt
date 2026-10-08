@@ -678,11 +678,11 @@ def _validate_orbit_sampler(settings: ConfigDict, path: str) -> None:
     Every registered sampler (`tnt.orbit_library`'s `StationaryGridOrbitSampler`/
     `XZGridFromOriginOrbitSampler`/`XZGridFromBoundaryOrbitSampler`) shares the
     same schema: `rmin`/`rmax` (an explicit length `Quantity` pair bounding
-    the logarithmic energy grid), `nE` (energy shells), and `nI1`/`nI2`
+    the logarithmic energy grid), `nE` (energy shells), and `nI2`/`nI3`
     (each sampler's own two non-energy grid dimensions -- see the owning
     class's docstring for what they mean for that sampler specifically).
     """
-    keys = {"type", "rmin", "rmax", "nE", "nI1", "nI2"}
+    keys = {"type", "rmin", "rmax", "nE", "nI2", "nI3"}
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
     _choice(settings["type"], _ORBIT_SAMPLER_TYPES, f"{path}.type")
@@ -694,10 +694,19 @@ def _validate_orbit_sampler(settings: ConfigDict, path: str) -> None:
         raise ValueError(f"{path}.rmin must be positive.")
     if rmin_value >= rmax_value:
         raise ValueError(f"{path}.rmin must be less than rmax.")
-    for key in ("nE", "nI1", "nI2"):
+    for key in ("nE", "nI2", "nI3"):
         value = _integer(settings[key], f"{path}.{key}")
         if value <= 0:
             raise ValueError(f"{path}.{key} must be a positive integer.")
+    # `orbitstart_f.f90`'s own `if (nI2 <= 3) stop "nI2 is smaller then 4"`:
+    # `XZGridFromBoundary`'s continuation search needs at least a second and
+    # third theta step beyond the x-axis seed to run at all (`_inner_tube_
+    # boundary`'s own stages), not a restriction either of the other two
+    # samplers shares.
+    if settings["type"] == "XZGridFromBoundary" and _integer(
+        settings["nI2"], f"{path}.nI2"
+    ) <= 3:
+        raise ValueError(f"{path}.nI2 must be at least 4 for XZGridFromBoundary.")
 
 
 _DITHERING_TYPES = {"Cubic"}

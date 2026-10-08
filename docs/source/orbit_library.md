@@ -14,14 +14,18 @@ is implemented; orbit *integration* and weighting
 
 Every sampler shares the same fields: `rmin`/`rmax` (an explicit length
 `Quantity` pair bounding a logarithmic grid of `nE` energy shells, each
-shell's energy read off the potential along the `+x` axis), and `nI1`/`nI2`,
+shell's energy read off the potential along the `+x` axis), and `nI2`/`nI3`,
 two further grid dimensions whose meaning depends on the sampler (below).
-`n_bundles()` is `nE * nI1 * nI2` for all three.
+`n_bundles()` is `nE * nI2 * nI3` for all three. Field names and roles
+match DYNAMITE's own (`orbitstart_f.f90`'s `nEner`/`nI2`/`nI3`) exactly:
+`nI2` is always the (first) angular grid count, `nI3` always the second
+non-energy dimension -- a second angle for `StationaryGrid`, a radial
+count for the two `(x, z)`-plane samplers.
 
 ### `StationaryGrid` -- box orbits
 
 Box orbits only, launched from rest exactly on the equipotential surface
-(Schwarzschild 1979). `nI1`/`nI2` are an open, bin-centred grid of
+(Schwarzschild 1979). `nI2`/`nI3` are an open, bin-centred grid of
 `theta, phi in (0, pi/2)` -- never exactly `0` or `pi/2`, which would
 respectively collapse every `phi` to one duplicate point on the `z`-axis, or
 launch an orbit exactly in the equatorial plane (able to pass through the
@@ -31,12 +35,12 @@ centre of a cuspy potential).
 
 Orbits confined to the `(x, z)` plane, launched with velocity purely along
 `y` from energy conservation (van den Bosch et al. 2008, MNRAS 385, 647,
-sec. 4.3). `nI1` is an open, bin-centred grid of `theta in (0, pi/2)`; at
-each `theta`, `nI2` orbits span `[r_floor, r_outer(theta)]` -- `r_floor` a
+sec. 4.3). `nI2` is an open, bin-centred grid of `theta in (0, pi/2)`; at
+each `theta`, `nI3` orbits span `[r_floor, r_outer(theta)]` -- `r_floor` a
 fixed near-origin floor (a cuspy or BH-dominated potential has
 `v_y -> infinity` as `r -> 0`), `r_outer` the equipotential radius in that
 direction -- via the "nearly closed" fractional spacing `(k - 0.9) /
-(nI2 - 0.8)`, since landing exactly on the equipotential is itself
+(nI3 - 0.8)`, since landing exactly on the equipotential is itself
 degenerate (`v_y = 0` there). No search for where tube-orbit support
 actually begins or ends: every shell samples the same fixed range, faster
 than `XZGridFromBoundary` but without its orbit-family completeness
@@ -45,7 +49,7 @@ guarantee.
 ### `XZGridFromBoundary` -- tube orbits, DYNAMITE-matching boundary search
 
 The same `(x, z)`-plane population as `XZGridFromOrigin`, but for a
-*regular* energy shell, `nI2`'s radii are bracketed between two located
+*regular* energy shell, `nI3`'s radii are bracketed between two located
 edges (`boundin`, `boundmid` -- the box/short-axis-tube and
 short-axis-tube/long-axis-tube boundaries) rather than spanning the full
 range -- van den Bosch et al. (2008) sec. 4.3's scheme, ported directly

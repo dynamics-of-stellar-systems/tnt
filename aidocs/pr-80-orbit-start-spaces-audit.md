@@ -309,7 +309,52 @@ the same zero/negative cases through `Configuration().read()`.
 run (`test_orbit_library.py` + `test_configuration.py`, including the new
 tests in both): 99 passed, 47.03s.
 
-### 5. [P2] Reject or implement the boundary sampler's one-angle case
+### 5. [P2] Reject or implement the boundary sampler's one-angle case -- fixed (reject)
+
+Confirmed the crash: with `nI1=1` (the theta grid count, before the rename
+below), `_outer_tube_boundary`'s `idx_desc = jnp.arange(n_theta - 2, -1, -1)`
+is empty, so `jnp.argmax(is_x_theta)` on an empty array raises the reported
+`ValueError`.
+
+Chose "reject", not "implement a single-angle path", directly from
+DYNAMITE's own source rather than a judgement call: `find_outerboundary`'s
+and `find_innerboundary`'s own first executable line is
+`if (nI2 <= 3) stop "nI2 is smaller then 4"` -- DYNAMITE refuses to run the
+boundary search below 4 theta angles at all; there is no reference
+single-angle behaviour to port.
+
+Checking the reference source for this also surfaced a naming
+discrepancy it's worth recording: **TNT's `nI1`/`nI2` fields had swapped
+roles relative to DYNAMITE's own `nI2`/`nI3`.** DYNAMITE's comment block
+(`initial_parameters.f90:62`, `! nEner = # energies, nI2 = # I2, nI3 = # I3`)
+and its box-orbit grid (`orbitstart_f.f90:287-291`, `Theta ... /nI2`,
+`Phi ... /nI3`) fix `nI2` as the (first) angular grid count and `nI3` as the
+second non-energy dimension, consistently across both the box- and
+tube-orbit code -- the same positional roles TNT already gave its own
+`nI1`/`nI2`, just one letter off. Finding 2's own fix already had to
+spell out that DYNAMITE's `Ni3` (not `nI2`) was the radial count being
+matched; this was the same cross-naming surfacing again. Renamed
+`nI1`->`nI2`, `nI2`->`nI3` throughout `tnt/orbit_library/`,
+`tnt/configuration/validation.py`, both default/test configs, the docs
+page, `KNOWLEDGE.md`, and both test files, so TNT's field names now match
+DYNAMITE's letter-for-letter, not just positionally. Triple-checked
+against the actual Fortran source (not just the earlier citations) before
+renaming anything.
+
+With the rename in place, added the DYNAMITE-matching floor scoped to
+`XZGridFromBoundary` only (`StationaryGrid`/`XZGridFromOrigin` keep
+allowing `nI2=1`, per the audit's own note not to share a restriction
+without justification): `_validate_orbit_sampler` rejects `nI2 <= 3` when
+`type == "XZGridFromBoundary"`, and `XZGridFromBoundaryOrbitSampler` gets
+its own `__check_init__` enforcing the same floor at direct construction
+(equinox calls every ancestor's own `__check_init__` independently, so
+this adds to, rather than replaces, the shared `rmin`/`rmax` check from
+finding 4).
+
+`test_orbit_library.py`: 29 passed (23 + 6 new), 40.01s.
+`test_configuration.py` + `test_orbit_library.py` combined: 107 passed,
+51.92s. `sphinx-build -W` still succeeds after the `orbit_library.md`
+rename.
 
 ### 6. [P2] Validate equipotential brackets and solved roots
 

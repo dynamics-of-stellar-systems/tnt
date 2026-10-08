@@ -68,7 +68,7 @@
 
 - Three implemented samplers, each producing one start-space population,
   composable rather than bundled into one combined sampler:
-  `StationaryGridOrbitSampler` (box orbits only, `nE * nI1 * nI2` bundles,
+  `StationaryGridOrbitSampler` (box orbits only, `nE * nI2 * nI3` bundles,
   each launched from rest on the equipotential at an open, bin-centred
   `(theta, phi)` grid in `(0, pi/2)^2`); `XZGridFromOriginOrbitSampler`
   (`(x, z)`-plane/tube orbits only, radii sampled directly over
@@ -76,7 +76,7 @@
   `XZGridFromBoundaryOrbitSampler` (the same `(x, z)` population, but with
   radii bracketed by a `boundin`/`boundmid` continuation search -- van den
   Bosch et al. 2008, MNRAS 385, 647, sec. 4.3, ported from DYNAMITE's own
-  `orbitstart_f.f90`). All three share `rmin`/`rmax`/`nE`/`nI1`/`nI2`
+  `orbitstart_f.f90`). All three share `rmin`/`rmax`/`nE`/`nI2`/`nI3`
   fields and produce only the `+v_y` population; the counter-rotating
   mirror and per-bundle dithering are separate, not-yet-implemented
   concerns.

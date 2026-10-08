@@ -36,13 +36,13 @@ def _flattened_potential() -> gp.AbstractPotential:
     )
 
 
-def _sampler(nE: int = 3, nI1: int = 4, nI2: int = 4) -> StationaryGridOrbitSampler:
+def _sampler(nE: int = 3, nI2: int = 4, nI3: int = 4) -> StationaryGridOrbitSampler:
     return StationaryGridOrbitSampler(
         rmin=Quantity(0.5, "kpc"),
         rmax=Quantity(30.0, "kpc"),
         nE=nE,
-        nI1=nI1,
         nI2=nI2,
+        nI3=nI3,
     )
 
 
@@ -56,8 +56,8 @@ def test_sampler_construction_rejects_non_positive_rmin(sampler_type, bad_rmin: 
             rmin=Quantity(bad_rmin, "kpc"),
             rmax=Quantity(30.0, "kpc"),
             nE=3,
-            nI1=4,
             nI2=4,
+            nI3=4,
         )
 
 
@@ -68,9 +68,44 @@ def test_boundary_sampler_construction_rejects_non_positive_rmin(bad_rmin: float
             rmin=Quantity(bad_rmin, "kpc"),
             rmax=Quantity(30.0, "kpc"),
             nE=3,
-            nI1=4,
             nI2=4,
+            nI3=4,
         )
+
+
+@pytest.mark.parametrize("nI2", [1, 2, 3])
+def test_boundary_sampler_construction_rejects_too_few_theta_rows(nI2: int):
+    with pytest.raises(ValueError, match="nI2"):
+        XZGridFromBoundaryOrbitSampler(
+            rmin=Quantity(0.5, "kpc"),
+            rmax=Quantity(30.0, "kpc"),
+            nE=3,
+            nI2=nI2,
+            nI3=4,
+        )
+
+
+def test_boundary_sampler_construction_accepts_the_minimum_theta_row_count():
+    sampler = XZGridFromBoundaryOrbitSampler(
+        rmin=Quantity(0.5, "kpc"),
+        rmax=Quantity(30.0, "kpc"),
+        nE=3,
+        nI2=4,
+        nI3=4,
+    )
+    assert sampler.nI2 == 4
+
+
+@pytest.mark.parametrize(
+    "sampler_type", [StationaryGridOrbitSampler, XZGridFromOriginOrbitSampler]
+)
+def test_other_samplers_are_not_subject_to_the_boundary_samplers_minimum_theta_rows(
+    sampler_type,
+):
+    sampler = sampler_type(
+        rmin=Quantity(0.5, "kpc"), rmax=Quantity(30.0, "kpc"), nE=3, nI2=1, nI3=4
+    )
+    assert sampler.nI2 == 1
 
 
 def test_sampler_construction_rejects_rmin_at_or_above_rmax():
@@ -79,8 +114,8 @@ def test_sampler_construction_rejects_rmin_at_or_above_rmax():
             rmin=Quantity(30.0, "kpc"),
             rmax=Quantity(30.0, "kpc"),
             nE=3,
-            nI1=4,
             nI2=4,
+            nI3=4,
         )
 
 
@@ -93,13 +128,13 @@ def test_sampler_construction_rejects_mismatched_unit_rmin_above_rmax():
             rmin=Quantity(30_001.0, "pc"),
             rmax=Quantity(30.0, "kpc"),
             nE=3,
-            nI1=4,
             nI2=4,
+            nI3=4,
         )
 
 
 def test_n_bundles_is_the_full_energy_angle_grid():
-    sampler = _sampler(nE=4, nI1=3, nI2=5)
+    sampler = _sampler(nE=4, nI2=3, nI3=5)
     assert sampler.n_bundles() == 4 * 3 * 5
 
 
@@ -112,10 +147,10 @@ def test_box_orbits_start_from_rest():
 
 def test_box_orbits_land_on_the_equipotential_sphere():
     """For a spherical potential, every bundle in a shell lands at the same radius."""
-    sampler = _sampler(nE=4, nI1=3, nI2=3)
+    sampler = _sampler(nE=4, nI2=3, nI3=3)
     ics = sampler.generate_ics(_nfw_potential())
     r = jnp.linalg.norm(ics[:, :3], axis=-1)
-    shells = r.reshape(sampler.nE, sampler.nI1 * sampler.nI2)
+    shells = r.reshape(sampler.nE, sampler.nI2 * sampler.nI3)
     for shell in shells:
         assert float(jnp.max(shell) - jnp.min(shell)) < 1e-8
 
@@ -124,25 +159,25 @@ def test_box_orbits_land_on_the_equipotential_surface_when_flattened():
     """For a flattened potential, the radius varies with direction, but every
     bundle in a shell sits on the same potential value.
     """
-    sampler = _sampler(nE=3, nI1=4, nI2=4)
+    sampler = _sampler(nE=3, nI2=4, nI3=4)
     potential = _flattened_potential()
     ics = sampler.generate_ics(potential)
     position = ics[:, :3]
     r = jnp.linalg.norm(position, axis=-1)
-    r_shells = r.reshape(sampler.nE, sampler.nI1 * sampler.nI2)
+    r_shells = r.reshape(sampler.nE, sampler.nI2 * sampler.nI3)
     for shell in r_shells:
         assert float(jnp.max(shell) - jnp.min(shell)) > 1e-3
 
     t0 = Quantity(0.0, "Myr")
     value = potential.potential(Quantity(position, "kpc"), t0).ustrip("kpc2/Myr2")
-    phi_shells = value.reshape(sampler.nE, sampler.nI1 * sampler.nI2)
+    phi_shells = value.reshape(sampler.nE, sampler.nI2 * sampler.nI3)
     for shell in phi_shells:
         assert float(jnp.max(shell) - jnp.min(shell)) < 1e-9
 
 
 def test_angular_grid_is_open_and_bin_centred():
     """theta/phi never land exactly on 0 or pi/2 -- both degenerate."""
-    sampler = _sampler(nE=1, nI1=4, nI2=4)
+    sampler = _sampler(nE=1, nI2=4, nI3=4)
     ics = sampler.generate_ics(_nfw_potential())
     position = ics[:, :3]
     r = jnp.linalg.norm(position, axis=-1)
@@ -154,7 +189,7 @@ def test_angular_grid_is_open_and_bin_centred():
 
 
 def test_rmin_rmax_bound_the_energy_grid_radii():
-    sampler = _sampler(nE=5, nI1=2, nI2=2)
+    sampler = _sampler(nE=5, nI2=2, nI3=2)
     ics = sampler.generate_ics(_nfw_potential())
     r = jnp.linalg.norm(ics[:, :3], axis=-1)
     assert float(r.min()) == pytest.approx(0.5, rel=1e-6)
@@ -162,19 +197,19 @@ def test_rmin_rmax_bound_the_energy_grid_radii():
 
 
 def _xz_sampler(
-    nE: int = 3, nI1: int = 4, nI2: int = 5
+    nE: int = 3, nI2: int = 4, nI3: int = 5
 ) -> XZGridFromOriginOrbitSampler:
     return XZGridFromOriginOrbitSampler(
         rmin=Quantity(0.5, "kpc"),
         rmax=Quantity(30.0, "kpc"),
         nE=nE,
-        nI1=nI1,
         nI2=nI2,
+        nI3=nI3,
     )
 
 
 def test_xz_n_bundles_is_the_full_energy_angle_radius_grid():
-    sampler = _xz_sampler(nE=4, nI1=3, nI2=5)
+    sampler = _xz_sampler(nE=4, nI2=3, nI3=5)
     assert sampler.n_bundles() == 4 * 3 * 5
 
 
@@ -190,27 +225,27 @@ def test_xz_orbits_are_confined_to_the_xz_plane_with_only_positive_vy():
 
 
 def test_xz_orbits_conserve_energy_per_shell():
-    sampler = _xz_sampler(nE=3, nI1=4, nI2=5)
+    sampler = _xz_sampler(nE=3, nI2=4, nI3=5)
     potential = _flattened_potential()
     ics = sampler.generate_ics(potential)
     position, velocity = ics[:, :3], ics[:, 3:]
     t0 = Quantity(0.0, "Myr")
     value = potential.potential(Quantity(position, "kpc"), t0).ustrip("kpc2/Myr2")
     total_energy = value + 0.5 * velocity[:, 1] ** 2
-    shells = total_energy.reshape(sampler.nE, sampler.nI1 * sampler.nI2)
+    shells = total_energy.reshape(sampler.nE, sampler.nI2 * sampler.nI3)
     for shell in shells:
         assert float(jnp.max(shell) - jnp.min(shell)) < 1e-9
 
 
 def test_xz_radii_are_strictly_increasing_and_never_reach_the_equipotential():
-    sampler = _xz_sampler(nE=2, nI1=2, nI2=6)
+    sampler = _xz_sampler(nE=2, nI2=2, nI3=6)
     potential = _flattened_potential()
     ics = sampler.generate_ics(potential)
     r = jnp.linalg.norm(ics[:, :3], axis=-1)
     v_y = ics[:, 4]
-    r_grid = r.reshape(sampler.nE, sampler.nI1, sampler.nI2)
+    r_grid = r.reshape(sampler.nE, sampler.nI2, sampler.nI3)
     for e_i in range(sampler.nE):
-        for th_i in range(sampler.nI1):
+        for th_i in range(sampler.nI2):
             radii = r_grid[e_i, th_i]
             assert bool(jnp.all(jnp.diff(radii) > 0))
             assert float(radii[0]) > 0.0
@@ -220,7 +255,7 @@ def test_xz_radii_are_strictly_increasing_and_never_reach_the_equipotential():
 
 
 def test_xz_theta_grid_is_open_and_bin_centred():
-    sampler = _xz_sampler(nE=1, nI1=5, nI2=1)
+    sampler = _xz_sampler(nE=1, nI2=5, nI3=1)
     ics = sampler.generate_ics(_flattened_potential())
     position = ics[:, :3]
     theta = jnp.arctan2(position[:, 0], position[:, 2])
@@ -240,20 +275,20 @@ def _triaxial_hernquist(q1: float = 0.8, q2: float = 0.6) -> gp.AbstractPotentia
 
 
 def _boundary_sampler(
-    nE: int = 2, nI1: int = 3, nI2: int = 3
+    nE: int = 2, nI2: int = 4, nI3: int = 3
 ) -> XZGridFromBoundaryOrbitSampler:
     return XZGridFromBoundaryOrbitSampler(
         rmin=Quantity(0.1, "kpc"),
         rmax=Quantity(10.0, "kpc"),
         nE=nE,
-        nI1=nI1,
         nI2=nI2,
+        nI3=nI3,
     )
 
 
 def test_xz_boundary_n_bundles_is_the_full_energy_angle_radius_grid():
-    sampler = _boundary_sampler(nE=2, nI1=3, nI2=4)
-    assert sampler.n_bundles() == 2 * 3 * 4
+    sampler = _boundary_sampler(nE=2, nI2=4, nI3=5)
+    assert sampler.n_bundles() == 2 * 4 * 5
 
 
 def test_xz_boundary_orbits_are_confined_to_the_xz_plane_with_only_positive_vy():
@@ -275,7 +310,7 @@ def test_xz_boundary_orbits_conserve_energy_per_shell():
     t0 = Quantity(0.0, "Myr")
     value = potential.potential(Quantity(position, "kpc"), t0).ustrip("kpc2/Myr2")
     total_energy = value + 0.5 * velocity[:, 1] ** 2
-    shells = total_energy.reshape(sampler.nE, sampler.nI1 * sampler.nI2)
+    shells = total_energy.reshape(sampler.nE, sampler.nI2 * sampler.nI3)
     for shell in shells:
         assert float(jnp.max(shell) - jnp.min(shell)) < 1e-6
 
@@ -285,18 +320,18 @@ def test_xz_boundary_delegates_to_xz_grid_from_origin_once_a_shell_is_irregular(
     # clean four-region picture tends to break down -- a real shell here is
     # expected to come back irregular, exercising the delegation path.
     potential = _triaxial_hernquist(q1=0.65, q2=0.60)
-    sampler = _boundary_sampler(nE=3, nI1=3, nI2=3)
+    sampler = _boundary_sampler(nE=3, nI2=4, nI3=3)
     origin_sampler = XZGridFromOriginOrbitSampler(
         rmin=sampler.rmin,
         rmax=sampler.rmax,
         nE=sampler.nE,
-        nI1=sampler.nI1,
         nI2=sampler.nI2,
+        nI3=sampler.nI3,
     )
     ics = sampler.generate_ics(potential)
     origin_ics = origin_sampler.generate_ics(potential)
 
-    n_per_shell = sampler.nI1 * sampler.nI2
+    n_per_shell = sampler.nI2 * sampler.nI3
     matches_origin = [
         bool(
             jnp.allclose(

@@ -619,7 +619,7 @@ def _outer_tube_boundary(
     r_floor: jnp.ndarray,
     t_ceiling: jnp.ndarray,
     classify_integration_time: jnp.ndarray,
-    nI2: int,
+    nI3: int,
     t0: Quantity,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """`boundmid` at one energy shell, for every `theta` in `theta_grid` --
@@ -653,7 +653,7 @@ def _outer_tube_boundary(
     additionally capped by the *previous* theta step's own found
     `boundmid`, the guess rescales the previous step's `boundmid` by the
     ratio of equipotential radii, and the inner bound is tapered toward
-    that guess by a fraction depending on `rel_rbi` and `nI2`.
+    that guess by a fraction depending on `rel_rbi` and `nI3`.
 
     Returns:
         `(boundmid_grid, notubes)`: `boundmid_grid` has the same shape as
@@ -666,11 +666,11 @@ def _outer_tube_boundary(
         r_outer_grid[-1],
     )
 
-    # `orbitstart_f.f90:419-431`: `3 * nI2` steps, walked sequentially and
+    # `orbitstart_f.f90:419-431`: `3 * nI3` steps, walked sequentially and
     # exited the instant an `x_tube`/`box` is found at `k >= 2` -- the
     # carry freezes (`broken`) from that point on. `rel_rbi` only updates
     # on `z_tube` points seen *before* any break.
-    n_scan = 3 * nI2
+    n_scan = 3 * nI3
     k = jnp.arange(1, n_scan + 1)
     r_scan = boundin_top + (r_outer_top - boundin_top) * k / (n_scan + 1)
 
@@ -717,7 +717,7 @@ def _outer_tube_boundary(
         found_onset, idx_desc[jnp.argmax(is_x_theta)], n_theta - 1
     )
 
-    # `orbitstart_f.f90:452`: `i = min(i_found + 1, nI2 - 1)` -- the row
+    # `orbitstart_f.f90:452`: `i = min(i_found + 1, nI3 - 1)` -- the row
     # *above* where the theta scan actually found a long-axis tube becomes
     # the unsearched equipotential seed; the found row itself (`i_found`,
     # `onset_idx_from_scan` here) is where the real search starts, one step
@@ -739,7 +739,7 @@ def _outer_tube_boundary(
     # `orbitstart_f.f90:482`: `r = ((1 - rel_rbi)/Ni3*3)` -- Fortran's
     # left-to-right `/`/`*` precedence makes this `3*(1-rel_rbi)/Ni3`, not
     # `(1-rel_rbi)/(3*Ni3)`.
-    taper_fraction = 3.0 * (1.0 - rel_rbi) / nI2
+    taper_fraction = 3.0 * (1.0 - rel_rbi) / nI3
 
     theta_desc2 = theta_grid[:-1][::-1]
     r_outer_desc2 = r_outer_grid[:-1][::-1]
@@ -790,7 +790,7 @@ def _outer_tube_boundary(
 class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
     """`(x, z)`-plane start space over `(E, theta)`, tube radii searched.
 
-    Same `rmin`/`rmax`/`nE`/`nI1`/`nI2` fields and the same `nE * nI1 * nI2`
+    Same `rmin`/`rmax`/`nE`/`nI2`/`nI3` fields and the same `nE * nI2 * nI3`
     bundle count as `xz_grid_from_origin.XZGridFromOriginOrbitSampler` --
     only *which* radii get sampled differs: this sampler locates `boundin`/
     `boundmid` (van den Bosch et al. 2008 sec. 4.3) and samples between them
@@ -807,11 +807,22 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
     rmin: Quantity
     rmax: Quantity
     nE: int
-    nI1: int
     nI2: int
+    nI3: int
+
+    def __check_init__(self) -> None:
+        """`orbitstart_f.f90`'s own `if (nI2 <= 3) stop "nI2 is smaller
+        then 4"` -- the continuation search's own stages (`_inner_tube_
+        boundary`'s x-axis step, second step, and the rest) need at least
+        four theta rows to run at all. Equinox also calls
+        `AbstractOrbitSampler.__check_init__` independently for the shared
+        `0 < rmin < rmax` check -- this does not repeat it.
+        """
+        if self.nI2 <= 3:
+            raise ValueError("nI2 must be at least 4 for XZGridFromBoundary.")
 
     def n_bundles(self) -> int:
-        return self.nE * self.nI1 * self.nI2
+        return self.nE * self.nI2 * self.nI3
 
     def generate_ics(self, potential: gp.AbstractPotential) -> jnp.ndarray:
         t0 = Quantity(0.0, potential.units["time"])
@@ -829,7 +840,7 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
             x_axis_points
         )
 
-        theta_grid = (jnp.arange(self.nI1) + 0.5) * (jnp.pi / 2) / self.nI1
+        theta_grid = (jnp.arange(self.nI2) + 0.5) * (jnp.pi / 2) / self.nI2
 
         # One energy shell's boundary search is independent of every
         # other's, but `jax.vmap`-ing this whole per-shell search is
@@ -838,7 +849,7 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
         # levels of `jax.lax.scan`). A plain Python loop over shells
         # instead, calling one `jax.jit`-compiled `per_shell` (compiled
         # once, reused for every subsequent shell -- they all share the
-        # same `theta_grid`/`nI2` shape), avoids that blowup.
+        # same `theta_grid`/`nI3` shape), avoids that blowup.
         @jax.jit
         def per_shell(
             energy: jnp.ndarray, r_x_axis: jnp.ndarray
@@ -882,13 +893,13 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
                 r_floor,
                 outer_t_ceiling,
                 outer_classify_time,
-                self.nI2,
+                self.nI3,
                 t0,
             )
 
             return boundin_grid, boundmid_grid, irregular_inner & ~notubes
 
-        frac = (jnp.arange(1, self.nI2 + 1) - 0.9) / (self.nI2 - 0.8)
+        frac = (jnp.arange(1, self.nI3 + 1) - 0.9) / (self.nI3 - 0.8)
 
         shell_rows: list[jnp.ndarray] = [None] * self.nE  # type: ignore[list-item]
 
@@ -904,13 +915,13 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
             energy, r_x_axis = energies[i], r_grid[i]
             if propagating:
                 shell_rows[i] = _single_shell_ics(
-                    potential, energy, theta_grid, r_floor, r_ceiling, t0, self.nI2
+                    potential, energy, theta_grid, r_floor, r_ceiling, t0, self.nI3
                 )
                 continue
             boundin_grid, boundmid_grid, irregular = per_shell(energy, r_x_axis)
             if bool(irregular):
                 shell_rows[i] = _single_shell_ics(
-                    potential, energy, theta_grid, r_floor, r_ceiling, t0, self.nI2
+                    potential, energy, theta_grid, r_floor, r_ceiling, t0, self.nI3
                 )
                 propagating = True
                 continue

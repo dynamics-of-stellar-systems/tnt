@@ -143,8 +143,8 @@ orbit_library_settings:
     rmin: {value: 0.01, unit: "kpc"}
     rmax: {value: 100.0, unit: "kpc"}
     nE: 6
-    nI1: 5
-    nI2: 4
+    nI2: 5
+    nI3: 4
   dithering:
     type: "Cubic"
     n_dither: 1
