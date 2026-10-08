@@ -461,6 +461,32 @@ reduction instead of a false "exact match" claim, matching the style
 `_TUBE_SEARCH_TIME_PERIODS`'s own neighbouring comment already uses for
 its own reduction from DYNAMITE's budget.
 
-The remaining two notes (the fallback test's coverage gap and
-`_outer_tube_boundary`'s wasted post-`broken` computation) are not yet
-addressed.
+**The fallback test's coverage gap -- addressed.** The existing delegation
+test only exercises the *irregular* shell's fallback path. Added two new
+tests against a confirmed-regular shell, calling `_inner_tube_boundary`/
+`_outer_tube_boundary` directly (not through `generate_ics`, so this
+exercises the real search code the delegation test never runs):
+
+- `test_boundary_search_boundin_is_a_local_width_minimum_in_a_regular_shell`:
+  independent of DYNAMITE, `boundin` must itself locally minimize its own
+  thin-orbit width objective -- perturbing it by 3-5% always finds a
+  clearly larger width. This held up cleanly in testing.
+- `test_boundary_search_boundmid_is_strictly_bracketed_in_a_regular_shell`:
+  a weaker, deterministic check for `boundmid`. Tried the equivalent
+  local-minimality check first and found it genuinely unreliable --
+  `boundmid` sits at a short-/long-axis-tube family transition, not a
+  smooth minimum, so perturbing it by a few percent sometimes finds a
+  *smaller* width (one case went from `13.2` to `11.8`), and re-minimizing
+  in a narrow bracket around it doesn't reliably reproduce it (up to 6%
+  drift) -- real noise in the physical transition, not a sign either fix
+  is wrong. Asserts instead on what must hold regardless: every row sits
+  strictly outside `boundin` and no further out than the equipotential,
+  and the search found a genuine interior transition for at least one row
+  rather than trivially reporting the equipotential everywhere.
+
+`test_orbit_library.py`: 33 passed (31 + 2 new), 72.13s (up from 47.86s --
+each new test runs real orbit-width integrations across every row, several
+times over for the perturbation check; a real cost, not a regression).
+
+The remaining note (`_outer_tube_boundary`'s wasted post-`broken`
+computation) is not yet addressed.

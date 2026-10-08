@@ -14,7 +14,19 @@ from tnt.orbit_library import (
     XZGridFromBoundaryOrbitSampler,
     XZGridFromOriginOrbitSampler,
 )
-from tnt.orbit_library.common import EquipotentialSearchError, _equipotential_radius
+from tnt.orbit_library.common import (
+    EquipotentialSearchError,
+    _equipotential_radius,
+    _xz_direction,
+    _xz_orbit_ic,
+)
+from tnt.orbit_library.xz_grid_from_boundary import (
+    _R_FLOOR_FACTOR,
+    _inner_tube_boundary,
+    _orbit_width_over_crossings,
+    _outer_tube_boundary,
+    _shell_integration_budgets,
+)
 
 UNITS = unitsystem("kpc", "Myr", "Msun", "rad")
 
@@ -395,3 +407,91 @@ def test_xz_boundary_delegates_to_xz_grid_from_origin_once_a_shell_is_irregular(
     last_delegated = len(matches_origin) - 1 - matches_origin[::-1].index(True)
     assert all(matches_origin[: last_delegated + 1])
     assert not any(matches_origin[last_delegated + 1 :])
+
+
+def _regular_shell_boundary(nE: int = 2, nI2: int = 4, nI3: int = 4):
+    """Run `_inner_tube_boundary`/`_outer_tube_boundary` directly, for a
+    shell confirmed regular (neither delegates), on the module's own
+    standard `(q1=0.8, q2=0.6)` triaxial fixture -- independent of the
+    already-covered irregular/delegation path above.
+    """
+    potential = _triaxial_hernquist()
+    t0 = Quantity(0.0, "Myr")
+    rmin_val, rmax_val = 0.5, 30.0
+    r_floor = rmin_val * _R_FLOOR_FACTOR
+    r_grid = 10.0 ** jnp.linspace(jnp.log10(rmin_val), jnp.log10(rmax_val), nE)
+    r_x_axis = r_grid[-1]
+    energy = potential.potential(
+        Quantity(jnp.array([r_x_axis, 0.0, 0.0]), "kpc"), t0
+    ).ustrip("kpc2/Myr2")
+    theta_grid = (jnp.arange(nI2) + 0.5) * (jnp.pi / 2) / nI2
+
+    r_outer_grid, valid_outer = jax.vmap(
+        lambda th: _equipotential_radius(
+            potential, _xz_direction(th), energy, r_x_axis, t0
+        )
+    )(theta_grid)
+    assert bool(jnp.all(valid_outer))
+
+    rough_r = 0.5 * r_x_axis
+    inner_t_ceiling, inner_classify_time = _shell_integration_budgets(
+        potential, rough_r, t0
+    )
+    boundin_grid, irregular_inner = _inner_tube_boundary(
+        potential, energy, theta_grid, r_floor, r_outer_grid,
+        inner_t_ceiling, inner_classify_time, t0,
+    )
+    assert not bool(irregular_inner)
+
+    refined_r = boundin_grid[-1]
+    outer_t_ceiling, outer_classify_time = _shell_integration_budgets(
+        potential, refined_r, t0
+    )
+    boundmid_grid, notubes = _outer_tube_boundary(
+        potential, energy, theta_grid, boundin_grid, r_outer_grid, r_floor,
+        outer_t_ceiling, outer_classify_time, nI3, t0,
+    )
+    assert not bool(notubes)
+
+    return (
+        potential, t0, energy, theta_grid, r_outer_grid,
+        boundin_grid, boundmid_grid, inner_t_ceiling,
+    )
+
+
+def test_boundary_search_boundin_is_a_local_width_minimum_in_a_regular_shell():
+    """Independent of DYNAMITE: `boundin` must itself locally minimize its
+    own thin-orbit width objective, not merely be *some* value the search
+    produced without crashing. Exercises a *regular* shell's real search
+    directly (`_inner_tube_boundary`) -- the irregular/delegation path
+    above doesn't run this code at all.
+    """
+    potential, t0, energy, theta_grid, _, boundin_grid, _, t_ceiling = (
+        _regular_shell_boundary()
+    )
+    for theta, r0 in zip(theta_grid, boundin_grid, strict=True):
+        ic0 = _xz_orbit_ic(potential, energy, theta, r0, t0)
+        width0 = float(_orbit_width_over_crossings(potential, ic0, "y", t_ceiling, t0))
+        for frac in (0.95, 0.97, 1.03, 1.05):
+            ic = _xz_orbit_ic(potential, energy, theta, r0 * frac, t0)
+            width = float(
+                _orbit_width_over_crossings(potential, ic, "y", t_ceiling, t0)
+            )
+            assert width0 < width
+
+
+def test_boundary_search_boundmid_is_strictly_bracketed_in_a_regular_shell():
+    """`boundmid` is the short-/long-axis-tube transition radius, not a
+    smooth objective's minimum -- perturbing it isn't a reliable accuracy
+    check (real orbit-family transitions are noisy close up). What must
+    hold regardless: every row sits strictly outside `boundin` and no
+    further out than the equipotential, and the search found a genuine
+    interior transition for at least one row rather than trivially
+    reporting the equipotential everywhere.
+    """
+    _, _, _, _, r_outer_grid, boundin_grid, boundmid_grid, _ = (
+        _regular_shell_boundary()
+    )
+    assert bool(jnp.all(boundin_grid < boundmid_grid))
+    assert bool(jnp.all(boundmid_grid <= r_outer_grid))
+    assert bool(jnp.any(boundmid_grid < r_outer_grid))
