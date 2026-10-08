@@ -233,7 +233,32 @@ computation).
 
 ### 2. [P2] Correct or explicitly justify the outer-search taper formula
 
-### 3. [P2] Preserve the outer-boundary angle before searching downward
+### 3. [P2] Preserve the outer-boundary angle before searching downward -- fixed
+
+Confirmed by direct trace against the reference (`orbitstart_f.f90:443-452`,
+also available locally): after the theta scan finds the onset row (`i_found`,
+`onset_idx_from_scan` here), Fortran sets `i = min(i_found + 1, nI2 - 1)`
+*before* seeding and searching downward from `i - 1`, so the real search
+loop starts at `i_found` itself -- the found row gets a genuine `findtube`
+search, and only the row above it (the bumped seed) is left at the
+equipotential. TNT set `effective_onset_idx = onset_idx_from_scan` directly,
+so the found row was itself treated as the unsearched seed and skipped.
+
+Fixed by applying the same `+1`, capped at `n_theta - 1`, only on the
+scanned-onset path (`found_x_directly` already starts from `n_theta - 1`
+correctly, matching Fortran's `i = nI2` when the initial radial scan finds
+an x-tube directly, without ever entering the secondary theta loop that
+produces `i_found`). Also tightened the function's own docstring, which
+worded the invariant ambiguously enough to read as consistent with either
+the correct or the buggy behaviour.
+
+Reproduced the audit's own four-angle probe (`[.2, .4, .6, .8]`, box above
+`.5`, long-axis tube at or below `.5`): the scan finds onset at index 1;
+the fix now searches indices 0 and 1, leaving only indices 2 and 3 (and the
+top row) at the equipotential -- previously only index 0 was searched.
+
+`test_orbit_library.py`: 15 passed, 35.53s (consistent with the 35-38s
+range seen after findings 1 and 2; no meaningful change).
 
 ### 4. [P2] Reject nonpositive radial limits
 

@@ -641,8 +641,9 @@ def _outer_tube_boundary(
       searched `boundmid`;
     * it finds a box orbit (or ends on anything other than `z_tube`) -- a
       `theta` sweep toward the z-axis, at that same relative radius,
-      locates the index where long-axis tubes first appear; only `theta`
-      below that index gets a searched `boundmid`.
+      locates the row where long-axis tubes first appear; that row and
+      every `theta` below it gets a searched `boundmid`, seeded from the
+      row immediately above it (the unsearched equipotential).
 
     Wherever a search is called for, it's a second continuation search
     (tracking `x = 0` crossings -- `plane="x"`), with its own bracket
@@ -716,8 +717,22 @@ def _outer_tube_boundary(
         found_onset, idx_desc[jnp.argmax(is_x_theta)], n_theta - 1
     )
 
+    # `orbitstart_f.f90:452`: `i = min(i_found + 1, nI2 - 1)` -- the row
+    # *above* where the theta scan actually found a long-axis tube becomes
+    # the unsearched equipotential seed; the found row itself (`i_found`,
+    # `onset_idx_from_scan` here) is where the real search starts, one step
+    # below the seed. `found_x_directly` is a separate code path (the
+    # initial radial scan at `theta_top` already found an x-tube, never
+    # entering the secondary theta loop that produces `i_found`) and keeps
+    # its own already-correct `n_theta - 1` seed unchanged.
     effective_onset_idx = jnp.where(
-        notubes, n_theta, jnp.where(found_x_directly, n_theta - 1, onset_idx_from_scan)
+        notubes,
+        n_theta,
+        jnp.where(
+            found_x_directly,
+            n_theta - 1,
+            jnp.minimum(onset_idx_from_scan + 1, n_theta - 1),
+        ),
     )
 
     boundin_max = jnp.max(boundin_grid)
