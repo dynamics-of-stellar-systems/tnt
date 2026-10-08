@@ -86,10 +86,15 @@
   `_single_shell_ics` for that shell and every shell inward of it, rather
   than re-deriving the uniform-grid-to-the-centre fallback inline.
 - Verified directly against a real run of DYNAMITE's compiled `orbitstart`
-  Fortran binary, across four NGC6278-based viewing geometries (oblate,
-  mild/strong triaxial, near-prolate), six energy shells each from
-  `r = 0.01` to `100 kpc`: box orbits agree to 5-6 significant figures and
-  boundary-searched tube orbits to 3-4, in every shell and geometry.
+  Fortran binary (DYNAMITE commit `0bd10a9`), across four NGC6278-based
+  viewing geometries (oblate, mild/strong triaxial, near-prolate), six
+  energy shells each from `r = 0.01` to `100 kpc`: box orbits agree to 5-6
+  significant figures and boundary-searched tube orbits to 3-4, in every
+  shell and geometry. Numerical comparisons like this one against DYNAMITE
+  live in the separate `dynamics-of-stellar-systems/tnt-dynamite-comparison`
+  repo, not in TNT itself -- DYNAMITE is not a TNT test dependency. This
+  particular comparison's own script/results were not preserved there; a
+  reproduction would need rerunning against the pinned commit above.
 - `common._equipotential_radius` brackets its search from each energy
   shell's own x-axis equipotential radius (`[0.01, 1.1] * r_ref`), matching
   DYNAMITE's own `findReq` (`orbitstart_f.f90:543-592`) exactly, rather than
