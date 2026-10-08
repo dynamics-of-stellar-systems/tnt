@@ -544,3 +544,224 @@ explicitly out of scope for this audit, not a gap in it:
   regression and not reachable by any physically realistic MGE-derived
   potential tried so far, but a genuine gap if TNT ever needs to support
   comparably extreme flattening.
+
+## Follow-up audit — 2026-10-08
+
+Reviewed by Codex for Thomas. This section follows the author's responses
+and deferred-work notes; everything above is preserved as review history.
+
+Reviewed head: `6d1111ff1d1d13a7614db35f290621be5913595f`.
+Base: `3f202994fe384f39cc5639f499fd99b577f6d017` (`main`).
+Branch: `box_tube_start_spaces`.
+
+### Merge recommendation
+
+**Hold the merge.** The updates resolve several original findings, including
+the unbounded integration loop, but four P2 correctness issues remain below.
+P2 means a normal-priority correctness issue to address before merging this
+PR. The existing tests pass; they do not cover these cases. This assessment
+does not require implementing the separately documented deferred features.
+
+Only this audit document was changed. No production code, GitHub comment,
+commit, push, or merge was performed during this follow-up.
+
+### Status of the original findings
+
+| Original finding | Follow-up assessment |
+| --- | --- |
+| 1. Integration failure/stall | The hang is fixed: terminal controller failure and nonfinite derivatives now stop after one attempt and return `inf`. Failure propagation remains incomplete; see findings 7 and 8. |
+| 2. Outer-search taper | Fixed: the code now uses `3 * (1 - rel_rbi) / nI3`, matching the pinned reference's operator precedence. |
+| 3. Theta onset | The middle-of-grid case is fixed. The upper cap, lowest-row case, and no-onset case still differ from the reference; see finding 9. |
+| 4. Nonpositive radial limits | Fixed in configuration validation and direct sampler construction, including conversion to a shared length unit. |
+| 5. Boundary sampler angular minimum | Fixed: `XZGridFromBoundary` requires `nI2 >= 4` at both boundaries. The simpler samplers retain their one-angle support. |
+| 6. Equipotential validity | Bracket and solver-status checks are added, and out-of-bracket roots are rejected. The new residual division incorrectly rejects zero-energy shells; see finding 10. |
+
+The `nI2`/`nI3` rename is consistent across active configuration, sampler
+fields, fixtures, and documentation. The shared origin-grid helper avoids
+duplicating the irregular-shell calculation. The new regular-shell tests
+exercise real boundary searches, and the conditional branches skip the
+post-break radial classifications and unsearched theta minimizations.
+
+### Remaining findings
+
+#### 7. [P2] Reject a width truncated by the step-attempt limit
+
+Location: `tnt/orbit_library/xz_grid_from_boundary.py:245-255` and
+`:359-367`.
+
+The loop stops when `attempts == _TUBE_SEARCH_MAX_STEP_ATTEMPTS`, but this
+exit does not set `failed_final`. The return condition checks only that a
+crossing was found and that no explicit solver/controller failure occurred.
+Consequently, exhaustion of the safety budget produces a finite width from
+partial crossings, even though neither the crossing target nor the simulated
+time ceiling was reached. This contradicts the new docstring's promise that
+attempt exhaustion is surfaced as failure. A minimizer can prefer an
+underestimated partial width and select the wrong boundary radius.
+
+Evidence: retained the actual NFW potential, Dopri8 solver, PID controller,
+and crossing refinement, and reduced only the process-local attempt limit
+to 50. Launched a circular orbit at `1 kpc` in the test potential
+(`m=1e11 Msun`, `r_s=10 kpc`), with a 1,000-period ceiling. Final state:
+`attempts=50`, `crossings=23` (target 100), `failed=False`,
+`time=1652.675364701899 Myr`, `ceiling=141210.1231349826 Myr`.
+The helper returned finite width `0.0001265571615006733 kpc`.
+This verifies the limit-exhaustion path; it does not claim the ordinary
+fixtures exhaust the production 200,000-attempt limit.
+
+Requested change: distinguish successful completion from safety-budget
+exhaustion. Accept a width only when the crossing target or intended time
+ceiling was reached without numerical failure; otherwise return the failure
+signal. Add a regression test that hits the attempt limit after at least one
+crossing, plus a case that completes normally on the final allowed attempt.
+
+#### 8. [P2] Propagate an all-failed width search to its caller
+
+Location: `tnt/orbit_library/xz_grid_from_boundary.py:499-503`, with callers
+in `_inner_tube_boundary` and `_outer_tube_boundary`.
+
+Returning `inf` for an unusable trial is useful when another trial succeeds.
+However, `_minimize_tube_width` never checks whether its selected objective
+is finite. If every trial fails, `inf < inf` is false at every comparison,
+the golden-section search repeatedly takes the same branch, and it returns
+a finite radius near its lower bound as though a thin orbit had been found.
+No search-validity flag reaches `generate_ics`. An inner search can treat
+this numerical failure as physical irregularity and delegate to the origin
+grid; an outer search can consume the fabricated radius as `boundmid`.
+Neither is an explicit report that the numerical boundary search failed.
+
+Evidence: replaced only the process-local width callback with its documented
+failure result, `jnp.inf`, and ran the actual minimizer over `[.2, .8] kpc`.
+It returned `0.20000019931243854 kpc`. All candidate objective values were
+infinite. This is a controlled failure-propagation test, not a claim that
+the normal galaxy fixtures fail every trial integration.
+
+Requested change: propagate an explicit search-validity result through the
+boundary helpers and reject a shell when no usable minimum was obtained.
+Keep documented physical irregularity separate from numerical failure.
+Test both an all-failed search and a search containing a mixture of valid
+and invalid trials.
+
+#### 9. [P2] Complete the one-based theta-onset translation
+
+Location: `tnt/orbit_library/xz_grid_from_boundary.py:733-752` and
+`:765-768`.
+
+The updated `+1` repairs the middle onset, but the reference's upper cap is
+still translated incorrectly. The pinned DYNAMITE source uses one-based
+`i = min(i + 1, nI2 - 1)` at line 458. For a found zero-based index `f`,
+the zero-based seed is therefore `min(f + 1, n_theta - 2)`, rather than
+the current `min(f + 1, n_theta - 1)`. In addition, DYNAMITE searches downward
+only when the resulting one-based seed is greater than 2 (line 473).
+When the theta scan finds no x tube, the completed Fortran loop leaves
+`i=0`, yielding one-based seed 1 and no search; the port instead uses the
+top row and searches all remaining rows.
+
+Reference:
+[pinned `find_outerboundary`, lines 450–475](https://github.com/dynamics-of-stellar-systems/dynamite/blob/0bd10a9586936bf6b9bcfdcd3679477d812a01d0/legacy_fortran/orbitstart_f.f90#L450).
+
+Evidence: ran the actual outer-boundary helper with the same four-angle
+controlled fixture as the original audit: ascending theta
+`[.2, .4, .6, .8]`, outer radii 1, inner radii `.2`, radial count 3.
+The classifier returns box above a chosen threshold and x tube below it;
+the minimizer returns its supplied bracket midpoint. The radial scan
+therefore takes the box-to-theta-scan path. Indices below are zero-based:
+
+| Theta-scan outcome | Rows searched by current port | Rows searched by pinned reference |
+| --- | --- | --- |
+| First x tube at index 1 (middle) | 0, 1 | 0, 1 |
+| First x tube at index 2 (highest secondary row) | 0, 1, 2 | 0, 1 |
+| First x tube at index 0 (lowest row) | 0 | None |
+| No x tube found | 0, 1, 2 | None |
+
+For the highest-row case, the port returns
+`[.299999875, .39999975, .5999995, 1]`, replacing reference seed row 2's
+equipotential with a searched radius and changing subsequent continuation
+brackets. These are deterministic algorithm-translation checks; they do
+not quantify the error for a particular physical galaxy.
+
+Requested change: translate the found index, cap, loop-completion state,
+and search-entry guard together. Add all four onset cases as regression
+tests. Preserve the distinct direct-radial-x-tube path. If this is an
+intentional departure from DYNAMITE, document and validate that choice
+instead of calling it an exact translation. The nearby source comment
+also says `nI3` where the reference actually says `nI2`.
+
+#### 10. [P2] Allow a valid equipotential whose energy is zero
+
+Location: `tnt/orbit_library/common.py:122-124`.
+
+The new residual check divides by the shell's absolute potential energy.
+At zero energy this gives `inf` or `nan`, rejecting a correctly bracketed,
+converged root. Near zero it also amplifies an otherwise negligible absolute
+residual. The additive zero of potential energy does not change the physical
+equipotential or forces, so it must not determine whether a sampler works.
+
+Evidence: used an ordinary spherical `LMJ09LogarithmicPotential` with
+`q1=q2=q3=1`, `r_s=.6 kpc`, and `v_c=200 km/s`, in
+`kpc/Myr/Msun/rad` units. At reference radius `.8 kpc`, the shell energy
+is exactly `0.0 kpc2/Myr2`. The x-axis root is
+`0.8000000000011644 kpc`, with absolute energy residual
+`3.897077348619819e-14 kpc2/Myr2`, but `valid=False`.
+Both `StationaryGridOrbitSampler` and `XZGridFromOriginOrbitSampler`,
+constructed with `.8–1.6 kpc`, `nE=1`, `nI2=nI3=2`, raise
+`EquipotentialSearchError`. This case uses the unmodified public samplers
+and potential, without injected failures or extreme flattening.
+
+Requested change: use a finite residual criterion that remains meaningful
+at zero energy, such as an absolute-plus-relative tolerance with a suitable
+local energy scale. Test zero and near-zero shells as well as the existing
+out-of-bracket failure. Preserve the bracket and solver-status checks.
+
+### Validation and reference evidence
+
+Python scientific checks ran sequentially in the documented Colima Linux
+development container. Temporary probes use process-local substitutions
+only where explicitly described above.
+
+| Check | Result |
+| --- | --- |
+| `pytest -q tests/unit_tests/test_orbit_library.py` | 33 passed |
+| Configuration/session, configuration compatibility, default configuration, model iterator, and named-input tests | 143 passed |
+| `ruff check .` | Passed |
+| `sphinx-build -E -b html -W docs/source /tmp/tnt-pr80-round2-docs` | Passed |
+| `git diff origin/main...HEAD --check` | Passed |
+| Focused numerical/control-flow probes | Findings 7–10 reproduced; original terminal/nonfinite hang paths now stop |
+
+Total: **176 selected tests passed**. The pre-existing TensorFlow
+Probability/JAX deprecation warning remains. The complete repository suite
+was not rerun.
+
+The preserved comparison is a substantial improvement over the original
+unavailable artifact. Inspected
+[`tnt-dynamite-comparison/orbit-start-spaces`](https://github.com/dynamics-of-stellar-systems/tnt-dynamite-comparison/tree/6332d684e0ba2ce743a3a3daa3bfaff0a9de9bff/orbit-start-spaces),
+including its reconstruction script, resolved inputs, raw Fortran outputs,
+and saved arrays. Independently recomputed all eight saved-array median/max
+statistics and checked that the saved DYNAMITE arrays match `begin[box].dat`
+after index ordering and unit conversion (maximum absolute difference below
+`1.5e-14` in the converted numerical components).
+
+These checks reproduce the saved summaries: box maximum relative error
+`4.2e-6–4.6e-6`; tube median `1.1e-5–7.8e-5`, with maximum approximately
+`3.10%` in each geometry. They verify the preserved artifacts, rather than
+a new generation of TNT arrays at the reviewed head. I did not compile
+DYNAMITE or rerun the complete four-geometry scientific comparison. The
+comparison pins DYNAMITE exactly, but its TNT provenance remains a branch
+and "after fixes" description; recording the exact TNT commit would make
+future numerical changes easier to attribute.
+
+The PR description still contains the old `nI1` schema, 15-test count,
+original artifact link, and blanket 3–4-significant-figure claim. Updating
+it to the current schema, public comparison, and typical-versus-worst-case
+agreement would make the final review clearer. This is supporting cleanup,
+separate from the four correctness findings.
+
+Reproduction harnesses from this follow-up are local temporary files:
+`/private/tmp/tnt_pr80_round2_probes.py`,
+`/private/tmp/tnt_pr80_round2_onset.py`,
+`/private/tmp/tnt_pr80_round2_failures.py`, and
+`/private/tmp/tnt_pr80_reference_arrays.py`. The first three run via
+`docker --context colima compose run --rm -T dev python - < <script-path>`.
+The last checks the separately downloaded reference artifacts with Python's
+standard library. These are review probes, not committed regression tests.
+
+Assisted by Codex (OpenAI).
