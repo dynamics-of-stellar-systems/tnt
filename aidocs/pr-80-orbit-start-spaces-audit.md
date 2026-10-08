@@ -513,3 +513,34 @@ it's a pure performance change.
 fixtures; the saving scales with how far a shell's onset sits from the
 z-axis and how often a shell breaks early in the radial scan, so a larger
 production grid should see more.)
+
+## Deferred
+
+All six findings and all four coverage notes are addressed. What's left is
+explicitly out of scope for this audit, not a gap in it:
+
+- **A convenience wrapper bundling `StationaryGrid` + `XZGridFromBoundary`**
+  -- that combination is the actual DYNAMITE-equivalent start space (box +
+  boundary-searched tube); kept as two separate, composable samplers for
+  now (PR #80's own stated scope).
+- **Orbit dithering** -- `AbstractOrbitDithering`/`CubicOrbitDithering`
+  exist but aren't consumed by any sampler yet (PR #80's own stated scope).
+- **The counter-rotating mirror's actual construction and call site** --
+  `_add_reverse_copies` only declares *whether* a sampler's population
+  needs mirroring; *how* and *where* that gets applied waits on
+  `OrbitLibrary` assembly, which doesn't exist yet (PR #80's own stated
+  scope; see also the `project_orbit_mirroring_design` design discussion).
+- **Configuration-to-sampler construction** -- `build_orbit_sampler`/
+  `build_orbit_dithering` remain `NotImplementedError`; nothing here can
+  yet be driven from a config file end to end (original audit coverage
+  note, still true).
+- **`OrbitLibrary`/`Potential.generate_orbit_library`** themselves remain
+  unimplemented (original audit coverage note, still true).
+- **`galax`'s own orbit-integrator robustness on extremely degenerate
+  potentials** -- surfaced while verifying finding 6's fix:
+  `XZGridFromBoundaryOrbitSampler.generate_ics` on a `q1=q2=1, q3=1e-5`
+  potential hits `gd.compute_orbit`'s own max-step limit inside
+  `_classify_orbit_type`, untouched by any fix in this cycle. Not a
+  regression and not reachable by any physically realistic MGE-derived
+  potential tried so far, but a genuine gap if TNT ever needs to support
+  comparably extreme flattening.
