@@ -15,25 +15,24 @@ registered conversion from some other raw parameter convention into those
 same native fields.
 
 Each parameter keeps its own declared unit all the way through
-construction -- `Potential.resolve`/`build` never coerce it into a shared
+construction -- `Potential.resolve`/`build_with_validity` never coerce it into a shared
 internal unit system (`galax`'s own `ParameterField` machinery already
-converts generically at evaluation time; see `ResolvedPotentialComponent.build`).
+converts generically at evaluation time; see
+`ResolvedPotentialComponent.build_with_validity`).
 Resolving a component's static structure (`type`/`parameterization`/`mge`)
 is split from building it at a given point in parameter space
-(`Potential.resolve`/`Potential.build`), so a caller building many
+(`Potential.resolve`/`Potential.build_with_validity`), so a caller building many
 `Potential`s from the same configuration -- e.g. `ModelIterator`, once per
 proposed point -- resolves once and reuses the result.
 
-This module is filled in incrementally, one object at a time -- the same
-approach already used for `ProjectedBinning`. `Potential.generate_orbit_library`
-remains `NotImplementedError`.
+`Potential.generate_orbit_library` remains `NotImplementedError`.
 
 Split across submodules by concern: `registry` (curated `galax` types, their
 native parameters' dimensions/mass-rescale exponents, and TNT component /
 parameterization registration), `nfw` (the `concentration_m200`
 parameterization's self-contained numerics, and its `register_parameterization`
 call), `components` (the abstract base and the native-`galax` component,
-resolution/dispatch and eager runtime domain validation included),
+resolution/dispatch and traceable runtime domain validation included),
 `triaxial_mge`/`oblate_mge` (the MGE-backed
 composite types, one sibling module per deprojection convention), and
 `core` (`Potential` itself and the module-level helpers around it).
@@ -41,20 +40,13 @@ composite types, one sibling module per deprojection convention), and
 
 from __future__ import annotations
 
+import tnt.potential.nfw  # noqa: F401 -- register NFW parameterizations
 from tnt.potential.components import (
     AbstractPotentialComponent,
     GalaxPotentialComponent,
     ResolvedPotentialComponent,
 )
-from tnt.potential.core import Potential, build_potential, raw_potential_parameters
-from tnt.potential.nfw import (
-    _nfw_concentration_m200 as _nfw_concentration_m200,
-)
-from tnt.potential.nfw import (
-    _nfw_concentration_m200_inverse as _nfw_concentration_m200_inverse,
-)
-from tnt.potential.nfw import _nfw_g as _nfw_g
-from tnt.potential.nfw import _solve_nfw_concentration as _solve_nfw_concentration
+from tnt.potential.core import Potential, raw_potential_parameters
 from tnt.potential.oblate_mge import (
     OblateLightMGEPotential,
     OblateMassMGEPotential,
@@ -81,7 +73,6 @@ __all__ = [
     "ResolvedPotentialComponent",
     "TriaxialLightMGEPotential",
     "TriaxialMassMGEPotential",
-    "build_potential",
     "raw_parameter_dimensions",
     "raw_potential_parameters",
 ]

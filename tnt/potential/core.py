@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any, Self
 
 import equinox as eqx
 import galax.potential
+import jax
+import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import LightMGE, MassMGE
@@ -37,7 +39,7 @@ class Potential(eqx.Module):
         See `AbstractPotentialComponent.resolve` -- a caller building many
         `Potential`s from the same configuration (e.g. `ModelIterator`,
         once per proposed `ParameterSet`) should call this once and reuse
-        the result via `Potential.build`.
+        the result via `Potential.build_with_validity`.
         """
         resolved: dict[str, ResolvedPotentialComponent] = {}
         for name, component_value in settings.items():
@@ -51,59 +53,29 @@ class Potential(eqx.Module):
         return resolved
 
     @classmethod
-    def build(
+    def build_with_validity(
         cls,
         resolved: Mapping[str, ResolvedPotentialComponent],
         parameter_values: ParameterSet,
         cosmological_parameters: Mapping[str, Quantity],
-        *,
-        validate: bool = True,
-    ) -> Self:
-        """Build a `Potential` from resolved static structure and a proposed point.
+    ) -> tuple[Self, jax.Array]:
+        """Build one complete proposal with one scalar JAX validity flag.
 
-        Args:
-            resolved: Every component's static structure, e.g.
-                from `Potential.resolve`.
-            parameter_values: The current point in parameter space, e.g. a
-                `tnt.parameter_generator.ParameterSet`.
-            cosmological_parameters: A resolved configuration's
-                `cosmological_parameters` section -- used only by
-                parameterizations that need it, e.g. NFW's `concentration_m200`.
-            validate: If false, skip every component's eager parameter and
-                deprojection checks so `build` runs under a JAX trace (see
-                `ResolvedPotentialComponent.build`).
+        Galax native parameters/traceable conversions and all registered
+        parameterizations for the four MGE component types are supported.
+        A false flag means the returned potential must not be evaluated; use
+        JAX conditional execution around derived calculations.
         """
-        return cls(
-            components={
-                name: component.build(
-                    parameter_values.get(name, {}),
-                    cosmological_parameters,
-                    validate=validate,
-                )
-                for name, component in resolved.items()
-            }
-        )
-
-    @classmethod
-    def from_settings(
-        cls,
-        settings: Mapping[str, Mapping[str, Any]],
-        parameter_values: ParameterSet,
-        mges: Mapping[str, LightMGE | MassMGE],
-        cosmological_parameters: Mapping[str, Quantity],
-    ) -> Self:
-        """Build a `Potential` from a resolved configuration's `potential` section.
-
-        A one-shot convenience combining `Potential.resolve`/`Potential.build`
-        -- callers that build many `Potential`s from the same configuration
-        (e.g. `ModelIterator`) should call those directly instead, resolving
-        once and reusing the result.
-        """
-        return cls.build(
-            cls.resolve(settings, mges),
-            parameter_values,
-            cosmological_parameters,
-        )
+        _check_proposal_components(resolved, parameter_values)
+        components: dict[str, AbstractPotentialComponent] = {}
+        valid = jnp.asarray(True)
+        for name, component in resolved.items():
+            built, component_valid = component.build_with_validity(
+                parameter_values[name], cosmological_parameters
+            )
+            components[name] = built
+            valid = valid & component_valid
+        return cls(components=components), valid
 
     def to_galax(
         self, unit_system: AbstractUnitSystem
@@ -151,33 +123,18 @@ class Potential(eqx.Module):
         )
 
 
-def build_potential(
+def _check_proposal_components(
     resolved: Mapping[str, ResolvedPotentialComponent],
-    parameter_values: ParameterSet,
-    cosmological_parameters: Mapping[str, Quantity],
-    *,
-    validate: bool = True,
-) -> Potential:
-    """Build the `Potential` from pre-resolved static structure and a proposed point.
-
-    Args:
-        resolved: Every component's static structure, e.g. from
-            `Potential.resolve(config["potential"], mges)`, called once per
-            run.
-        parameter_values: The current point in parameter space, e.g. a
-            `tnt.parameter_generator.ParameterSet`.
-        cosmological_parameters: A resolved configuration's
-            `cosmological_parameters` section -- used only by
-            parameterizations that need it, e.g. NFW's `concentration_m200`.
-        validate: If false, skip every eager check so this runs under a JAX
-            trace (see `ResolvedPotentialComponent.build`).
-
-    Returns:
-        A `Potential` assembled from every component.
-    """
-    return Potential.build(
-        resolved, parameter_values, cosmological_parameters, validate=validate
-    )
+    values: Mapping[str, Mapping[str, Quantity]],
+) -> None:
+    """Require exactly the resolved components for one complete proposal."""
+    _mapping(values, "potential proposal")
+    if set(values) != set(resolved):
+        raise ValueError(
+            "Invalid potential proposal components: "
+            f"missing {sorted(set(resolved) - set(values))}, "
+            f"unexpected {sorted(set(values) - set(resolved))}."
+        )
 
 
 def _declared_parameter_units(
@@ -206,8 +163,8 @@ def raw_potential_parameters(
 ) -> dict[str, dict[str, Quantity]]:
     """Every component's parameters, in the config's own parameterization.
 
-    The inverse of `build_potential`/`Potential.from_settings`: where those
-    convert each raw config parameter into `galax`'s native constructor
+    The inverse of `Potential.build_with_validity`: where that builder
+    converts each raw config parameter into `galax`'s native constructor
     kwargs, this converts back, e.g. NFW's `concentration_m200`'s native
     `(m, r_s)` back to `(c, M_200)`. `AllModels` uses this to report every
     model in the parameterization its configuration actually specifies,
@@ -224,7 +181,7 @@ def raw_potential_parameters(
             (e.g. `ModelIterator.potential_settings`) -- each component's
             `parameterization` and its parameters' declared units are used.
         potential: The resolved `Potential` to report, e.g. from
-            `build_potential`, possibly after `Potential.rescale`.
+            `Potential.build_with_validity`, possibly after `Potential.rescale`.
         cosmological_parameters: A resolved configuration's
             `cosmological_parameters` section -- used only by
             parameterizations that need it, e.g. NFW's `concentration_m200`.

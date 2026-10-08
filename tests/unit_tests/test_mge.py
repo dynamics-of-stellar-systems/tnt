@@ -1,4 +1,5 @@
 import dataclasses
+import math
 from pathlib import Path
 
 import jax
@@ -13,6 +14,8 @@ from tnt.mge import (
     LightMGE,
     MassMGE,
     MGEDeprojectionError,
+    _p_q_u_from_T_Tmaj_Tmin,
+    _T_Tmaj_Tmin_from_p_q_u,
     build_mges,
     read_mge,
 )
@@ -64,32 +67,35 @@ _MASS_ROWS = [
 def _multi_component_light_mge() -> LightMGE:
     """A multi-component LightMGE with realistic, varied q values.
 
-    Same values as `_LIGHT_ROWS`, converted to radians up front and
-    constructed directly rather than read from a file -- for tests that just
-    need some realistic LightMGE to operate on, as opposed to testing
-    file-reading behaviour itself. (`LightMGE.read` keeps each column's
-    declared unit, so a real MGE would carry arcsec/deg here; radians keep
-    these fixtures' expected values unchanged.)
+    Same values as `_LIGHT_ROWS`, converted to radians (for `sigma`) up
+    front and constructed directly rather than read from a file -- for
+    tests that just need some realistic LightMGE to operate on, as opposed
+    to testing file-reading behaviour itself. (`LightMGE.read` keeps each
+    column's declared unit, so a real MGE would carry arcsec/deg for
+    `sigma`/`PA_twist` here; radians keep these fixtures' expected values
+    unchanged. `I` is the standard MGE convention's already-physical
+    surface density -- no angular unit or conversion involved, so it's
+    declared directly in Lsun/pc2, unlike `sigma`.)
     """
     intensity, sigma, q, pa_twist = zip(*_LIGHT_ROWS, strict=True)
     sigma_arcsec = u.Quantity(jnp.array(sigma), "arcsec")
-    intensity_per_arcsec2 = u.Quantity(jnp.array(intensity), "Lsun / arcsec2")
     pa_twist_deg = u.Quantity(jnp.array(pa_twist), "deg")
     return LightMGE(
-        I=u.Quantity(intensity_per_arcsec2.ustrip("Lsun / rad2"), "Lsun / rad2"),
+        I=u.Quantity(jnp.array(intensity), "Lsun / pc2"),
         sigma=u.Quantity(sigma_arcsec.ustrip("rad"), "rad"),
         q=u.Quantity(jnp.array(q), ""),
         PA_twist=u.Quantity(pa_twist_deg.ustrip("rad"), "rad"),
+        major_axis_pa=u.Quantity(20.0, "deg"),
     )
 
 
 def test_read_keeps_declared_light_column_units(tmp_path):
     path = tmp_path / "mge_lum.ecsv"
-    _write_ecsv(path, intensity_unit="Lsun / arcsec2", rows=_LIGHT_ROWS)
+    _write_ecsv(path, intensity_unit="Lsun / pc2", rows=_LIGHT_ROWS)
 
-    mge = LightMGE.read(path)
+    mge = LightMGE.read(path, u.Quantity(20.0, "deg"))
 
-    assert mge.I.unit == u.unit("Lsun / arcsec2")
+    assert mge.I.unit == u.unit("Lsun / pc2")
     assert mge.sigma.unit == u.unit("arcsec")
     assert mge.q.unit == u.unit("")
     assert mge.PA_twist.unit == u.unit("deg")
@@ -101,11 +107,11 @@ def test_read_keeps_declared_light_column_units(tmp_path):
 
 def test_read_keeps_declared_mass_column_units(tmp_path):
     path = tmp_path / "mge_mass.ecsv"
-    _write_ecsv(path, intensity_unit="Msun / arcsec2", rows=_MASS_ROWS)
+    _write_ecsv(path, intensity_unit="Msun / pc2", rows=_MASS_ROWS)
 
-    mge = MassMGE.read(path)
+    mge = MassMGE.read(path, u.Quantity(20.0, "deg"))
 
-    assert mge.I.unit == u.unit("Msun / arcsec2")
+    assert mge.I.unit == u.unit("Msun / pc2")
     assert mge.sigma.unit == u.unit("arcsec")
     assert mge.q.unit == u.unit("")
     assert mge.PA_twist.unit == u.unit("deg")
@@ -117,38 +123,47 @@ def test_read_keeps_declared_mass_column_units(tmp_path):
 
 def test_read_mge_infers_light_kind(tmp_path):
     path = tmp_path / "mge.ecsv"
-    _write_ecsv(path, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, 0.9, 0.0)])
+    _write_ecsv(path, intensity_unit="Lsun / pc2", rows=[(1.0, 1.0, 0.9, 0.0)])
 
-    mge = read_mge(path)
+    mge = read_mge(path, u.Quantity(20.0, "deg"))
 
     assert isinstance(mge, LightMGE)
-    assert mge.I.unit == u.unit("Lsun / arcsec2")
+    assert mge.I.unit == u.unit("Lsun / pc2")
 
 
 def test_read_mge_infers_mass_kind(tmp_path):
     path = tmp_path / "mge.ecsv"
-    _write_ecsv(path, intensity_unit="Msun / arcsec2", rows=[(1.0, 1.0, 0.9, 0.0)])
+    _write_ecsv(path, intensity_unit="Msun / pc2", rows=[(1.0, 1.0, 0.9, 0.0)])
 
-    mge = read_mge(path)
+    mge = read_mge(path, u.Quantity(20.0, "deg"))
 
     assert isinstance(mge, MassMGE)
-    assert mge.I.unit == u.unit("Msun / arcsec2")
+    assert mge.I.unit == u.unit("Msun / pc2")
 
 
 def test_build_mges_reads_each_named_file(tmp_path):
     _write_ecsv(
         tmp_path / "light.ecsv",
-        intensity_unit="Lsun / arcsec2",
+        intensity_unit="Lsun / pc2",
         rows=[(1.0, 1.0, 0.9, 0.0)],
     )
     _write_ecsv(
         tmp_path / "mass.ecsv",
-        intensity_unit="Msun / arcsec2",
+        intensity_unit="Msun / pc2",
         rows=[(1.0, 1.0, 0.9, 0.0)],
     )
 
     mges = build_mges(
-        {"light": "light.ecsv", "mass": "mass.ecsv"},
+        {
+            "light": {
+                "file": "light.ecsv",
+                "major_axis_pa": {"value": 30.0, "unit": "deg"},
+            },
+            "mass": {
+                "file": "mass.ecsv",
+                "major_axis_pa": {"value": 60.0, "unit": "deg"},
+            },
+        },
         tmp_path,
         u.Quantity(30.5, "Mpc"),
     )
@@ -158,6 +173,8 @@ def test_build_mges_reads_each_named_file(tmp_path):
     # angular_to_physical already applied -- sigma is length-like, not angular.
     mges["light"].sigma.ustrip("Mpc")
     mges["mass"].sigma.ustrip("Mpc")
+    assert mges["light"].major_axis_pa.ustrip("deg") == pytest.approx(30.0)
+    assert mges["mass"].major_axis_pa.ustrip("deg") == pytest.approx(60.0)
 
 
 def test_build_mges_without_entries_returns_empty_dict(tmp_path):
@@ -167,19 +184,17 @@ def test_build_mges_without_entries_returns_empty_dict(tmp_path):
 @pytest.mark.parametrize("bad_q", [0.0, -0.5, 1.5])
 def test_read_rejects_q_out_of_range(tmp_path, bad_q):
     bad_file = tmp_path / "bad_q.ecsv"
-    _write_ecsv(
-        bad_file, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, bad_q, 0.0)]
-    )
+    _write_ecsv(bad_file, intensity_unit="Lsun / pc2", rows=[(1.0, 1.0, bad_q, 0.0)])
 
     with pytest.raises(ValueError, match="q must satisfy 0 < q <= 1"):
-        LightMGE.read(bad_file)
+        LightMGE.read(bad_file, u.Quantity(0.0, "deg"))
 
 
 def test_read_accepts_q_equal_to_one(tmp_path):
     ok_file = tmp_path / "q_one.ecsv"
-    _write_ecsv(ok_file, intensity_unit="Lsun / arcsec2", rows=[(1.0, 1.0, 1.0, 0.0)])
+    _write_ecsv(ok_file, intensity_unit="Lsun / pc2", rows=[(1.0, 1.0, 1.0, 0.0)])
 
-    mge = LightMGE.read(ok_file)
+    mge = LightMGE.read(ok_file, u.Quantity(0.0, "deg"))
 
     assert jnp.allclose(mge.q.ustrip(""), 1.0)
 
@@ -189,7 +204,65 @@ def test_read_mge_rejects_unrecognized_units(tmp_path):
     _write_ecsv(bad_file, intensity_unit="s", rows=[(1.0, 1.0, 1.0, 0.0)])
 
     with pytest.raises(ValueError, match="Could not infer MGE kind"):
-        read_mge(bad_file)
+        read_mge(bad_file, u.Quantity(0.0, "deg"))
+
+
+def _write_simple_light_ecsv(path):
+    _write_ecsv(path, intensity_unit="Lsun / pc2", rows=[(1.0, 1.0, 0.9, 0.0)])
+
+
+@pytest.mark.parametrize(
+    "bad_pa",
+    [
+        u.Quantity(180.0, "deg"),  # excluded upper endpoint
+        u.Quantity(200.0, "deg"),
+        u.Quantity(-10.0, "deg"),
+        u.Quantity(jnp.pi, "rad"),  # 180 deg, via a different unit
+    ],
+)
+def test_read_rejects_major_axis_pa_out_of_domain(tmp_path, bad_pa):
+    path = tmp_path / "mge.ecsv"
+    _write_simple_light_ecsv(path)
+
+    with pytest.raises(
+        ValueError, match=r"major_axis_pa must be in \[0, 180\) degrees"
+    ):
+        LightMGE.read(path, bad_pa)
+
+
+@pytest.mark.parametrize(
+    "ok_pa",
+    [
+        u.Quantity(0.0, "deg"),  # included lower endpoint
+        u.Quantity(179.999, "deg"),
+        u.Quantity(jnp.pi - 1e-3, "rad"),  # just under 180 deg, via a different unit
+    ],
+)
+def test_read_accepts_major_axis_pa_domain_endpoints(tmp_path, ok_pa):
+    path = tmp_path / "mge.ecsv"
+    _write_simple_light_ecsv(path)
+
+    mge = LightMGE.read(path, ok_pa)
+
+    assert mge.major_axis_pa is ok_pa
+
+
+@pytest.mark.parametrize(
+    ("bad_pa", "match"),
+    [
+        (126.0, "must be an angular Quantity"),
+        (u.Quantity(3.0, "km"), "must describe angle"),
+        (u.Quantity(float("nan"), "deg"), "must be finite"),
+        (u.Quantity(float("inf"), "deg"), "must be finite"),
+        (u.Quantity(jnp.array([10.0, 20.0]), "deg"), "must be a scalar angle"),
+    ],
+)
+def test_read_rejects_invalid_major_axis_pa(tmp_path, bad_pa, match):
+    path = tmp_path / "mge.ecsv"
+    _write_simple_light_ecsv(path)
+
+    with pytest.raises(ValueError, match=match):
+        LightMGE.read(path, bad_pa)
 
 
 def test_to_mass_with_constant_ratio():
@@ -199,13 +272,12 @@ def test_to_mass_with_constant_ratio():
     mass = light.to_mass(m_over_l)
 
     assert isinstance(mass, MassMGE)
-    assert mass.I.unit == u.unit("Msun / rad2")
-    assert jnp.allclose(
-        mass.I.ustrip("Msun / rad2"), light.I.ustrip("Lsun / rad2") * 2.5
-    )
+    assert mass.I.unit == u.unit("Msun / pc2")
+    assert jnp.allclose(mass.I.ustrip("Msun / pc2"), light.I.ustrip("Lsun / pc2") * 2.5)
     assert jnp.allclose(mass.sigma.ustrip("rad"), light.sigma.ustrip("rad"))
     assert jnp.allclose(mass.q.ustrip(""), light.q.ustrip(""))
     assert jnp.allclose(mass.PA_twist.ustrip("rad"), light.PA_twist.ustrip("rad"))
+    assert mass.major_axis_pa == light.major_axis_pa
 
 
 def test_to_mass_with_per_component_ratio():
@@ -217,7 +289,7 @@ def test_to_mass_with_per_component_ratio():
 
     assert isinstance(mass, MassMGE)
     assert jnp.allclose(
-        mass.I.ustrip("Msun / rad2"), light.I.ustrip("Lsun / rad2") * ratios
+        mass.I.ustrip("Msun / pc2"), light.I.ustrip("Lsun / pc2") * ratios
     )
 
 
@@ -229,11 +301,12 @@ def test_rescaled_multiplies_intensity_and_keeps_everything_else():
 
     assert isinstance(rescaled, LightMGE)
     assert jnp.allclose(
-        rescaled.I.ustrip("Lsun / rad2"), light.I.ustrip("Lsun / rad2") * 2.0
+        rescaled.I.ustrip("Lsun / pc2"), light.I.ustrip("Lsun / pc2") * 2.0
     )
     assert jnp.allclose(rescaled.sigma.ustrip("rad"), light.sigma.ustrip("rad"))
     assert jnp.allclose(rescaled.q.ustrip(""), light.q.ustrip(""))
     assert jnp.allclose(rescaled.PA_twist.ustrip("rad"), light.PA_twist.ustrip("rad"))
+    assert rescaled.major_axis_pa == light.major_axis_pa
 
 
 def test_to_mass_rejects_mismatched_component_count():
@@ -280,7 +353,7 @@ def test_deproject_oblate_conserves_total_flux():
 def test_deproject_oblate_requires_physical_units():
     mge = _multi_component_light_mge()
 
-    with pytest.raises(ValueError, match="physical .length. sigma"):
+    with pytest.raises(ValueError, match="MGE sigma must describe length"):
         mge.deproject_oblate(u.Quantity(90.0, "deg"))
 
 
@@ -293,6 +366,7 @@ def test_deproject_oblate_requires_zero_pa_twist():
         sigma=physical.sigma,
         q=physical.q,
         PA_twist=u.Quantity(jnp.full(physical.q.shape, 0.1), "rad"),
+        major_axis_pa=physical.major_axis_pa,
     )
 
     with pytest.raises(ValueError, match="PA_twist == 0"):
@@ -321,12 +395,86 @@ def test_deproject_oblate_rejects_inclination_outside_0_90():
             physical.deproject_oblate(u.Quantity(bad, "deg"))
 
 
+def test_inclination_from_q_min_and_q_min_from_inclination_are_inverses():
+    mge = _triaxial_anchor_mge()  # anchor q' = 0.76 (zero PA_twist)
+
+    inclination = mge.inclination_from_q_min(0.6)
+    q_min_r = mge.q_min_from_inclination(inclination)
+
+    assert q_min_r == pytest.approx(0.6, abs=1e-9)
+
+
+def test_inclination_from_q_min_at_the_anchor_edge_is_edge_on():
+    # q_min == q_obs' is the inclusive i = 90 deg (edge-on) limit.
+    mge = _triaxial_anchor_mge()
+
+    inclination = mge.inclination_from_q_min(0.76)
+
+    assert inclination.ustrip("deg") == pytest.approx(90.0, abs=1e-9)
+
+
+def test_inclination_from_q_min_rejects_q_min_above_the_anchor():
+    with pytest.raises(MGEDeprojectionError, match="0 < q_min <= q'"):
+        _triaxial_anchor_mge().inclination_from_q_min(0.9)
+
+
+def test_inclination_from_q_min_rejects_non_positive_q_min():
+    with pytest.raises(MGEDeprojectionError, match="0 < q_min <= q'"):
+        _triaxial_anchor_mge().inclination_from_q_min(0.0)
+
+
+def test_inclination_from_q_min_rejects_a_circular_anchor():
+    circular = _single_component_light_mge(q_obs=1.0, psi=0.0)
+    with pytest.raises(MGEDeprojectionError, match="circular MGE"):
+        circular.inclination_from_q_min(0.5)
+
+
+def test_inclination_from_q_min_rejects_a_thin_disk_at_reduced_precision():
+    # PR-68 audit finding: deproject_oblate's own q**2 = q_obs**2 - cos(i)**2
+    # subtracts two nearly equal quantities whenever q_min is small relative
+    # to q_obs -- at float32, q_min = 0.001 against q_obs = 0.76 previously
+    # recovered ~0.00106249 (+6.2% relative error) without ever raising.
+    with jax.enable_x64(False):
+        mge = _single_component_light_mge(q_obs=0.76, psi=0.0)
+        with pytest.raises(MGEDeprojectionError, match="precision boundary"):
+            mge.inclination_from_q_min(0.001)
+
+
+def test_inclination_from_q_min_rejects_a_near_circular_anchor_at_reduced_precision():
+    # PR-68 audit finding: the same cancellation also triggers for an
+    # ordinary, non-thin q_min when the anchor itself is nearly circular --
+    # at float32, q_min = 0.6 against q_obs = 0.999999 previously recovered
+    # ~0.613572 (+2.26% relative error).
+    with jax.enable_x64(False):
+        mge = _single_component_light_mge(q_obs=0.999999, psi=0.0)
+        with pytest.raises(MGEDeprojectionError, match="precision boundary"):
+            mge.inclination_from_q_min(0.6)
+
+
+@pytest.mark.parametrize(
+    ("q_obs", "q_min"), [(0.76, 0.6), (0.5, 0.3), (0.9, 0.1), (0.95, 0.05)]
+)
+def test_inclination_from_q_min_accepts_ordinary_points_at_both_precisions(
+    q_obs, q_min
+):
+    # The round-trip check must not reject ordinary configurations --
+    # confirms it doesn't just reject everything near a flattened anchor.
+    for x64 in (True, False):
+        with jax.enable_x64(x64):
+            mge = _single_component_light_mge(q_obs=q_obs, psi=0.0)
+            inclination = mge.inclination_from_q_min(q_min)
+            q_min_r = mge.q_min_from_inclination(inclination)
+            tol = 1e-6 if x64 else 1e-2
+            assert q_min_r == pytest.approx(q_min, rel=tol)
+
+
 def _single_component_light_mge(q_obs: float, psi: float) -> LightMGE:
     return LightMGE(
         I=u.Quantity(jnp.array([5.0]), "Lsun / kpc2"),
         sigma=u.Quantity(jnp.array([2.0]), "kpc"),
         q=u.Quantity(jnp.array([q_obs]), ""),
         PA_twist=u.Quantity(jnp.array([psi]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "deg"),
     )
 
 
@@ -392,7 +540,7 @@ def test_deproject_triaxial_conserves_total_flux():
 def test_deproject_triaxial_requires_physical_units():
     mge = _multi_component_light_mge()
 
-    with pytest.raises(ValueError, match="physical .length. sigma"):
+    with pytest.raises(ValueError, match="MGE sigma must describe length"):
         mge.deproject_triaxial(
             theta=u.Quantity(1.0, "rad"),
             phi=u.Quantity(1.0, "rad"),
@@ -461,28 +609,42 @@ def _forward_project_triaxial(
         (1.0, 0.9, 0.85, 0.5, 0.5),
     ],
 )
+@pytest.mark.parametrize("x64", [False, True])
 def test_deproject_triaxial_recovers_independent_forward_projection(
-    sigma_intr, p_intr, q_intr, theta, phi
+    sigma_intr, p_intr, q_intr, theta, phi, x64
 ):
     sigma_obs, q_obs, psi_prime = _forward_project_triaxial(
         sigma_intr, p_intr, q_intr, theta, phi
     )
-    mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0]), "Lsun / kpc2"),
-        sigma=u.Quantity(jnp.array([sigma_obs]), "kpc"),
-        q=u.Quantity(jnp.array([q_obs]), ""),
-        PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
-    )
+    with jax.enable_x64(x64):
+        mge = LightMGE(
+            I=u.Quantity(jnp.array([5.0]), "Lsun / kpc2"),
+            sigma=u.Quantity(jnp.array([sigma_obs]), "kpc"),
+            q=u.Quantity(jnp.array([q_obs]), ""),
+            PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+            major_axis_pa=u.Quantity(0.0, "deg"),
+        )
 
-    deprojected = mge.deproject_triaxial(
-        theta=u.Quantity(theta, "rad"),
-        phi=u.Quantity(phi, "rad"),
-        psi=u.Quantity(psi_prime, "rad"),
-    )
+        deprojected = mge.deproject_triaxial(
+            theta=u.Quantity(theta, "rad"),
+            phi=u.Quantity(phi, "rad"),
+            psi=u.Quantity(psi_prime, "rad"),
+        )
 
-    assert jnp.allclose(deprojected.p.ustrip(""), p_intr, atol=1e-4)
-    assert jnp.allclose(deprojected.q.ustrip(""), q_intr, atol=1e-4)
-    assert jnp.allclose(deprojected.sigma.ustrip("kpc"), sigma_intr, atol=1e-4)
+        traced, valid = jax.jit(
+            lambda *args: mge.deproject_triaxial_with_validity(*args)
+        )(
+            u.Quantity(theta, "rad"),
+            u.Quantity(phi, "rad"),
+            u.Quantity(psi_prime, "rad"),
+        )
+        assert bool(valid)
+        assert jnp.allclose(traced.q.ustrip(""), q_intr, atol=1e-4)
+        assert jnp.allclose(traced.p.ustrip(""), p_intr, atol=1e-4)
+        assert jnp.allclose(traced.sigma.ustrip("kpc"), sigma_intr, atol=1e-4)
+        assert jnp.allclose(deprojected.p.ustrip(""), p_intr, atol=1e-4)
+        assert jnp.allclose(deprojected.q.ustrip(""), q_intr, atol=1e-4)
+        assert jnp.allclose(deprojected.sigma.ustrip("kpc"), sigma_intr, atol=1e-4)
 
 
 def test_deproject_triaxial_global_psi_and_pa_twist_are_additive():
@@ -502,6 +664,225 @@ def test_deproject_triaxial_global_psi_and_pa_twist_are_additive():
     assert jnp.allclose(shifted_psi.q.ustrip(""), shifted_twist.q.ustrip(""))
 
 
+def _triaxial_anchor_mge() -> LightMGE:
+    # 3 Gaussians, physical sigma, flattest (anchor) q' = 0.76.
+    return LightMGE(
+        I=u.Quantity(jnp.array([120.0, 45.0, 18.0]), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array([0.4, 1.8, 6.0]), "kpc"),
+        q=u.Quantity(jnp.array([0.88, 0.82, 0.76]), ""),
+        PA_twist=u.Quantity(jnp.zeros(3), "rad"),
+        major_axis_pa=u.Quantity(0.0, "deg"),
+    )
+
+
+def test_triaxial_viewing_angles_and_intrinsic_shape_are_inverses():
+    mge = _triaxial_anchor_mge()
+    p, q, u_ = 0.85, 0.60, 0.93
+
+    theta, phi, psi = mge.triaxial_viewing_angles(p, q, u_)
+    p_r, q_r, u_r = mge.triaxial_intrinsic_shape(theta, phi, psi)
+
+    assert (p_r, q_r, u_r) == pytest.approx((p, q, u_), abs=1e-9)
+
+
+def test_triaxial_viewing_angles_agree_with_deproject_triaxial_at_the_anchor():
+    mge = _triaxial_anchor_mge()
+    theta, phi, psi = mge.triaxial_viewing_angles(0.85, 0.60, 0.93)
+
+    deprojected = mge.deproject_triaxial(theta, phi, psi)
+
+    # component 2 is the anchor (q' = 0.76)
+    assert float(deprojected.p[2].ustrip("")) == pytest.approx(0.85, abs=1e-9)
+    assert float(deprojected.q[2].ustrip("")) == pytest.approx(0.60, abs=1e-9)
+
+
+def test_triaxial_viewing_angles_fold_the_anchor_pa_twist():
+    # A single-Gaussian MGE whose one component (the anchor) has PA_twist.
+    twisted = _single_component_light_mge(q_obs=0.76, psi=0.3)
+    theta, phi, psi = twisted.triaxial_viewing_angles(0.85, 0.60, 0.93)
+
+    # deproject_triaxial adds PA_twist=0.3 back, recovering the requested shape.
+    deprojected = twisted.deproject_triaxial(theta, phi, psi)
+    assert float(deprojected.p[0].ustrip("")) == pytest.approx(0.85, abs=1e-9)
+    assert float(deprojected.q[0].ustrip("")) == pytest.approx(0.60, abs=1e-9)
+
+
+@pytest.mark.parametrize(
+    ("p", "q", "u_", "match"),
+    [
+        (0.85, 0.85, 0.93, "prolate"),
+        (0.85, 0.60, 0.65, r"max\(q/q', p\)"),
+        (0.70, 0.55, 0.95, r"u <= min"),  # hi = p/q' = 0.921 < u
+    ],
+)
+def test_triaxial_viewing_angles_reject_degenerate_geometry(p, q, u_, match):
+    with pytest.raises(MGEDeprojectionError, match=match):
+        _triaxial_anchor_mge().triaxial_viewing_angles(p, q, u_)
+
+
+def test_triaxial_viewing_angles_reject_a_circular_mge():
+    circular = _single_component_light_mge(q_obs=1.0, psi=0.0)
+    with pytest.raises(MGEDeprojectionError, match="circular MGE"):
+        circular.triaxial_viewing_angles(0.85, 0.60, 0.93)
+
+
+def test_triaxial_viewing_angles_reject_a_too_narrow_domain():
+    # lo = p = 0.99999999, hi = 1: no interior point one margin from both ends.
+    with pytest.raises(MGEDeprojectionError, match="too narrow"):
+        _triaxial_anchor_mge().triaxial_viewing_angles(0.99999999, 0.60, 1.0)
+
+
+@pytest.mark.parametrize("x64", [True, False])
+@pytest.mark.parametrize(
+    ("q_obs", "p", "q", "u_in"),
+    [
+        (0.76, 0.85, 0.60, 1.0),  # u = 1
+        (0.60, 0.55, 0.40, 0.55 / 0.60),  # u = p/q' < 1
+        (0.76, 0.85, 0.60, 0.93),  # interior, for contrast
+    ],
+)
+def test_triaxial_viewing_angles_round_trip_at_both_precisions(x64, q_obs, p, q, u_in):
+    with jax.enable_x64(x64):
+        mge = LightMGE(
+            I=u.Quantity(jnp.array([1.0]), "Lsun / pc2"),
+            sigma=u.Quantity(jnp.array([1.0]), "kpc"),
+            q=u.Quantity(jnp.array([q_obs]), ""),
+            PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+            major_axis_pa=u.Quantity(0.0, "deg"),
+        )
+        theta, phi, psi = mge.triaxial_viewing_angles(p, q, u_in)
+        p_r, q_r, u_r = mge.triaxial_intrinsic_shape(theta, phi, psi)
+    tol = 1e-9 if x64 else 1e-4
+    assert (p_r, q_r) == pytest.approx((p, q), abs=tol)
+    # a boundary u is honoured only to the precision-scaled margin
+    assert u_r == pytest.approx(u_in, abs=1e-6 if x64 else 3e-3)
+
+
+@pytest.mark.parametrize(
+    ("p", "q", "u_", "q_obs"),
+    [(0.85, 0.60, 0.93, 0.76), (0.55, 0.40, 0.55 / 0.60, 0.60), (0.99, 0.20, 1.0, 0.5)],
+)
+def test_T_Tmaj_Tmin_round_trips_through_p_q_u(p, q, u_, q_obs):
+    T, T_maj, T_min = _T_Tmaj_Tmin_from_p_q_u(p, q, u_, q_obs)
+    assert 0.0 <= T <= 1.0
+    assert 0.0 <= T_maj <= 1.0
+    assert 0.0 <= T_min <= 1.0
+
+    p_r, q_r, u_r = _p_q_u_from_T_Tmaj_Tmin(T, T_maj, T_min, q_obs)
+
+    assert (p_r, q_r, u_r) == pytest.approx((p, q, u_), abs=1e-9)
+
+
+def test_T_matches_the_ngc1453_value_from_quenneville_liepold_ma_2022():
+    # Quenneville, Liepold & Ma (2022), ApJ 926:30, abstract: the best-fit
+    # NGC 1453 model has p = 0.933, q = 0.779, T = 0.33. T = (1-p^2)/(1-q^2)
+    # doesn't depend on q_obs, so any valid dummy anchor value works here.
+    T, _, _ = _T_Tmaj_Tmin_from_p_q_u(p=0.933, q=0.779, u=0.95, q_obs=0.5)
+    assert T == pytest.approx(0.33, abs=5e-3)
+
+
+def test_p_q_u_from_T_Tmaj_Tmin_rejects_a_degenerate_denominator():
+    # den = 1 - (1-T)*T_min - q_obs^2*T*T_maj == 0 at T=1, T_maj=1, q_obs^2=1... but
+    # q_obs < 1 always for a flattened MGE, so drive den -> 0 via T_min instead:
+    # (1-T)*T_min == 1 needs T=0, T_min=1 (T*T_maj term then vanishes since T=0).
+    with pytest.raises(MGEDeprojectionError, match="denominator"):
+        _p_q_u_from_T_Tmaj_Tmin(T=0.0, T_maj=0.5, T_min=1.0, q_obs=0.76)
+
+
+def test_T_Tmaj_Tmin_and_viewing_angles_are_inverses():
+    mge = _triaxial_anchor_mge()
+    T, T_maj, T_min = _T_Tmaj_Tmin_from_p_q_u(0.85, 0.60, 0.93, q_obs=0.76)
+
+    theta, phi, psi = mge.viewing_angles_from_T_Tmaj_Tmin(T, T_maj, T_min)
+    T_r, T_maj_r, T_min_r = mge.T_Tmaj_Tmin_from_viewing_angles(theta, phi, psi)
+
+    assert (T_r, T_maj_r, T_min_r) == pytest.approx((T, T_maj, T_min), abs=1e-9)
+
+
+def test_viewing_angles_from_T_Tmaj_Tmin_agrees_with_the_pqu_path():
+    # Both parameterizations pin down the same anchor geometry -- going via
+    # (T, T_maj, T_min) must reproduce the (p, q, u) path's own angles exactly.
+    mge = _triaxial_anchor_mge()
+    p, q, u_ = 0.85, 0.60, 0.93
+    T, T_maj, T_min = _T_Tmaj_Tmin_from_p_q_u(p, q, u_, q_obs=0.76)
+
+    theta_pqu, phi_pqu, psi_pqu = mge.triaxial_viewing_angles(p, q, u_)
+    theta_t, phi_t, psi_t = mge.viewing_angles_from_T_Tmaj_Tmin(T, T_maj, T_min)
+
+    assert theta_t.ustrip("rad") == pytest.approx(theta_pqu.ustrip("rad"), abs=1e-9)
+    assert phi_t.ustrip("rad") == pytest.approx(phi_pqu.ustrip("rad"), abs=1e-9)
+    assert psi_t.ustrip("rad") == pytest.approx(psi_pqu.ustrip("rad"), abs=1e-9)
+
+
+def test_viewing_angles_from_T_Tmaj_Tmin_rejects_a_prolate_geometry():
+    # T=1 <=> p == q (see _T_Tmaj_Tmin_from_p_q_u); triaxial_viewing_angles
+    # itself rejects the prolate limit q == p.
+    with pytest.raises(MGEDeprojectionError, match="prolate"):
+        _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(1.0, 0.5, 0.5)
+
+
+def test_p_q_u_from_T_Tmaj_Tmin_rejects_a_zero_thickness_boundary():
+    # q_obs=0.5, (T, T_maj, T_min) = (0.5, 0.5, 0.375): den = 1 - 0.5*0.375 -
+    # 0.25*0.5*0.5 = 0.75 exactly, giving q^2 = 1 - (1 - 0.25)/0.75 = 0.0
+    # exactly -- a zero-thickness anchor, excluded by TNT's strict
+    # `0 < q <= p <= 1` intrinsic-axis convention even though it's a
+    # boundary rather than negative value.
+    with pytest.raises(MGEDeprojectionError, match="positive"):
+        _p_q_u_from_T_Tmaj_Tmin(T=0.5, T_maj=0.5, T_min=0.375, q_obs=0.5)
+
+
+def test_p_q_u_from_T_Tmaj_Tmin_accepts_the_adjacent_interior_point():
+    # One ULP-scale nudge off the exact zero-thickness boundary above should
+    # still deproject normally -- confirms the new q^2 > 0 check rejects
+    # only the boundary itself, not a neighbourhood around it.
+    p, q, u_ = _p_q_u_from_T_Tmaj_Tmin(T=0.5, T_maj=0.5, T_min=0.374, q_obs=0.5)
+    assert 0.0 < q <= p <= 1.0
+    assert 0.0 < u_ <= 1.0
+
+
+def test_viewing_angles_from_T_Tmaj_Tmin_rejects_a_clamped_boundary_point():
+    # Same point the PR-67 audit flagged: near the T -> 0 (oblate) limit,
+    # triaxial_viewing_angles's own eps-margin clamp on u moves u by only
+    # ~3e-8, but (T, T_maj, T_min) divides by (1 - p**2) and (p**2 - q**2),
+    # amplifying that into a recovered T_maj far from the one requested
+    # (0.1 requested vs. ~0.226 previously silently recovered). The
+    # round-trip check must reject this rather than build the wrong point.
+    with pytest.raises(MGEDeprojectionError, match="precision boundary"):
+        _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(1e-6, 0.1, 0.2)
+
+
+def test_viewing_angles_from_T_Tmaj_Tmin_accepts_an_ordinary_interior_point():
+    # The round-trip check must not reject points that aren't actually near
+    # a clamped boundary -- confirms it doesn't just reject everything.
+    theta, phi, psi = _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(
+        0.43, 0.49, 0.39
+    )
+    assert all(math.isfinite(a.ustrip("rad")) for a in (theta, phi, psi))
+
+
+@pytest.mark.parametrize(
+    ("T", "T_maj", "T_min"), [(0.1, 0.02, 0.2), (0.1, 0.03, 0.2), (0.05, 0.08, 0.2)]
+)
+def test_viewing_angles_from_T_Tmaj_Tmin_rejects_small_coordinate_drift_at_float32(
+    T, T_maj, T_min
+):
+    # PR-67 re-audit finding: a purely *absolute* round-trip tolerance is
+    # blind to a small requested coordinate -- at float32, T_maj = 0.02
+    # (etc.) previously recovered a value ~32%-168% larger, well under the
+    # old absolute-only bound (~0.0345), without ever raising. These same
+    # three points are genuinely fine at float64 (agree to ~1e-13) -- only
+    # float32 should reject them.
+    with jax.enable_x64(True):
+        mge = _triaxial_anchor_mge()  # anchor q' = 0.76
+        theta, phi, psi = mge.viewing_angles_from_T_Tmaj_Tmin(T, T_maj, T_min)
+        assert all(math.isfinite(a.ustrip("rad")) for a in (theta, phi, psi))
+    with (
+        jax.enable_x64(False),
+        pytest.raises(MGEDeprojectionError, match="precision boundary"),
+    ):
+        _triaxial_anchor_mge().viewing_angles_from_T_Tmaj_Tmin(T, T_maj, T_min)
+
+
 def test_mge_is_frozen():
     mge = _multi_component_light_mge()
 
@@ -517,34 +898,55 @@ def test_mge_is_a_jax_pytree():
     assert jnp.allclose(doubled.q.ustrip(""), mge.q.ustrip("") * 2)
 
 
-def test_angular_to_physical_converts_sigma_and_intensity():
+def test_angular_to_physical_converts_sigma_and_leaves_intensity_unchanged():
     mge = _multi_component_light_mge()
     distance = u.Quantity(30.5, "Mpc")
 
     physical = mge.angular_to_physical(distance)
 
     assert physical.sigma.unit == u.unit("Mpc")
-    assert physical.I.unit == u.unit("Lsun / Mpc2")
     assert jnp.allclose(
         physical.sigma.ustrip("Mpc"),
         distance.ustrip("Mpc") * mge.sigma.ustrip("rad"),
     )
-    assert jnp.allclose(
-        physical.I.ustrip("Lsun / Mpc2"),
-        mge.I.ustrip("Lsun / rad2") / distance.ustrip("Mpc") ** 2,
-    )
+    # `I` is a physical surface density, independent of distance.
+    assert physical.I.unit == mge.I.unit
+    assert jnp.array_equal(physical.I.ustrip(mge.I.unit), mge.I.ustrip(mge.I.unit))
+
+
+def test_angular_to_physical_total_luminosity_scales_with_distance_squared():
+    mge = _multi_component_light_mge()
+    totals = []
+    for distance_mpc in (30.0, 60.0):
+        physical = mge.angular_to_physical(u.Quantity(distance_mpc, "Mpc"))
+        intrinsic = physical.deproject_oblate(u.Quantity(90.0, "deg"))
+        total = (
+            (2 * jnp.pi) ** 1.5
+            * intrinsic.I
+            * intrinsic.sigma**3
+            * intrinsic.p
+            * intrinsic.q
+        ).ustrip("Lsun")
+        expected = (2 * jnp.pi * mge.I * physical.sigma**2 * mge.q).ustrip("Lsun")
+        assert jnp.allclose(total, expected, rtol=1e-6)
+        totals.append(total)
+
+    assert jnp.allclose(totals[1], 4 * totals[0], rtol=1e-6)
 
 
 def test_angular_to_physical_is_invariant_to_the_declared_angular_unit():
     # The same physical MGE declared in radians vs. arcsec/deg must project
-    # to the same physical `sigma` and `I`; `angular_to_physical` converts
-    # each declared angular unit on demand.
+    # to the same physical `sigma`; `angular_to_physical` converts each
+    # declared angular unit on demand. `I` (already physical, untouched by
+    # this conversion) is identical on both sides by construction -- kept
+    # here as a cross-check that it really is passed through unchanged.
     rad = _multi_component_light_mge()
     arcsec = LightMGE(
-        I=u.Quantity(rad.I.ustrip("Lsun / arcsec2"), "Lsun / arcsec2"),
+        I=u.Quantity(rad.I.ustrip("Lsun / pc2"), "Lsun / pc2"),
         sigma=u.Quantity(rad.sigma.ustrip("arcsec"), "arcsec"),
         q=rad.q,
         PA_twist=u.Quantity(rad.PA_twist.ustrip("deg"), "deg"),
+        major_axis_pa=rad.major_axis_pa,
     )
     distance = u.Quantity(30.5, "Mpc")
 
@@ -561,7 +963,7 @@ def test_angular_to_physical_is_invariant_to_the_declared_angular_unit():
     )
 
 
-def test_angular_to_physical_leaves_q_and_pa_twist_unchanged():
+def test_angular_to_physical_leaves_q_pa_twist_and_major_axis_pa_unchanged():
     mge = _multi_component_light_mge()
     distance = u.Quantity(30.5, "Mpc")
 
@@ -569,44 +971,67 @@ def test_angular_to_physical_leaves_q_and_pa_twist_unchanged():
 
     assert jnp.allclose(physical.q.ustrip(""), mge.q.ustrip(""))
     assert jnp.allclose(physical.PA_twist.ustrip("rad"), mge.PA_twist.ustrip("rad"))
+    assert physical.major_axis_pa == mge.major_axis_pa
 
 
 _PROJECTED_MASS_QUAD_ORDER = 10
 
 
 def _projected_binning(
-    *, min_x, min_y, x_extent, y_extent, pa, bins
+    *, min_x, min_y, x_extent, y_extent, y_axis_pa, bins, coord_unit="pc"
 ) -> ProjectedBinning:
-    return ProjectedBinning.from_settings(
-        {
-            "min_x": {"value": min_x, "unit": "rad"},
-            "min_y": {"value": min_y, "unit": "rad"},
-            "x_extent": {"value": x_extent, "unit": "rad"},
-            "y_extent": {"value": y_extent, "unit": "rad"},
-            "PA": {"value": pa, "unit": "rad"},
-        },
-        bins,
-        _PROJECTED_MASS_QUAD_ORDER,
+    """A `ProjectedBinning` for `get_projected_mass` tests.
+
+    `coord_unit` defaults to a physical length (`pc`, matching `I`'s
+    always-physical convention -- see `AbstractMGE.angular_to_physical`),
+    not angular. Built via the plain constructor, not `from_settings`
+    (which -- a configuration-boundary validator, unrelated to this
+    dimension -- always requires an angular unit); pass `coord_unit="rad"`
+    explicitly for the tests that deliberately exercise a still-angular
+    grid.
+    """
+    return ProjectedBinning(
+        min_x=u.Quantity(min_x, coord_unit),
+        min_y=u.Quantity(min_y, coord_unit),
+        x_extent=u.Quantity(x_extent, coord_unit),
+        y_extent=u.Quantity(y_extent, coord_unit),
+        y_axis_pa=u.Quantity(y_axis_pa, "rad"),
+        bins=jnp.asarray(bins),
+        quad_order=_PROJECTED_MASS_QUAD_ORDER,
     )
 
 
-def _brute_force_aperture_mass(I, sigma, q, pa_twist, pa, x_edges, y_edges):
+def _brute_force_aperture_mass(
+    I, sigma, q, pa_twist, major_axis_pa, y_axis_pa, x_edges, y_edges
+):
     """Independently integrate a multi-component MGE over a pixel grid.
 
     Uses `scipy.integrate.dblquad` directly on each component's surface
-    density, rotated into the pixel grid's frame by hand (no tnt code
-    involved), as ground truth for `AbstractMGE.get_projected_mass`.
+    density, as ground truth for `AbstractMGE.get_projected_mass`. The
+    geometry is built from sky basis vectors rather than the production
+    `alpha` formula: a direction at PA ``p`` (north through east) is the unit
+    vector ``(sin p, cos p)`` in (east, north) coordinates. The grid's +y
+    axis is at PA ``y_axis_pa`` and, by TNT's fixed parity, its +x axis is at
+    PA ``y_axis_pa + 90 deg``; each Gaussian's major axis is at PA
+    ``major_axis_pa + pa_twist[k]``. This gives an independent check of the
+    sky-to-grid composition as well as the Gaussian integral itself.
     """
     n_x, n_y = len(x_edges) - 1, len(y_edges) - 1
     mass = np.zeros((n_x, n_y))
+    # (east, north) unit vectors of the grid's +x and +y axes.
+    x_hat = np.array([np.sin(y_axis_pa + np.pi / 2), np.cos(y_axis_pa + np.pi / 2)])
+    y_hat = np.array([np.sin(y_axis_pa), np.cos(y_axis_pa)])
     for k in range(len(I)):
-        alpha = pa - np.pi / 2 + pa_twist[k]
+        pa_k = major_axis_pa + pa_twist[k]
+        major_hat = np.array([np.sin(pa_k), np.cos(pa_k)])
+        minor_hat = np.array([np.cos(pa_k), -np.sin(pa_k)])
 
-        def surface_density(x, y, k=k, alpha=alpha):
-            x_major = x * np.cos(alpha) + y * np.sin(alpha)
-            y_minor = -x * np.sin(alpha) + y * np.cos(alpha)
+        def surface_density(x, y, k=k, major_hat=major_hat, minor_hat=minor_hat):
+            sky = x * x_hat + y * y_hat
+            s_major = sky @ major_hat
+            s_minor = sky @ minor_hat
             return I[k] * np.exp(
-                -(x_major**2 + (y_minor / q[k]) ** 2) / (2 * sigma[k] ** 2)
+                -(s_major**2 + (s_minor / q[k]) ** 2) / (2 * sigma[k] ** 2)
             )
 
         for i in range(n_x):
@@ -625,21 +1050,22 @@ def _brute_force_aperture_mass(I, sigma, q, pa_twist, pa, x_edges, y_edges):
 
 
 @pytest.mark.parametrize(
-    ("I", "sigma", "q", "pa_twist", "pa"),
+    ("I", "sigma", "q", "pa_twist", "major_axis_pa", "y_axis_pa"),
     [
-        ([3.0], [0.02], [0.4], [0.3], 1.1),
-        ([3.0], [0.02], [1.0], [0.0], 0.0),
-        ([2.0, 4.0], [0.015, 0.03], [0.6, 0.3], [0.0, 0.5], 0.7),
+        ([3.0], [0.02], [0.4], [0.3], 0.2, 1.1),
+        ([3.0], [0.02], [0.5], [0.0], 0.0, 0.0),
+        ([2.0, 4.0], [0.015, 0.03], [0.6, 0.3], [0.0, 0.5], -0.3, 0.7),
     ],
 )
 def test_get_projected_mass_matches_independent_numeric_integral(
-    I, sigma, q, pa_twist, pa
+    I, sigma, q, pa_twist, major_axis_pa, y_axis_pa
 ):
     mge = LightMGE(
-        I=u.Quantity(jnp.array(I), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array(sigma), "rad"),
+        I=u.Quantity(jnp.array(I), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array(sigma), "pc"),
         q=u.Quantity(jnp.array(q), ""),
         PA_twist=u.Quantity(jnp.array(pa_twist), "rad"),
+        major_axis_pa=u.Quantity(major_axis_pa, "rad"),
     )
     n_x, n_y = 4, 3
     min_x, min_y = -0.05, -0.04
@@ -652,14 +1078,14 @@ def test_get_projected_mass_matches_independent_numeric_integral(
         min_y=min_y,
         x_extent=x_extent,
         y_extent=y_extent,
-        pa=pa,
+        y_axis_pa=y_axis_pa,
         bins=bins,
     )
 
     mass = mge.get_projected_mass(binning)
 
     expected_grid = _brute_force_aperture_mass(
-        I, sigma, q, pa_twist, pa, x_edges, y_edges
+        I, sigma, q, pa_twist, major_axis_pa, y_axis_pa, x_edges, y_edges
     )
     expected = expected_grid.ravel()[np.argsort(bins.ravel())]
     assert mass.unit == u.unit("Lsun")
@@ -667,25 +1093,31 @@ def test_get_projected_mass_matches_independent_numeric_integral(
 
 
 @pytest.mark.parametrize(
-    ("pa", "aligned_bin_idx"),
+    ("major_axis_pa", "aligned_bin_idx"),
     [
-        (0.0, 0),  # PA=0 -> major axis along y -> the y-strip bin gets more mass.
-        (np.pi / 2, 1),  # PA=90deg -> major axis along x -> the x-strip bin does.
+        (90.0, 0),  # Aligned with the grid's y-axis -> the y-strip bin gets more mass.
+        (0.0, 1),  # Aligned with the grid's x-axis -> the x-strip bin does.
     ],
 )
-def test_get_projected_mass_pa_convention_matches_documented_axis(pa, aligned_bin_idx):
-    """PA is measured counterclockwise from the y-axis (docstring/configuration.md).
+def test_get_projected_mass_pa_convention_matches_documented_axis(
+    major_axis_pa, aligned_bin_idx
+):
+    """A component's on-sky major axis is `major_axis_pa + PA_twist`.
 
-    An elongated component (small `q`) with no twist should therefore have its
-    major axis along y at PA=0 and along x at PA=90deg -- checked here by
-    comparing the mass caught by a thin strip along each axis, independently
-    of the erf/quadrature integration formula itself.
+    With no twist and a grid whose y-axis PA is 90deg (so, by
+    `ProjectedBinning`'s fixed parity, its x-axis PA is 180deg), an elongated
+    component (small `q`) should therefore have its major axis along the
+    grid's y-axis at `major_axis_pa=90deg` and along its x-axis at
+    `major_axis_pa=0deg` -- checked here by comparing the mass caught by a
+    thin strip along each axis, independently of the erf/quadrature
+    integration formula itself.
     """
     mge = LightMGE(
-        I=u.Quantity(jnp.array([1.0]), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array([1.0]), "rad"),
+        I=u.Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array([1.0]), "pc"),
         q=u.Quantity(jnp.array([0.2]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=u.Quantity(major_axis_pa, "deg"),
     )
     n_x, n_y = 40, 40
     min_x, min_y = -4.0, -4.0
@@ -697,7 +1129,12 @@ def test_get_projected_mass_pa_convention_matches_documented_axis(pa, aligned_bi
     x_strip = np.abs(y_centers)[None, :] < half_width  # bin 2: thin in y, wide in x
     bins = np.where(y_strip, 1, np.where(x_strip & ~y_strip, 2, 0))
     binning = _projected_binning(
-        min_x=min_x, min_y=min_y, x_extent=x_extent, y_extent=y_extent, pa=pa, bins=bins
+        min_x=min_x,
+        min_y=min_y,
+        x_extent=x_extent,
+        y_extent=y_extent,
+        y_axis_pa=np.pi / 2,
+        bins=bins,
     )
 
     mass = mge.get_projected_mass(binning).ustrip("Lsun")
@@ -705,16 +1142,59 @@ def test_get_projected_mass_pa_convention_matches_documented_axis(pa, aligned_bi
     assert mass[aligned_bin_idx] > mass[1 - aligned_bin_idx]
 
 
+@pytest.mark.parametrize("rotation_deg", [37.0, -110.0, 213.0])
+def test_get_projected_mass_invariant_under_global_frame_rotation(rotation_deg):
+    """Only `y_axis_pa - major_axis_pa` (and `PA_twist`) enters the projection.
+
+    Rotating the whole sky frame -- adding the same angle to `major_axis_pa`
+    and `y_axis_pa` -- rotates the MGE and the grid together, so every bin's
+    mass must be unchanged. This is independent of the `alpha` formula: it
+    only assumes the projection depends on the two angles solely through
+    their difference.
+    """
+    base_major, base_y = 20.0, 300.0
+
+    def masses(major_deg, y_deg):
+        mge = LightMGE(
+            I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / pc2"),
+            sigma=u.Quantity(jnp.array([0.01, 0.02]), "pc"),
+            q=u.Quantity(jnp.array([0.5, 0.8]), ""),
+            PA_twist=u.Quantity(jnp.array([0.0, 0.35]), "rad"),
+            major_axis_pa=u.Quantity(major_deg, "deg"),
+        )
+        binning = _projected_binning(
+            min_x=-0.05,
+            min_y=-0.04,
+            x_extent=0.1,
+            y_extent=0.08,
+            y_axis_pa=np.radians(y_deg),
+            bins=1 + np.arange(12).reshape(4, 3),
+        )
+        return mge.get_projected_mass(binning).ustrip("Lsun")
+
+    rotated_major = (base_major + rotation_deg) % 180.0
+    rotated_y = (base_y + rotation_deg) % 360.0
+    assert jnp.allclose(
+        masses(base_major, base_y), masses(rotated_major, rotated_y), rtol=1e-6
+    )
+
+
 def test_get_projected_mass_conserves_total_flux_for_circular_component():
     mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array([0.01]), "rad"),
+        I=u.Quantity(jnp.array([5.0]), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array([0.01]), "pc"),
         q=u.Quantity(jnp.array([1.0]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "rad"),
     )
     bins = np.ones((60, 60), dtype=int)
     binning = _projected_binning(
-        min_x=-1.0, min_y=-1.0, x_extent=2.0, y_extent=2.0, pa=0.3, bins=bins
+        min_x=-1.0,
+        min_y=-1.0,
+        x_extent=2.0,
+        y_extent=2.0,
+        y_axis_pa=0.3,
+        bins=bins,
     )
 
     mass = mge.get_projected_mass(binning)
@@ -725,14 +1205,20 @@ def test_get_projected_mass_conserves_total_flux_for_circular_component():
 
 def test_get_projected_mass_excludes_unbinned_pixels():
     mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array([0.01]), "rad"),
+        I=u.Quantity(jnp.array([5.0]), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array([0.01]), "pc"),
         q=u.Quantity(jnp.array([1.0]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "rad"),
     )
     bins = np.array([[0, 1], [1, 0]])
     binning = _projected_binning(
-        min_x=-0.02, min_y=-0.02, x_extent=0.04, y_extent=0.04, pa=0.0, bins=bins
+        min_x=-0.02,
+        min_y=-0.02,
+        x_extent=0.04,
+        y_extent=0.04,
+        y_axis_pa=np.pi / 2,
+        bins=bins,
     )
 
     mass = mge.get_projected_mass(binning)
@@ -742,10 +1228,11 @@ def test_get_projected_mass_excludes_unbinned_pixels():
 
 def test_get_projected_mass_aggregates_multiple_pixels_per_bin():
     mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array([0.01]), "rad"),
+        I=u.Quantity(jnp.array([5.0]), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array([0.01]), "pc"),
         q=u.Quantity(jnp.array([0.7]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "rad"),
     )
     single_bin = np.ones((4, 4), dtype=int)
     per_pixel_bins = 1 + np.arange(16).reshape(4, 4)
@@ -754,7 +1241,7 @@ def test_get_projected_mass_aggregates_multiple_pixels_per_bin():
         "min_y": -0.02,
         "x_extent": 0.04,
         "y_extent": 0.04,
-        "pa": 0.2,
+        "y_axis_pa": 0.2,
     }
 
     combined = mge.get_projected_mass(
@@ -768,46 +1255,72 @@ def test_get_projected_mass_aggregates_multiple_pixels_per_bin():
 
 
 def test_get_projected_mass_requires_consistent_units():
+    """`sigma` left angular (not yet `angular_to_physical`-converted) while
+    `binning` is already physical -- a mismatch `get_projected_mass` must
+    reject, regardless of `I` (always physical; see `angular_to_physical`).
+    """
     mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0]), "Lsun / rad2"),
+        I=u.Quantity(jnp.array([5.0]), "Lsun / pc2"),
         sigma=u.Quantity(jnp.array([0.01]), "rad"),
         q=u.Quantity(jnp.array([1.0]), ""),
         PA_twist=u.Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "rad"),
     )
     binning = _projected_binning(
         min_x=-1.0,
         min_y=-1.0,
         x_extent=2.0,
         y_extent=2.0,
-        pa=0.0,
+        y_axis_pa=np.pi / 2,
         bins=np.ones((3, 3), dtype=int),
+        coord_unit="rad",
     ).angular_to_physical(u.Quantity(30.5, "Mpc"))
 
     with pytest.raises(ValueError, match="not convertible"):
         mge.get_projected_mass(binning)
 
 
-def test_get_projected_mass_invariant_under_matching_physical_conversion():
-    mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array([0.01, 0.02]), "rad"),
+def test_get_projected_mass_invariant_under_matching_physical_length_unit():
+    """`get_projected_mass` gives the same answer regardless of which
+    physical length unit `sigma`/`binning` happen to be re-expressed in
+    (`pc` vs `kpc`, the same grid and MGE) -- `I` (always physical; see
+    `angular_to_physical`) must be re-based to match either one correctly.
+    """
+    sigma_pc = jnp.array([0.01, 0.02])
+    mge_pc = LightMGE(
+        I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / pc2"),
+        sigma=u.Quantity(sigma_pc, "pc"),
         q=u.Quantity(jnp.array([0.6, 0.9]), ""),
         PA_twist=u.Quantity(jnp.array([0.0, 0.4]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "rad"),
     )
+    mge_kpc = dataclasses.replace(mge_pc, sigma=mge_pc.sigma.uconvert("kpc"))
+
     bins = 1 + np.arange(9).reshape(3, 3)
-    binning = _projected_binning(
-        min_x=-0.05, min_y=-0.05, x_extent=0.1, y_extent=0.1, pa=0.5, bins=bins
+    binning_pc = _projected_binning(
+        min_x=-0.05,
+        min_y=-0.05,
+        x_extent=0.1,
+        y_extent=0.1,
+        y_axis_pa=0.5,
+        bins=bins,
+        coord_unit="pc",
     )
-    distance = u.Quantity(30.5, "Mpc")
+    # Same physical grid, re-expressed in kpc (1 kpc = 1000 pc).
+    binning_kpc = _projected_binning(
+        min_x=-0.05e-3,
+        min_y=-0.05e-3,
+        x_extent=0.1e-3,
+        y_extent=0.1e-3,
+        y_axis_pa=0.5,
+        bins=bins,
+        coord_unit="kpc",
+    )
 
-    angular_mass = mge.get_projected_mass(binning)
-    physical_mass = mge.angular_to_physical(distance).get_projected_mass(
-        binning.angular_to_physical(distance)
-    )
+    mass_pc = mge_pc.get_projected_mass(binning_pc)
+    mass_kpc = mge_kpc.get_projected_mass(binning_kpc)
 
-    assert jnp.allclose(
-        angular_mass.ustrip("Lsun"), physical_mass.ustrip("Lsun"), rtol=1e-6
-    )
+    assert jnp.allclose(mass_pc.ustrip("Lsun"), mass_kpc.ustrip("Lsun"), rtol=1e-6)
 
 
 def test_get_projected_mass_is_jit_compatible():
@@ -819,17 +1332,18 @@ def test_get_projected_mass_is_jit_compatible():
     static Python `int`, precomputed at construction time.
     """
     mge = LightMGE(
-        I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / rad2"),
-        sigma=u.Quantity(jnp.array([0.01, 0.02]), "rad"),
+        I=u.Quantity(jnp.array([5.0, 2.0]), "Lsun / pc2"),
+        sigma=u.Quantity(jnp.array([0.01, 0.02]), "pc"),
         q=u.Quantity(jnp.array([0.7, 0.9]), ""),
         PA_twist=u.Quantity(jnp.array([0.0, 0.3]), "rad"),
+        major_axis_pa=u.Quantity(0.0, "rad"),
     )
     binning = _projected_binning(
         min_x=-0.02,
         min_y=-0.02,
         x_extent=0.04,
         y_extent=0.04,
-        pa=0.2,
+        y_axis_pa=0.2,
         bins=np.array([[1, 2], [2, 1]]),
     )
 
@@ -1012,3 +1526,23 @@ def test_spherical_mass_grid_reusable_across_components_with_different_length_un
         np.array([3.0]), np.array([2000.0]), np.array([1.0]), np.array([1.0])
     )
     assert jnp.allclose(total, expected, rtol=1e-5)
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_native_triaxial_precision_boundary_from_independent_covariance(x64):
+    theta, phi = 1e-3, 0.4
+    _sigma, q_obs, psi = _forward_project_triaxial(2.0, 0.7, 0.5, theta, phi)
+    with jax.enable_x64(x64):
+        mge = _single_component_light_mge(q_obs=q_obs, psi=0.0)
+        angles = tuple(u.Quantity(v, "rad") for v in (theta, phi, psi))
+        model, valid = jax.jit(
+            lambda *args: mge.deproject_triaxial_with_validity(*args)
+        )(*angles)
+        assert bool(valid) is x64
+        if x64:
+            assert float(model.q.ustrip("")[0]) == pytest.approx(0.5, rel=1e-6)
+            mge.deproject_triaxial(*angles)
+        else:
+            with pytest.raises(MGEDeprojectionError, match="precision|0 < q"):
+                mge.deproject_triaxial(*angles)
+            assert bool(jnp.all(model.I.ustrip(model.I.unit) == 0))

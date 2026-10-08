@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 from unxt import Quantity
 
@@ -22,9 +23,22 @@ def _newtonian_gravitational_constant() -> Quantity:
     return Quantity(6.6743e-11, "m3 / (kg s2)")
 
 
+def _nfw_critical_density(h: Quantity) -> Quantity:
+    """Critical density in local units safe for float32 differentiation."""
+    h = h.to("1 / Myr")
+    # Prevent XLA from folding the unit conversion into later divisions and
+    # recreating overflow/underflow in the original inverse-second units.
+    h = Quantity(jax.lax.optimization_barrier(h.ustrip(h.unit)), h.unit)
+    gravitational_constant = _newtonian_gravitational_constant().to(
+        "kpc3 / (Msun Myr2)"
+    )
+    return 3 * h**2 / (8 * jnp.pi * gravitational_constant)
+
+
 def _nfw_concentration_m200(
     raw: dict[str, Quantity],
     cosmological_parameters: Mapping[str, Quantity],
+    mge: Any = None,
 ) -> dict[str, Quantity]:
     """Convert NFW's `(c, M_200)` parameterization to native `(m, r_s)`.
 
@@ -40,29 +54,79 @@ def _nfw_concentration_m200(
     `mass_enclosed` at the configured precision, and that the resulting `r_200`
     truly encloses a mean density of exactly `200 * rho_crit`.
     """
+    del mge  # this parameterization needs no MGE (see ForwardConverter)
     c = raw["c"]
     m200 = raw["M_200"]
-    h = cosmological_parameters["H"]
-
-    rho_crit = 3 * h**2 / (8 * jnp.pi * _newtonian_gravitational_constant())
-    r200 = (3 * m200 / (4 * jnp.pi * 200 * rho_crit)) ** (1 / 3)
+    # Local astronomical units keep both values and reverse-mode intermediates
+    # representable in float32, including when H is declared in inverse seconds.
+    rho_crit = _nfw_critical_density(cosmological_parameters["H"])
+    volume = 3 * m200.to("Msun") / (4 * jnp.pi * 200 * rho_crit)
+    # A fractional power on a volume Quantity fails under batched JAX traces.
+    # Cube-root the numeric value, then attach the corresponding length unit.
+    r200 = Quantity(jnp.cbrt(volume.ustrip(volume.unit)), volume.unit ** (1 / 3))
     r_s = r200 / c
-    m = m200 / _nfw_g(c.ustrip(""))
-    # No unit-system conversion: `m`/`r_s` keep whatever unit the arithmetic
-    # above produces -- `to_galax()`'s native `NFWPotential` constructor
-    # converts them regardless (see `tnt.potential`'s module docstring).
+    concentration = c.ustrip("")
+    mass_value = _nfw_characteristic_mass(m200.ustrip(m200.unit), concentration)
+    g = _nfw_g(concentration)
+    physical_mass = Quantity(mass_value, m200.unit).ustrip("Msun")
+    # Reject conversions whose values or concentration/mass derivatives cannot
+    # be represented. The traced builder keeps these outside its AD path.
+    reliable = (
+        jnp.isfinite(1 / g)
+        & jnp.isfinite(
+            physical_mass
+            * ((concentration / (1 + concentration)) / g)
+            / (1 + concentration)
+        )
+        & jnp.isfinite(r_s.ustrip(r_s.unit) / concentration)
+    )
+    m = Quantity(jnp.where(reliable, mass_value, jnp.nan), m200.unit)
     return {"m": m, "r_s": r_s}
 
 
+@jax.custom_jvp
 def _nfw_g(c: Any) -> Any:
     """`ln(1 + c) - c / (1 + c)`, NFW's enclosed-mass shape function.
 
-    `log1p(c)`, not `log(1 + c)`: for small `c`, `1 + c` loses precision
-    that `log1p` avoids by not forming that sum.
+    Below 0.01 use the Taylor series through c**10, whose relative
+    truncation error is below 2e-18. This avoids subtracting nearly equal
+    terms. Mask the polynomial input so unused large-c powers cannot overflow.
     """
-    return jnp.log1p(c) - c / (1 + c)
+    small = c < 0.01
+    x = jnp.where(small, c, 0.0)
+    polynomial = jnp.asarray(9 / 10, dtype=jnp.asarray(c).dtype)
+    for power in range(9, 1, -1):
+        polynomial = (-1) ** power * (power - 1) / power + x * polynomial
+    return jnp.where(small, x * x * polynomial, jnp.log1p(c) - c / (1 + c))
 
 
+@_nfw_g.defjvp
+def _nfw_g_jvp(primals: tuple[Any], tangents: tuple[Any]) -> tuple[Any, Any]:
+    """Analytic shape derivative without a potentially overflowing square."""
+    (c,), (c_dot,) = primals, tangents
+    return _nfw_g(c), ((c / (1 + c)) / (1 + c)) * c_dot
+
+
+@jax.custom_jvp
+def _nfw_characteristic_mass(m200: Any, c: Any) -> Any:
+    """Characteristic mass with a derivative avoiding division by g(c)**2."""
+    return m200 / _nfw_g(c)
+
+
+@_nfw_characteristic_mass.defjvp
+def _nfw_characteristic_mass_jvp(
+    primals: tuple[Any, Any], tangents: tuple[Any, Any]
+) -> tuple[Any, Any]:
+    """Evaluate derivative coefficients before multiplying by cotangents."""
+    m200, c = primals
+    m200_dot, c_dot = tangents
+    g = _nfw_g(c)
+    mass = _nfw_characteristic_mass(m200, c)
+    derivative = mass * ((c / (1 + c)) / g) / (1 + c)
+    return mass, m200_dot / g - derivative * c_dot
+
+
+@jax.custom_jvp
 def _solve_nfw_concentration(target: Any) -> Any:
     """Solve `c**3 / _nfw_g(c) == target` for `c > 0`.
 
@@ -71,7 +135,10 @@ def _solve_nfw_concentration(target: Any) -> Any:
     magnitude of `c`), so a fixed-iteration bisection over a wide,
     unit-independent bracket (`c` is dimensionless -- realistic halo
     concentrations are always well inside `[1e-6, 1e6]`) converges reliably
-    regardless of `target`'s scale.
+    for targets whose roots lie inside that bracket. The custom derivative
+    comes from the root equation, not from differentiating the bisection
+    comparisons. Outside the bracket, bisection returns an endpoint and the
+    implicit derivative does not describe that clamped result.
     """
 
     def h(c: Any) -> Any:
@@ -86,10 +153,25 @@ def _solve_nfw_concentration(target: Any) -> Any:
     return 0.5 * (lower + upper)
 
 
+@_solve_nfw_concentration.defjvp
+def _solve_nfw_concentration_jvp(
+    primals: tuple[Any], tangents: tuple[Any]
+) -> tuple[Any, Any]:
+    """Differentiate the root equation instead of the bisection decisions."""
+    (target,) = primals
+    (target_dot,) = tangents
+    c = _solve_nfw_concentration(target)
+    g = _nfw_g(c)
+    g_prime = c / (1 + c) ** 2
+    h_prime = c**2 * (3 * g - c * g_prime) / g**2
+    return c, target_dot / h_prime
+
+
 def _nfw_concentration_m200_inverse(
     native: dict[str, Quantity],
     declared_units: Mapping[str, str],
     cosmological_parameters: Mapping[str, Quantity],
+    mge: Any = None,
 ) -> dict[str, Quantity]:
     """Convert NFW's native `(m, r_s)` back to `(c, M_200)`.
 
@@ -110,12 +192,13 @@ def _nfw_concentration_m200_inverse(
     rescaled `(c, M_200)` genuinely differs from the original and must be
     recomputed here, not just carried through unchanged.
     """
+    del mge  # this parameterization needs no MGE (see ForwardConverter)
     m = native["m"]
     r_s = native["r_s"]
-    h = cosmological_parameters["H"]
-
-    rho_crit = 3 * h**2 / (8 * jnp.pi * _newtonian_gravitational_constant())
-    target = (m / (4 * jnp.pi * 200 * rho_crit / 3 * r_s**3)).ustrip("")
+    rho_crit = _nfw_critical_density(cosmological_parameters["H"])
+    target = (
+        m.to("Msun") / (4 * jnp.pi * 200 * rho_crit / 3 * r_s.to("kpc") ** 3)
+    ).ustrip("")
     c = _solve_nfw_concentration(target)
     m200 = m * _nfw_g(c)
     return {"c": Quantity(c, ""), "M_200": m200.to(declared_units["M_200"])}

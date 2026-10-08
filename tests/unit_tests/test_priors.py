@@ -55,6 +55,7 @@ _STARS_MGE = LightMGE(
     sigma=Quantity(jnp.array([1.0]), "rad"),
     q=Quantity(jnp.array([1.0]), ""),
     PA_twist=Quantity(jnp.array([0.0]), "rad"),
+    major_axis_pa=Quantity(0.0, "deg"),
 )
 _MGES = {"stars": _STARS_MGE}
 
@@ -195,6 +196,7 @@ _TRIAXIAL_MGE = LightMGE(
     sigma=Quantity(jnp.array([0.3, 1.2, 4.0]), "kpc"),
     q=Quantity(jnp.array([0.85, 0.78, 0.90]), ""),
     PA_twist=Quantity(jnp.zeros(3), "rad"),
+    major_axis_pa=Quantity(0.0, "deg"),
 )
 _ANGLES = {
     "theta": 0.4280191007651427,
@@ -258,7 +260,10 @@ def _enclosed_mass_of(resolved, ml: jnp.ndarray, m_halo: jnp.ndarray) -> jnp.nda
             **{name: Quantity(value, "rad") for name, value in _ANGLES.items()},
         },
     }
-    built = Potential.build(resolved, parameters, {}, validate=False)
+    # Called under `jax.vmap` below, so the validity flag can't be asserted
+    # here (a traced boolean); every drawn `ml`/`m_halo` in this test is
+    # physically valid by construction.
+    built, _valid = Potential.build_with_validity(resolved, parameters, {})
     galax_potential = built.to_galax(_UNITS)
     return gp.spherical_mass_enclosed(galax_potential, _R_10_KPC, _T0).ustrip("Msun")
 

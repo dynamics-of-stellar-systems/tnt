@@ -4,9 +4,8 @@ TNT uses [`unxt`](https://unxt.readthedocs.io/) to validate units and define
 two related unit systems:
 
 - `units.internal` names the base units of the unit system TNT hands to
-  `galax` when it constructs a real potential object for orbit integration
-  (and for prior plugins that need one) -- see
-  `Potential.to_galax()`. It is *not* a normalization applied to declared
+  `galax` when it constructs a real potential object for orbit integration --
+  see `Potential.to_galax()`. It is *not* a normalization applied to declared
   configuration values or to data read from files: those keep the units they
   are declared in.
 - `units.display` controls presentation preferences. Any dimension not
@@ -144,9 +143,13 @@ objects are built either. Each constructor checks its columns' or metadata's
 declared units for the right dimension and then keeps them:
 
 - **MGE** (`tnt.mge`): the `I`, `sigma`, `q`, and `PA_twist` columns are read
-  in the units the ECSV file declares. `build_mges()` still projects each MGE
-  to physical units with `AbstractMGE.angular_to_physical()`, which works for
-  any angular unit `sigma`/`I` were declared in.
+  in the units the ECSV file declares, and the configuration-supplied
+  `major_axis_pa` (validated as an angle in `[0, 180)` degrees) keeps its
+  own declared unit. `I` must be physical surface brightness or density
+  (for example `Lsun/pc2` or `Msun/pc2`), `sigma` and `PA_twist` must be
+  angular, and `q` must be dimensionless. `build_mges()` uses
+  `AbstractMGE.angular_to_physical()` to convert only `sigma` to a physical
+  width using distance; `I` and the other fields remain unchanged.
 - **Gauss-Hermite kinematics**: the `v`/`dv`/`sigma`/`dsigma` columns keep
   their ECSV units; the velocity column's unit is the local reference the
   quadrature errors and the auto-sized histogram are computed in.
@@ -159,10 +162,11 @@ declared units for the right dimension and then keeps them:
   uncertainty is converted into the *value column's* declared unit and that
   unit is kept. A pair without declared units is treated as dimensionless.
 - **Projected spatial binning**: `min_x`, `min_y`, `x_extent`, `y_extent`,
-  and `PA` are validated as angular quantities and kept in their declared
-  units; `ProjectedBinning` does its grid geometry on demand in `min_x`'s
-  unit, and `build_spatial_binnings()` then projects to physical units the
-  same way `build_mges()` does.
+  and `y_axis_pa` are validated as angular quantities (with `y_axis_pa` in
+  `[0, 360)` degrees) and kept in their declared units; `ProjectedBinning`
+  does its grid geometry on demand in `min_x`'s unit, and
+  `build_spatial_binnings()` then projects to physical units the same way
+  `build_mges()` does.
 
 Dimensionless moments, distributions, and relative uncertainties never carry
 a unit.

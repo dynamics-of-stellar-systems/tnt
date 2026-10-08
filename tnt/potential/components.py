@@ -21,15 +21,16 @@ reused across every proposed point in parameter space; see
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from typing import Any, ClassVar, NamedTuple, Self
 
 import equinox as eqx
 import galax.potential
+import jax
+import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt.mge import LightMGE, MassMGE
+from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, _guard_construction
 from tnt.potential.registry import (
     _SUPPORTED_GALAX_TYPES,
     ForwardConverter,
@@ -43,7 +44,7 @@ from tnt.potential.registry import (
     raw_parameter_dimensions,
 )
 from tnt.units import validate_dimension
-from tnt.validation import _required_string, _string
+from tnt.validation import _mapping, _required_string, _string
 
 
 class ResolvedPotentialComponent(NamedTuple):
@@ -52,7 +53,7 @@ class ResolvedPotentialComponent(NamedTuple):
     Everything needed to build the component except the current parameter
     values -- fixed for a whole run, independent of any proposed point in
     parameter space. Computed once by `AbstractPotentialComponent.resolve`;
-    reused across every call to `build` for the same component.
+    reused across every call to `build_with_validity` for the same component.
     """
 
     component_cls: type[AbstractPotentialComponent]
@@ -64,81 +65,129 @@ class ResolvedPotentialComponent(NamedTuple):
     extra_fields: dict[str, Any]
     path: str
 
-    def build(
+    def _raw_parameters_valid(
+        self, parameter_values: Mapping[str, Quantity]
+    ) -> jax.Array:
+        """JAX boolean for raw numerical values after static contract checks."""
+        _mapping(parameter_values, f"{self.path}.parameters")
+        _check_parameter_set_structure(
+            parameter_values, self.raw_dimensions, path=self.path, stage="raw"
+        )
+        return _parameter_values_valid(parameter_values, self.raw_constraints)
+
+    def build_with_validity(
         self,
         parameter_values: Mapping[str, Quantity],
         cosmological_parameters: Mapping[str, Quantity],
-        *,
-        validate: bool = True,
-    ) -> AbstractPotentialComponent:
-        """Build this component from one proposed point in parameter space.
+    ) -> tuple[AbstractPotentialComponent, jax.Array]:
+        """Build a component and return its scalar JAX validity flag.
 
-        `parameter_values` must have this component's exact raw parameter names
-        (native, or under a `parameterization`), each as a scalar, finite
-        `Quantity` in whatever unit it was declared/proposed in. Physical-domain
-        constraints are checked before a registered converter runs, then the
-        converter's canonical output is checked again against the native
-        component constraints. No unit-system normalization happens here (see
-        `tnt.potential`'s module docstring); constraints convert only as needed
-        for a comparison. MGE geometry validation remains owned by the eager
-        deprojection in the four composite types' `_build` methods.
-        Validation converts scalar values to Python numbers, so with
-        `validate=True` (the default) `build` is an eager runtime boundary
-        and must stay outside `jax.jit`/`jax.vmap`. Pass `validate=False` to
-        skip every eager check -- the contract, the physical-domain
-        constraints, and the MGE deprojection convention check -- so `build`
-        itself becomes traceable, e.g. for a `tnt.priors` prior plugin
-        rebuilding the `Potential` from a draw inside the numpyro model. The
-        caller is then responsible for the parameters being valid (a
-        `numpyro.sample` site's own support usually is that guarantee).
-
-        Args:
-            parameter_values: This component's current values, e.g. one
-                entry of a `tnt.parameter_generator.ParameterSet`.
-            cosmological_parameters: Passed through to a registered
-                `parameterization` converter that needs it, e.g. NFW's
-                `concentration_m200` via `H`.
-            validate: If false, skip every eager check so `build` can run
-                under a JAX trace.
+        Galax native parameters/traceable conversions and native MGE parameters
+        and registered MGE conversions are supported.
+        Conversion first probes native validity without differentiation, then
+        runs differentiably only for valid proposals. Invalid converted proposals
+        contain zero placeholders in the converter's output units, never a
+        usable physical model.
+        Callers must condition numerical use of any component on the flag.
         """
-        raw = dict(parameter_values)
-        if validate:
-            _check_parameter_set_contract(
-                raw, self.raw_dimensions, path=self.path, stage="raw"
-            )
-            _validate_parameter_constraints(
-                raw, self.raw_constraints, path=self.path, stage="raw"
-            )
+        raw = dict(_mapping(parameter_values, f"{self.path}.parameters"))
+        valid = self._raw_parameters_valid(raw)
         if self.convert is None:
             canonical = raw
         else:
-            canonical = self.convert(raw, cosmological_parameters)
-            if validate:
-                _check_parameter_set_contract(
+
+            def convert(
+                values: dict[str, Quantity],
+            ) -> tuple[dict[str, Quantity], jax.Array]:
+                canonical = self.convert(
+                    values, cosmological_parameters, self.extra_fields.get("mge")
+                )
+                _check_parameter_set_structure(
                     canonical,
                     self.canonical_dimensions,
                     path=self.path,
                     stage="converted",
                 )
-                _validate_parameter_constraints(
-                    canonical,
-                    self.canonical_constraints,
-                    path=self.path,
-                    stage="converted",
+                return canonical, _parameter_values_valid(
+                    canonical, self.canonical_constraints
                 )
-        return self.component_cls._build(
-            canonical, cosmological_parameters, self.extra_fields, validate=validate
+
+            canonical, valid = _guard_construction(convert, (raw,), valid)
+        if self.component_cls._native_mge:
+            return _build_mge_with_validity(
+                self.component_cls, canonical, self.extra_fields, valid
+            )
+        if self.component_cls is not GalaxPotentialComponent:
+            raise NotImplementedError(
+                f"Traced construction is not implemented for {self.path}."
+            )
+        component = self.component_cls(parameters=canonical, **self.extra_fields)
+        return component, valid
+
+
+def _build_mge_with_validity(
+    component_cls: type[AbstractPotentialComponent],
+    parameters: dict[str, Quantity],
+    extra_fields: dict[str, Any],
+    raw_valid: jax.Array,
+) -> tuple[AbstractPotentialComponent, jax.Array]:
+    """Shared native construction for light/mass and oblate/triaxial MGEs."""
+    mge = extra_fields["mge"]
+
+    def candidate(
+        values: dict[str, Quantity],
+    ) -> tuple[Deprojected3DMGE, jax.Array]:
+        mass = (
+            mge.to_mass(values["ml"])
+            if isinstance(mge, LightMGE)
+            else mge.rescaled(values["mge_mass_scale"])
         )
+        if "inclination" in values:
+            mass._check_deprojection_structure(values["inclination"])
+            model, valid = mass._oblate_candidate(values["inclination"])
+        else:
+            mass._check_deprojection_structure(
+                values["theta"], values["phi"], values["psi"]
+            )
+            model, valid = mass._triaxial_candidate(
+                values["theta"], values["phi"], values["psi"]
+            )
+        # Validate the values consumed by Galax in its local astronomical units.
+        # Derivative correctness belongs in regression tests, not a pair of
+        # full Jacobians recomputed for every proposed model.
+        for quantity, unit in (
+            (model.I, "Msun / kpc3"),
+            (model.sigma, "kpc"),
+            (model.component_masses, "Msun"),
+        ):
+            value = quantity.ustrip(unit)
+            valid = valid & jnp.all(jnp.isfinite(value) & (value > 0))
+        return model, valid
+
+    deprojected, valid = _guard_construction(candidate, (parameters,), raw_valid)
+    return component_cls(parameters=parameters, mge=mge, deprojected=deprojected), valid
 
 
-def _check_parameter_set_contract(
+def _parameter_values_valid(
+    values: Mapping[str, Quantity], constraints: Mapping[str, ParameterConstraint]
+) -> jax.Array:
+    """Combine finiteness and registered bounds for structurally checked values."""
+    valid = jnp.asarray(True)
+    for value in values.values():
+        valid = valid & jnp.isfinite(value.ustrip(value.unit))
+    for name, constraint in constraints.items():
+        valid = valid & constraint.valid(values[name], values)
+    return valid
+
+
+def _check_parameter_set_structure(
     values: Mapping[str, Quantity],
     dimensions: Mapping[str, str],
     *,
     path: str,
     stage: str,
 ) -> None:
-    """Check the generator/converter contract for one parameter mapping."""
+    """Check names, Quantity types, dimensions, and scalar shapes before tracing."""
     expected = set(dimensions)
     actual = set(values)
     if actual != expected:
@@ -167,30 +216,17 @@ def _check_parameter_set_contract(
                 f"Invalid {stage} value: {error}"
             ) from error
         stripped = value.ustrip(value.unit)
+        if not (
+            jnp.issubdtype(stripped.dtype, jnp.integer)
+            or jnp.issubdtype(stripped.dtype, jnp.floating)
+        ):
+            raise TypeError(
+                f"Invalid {stage} value for {label}: expected a real number."
+            )
         if getattr(stripped, "shape", ()) != ():
             raise InvalidPotentialParametersError(
                 f"Invalid {stage} value for {label}: expected a scalar, "
                 f"got shape {getattr(stripped, 'shape', None)}."
-            )
-        if not math.isfinite(float(stripped)):
-            raise InvalidPotentialParametersError(
-                f"Invalid {stage} value for {label}: {value} must be finite."
-            )
-
-
-def _validate_parameter_constraints(
-    values: Mapping[str, Quantity],
-    constraints: Mapping[str, ParameterConstraint],
-    *,
-    path: str,
-    stage: str,
-) -> None:
-    """Apply registered physical-domain constraints to checked parameters."""
-    for name, constraint in constraints.items():
-        violation = constraint.violation(values[name], values)
-        if violation is not None:
-            raise InvalidPotentialParametersError(
-                f"Invalid {stage} value for {path}.parameters.{name}: {violation}"
             )
 
 
@@ -212,6 +248,7 @@ class AbstractPotentialComponent(eqx.Module):
     """
 
     _constraints: ClassVar[dict[str, ParameterConstraint]] = {}
+    _native_mge: ClassVar[bool] = False
 
     parameters: dict[str, Quantity]
 
@@ -229,9 +266,9 @@ class AbstractPotentialComponent(eqx.Module):
         proposed point in parameter space -- a caller building many
         `Potential`s from the same configuration (e.g. `ModelIterator`,
         once per proposed `ParameterSet`) should call this once and reuse
-        the result via `ResolvedPotentialComponent.build`, rather than
-        re-deriving it every time. `Potential.from_settings` calls this
-        internally for one-shot construction.
+        the result via `ResolvedPotentialComponent.build_with_validity`, rather than
+        re-deriving it every time. `Potential.resolve` calls this
+        internally to resolve the complete potential's static structure.
 
         Args:
             settings: One resolved `potential.<name>` entry: `type`, an
@@ -309,40 +346,6 @@ class AbstractPotentialComponent(eqx.Module):
         """Extra constructor kwargs beyond `parameters` (e.g. `galax_type`, `mge`)."""
         return {}
 
-    @classmethod
-    def _build(
-        cls,
-        parameters: dict[str, Quantity],
-        cosmological_parameters: Mapping[str, Quantity],
-        extra_fields: dict[str, Any],
-        *,
-        validate: bool = True,
-    ) -> Self:
-        """Construct this component from its canonical `parameters` and static fields.
-
-        The default just constructs directly -- the four MGE composite types
-        (`tnt.potential.triaxial_mge`, `tnt.potential.oblate_mge`) override
-        this to deproject and validate their MGE eagerly, here, rather than
-        lazily inside `to_galax()`: this is
-        the point where the proposed parameter values are turned into a concrete
-        potential, so it's the appropriate place for that potential to fail if
-        it's invalid (e.g. `tnt.mge.MGEDeprojectionError`), before anything
-        downstream (like orbit integration) is attempted.
-
-        Args:
-            parameters: This component's canonical, parameterization-independent
-                parameter values (post-`ResolvedPotentialComponent.build`'s
-                `convert` step).
-            cosmological_parameters: Passed through for subclasses that need it;
-                unused by the default implementation.
-            extra_fields: This component's resolved static structure beyond
-                `parameters`, e.g. `galax_type` or `mge` -- see `_extra_fields`.
-            validate: Forwarded to eager MGE deprojection by the composite
-                types; ignored by the default and `GalaxPotentialComponent`.
-        """
-        del cosmological_parameters, validate
-        return cls(parameters=parameters, **extra_fields)
-
     def to_galax(
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
@@ -363,6 +366,17 @@ class AbstractPotentialComponent(eqx.Module):
         """
         raise NotImplementedError
 
+    def _registry_type_name(self) -> str:
+        """The key this component looks itself up under in the parameterization
+        registry (`tnt.potential.registry.get_parameterization`).
+
+        Every `tnt.potential.registry.register_component`-registered subclass
+        already declares this as its own `_type` `ClassVar`, so that's the
+        default. `GalaxPotentialComponent` -- the only concrete subclass that
+        isn't registered that way -- overrides this to `self.galax_type`.
+        """
+        return self._type
+
     def raw_parameters(
         self,
         parameterization: str | None,
@@ -371,14 +385,19 @@ class AbstractPotentialComponent(eqx.Module):
     ) -> dict[str, Quantity]:
         """This component's parameters in the resolved config's own parameterization.
 
-        The inverse of `ResolvedPotentialComponent.build`'s conversion, so
+        The inverse of `ResolvedPotentialComponent.build_with_validity`'s conversion, so
         `AllModels` can report every component the way its configuration
-        actually specifies it, regardless of `rescale`. Identity by default:
-        `parameters` already *is* the raw, parameterization-independent
-        representation for anything without a registered non-native
-        parameterization -- the four MGE composite types (which don't support
-        one at all) and a native `galax` type with `parameterization`
-        omitted.
+        actually specifies it, regardless of `rescale`. `parameters` already
+        *is* the raw, parameterization-independent representation when no
+        `parameterization` was configured; otherwise this looks up and runs
+        the registered `invert` converter itself, via `_registry_type_name`,
+        so every component type gets correct dispatch without its own
+        override. The converter's trailing `mge` argument is read directly
+        off `self` (every MGE composite type stores its MGE in a field named
+        `mge`; `None` for a curated native `galax` type, which never carries
+        one) -- `ForwardConverter`'s matching argument comes from
+        `ResolvedPotentialComponent.build_with_validity`'s `extra_fields`, before a
+        component exists to read it from.
 
         Args:
             parameterization: The registered non-native parameterization
@@ -390,8 +409,20 @@ class AbstractPotentialComponent(eqx.Module):
             cosmological_parameters: Passed through to an `invert` converter
                 that needs it, e.g. NFW's `concentration_m200` via `H`.
         """
-        del parameterization, declared_units, cosmological_parameters
-        return self.parameters
+        if parameterization is None:
+            return self.parameters
+        spec = get_parameterization(self._registry_type_name(), parameterization)
+        if spec is None:  # unreachable: resolve() already validated it
+            raise NotImplementedError(
+                f"{self._registry_type_name()}.{parameterization!r} is not a "
+                "registered parameterization."
+            )
+        return spec.invert(
+            self.parameters,
+            declared_units,
+            cosmological_parameters,
+            getattr(self, "mge", None),
+        )
 
 
 class GalaxPotentialComponent(AbstractPotentialComponent):
@@ -442,18 +473,6 @@ class GalaxPotentialComponent(AbstractPotentialComponent):
             rescaled[name] = value * mass_scale**exponent
         return eqx.tree_at(lambda c: c.parameters, self, rescaled)
 
-    def raw_parameters(
-        self,
-        parameterization: str | None,
-        declared_units: Mapping[str, str],
-        cosmological_parameters: Mapping[str, Quantity],
-    ) -> dict[str, Quantity]:
-        if parameterization is None:
-            return self.parameters
-        spec = get_parameterization(self.galax_type, parameterization)
-        if spec is None:  # unreachable: resolve() already validated it
-            raise NotImplementedError(
-                f"{self.galax_type}.{parameterization!r} is not a registered "
-                "parameterization."
-            )
-        return spec.invert(self.parameters, declared_units, cosmological_parameters)
+    def _registry_type_name(self) -> str:
+        """`galax_type`, not `_type` -- see `AbstractPotentialComponent`'s docstring."""
+        return self.galax_type

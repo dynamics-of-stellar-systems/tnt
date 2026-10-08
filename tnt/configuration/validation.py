@@ -8,22 +8,30 @@ scientific objects, load scientific input data, or begin scientific execution.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from tnt.kinematics.registry import kinematics_type_names
+from tnt.mge import MAJOR_AXIS_PA_DOMAIN_DEG
 from tnt.parameter_generator import parameter_generator_required_settings
 from tnt.potential.registry import (
     is_registered_component_type,
     parameter_schema_is_known,
     raw_parameter_dimensions,
 )
-from tnt.units import declared_quantity_value, validate_configuration_quantities
+from tnt.units import (
+    declared_quantity,
+    declared_quantity_value,
+    validate_declared_unit,
+    validate_position_angle,
+)
 from tnt.validation import (
     _integer,
     _mapping,
     _nonnegative_number,
     _number,
+    _optional_mapping,
     _positive_number,
     _reject_unknown_keys,
     _require_keys,
@@ -140,6 +148,106 @@ def validate_resolved_configuration(config: ConfigDict) -> None:
     )
 
 
+def validate_configuration_quantities(config: Mapping[str, Any]) -> None:
+    """Validate declared configuration quantities without converting them."""
+    config = _mapping(config, "configuration")
+
+    cosmology = _optional_mapping(config, "cosmological_parameters", "configuration")
+    _validate_quantity_field(cosmology, "H", "inverse_time", "cosmological_parameters")
+
+    attributes = _optional_mapping(config, "system_attributes", "configuration")
+    _validate_quantity_field(attributes, "distance", "length", "system_attributes")
+
+    potential = _optional_mapping(config, "potential", "configuration")
+    for potential_name, potential_value in potential.items():
+        potential_path = f"potential.{potential_name}"
+        settings = _mapping(potential_value, potential_path)
+        dimensions = _potential_parameter_dimensions(settings)
+        parameters = settings.get("parameters")
+        if parameters is not None and dimensions is not None:
+            _validate_parameter_units(
+                _mapping(parameters, f"{potential_path}.parameters"),
+                dimensions,
+                f"{potential_path}.parameters",
+            )
+
+    kinematics = _optional_mapping(config, "kinematic_data", "configuration")
+    for name, settings_value in kinematics.items():
+        settings_path = f"kinematic_data.{name}"
+        settings = _mapping(settings_value, settings_path)
+        histogram = settings.get("histogram")
+        if histogram is not None:
+            histogram = _mapping(histogram, f"{settings_path}.histogram")
+            histogram_path = f"{settings_path}.histogram"
+            _validate_quantity_field(histogram, "width", "speed", histogram_path)
+            _validate_quantity_field(histogram, "center", "speed", histogram_path)
+
+        errors = settings.get("observational_errors")
+        if settings.get("type") == "gauss_hermite" and errors is not None:
+            errors = _mapping(errors, f"{settings_path}.observational_errors")
+            systematics = errors.get("systematic_uncertainties")
+            if systematics is not None:
+                systematics_path = (
+                    f"{settings_path}.observational_errors.systematic_uncertainties"
+                )
+                systematics = _mapping(systematics, systematics_path)
+                _validate_quantity_field(systematics, "v", "speed", systematics_path)
+                _validate_quantity_field(
+                    systematics, "sigma", "speed", systematics_path
+                )
+
+
+def _potential_parameter_dimensions(
+    settings: Mapping[str, Any],
+) -> Mapping[str, str] | None:
+    """Return one component's raw parameter dimensions from `tnt.potential`.
+
+    `None` means the resolved `type`/`parameterization` has no known parameter
+    schema -- a malformed value (already rejected by `_validate_potential`,
+    which runs first), an unrecognized `type`, or an unimplemented
+    `parameterization`. The caller then skips unit validation for this
+    component, leaving that error to `AbstractPotentialComponent.resolve`
+    rather than emitting a misleading "unit not supported for this parameter".
+    """
+    potential_type = settings.get("type")
+    parameterization = settings.get("parameterization")
+    if not (
+        isinstance(potential_type, str)
+        and (parameterization is None or isinstance(parameterization, str))
+    ):
+        return None
+    if not parameter_schema_is_known(potential_type, parameterization):
+        return None
+    return raw_parameter_dimensions(potential_type, parameterization)
+
+
+def _validate_quantity_field(
+    mapping: Mapping[str, Any], key: str, dimension: str, path: str
+) -> None:
+    if key in mapping:
+        declared_quantity_value(mapping[key], dimension, f"{path}.{key}")
+
+
+def _validate_parameter_units(
+    parameters: Mapping[str, Any], dimensions: Mapping[str, str], path: str
+) -> None:
+    for name, parameter_value in parameters.items():
+        parameter_path = f"{path}.{name}"
+        parameter = _mapping(parameter_value, parameter_path)
+        dimension = dimensions.get(name)
+        if dimension is None or dimension == "dimensionless":
+            if "unit" in parameter:
+                raise ValueError(
+                    f"{parameter_path}.unit is not supported because this "
+                    "parameter is dimensionless or does not yet have a declared "
+                    "dimension."
+                )
+            continue
+        if "unit" not in parameter:
+            raise ValueError(f"{parameter_path} is missing required field: unit.")
+        validate_declared_unit(parameter["unit"], dimension, f"{parameter_path}.unit")
+
+
 def _validate_cosmological_parameters(settings: ConfigDict) -> None:
     path = "cosmological_parameters"
     _reject_unknown_keys(settings, {"H"}, path)
@@ -254,9 +362,20 @@ def _validate_mges(mges: ConfigDict) -> set[str]:
     """Validate the named Multi-Gaussian Expansion (MGE) file registry."""
     path = "MGEs"
     names: set[str] = set()
-    for name, filename in mges.items():
+    for name, entry in mges.items():
         name = _dynamic_name(name, path)
-        _string(filename, f"{path}.{name}")
+        entry_path = f"{path}.{name}"
+        entry = _mapping(entry, entry_path)
+        _reject_unknown_keys(entry, {"file", "major_axis_pa"}, entry_path)
+        _require_keys(entry, {"file", "major_axis_pa"}, entry_path)
+        _string(entry["file"], f"{entry_path}.file")
+        pa_path = f"{entry_path}.major_axis_pa"
+        validate_position_angle(
+            declared_quantity(entry["major_axis_pa"], "angle", pa_path),
+            minimum_deg=MAJOR_AXIS_PA_DOMAIN_DEG[0],
+            maximum_deg=MAJOR_AXIS_PA_DOMAIN_DEG[1],
+            path=pa_path,
+        )
         names.add(name)
     return names
 

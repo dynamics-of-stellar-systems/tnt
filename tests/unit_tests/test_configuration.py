@@ -1,6 +1,7 @@
 import logging
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,122 @@ from tnt.configuration import (
     configuration_session,
 )
 from tnt.configuration import validation as configuration_validation
+from tnt.configuration.validation import validate_configuration_quantities
+
+
+@pytest.mark.parametrize(
+    "imports",
+    [
+        "import tnt.configuration.validation\nimport tnt.potential",
+        "import tnt.potential\nimport tnt.configuration.validation",
+    ],
+)
+def test_configuration_and_potential_import_orders_are_acyclic(imports: str) -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", imports],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_configuration_quantity_validation_does_not_modify_declarations() -> None:
+    config = {
+        "cosmological_parameters": {"H": {"value": 70.0, "unit": "km / (s Mpc)"}},
+        "system_attributes": {
+            "distance": {"value": 2.0, "unit": "Mpc"},
+        },
+        "potential": {
+            "stars": {
+                "type": "TriaxialLightMGEPotential",
+                "parameters": {
+                    "ml": {"value": 5.0, "unit": "Msun / Lsun"},
+                },
+            }
+        },
+        "kinematic_data": {},
+    }
+    original = deepcopy(config)
+
+    validate_configuration_quantities(config)
+
+    assert config == original
+
+
+def test_parameter_unit_is_rejected_on_a_dimensionless_native_parameter() -> None:
+    config = {
+        "cosmological_parameters": {},
+        "system_attributes": {},
+        "potential": {
+            "halo": {
+                "type": "gNFWPotential",
+                "parameters": {
+                    "m": {"value": 1.0e12, "unit": "Msun"},
+                    "r_s": {"value": 10.0, "unit": "kpc"},
+                    "gamma": {"value": 1.0, "unit": "m"},
+                },
+            }
+        },
+        "kinematic_data": {},
+    }
+
+    with pytest.raises(ValueError, match=r"parameters\.gamma\.unit is not supported"):
+        validate_configuration_quantities(config)
+
+
+def test_parameter_unit_check_defers_for_an_unrecognized_potential_type() -> None:
+    # An unknown type has no known parameter schema, so unit validation is
+    # skipped here -- the "unsupported type" error is left to resolve().
+    config = {
+        "cosmological_parameters": {},
+        "system_attributes": {},
+        "potential": {
+            "halo": {
+                "type": "not_a_registered_potential_type",
+                "parameters": {"c": {"value": 1.0, "unit": "m"}},
+            }
+        },
+        "kinematic_data": {},
+    }
+
+    validate_configuration_quantities(config)
+
+
+@pytest.mark.parametrize(
+    ("potential", "error"),
+    [
+        (
+            {
+                "bh": {
+                    "type": "PlummerPotential",
+                    "parameters": {"m_tot": {"value": 10.0}},
+                }
+            },
+            r"potential\.bh\.parameters\.m_tot.*required field: unit",
+        ),
+        (
+            {
+                "stars": {
+                    "type": "TriaxialLightMGEPotential",
+                    "parameters": {"ml": {"value": 5.0}},
+                }
+            },
+            r"potential\.stars\.parameters\.ml.*required field: unit",
+        ),
+    ],
+)
+def test_unitful_parameter_requires_unit(potential: dict, error: str) -> None:
+    config = {
+        "cosmological_parameters": {},
+        "system_attributes": {},
+        "potential": potential,
+        "kinematic_data": {},
+    }
+
+    with pytest.raises(ValueError, match=error):
+        validate_configuration_quantities(config)
 
 
 def _write_user_config(
@@ -26,14 +143,16 @@ system_attributes:
   distance: {{value: 10.0, unit: "kpc"}}
   name: test_system
 MGEs:
-  light: luminosity.ecsv
+  light:
+    file: luminosity.ecsv
+    major_axis_pa: {{value: 126.0, unit: "deg"}}
 spatial_binnings:
   observed:
     min_x: {{value: -29.5, unit: "arcsec"}}
     min_y: {{value: -26.5, unit: "arcsec"}}
     x_extent: {{value: 58.0, unit: "arcsec"}}
     y_extent: {{value: 52.0, unit: "arcsec"}}
-    PA: {{value: 126.0, unit: "deg"}}
+    y_axis_pa: {{value: 0.0, unit: "deg"}}
     bins_file: bins.npy
 potential:
   stars:
@@ -386,6 +505,28 @@ def test_read_rejects_incompatible_quantity_unit_before_writing(
     user_path.write_text(invalid, encoding="utf-8")
 
     with pytest.raises(ValueError, match=r"system_attributes\.distance\.unit"):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert not output_directory.exists()
+
+
+@pytest.mark.parametrize("bad_value", [180.0, 200.0, -10.0])
+def test_read_rejects_major_axis_pa_outside_domain(
+    tmp_path: Path, bad_value: float
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    invalid = user_path.read_text(encoding="utf-8").replace(
+        'major_axis_pa: {value: 126.0, unit: "deg"}',
+        f'major_axis_pa: {{value: {bad_value}, unit: "deg"}}',
+    )
+    user_path.write_text(invalid, encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=r"MGEs\.light\.major_axis_pa must be in \[0, 180\) degrees",
+    ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
     assert not output_directory.exists()
@@ -1086,6 +1227,72 @@ def test_mass_mge_potential_rejects_ml_parameter(tmp_path: Path) -> None:
         match=r"parameters has invalid field\(s\) for TriaxialMassMGEPotential: ml",
     ):
         Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def _pqu_stars(user_data: dict) -> dict:
+    """Retarget the default `stars` component at the `pqu` parameterization."""
+    stars = user_data["potential"]["stars"]
+    stars["parameterization"] = "pqu"
+    stars["parameters"] = {
+        "ml": {"unit": "Msun / Lsun", "value": 5.0, "fixed": True},
+        "p": {"value": 0.85, "fixed": True},
+        "q": {"value": 0.6, "fixed": True},
+        "u": {"value": 0.93, "fixed": True},
+    }
+    return stars
+
+
+def test_triaxial_mge_pqu_parameterization_resolves(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    _pqu_stars(user_data)
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    stars = config.data["potential"]["stars"]
+    assert stars["parameterization"] == "pqu"
+    assert set(stars["parameters"]) == {"ml", "p", "q", "u"}
+
+
+def test_triaxial_mge_pqu_rejects_a_missing_shape_parameter(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    del _pqu_stars(user_data)["parameters"]["u"]
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError, match=r"parameters is missing required field\(s\): u"
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_triaxial_mge_pqu_rejects_a_native_viewing_angle(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    _pqu_stars(user_data)["parameters"]["theta"] = {
+        "unit": "rad",
+        "value": 1.0,
+        "fixed": True,
+    }
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"parameters has invalid field\(s\) for TriaxialLightMGEPotential "
+            r"with parameterization 'pqu': theta"
+        ),
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+# NB: an out-of-domain static value (e.g. q > p) is not rejected at config-prep
+# -- ParameterConstraints are enforced at build_with_validity via its flag,
+# see test_potential.py::test_pqu_domain_invalid_value_is_rejected_at_build_time.
 
 
 def test_potential_component_rejects_the_removed_include_key(tmp_path: Path) -> None:

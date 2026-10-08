@@ -22,10 +22,13 @@ scientific input data.
 
 from __future__ import annotations
 
+import math
 import operator
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
+import jax
+import jax.numpy as jnp
 from unxt import Quantity
 
 from tnt.registry import register_typed_class
@@ -33,26 +36,29 @@ from tnt.registry import register_typed_class
 if TYPE_CHECKING:
     from tnt.potential.components import AbstractPotentialComponent
 
-ForwardConverter = Callable[
-    [dict[str, Quantity], Mapping[str, Quantity]],
-    dict[str, Quantity],
-]
-"""`(raw, cosmological_parameters) -> native galax constructor kwargs`.
+ForwardConverter = Callable[..., dict[str, Quantity]]
+"""`(raw, cosmological_parameters, mge) -> native/canonical constructor kwargs`.
 
-No unit system: each result keeps whatever unit its arithmetic produces --
-`to_galax()`'s native constructor converts again regardless (see
-`tnt.potential`'s module docstring).
+`mge` is the component's own `tnt.mge` MGE when it has one -- every MGE
+composite type stores it in a field named `mge`, `None` for a curated native
+`galax` type, which never carries one. Supplied generically, not per type:
+`ResolvedPotentialComponent.build_with_validity` passes
+`self.extra_fields.get("mge")` to this (forward) converter;
+`AbstractPotentialComponent.raw_parameters` passes
+`getattr(self, "mge", None)` -- the same value, read off the built component
+instead -- to the matching `InverseConverter`. The `pqu` parameterization
+needs it for `q' = min(component q)` and the anchor twist; `concentration_m200`
+ignores it. No unit system: each result keeps whatever unit its arithmetic
+produces (`to_galax()`'s native constructor, or the MGE deprojection,
+converts again regardless -- see `tnt.potential`'s module docstring).
 """
 
-InverseConverter = Callable[
-    [dict[str, Quantity], Mapping[str, str], Mapping[str, Quantity]],
-    dict[str, Quantity],
-]
-"""`(native, declared_units, cosmological_parameters) -> raw config parameters`.
+InverseConverter = Callable[..., dict[str, Quantity]]
+"""`(native, declared_units, cosmological_parameters, mge) -> raw config parameters`.
 
 `declared_units` maps each raw parameter name to the unit string its
 configuration declares, so a reported value comes back in the parameterization
-*and* the unit the config actually specifies.
+*and* the unit the config actually specifies. `mge` as for `ForwardConverter`.
 """
 
 
@@ -72,12 +78,17 @@ class ParameterConstraint(NamedTuple):
     """Bounds and an optional same-component parameter relationship.
 
     Numeric bounds are interpreted in ``unit`` when supplied, or in the
-    parameter value's own unit otherwise. Runtime validation independently
+    parameter value's own unit otherwise. An empty unit string means unit-free
+    ratios, so scaled dimensionless units such as percent compare correctly.
+    Runtime validation independently
     requires every potential parameter to be scalar and finite, including
     parameters with no additional constraint entry. When both
     ``other_parameter`` and ``relation`` are supplied, the rule is interpreted
     as ``this parameter relation other_parameter`` after compatible-unit
-    conversion.
+    conversion. ``minimum_separation_eps_power`` optionally requires a gap
+    between related values, measured against the larger absolute value in
+    units of the active floating-point precision's epsilon raised to that
+    exponent.
     """
 
     minimum: float | None = None
@@ -87,6 +98,47 @@ class ParameterConstraint(NamedTuple):
     unit: str | None = None
     other_parameter: str | None = None
     relation: Literal[">", ">=", "<", "<="] | None = None
+    minimum_separation_eps_power: float | None = None
+
+    def _checks(
+        self, number: jax.Array | float, other: jax.Array | float | None
+    ) -> dict[str, jax.Array]:
+        """Numerical predicates shared by eager diagnostics and JAX tracing."""
+        checks = {"finite": jnp.isfinite(number)}
+        if self.minimum is not None:
+            checks["minimum"] = (
+                number >= self.minimum
+                if self.minimum_inclusive
+                else number > self.minimum
+            )
+        if self.maximum is not None:
+            checks["maximum"] = (
+                number <= self.maximum
+                if self.maximum_inclusive
+                else number < self.maximum
+            )
+        if other is not None:
+            checks["other_finite"] = jnp.isfinite(other)
+            checks["relation"] = _RELATION_OPERATORS[self.relation](number, other)
+            if self.minimum_separation_eps_power is not None:
+                dtype = jnp.result_type(number, other)
+                eps = jnp.asarray(jnp.finfo(dtype).eps, dtype=dtype)
+                margin = eps**self.minimum_separation_eps_power
+                checks["separation"] = (number - other) > margin * jnp.maximum(
+                    jnp.abs(number), jnp.abs(other)
+                )
+        return checks
+
+    def valid(self, value: Quantity, siblings: Mapping[str, Quantity]) -> jax.Array:
+        """JAX scalar boolean for this constraint, including finite values."""
+        unit = value.unit if self.unit is None else self.unit
+        number = value.ustrip(unit)
+        other = (
+            siblings[self.other_parameter].ustrip(unit)
+            if self.other_parameter is not None
+            else None
+        )
+        return jnp.all(jnp.stack(tuple(self._checks(number, other).values())))
 
     def violation(
         self,
@@ -99,48 +151,45 @@ class ParameterConstraint(NamedTuple):
         caller must first verify the parameter mapping's names, types,
         dimensions, scalar shapes, and finite values.
         """
-        unit = self.unit or value.unit
+        unit = value.unit if self.unit is None else self.unit
         try:
-            number = float(value.ustrip(unit))
+            number = value.ustrip(unit)
         except (TypeError, ValueError):
             return f"{value} cannot be compared in constraint unit {unit!s}."
 
-        if self.minimum is not None:
-            valid = (
-                number >= self.minimum
-                if self.minimum_inclusive
-                else number > self.minimum
-            )
-            if not valid:
-                relation = "at least" if self.minimum_inclusive else "greater than"
-                suffix = f" {unit}" if str(unit) else ""
-                return f"{value} must be {relation} {self.minimum}{suffix}."
+        checks = self._checks(number, None)
+        if not bool(checks["finite"]):
+            return f"{value} must be finite."
+        if self.minimum is not None and not bool(checks["minimum"]):
+            relation = "at least" if self.minimum_inclusive else "greater than"
+            suffix = f" {unit}" if str(unit) else ""
+            return f"{value} must be {relation} {self.minimum}{suffix}."
 
-        if self.maximum is not None:
-            valid = (
-                number <= self.maximum
-                if self.maximum_inclusive
-                else number < self.maximum
-            )
-            if not valid:
-                relation = "at most" if self.maximum_inclusive else "less than"
-                suffix = f" {unit}" if str(unit) else ""
-                return f"{value} must be {relation} {self.maximum}{suffix}."
+        if self.maximum is not None and not bool(checks["maximum"]):
+            relation = "at most" if self.maximum_inclusive else "less than"
+            suffix = f" {unit}" if str(unit) else ""
+            return f"{value} must be {relation} {self.maximum}{suffix}."
 
         if self.other_parameter is None:
             return None
         other_value = siblings[self.other_parameter]
         try:
-            other = float(other_value.ustrip(unit))
+            other = other_value.ustrip(unit)
         except (TypeError, ValueError):
             return (
                 f"{value} and parameter {self.other_parameter!r} "
                 f"({other_value}) do not have compatible units."
             )
-        if not _RELATION_OPERATORS[self.relation](number, other):
+        checks = self._checks(number, other)
+        if not bool(checks["other_finite"]) or not bool(checks["relation"]):
             return (
                 f"{value} must be {self.relation} parameter "
                 f"{self.other_parameter!r} ({other_value})."
+            )
+        if "separation" in checks and not bool(checks["separation"]):
+            return (
+                f"{value} is too close to parameter {self.other_parameter!r} "
+                f"({other_value}) for stable evaluation at this precision."
             )
         return None
 
@@ -298,11 +347,14 @@ _SUPPORTED_GALAX_TYPES: dict[str, dict[str, NativeParameter]] = {
         "r_h": NativeParameter(
             "length",
             0.0,
+            # Galax's potential subtracts near-equal terms; its radius
+            # derivative needs a wider gap than simple representability.
             ParameterConstraint(
                 minimum=0.0,
                 minimum_inclusive=False,
                 other_parameter="r_c",
                 relation=">",
+                minimum_separation_eps_power=0.2,
             ),
         ),
     },
@@ -402,6 +454,15 @@ def _validate_constraint_metadata(
                     f"{context}: constraint for {name!r} cannot compare the "
                     "parameter with itself."
                 )
+        if constraint.minimum_separation_eps_power is not None and (
+            constraint.relation != ">"
+            or not math.isfinite(constraint.minimum_separation_eps_power)
+            or not 0 < constraint.minimum_separation_eps_power < 1
+        ):
+            raise ValueError(
+                f"{context}: constraint for {name!r} requires a separation "
+                "exponent between zero and one and a '>' relationship."
+            )
         if (
             constraint.minimum is not None
             and constraint.maximum is not None
@@ -502,28 +563,31 @@ def register_parameterization(
     parameterizations exist, what parameters they take, or which raw domains
     they accept.
 
-    `type_name` must be a curated native `galax` class
-    (`_SUPPORTED_GALAX_TYPES`). A parameterization converts a raw config
-    convention into a component's native `galax` constructor kwargs, and only
-    `GalaxPotentialComponent` runs the inverse converter that reports a model
-    back in its configured parameterization (`AllModels`); a TNT MGE composite
-    type would silently round-trip through its canonical parameters instead.
-    Supporting composite types needs the inverse dispatch moved to a
-    type-independent layer first.
+    `type_name` must be either a curated native `galax` class
+    (`_SUPPORTED_GALAX_TYPES`) or a registered TNT component type
+    (`is_registered_component_type`). A parameterization converts a raw config
+    convention into the component's canonical parameters -- native `galax`
+    constructor kwargs for a curated type, or the type's own native fields for
+    a TNT composite (e.g. `(p, q, u)` -> `(theta, phi, psi)` for the triaxial
+    MGE types). `AbstractPotentialComponent.raw_parameters` runs the inverse
+    converter to report a model back in its configured parameterization
+    (`AllModels`) for *any* registered `type_name` -- no per-type override
+    needed, including for a type registered after this docstring was written.
 
     Constraint names must be a subset of ``raw_dimensions`` so schema and
     domain metadata cannot silently disagree.
 
     Raises:
-        ValueError: If `type_name` is not a curated native `galax` type, or if
-            `(type_name, name)` is already registered, or a constraint names
-            an unknown raw parameter.
+        ValueError: If `type_name` is neither a curated native `galax` type nor
+            a registered TNT component type, if `(type_name, name)` is already
+            registered, or if a constraint names an unknown raw parameter.
     """
-    if type_name not in _SUPPORTED_GALAX_TYPES:
+    if type_name not in _SUPPORTED_GALAX_TYPES and not is_registered_component_type(
+        type_name
+    ):
         raise ValueError(
-            f"Cannot register parameterization {name!r}: {type_name!r} is not a "
-            "curated native galax type. Parameterizations are only supported for "
-            "native galax component types."
+            f"Cannot register parameterization {name!r}: {type_name!r} is neither a "
+            "curated native galax type nor a registered TNT component type."
         )
     _validate_constraint_metadata(
         raw_constraints,

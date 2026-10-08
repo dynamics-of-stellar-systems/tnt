@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 import equinox as eqx
+import jax.numpy as jnp
 import numpyro
 import numpyro.distributions
 import numpyro.infer
@@ -76,13 +77,17 @@ class PriorContext(eqx.Module):
 
     A plugin that needs a derived quantity of the whole potential (an
     enclosed mass, a circular velocity) calls `build_potential()`: it
-    assembles this draw's `tnt.potential.Potential` from `candidate` with
-    every eager check skipped (`build`'s `validate=False`), so it runs inside
-    the traced model. Evaluate it with
-    `build_potential().to_galax(context.unit_system)`. The run's `resolved`
-    potential and cosmology are captured when the `Prior` is built -- a
-    plugin never handles those. An invalid geometry yields `nan` rather than
-    raising (see `tnt.mge.AbstractMGE.deproject_triaxial`).
+    assembles this draw's `tnt.potential.Potential` from `candidate` via
+    `Potential.build_with_validity`, so it runs inside the traced model.
+    Evaluate it with `build_potential().to_galax(context.unit_system)`. The
+    run's `resolved` potential and cosmology are captured when the `Prior`
+    is built -- a plugin never handles those. The first call in a draw
+    registers a `numpyro.factor` site giving an invalid geometry exactly
+    `-inf` log-probability (the formal statement that point has no support,
+    not a `nan` relying on gradient propagation to get rejected) and caches
+    the result, so every later call in the same draw -- whether from the
+    same plugin or another -- reuses it rather than rebuilding and
+    registering a second site.
 
     Attributes (continued):
         unit_system: The run's internal unit system, for
@@ -97,12 +102,16 @@ class PriorContext(eqx.Module):
     candidate: dict[str, dict[str, Any]]
     mges: Mapping[str, LightMGE | MassMGE]
     unit_system: AbstractUnitSystem | None = None
-    _build_potential: Callable[[Mapping[str, Any]], Potential] | None = eqx.field(
+    _build_potential: Callable[[], Potential] | None = eqx.field(
         default=None, static=True
     )
 
     def build_potential(self) -> Potential:
-        """This draw's `Potential`, built with every eager check skipped.
+        """This draw's `Potential`, built via `Potential.build_with_validity`.
+
+        The first call in a draw registers this draw's validity as a
+        `numpyro.factor` site (see this class's own docstring) and caches
+        the result; later calls in the same draw are free.
 
         Raises:
             RuntimeError: If this `Prior` was constructed without the run's
@@ -115,7 +124,7 @@ class PriorContext(eqx.Module):
                 "cosmological parameters and unit system; this Prior was built "
                 "without them."
             )
-        return self._build_potential(self.candidate)
+        return self._build_potential()
 
 
 PriorPlugin = Callable[[PriorContext], None]
@@ -166,16 +175,19 @@ def _make_potential_builder(
     resolved_potential: Mapping[str, ResolvedPotentialComponent],
     cosmological_parameters: Mapping[str, Quantity],
     unit_system: AbstractUnitSystem,
-) -> Callable[[Mapping[str, Any]], Potential]:
-    """A closure that turns one draw's bare `candidate` into a `Potential`.
+) -> Callable[[Mapping[str, Any]], tuple[Potential, Array]]:
+    """A closure that turns one draw's bare `candidate` into a `Potential`
+    and its scalar validity flag.
 
     Mirrors `tnt.parameter_generator._parameter_sets_from_samples`: each
     value is re-wrapped as a `Quantity` in its parameter's own declared
-    `unit` (absent -> dimensionless), then `Potential.build` runs with
-    `validate=False` so the whole thing is JAX-traceable inside the model.
-    `unit_system` isn't `build`'s concern (it's `Potential.to_galax`'s), but
-    the caller passes it here so `Prior` has one place that gates the whole
-    capability on all three being present.
+    `unit` (absent -> dimensionless), then `Potential.build_with_validity`
+    runs, which is itself JAX-traceable. `unit_system` isn't
+    `build_with_validity`'s concern (it's `Potential.to_galax`'s), but the
+    caller passes it here so `Prior` has one place that gates the whole
+    capability on all three being present. Registering the validity as a
+    `numpyro.factor` site is `_build_model`'s concern, not this one's --
+    this function only builds.
     """
     del unit_system
     units: dict[str, dict[str, str]] = {
@@ -186,7 +198,7 @@ def _make_potential_builder(
         for name, component in potential_settings.items()
     }
 
-    def build(candidate: Mapping[str, Any]) -> Potential:
+    def build(candidate: Mapping[str, Any]) -> tuple[Potential, Array]:
         parameter_values = {
             name: {
                 parameter_name: Quantity(candidate[name][parameter_name], unit)
@@ -195,11 +207,8 @@ def _make_potential_builder(
             }
             for name, component_units in units.items()
         }
-        return Potential.build(
-            resolved_potential,
-            parameter_values,
-            cosmological_parameters,
-            validate=False,
+        return Potential.build_with_validity(
+            resolved_potential, parameter_values, cosmological_parameters
         )
 
     return build
@@ -209,7 +218,7 @@ def _build_model(
     potential_settings: Mapping[str, Mapping[str, Any]],
     prior_plugins: Mapping[str, PriorPlugin],
     mges: Mapping[str, LightMGE | MassMGE],
-    build_potential: Callable[[Mapping[str, Any]], Potential] | None,
+    build_potential: Callable[[Mapping[str, Any]], tuple[Potential, Array]] | None,
     unit_system: AbstractUnitSystem | None,
 ) -> Callable[[], dict[str, dict[str, Any]]]:
     """Compose one numpyro model from declared parameter priors and plugins.
@@ -220,6 +229,14 @@ def _build_model(
     site -- it's the same value on every draw). Plugins run last, each
     receiving a `PriorContext` over the assembled `candidate` (and, when
     available, `build_potential`) and adding factor terms only.
+
+    `build_potential` (if given) is wrapped in a per-draw, memoized,
+    zero-arg closure before being handed to `PriorContext`: the first
+    plugin to call `context.build_potential()` in a draw triggers the real
+    build and registers that draw's validity as a `numpyro.factor` site
+    (`-inf` log-probability for an invalid geometry, `0` otherwise); every
+    later call in the same draw -- any plugin -- reuses the cached result
+    rather than rebuilding and registering a second site.
     """
 
     def _model() -> dict[str, dict[str, Any]]:
@@ -239,11 +256,25 @@ def _build_model(
                     site, distribution_cls(*prior["args"])
                 )
             candidate[component_name] = component_values
+
+        cached_potential: list[Potential] = []
+
+        def build_potential_once() -> Potential:
+            if not cached_potential:
+                potential, valid = build_potential(candidate)
+                numpyro.factor(
+                    "_valid_potential_geometry", jnp.where(valid, 0.0, -jnp.inf)
+                )
+                cached_potential.append(potential)
+            return cached_potential[0]
+
         context = PriorContext(
             candidate=candidate,
             mges=mges,
             unit_system=unit_system,
-            _build_potential=build_potential,
+            _build_potential=(
+                build_potential_once if build_potential is not None else None
+            ),
         )
         for prior_fn in prior_plugins.values():
             prior_fn(context)

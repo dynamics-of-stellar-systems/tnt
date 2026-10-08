@@ -10,6 +10,7 @@ paths, and the four MGE composite types' `to_galax`.
 from __future__ import annotations
 
 import dataclasses
+from decimal import Decimal, localcontext
 from typing import ClassVar
 
 import galax.potential as gp
@@ -20,7 +21,7 @@ import unxt as u
 from galax.potential.params import ParameterField
 from unxt import Quantity
 
-from tnt.mge import LightMGE, MassMGE, MGEDeprojectionError
+from tnt.mge import LightMGE, MassMGE
 from tnt.potential import (
     _SUPPORTED_GALAX_TYPES,
     AbstractPotentialComponent,
@@ -30,22 +31,47 @@ from tnt.potential import (
     Potential,
     TriaxialLightMGEPotential,
     TriaxialMassMGEPotential,
-    _nfw_concentration_m200,
-    _nfw_concentration_m200_inverse,
-    _nfw_g,
-    _solve_nfw_concentration,
-    build_potential,
     raw_parameter_dimensions,
     raw_potential_parameters,
 )
 from tnt.potential import registry as _registry_module
-from tnt.potential.nfw import _newtonian_gravitational_constant
+from tnt.potential.nfw import (
+    _newtonian_gravitational_constant,
+    _nfw_concentration_m200,
+    _nfw_concentration_m200_inverse,
+    _nfw_g,
+    _solve_nfw_concentration,
+)
+from tnt.potential.oblate_mge import _inclination_to_qmin, _qmin_to_inclination
 from tnt.potential.registry import (
     _COMPONENT_REGISTRY,
     ParameterConstraint,
     parameter_constraints,
     register_component,
 )
+from tnt.potential.triaxial_mge import (
+    _pqu_to_tpp,
+    _tmajmin_to_tpp,
+    _tpp_to_pqu,
+    _tpp_to_tmajmin,
+)
+
+
+def _valid_build(result):
+    """Assert successful construction before a test uses the returned model."""
+    model, valid = result
+    assert bool(valid)
+    return model
+
+
+def _build_component(cls, parameters, cosmology, extra_fields):
+    """Exercise the public construction contract in physical reference tests."""
+    resolved = cls.resolve(
+        {"type": cls._type, "mge": "m"},
+        {"m": extra_fields["mge"]},
+        path="potential.stars",
+    )
+    return _valid_build(resolved.build_with_validity(parameters, cosmology))
 
 
 def _native_parameter_dimensions(galax_type: str) -> dict[str, str] | None:
@@ -305,7 +331,7 @@ def test_raw_parameter_dimensions_covers_all_three_sources() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_from_settings_rejects_unrecognized_type() -> None:
+def test_resolve_rejects_unrecognized_type() -> None:
     with pytest.raises(
         ValueError, match="Unsupported potential.dh.type 'NotAPotential'"
     ):
@@ -316,9 +342,9 @@ def test_from_settings_rejects_unrecognized_type() -> None:
         )
 
 
-def test_from_settings_rejects_a_real_but_uncurated_galax_class() -> None:
+def test_resolve_rejects_a_real_but_uncurated_galax_class() -> None:
     # MultipolePotential is a real galax.potential class -- unlike
-    # test_from_settings_rejects_unrecognized_type's made-up name -- but
+    # test_resolve_rejects_unrecognized_type's made-up name -- but
     # isn't in _SUPPORTED_GALAX_TYPES (its required l_max: int
     # hyperparameter isn't representable by this module's scalar-Quantity
     # schema). Curating supported classes makes this fail clearly during
@@ -333,15 +359,17 @@ def test_from_settings_rejects_a_real_but_uncurated_galax_class() -> None:
         )
 
 
-def test_from_settings_resolves_a_real_galax_class_name() -> None:
+def test_resolve_resolves_a_real_galax_class_name() -> None:
     resolved = AbstractPotentialComponent.resolve(
         {"type": "NFWPotential", "parameters": {}},
         {},
         path="potential.dh",
     )
-    component = resolved.build(
-        {"m": Quantity(1e11, "Msun"), "r_s": Quantity(10.0, "kpc")},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"m": Quantity(1e11, "Msun"), "r_s": Quantity(10.0, "kpc")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     assert isinstance(component, GalaxPotentialComponent)
     assert component.galax_type == "NFWPotential"
@@ -358,14 +386,12 @@ def test_native_parameter_domain_rejects_nonpositive_or_nonfinite_mass(
         {},
         path="potential.bh",
     )
-    message = "must be finite" if not jnp.isfinite(invalid) else "greater than"
-    with pytest.raises(
-        ValueError, match=rf"potential\.bh\.parameters\.m_tot.*{message}"
-    ):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {"m_tot": Quantity(invalid, "Msun"), "r_s": Quantity(1.0, "kpc")},
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
 def test_runtime_parameter_domain_requires_scalar_quantities_and_exact_names() -> None:
@@ -375,23 +401,167 @@ def test_runtime_parameter_domain_requires_scalar_quantities_and_exact_names() -
         path="potential.bh",
     )
     with pytest.raises(ValueError, match=r"expected a scalar, got shape \(1,\)"):
-        resolved.build(
-            {
-                "m_tot": Quantity(jnp.array([1.0]), "Msun"),
-                "r_s": Quantity(1.0, "kpc"),
-            },
-            _NO_COSMOLOGICAL_PARAMETERS,
+        _valid_build(
+            resolved.build_with_validity(
+                {
+                    "m_tot": Quantity(jnp.array([1.0]), "Msun"),
+                    "r_s": Quantity(1.0, "kpc"),
+                },
+                _NO_COSMOLOGICAL_PARAMETERS,
+            )
         )
     with pytest.raises(ValueError, match=r"missing \['r_s'\].*unexpected \['x'\]"):
-        resolved.build(
-            {"m_tot": Quantity(1.0, "Msun"), "x": Quantity(1.0, "kpc")},
-            _NO_COSMOLOGICAL_PARAMETERS,
+        _valid_build(
+            resolved.build_with_validity(
+                {"m_tot": Quantity(1.0, "Msun"), "x": Quantity(1.0, "kpc")},
+                _NO_COSMOLOGICAL_PARAMETERS,
+            )
         )
     with pytest.raises(ValueError, match=r"parameters\.r_s must describe length"):
-        resolved.build(
-            {"m_tot": Quantity(1.0, "Msun"), "r_s": Quantity(1.0, "s")},
+        _valid_build(
+            resolved.build_with_validity(
+                {"m_tot": Quantity(1.0, "Msun"), "r_s": Quantity(1.0, "s")},
+                _NO_COSMOLOGICAL_PARAMETERS,
+            )
+        )
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_resolved_component_raw_validity_is_traceable(x64_enabled: bool) -> None:
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": "PlummerPotential", "parameters": {}},
+        {},
+        path="potential.bh",
+    )
+
+    def raw_valid(mass: jax.Array) -> jax.Array:
+        return resolved._raw_parameters_valid(
+            {"m_tot": Quantity(mass, "Msun"), "r_s": Quantity(1.0, "kpc")}
+        )
+
+    with jax.enable_x64(x64_enabled):
+        traced = jax.jit(raw_valid)
+        assert bool(traced(jnp.asarray(1.0e5)))
+        assert not bool(traced(jnp.asarray(0.0)))
+        assert not bool(traced(jnp.asarray(float("nan"))))
+
+    with pytest.raises(ValueError, match=r"missing \['r_s'\]"):
+        resolved._raw_parameters_valid({"m_tot": Quantity(1.0e5, "Msun")})
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_native_potential_build_flag_guards_traced_evaluation_and_gradients(
+    x64_enabled: bool,
+) -> None:
+    resolved = Potential.resolve(
+        {"bh": {"type": "PlummerPotential", "parameters": {}}}, {}
+    )
+    xyz = Quantity(jnp.array([1.0, 0.0, 0.0]), "kpc")
+    t = Quantity(0.0, "Myr")
+
+    def log_density(mass: jax.Array) -> tuple[jax.Array, jax.Array]:
+        potential, valid = Potential.build_with_validity(
+            resolved,
+            {"bh": {"m_tot": Quantity(mass, "Msun"), "r_s": Quantity(1.0, "kpc")}},
             _NO_COSMOLOGICAL_PARAMETERS,
         )
+        value = jax.lax.cond(
+            valid,
+            lambda: (
+                potential.to_galax(_internal_unit_system())
+                .potential(xyz, t)
+                .ustrip("kpc2 / Myr2")
+            ),
+            lambda: jnp.asarray(-jnp.inf),
+        )
+        return value, valid
+
+    with jax.enable_x64(x64_enabled):
+        traced = jax.jit(jax.value_and_grad(log_density, has_aux=True))
+        (valid_value, valid_flag), valid_gradient = traced(jnp.asarray(1.0e5))
+        assert bool(valid_flag)
+        assert bool(jnp.isfinite(valid_value))
+        assert bool(jnp.isfinite(valid_gradient))
+        assert float(valid_gradient) < 0
+
+        (invalid_value, invalid_flag), invalid_gradient = traced(jnp.asarray(0.0))
+        assert not bool(invalid_flag)
+        assert float(invalid_value) == -jnp.inf
+        assert bool(jnp.isfinite(invalid_gradient))
+
+
+@pytest.mark.parametrize("galax_type", sorted(_SUPPORTED_GALAX_TYPES))
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_traced_native_build_covers_each_curated_galax_type(
+    galax_type: str, x64_enabled: bool
+) -> None:
+    units_and_values = {
+        "mass": (1.0e10, "Msun"),
+        "length": (1.0, "kpc"),
+        "angle": (0.1, "rad"),
+        "dimensionless": (0.7, ""),
+        "speed": (200.0, "km / s"),
+        "frequency": (0.1, "1 / Myr"),
+    }
+    parameter_specs = _SUPPORTED_GALAX_TYPES[galax_type]
+    with jax.enable_x64(x64_enabled):
+        reference = {
+            name: Quantity(*units_and_values[spec.dimension])
+            for name, spec in parameter_specs.items()
+        }
+        if galax_type == "StoneOstriker15Potential":
+            reference["r_h"] = Quantity(2.0, "kpc")
+        xyz = Quantity(jnp.array([2.0, 1.0, 0.5]), "kpc")
+        t = Quantity(0.0, "Myr")
+    constrained_name = next(
+        name
+        for name, spec in parameter_specs.items()
+        if spec.constraint is not None
+        and spec.constraint.minimum == 0.0
+        and not spec.constraint.minimum_inclusive
+    )
+    reference_value = reference[constrained_name]
+    resolved = Potential.resolve(
+        {"component": {"type": galax_type, "parameters": {}}}, {}
+    )
+
+    def traced(value: jax.Array) -> jax.Array:
+        candidate = dict(reference)
+        candidate[constrained_name] = Quantity(value, reference_value.unit)
+        _, valid = Potential.build_with_validity(
+            resolved, {"component": candidate}, _NO_COSMOLOGICAL_PARAMETERS
+        )
+        return valid
+
+    def potential_value(value: jax.Array) -> jax.Array:
+        candidate = dict(reference)
+        candidate[constrained_name] = Quantity(value, reference_value.unit)
+        potential, valid = Potential.build_with_validity(
+            resolved, {"component": candidate}, _NO_COSMOLOGICAL_PARAMETERS
+        )
+        return jax.lax.cond(
+            valid,
+            lambda: (
+                potential.to_galax(_internal_unit_system())
+                .potential(xyz, t)
+                .ustrip("kpc2 / Myr2")
+            ),
+            lambda: jnp.asarray(-jnp.inf),
+        )
+
+    with jax.enable_x64(x64_enabled):
+        compiled = jax.jit(traced)
+        assert bool(compiled(reference_value.ustrip(reference_value.unit)))
+        assert not bool(compiled(jnp.asarray(0.0)))
+        compiled_potential = jax.jit(jax.value_and_grad(potential_value))
+        value, gradient = compiled_potential(
+            reference_value.ustrip(reference_value.unit)
+        )
+        assert bool(jnp.isfinite(value))
+        assert bool(jnp.isfinite(gradient))
+        invalid_value, invalid_gradient = compiled_potential(jnp.asarray(0.0))
+        assert float(invalid_value) == -jnp.inf
+        assert bool(jnp.isfinite(invalid_gradient))
 
 
 @pytest.mark.parametrize(
@@ -437,11 +607,9 @@ def test_analytic_profile_parameter_bounds_are_enforced(
         {},
         path="potential.halo",
     )
-    with pytest.raises(
-        ValueError,
-        match=rf"potential\.halo\.parameters\.{parameter_name}.*less than",
-    ):
-        resolved.build(parameters, _NO_COSMOLOGICAL_PARAMETERS)
+    assert not bool(
+        resolved.build_with_validity(parameters, _NO_COSMOLOGICAL_PARAMETERS)[1]
+    )
 
 
 def test_same_component_relationship_uses_compatible_declared_units() -> None:
@@ -450,15 +618,16 @@ def test_same_component_relationship_uses_compatible_declared_units() -> None:
         {},
         path="potential.cluster",
     )
-    with pytest.raises(ValueError, match=r"r_h.*must be >.*r_c"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {
                 "m_tot": Quantity(1.0e6, "Msun"),
                 "r_c": Quantity(1.0, "kpc"),
                 "r_h": Quantity(900.0, "pc"),
             },
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
 def test_leesuto_axis_order_is_enforced() -> None:
@@ -467,8 +636,8 @@ def test_leesuto_axis_order_is_enforced() -> None:
         {},
         path="potential.halo",
     )
-    with pytest.raises(ValueError, match=r"a1.*must be >=.*a2"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {
                 "m": Quantity(1.0e11, "Msun"),
                 "r_s": Quantity(10.0, "kpc"),
@@ -477,7 +646,8 @@ def test_leesuto_axis_order_is_enforced() -> None:
                 "a3": Quantity(0.7, ""),
             },
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
 def test_frequency_amplitude_domain_and_signed_pattern_speed_are_distinct() -> None:
@@ -486,32 +656,34 @@ def test_frequency_amplitude_domain_and_signed_pattern_speed_are_distinct() -> N
         {},
         path="potential.core",
     )
-    with pytest.raises(ValueError, match=r"omega.*greater than"):
-        oscillator.build(
-            {"omega": Quantity(0.0, "1 / Myr")},
-            _NO_COSMOLOGICAL_PARAMETERS,
-        )
+    assert not bool(
+        oscillator.build_with_validity(
+            {"omega": Quantity(0.0, "1 / Myr")}, _NO_COSMOLOGICAL_PARAMETERS
+        )[1]
+    )
 
     bar = AbstractPotentialComponent.resolve(
         {"type": "MonariEtAl2016BarPotential", "parameters": {}},
         {},
         path="potential.bar",
     )
-    component = bar.build(
-        {
-            "alpha": Quantity(-0.02, ""),
-            "R0": Quantity(8.0, "kpc"),
-            "v0": Quantity(220.0, "km / s"),
-            "Rb": Quantity(3.5, "kpc"),
-            "phi_b": Quantity(25.0, "deg"),
-            "Omega": Quantity(-40.0, "km / (s kpc)"),
-        },
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        bar.build_with_validity(
+            {
+                "alpha": Quantity(-0.02, ""),
+                "R0": Quantity(8.0, "kpc"),
+                "v0": Quantity(220.0, "km / s"),
+                "Rb": Quantity(3.5, "kpc"),
+                "phi_b": Quantity(25.0, "deg"),
+                "Omega": Quantity(-40.0, "km / (s kpc)"),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     assert component.parameters["Omega"].ustrip("km / (s kpc)") == -40.0
 
 
-def test_from_settings_rejects_unimplemented_parameterization() -> None:
+def test_resolve_rejects_unimplemented_parameterization() -> None:
     with pytest.raises(NotImplementedError, match="'bogus' is not implemented"):
         AbstractPotentialComponent.resolve(
             {
@@ -544,9 +716,10 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
         {},
         path="potential.dh",
     )
-    component = resolved.build(
-        {"c": Quantity(c, ""), "M_200": Quantity(m200, "Msun")},
-        {"H": h},
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"c": Quantity(c, ""), "M_200": Quantity(m200, "Msun")}, {"H": h}
+        )
     )
     m = component.parameters["m"].ustrip("Msun")
     r_s = component.parameters["r_s"].ustrip("kpc")
@@ -563,8 +736,337 @@ def test_nfw_concentration_m200_matches_galax_enclosed_mass() -> None:
     assert float(mean_density / rho_crit) == pytest.approx(200.0, rel=1e-5)
 
 
+@pytest.mark.parametrize(
+    ("mass_value", "mass_unit", "hubble_value", "hubble_unit"),
+    [
+        (1.0e12, "Msun", 7.158985155319864e-05, "1 / Myr"),
+        (100.0, "1e10 Msun", 70.0, "km / (s Mpc)"),
+        (1.0e12, "Msun", 2.2685455026110557e-18, "1 / s"),
+    ],
+)
+def test_nfw_concentration_m200_traces_with_gradients(
+    mass_value: float,
+    mass_unit: str,
+    hubble_value: float,
+    hubble_unit: str,
+) -> None:
+    def scale_radius(c: jax.Array, mass_scale: jax.Array) -> jax.Array:
+        native = _nfw_concentration_m200(
+            {
+                "c": Quantity(c, ""),
+                "M_200": Quantity(mass_value * mass_scale, mass_unit),
+            },
+            {"H": Quantity(hubble_value, hubble_unit)},
+        )
+        return native["r_s"].ustrip("kpc")
+
+    c, mass_scale = jnp.asarray(8.0), jnp.asarray(1.0)
+    eager_radius = scale_radius(c, mass_scale)
+    traced_radius, (c_gradient, mass_gradient) = jax.jit(
+        jax.value_and_grad(scale_radius, argnums=(0, 1))
+    )(c, mass_scale)
+
+    assert float(traced_radius) == pytest.approx(float(eager_radius), rel=1e-6)
+    assert bool(jnp.isfinite(c_gradient))
+    assert bool(jnp.isfinite(mass_gradient))
+    assert float(c_gradient) == pytest.approx(-float(traced_radius) / 8.0, rel=1e-5)
+    assert float(mass_gradient) == pytest.approx(float(traced_radius) / 3.0, rel=1e-5)
+
+    concentrations = jnp.asarray([4.0, 8.0])
+    mass_scales = jnp.asarray([0.5, 1.0])
+    batched_radii, (batched_c_gradients, batched_mass_gradients) = jax.jit(
+        jax.vmap(jax.value_and_grad(scale_radius, argnums=(0, 1)))
+    )(concentrations, mass_scales)
+    assert bool(jnp.all(jnp.isfinite(batched_radii)))
+    assert bool(jnp.all(jnp.isfinite(batched_c_gradients)))
+    assert bool(jnp.all(jnp.isfinite(batched_mass_gradients)))
+    assert bool(
+        jnp.allclose(batched_c_gradients, -batched_radii / concentrations, rtol=1e-5)
+    )
+    assert bool(
+        jnp.allclose(
+            batched_mass_gradients, batched_radii / (3 * mass_scales), rtol=1e-5
+        )
+    )
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+@pytest.mark.parametrize(
+    ("mass_value", "mass_unit", "hubble_value", "hubble_unit"),
+    [
+        (1.0e12, "Msun", 7.158985155319864e-05, "1 / Myr"),
+        (100.0, "1e10 Msun", 70.0, "km / (s Mpc)"),
+        (1.0e12, "Msun", 2.2685455026110557e-18, "1 / s"),
+    ],
+)
+def test_traced_nfw_build_guards_conversion_and_preserves_gradients(
+    x64_enabled: bool,
+    mass_value: float,
+    mass_unit: str,
+    hubble_value: float,
+    hubble_unit: str,
+) -> None:
+    resolved = Potential.resolve(
+        {
+            "halo": {
+                "type": "NFWPotential",
+                "parameterization": "concentration_m200",
+                "parameters": {},
+            }
+        },
+        {},
+    )
+    with jax.enable_x64(x64_enabled):
+        xyz = Quantity(jnp.array([2.0, 1.0, 0.5]), "kpc")
+        t = Quantity(0.0, "Myr")
+
+        def proposed(
+            c: jax.Array, mass_scale: jax.Array
+        ) -> dict[str, dict[str, Quantity]]:
+            return {
+                "halo": {
+                    "c": Quantity(c, ""),
+                    "M_200": Quantity(mass_value * mass_scale, mass_unit),
+                }
+            }
+
+        def cosmology(hubble_scale: jax.Array) -> dict[str, Quantity]:
+            return {"H": Quantity(hubble_value * hubble_scale, hubble_unit)}
+
+        def evaluated(potential: Potential) -> jax.Array:
+            return (
+                potential.to_galax(_internal_unit_system())
+                .potential(xyz, t)
+                .ustrip("kpc2 / Myr2")
+            )
+
+        def reference(
+            c: jax.Array, mass_scale: jax.Array, hubble_scale: jax.Array
+        ) -> jax.Array:
+            native = (
+                _valid_build(
+                    Potential.build_with_validity(
+                        resolved, proposed(c, mass_scale), cosmology(hubble_scale)
+                    )
+                )
+                .components["halo"]
+                .parameters
+            )
+            radius = jnp.linalg.norm(xyz.ustrip("kpc"))
+            g = _newtonian_gravitational_constant().ustrip("kpc3 / (Msun Myr2)")
+            return (
+                -g
+                * native["m"].ustrip("Msun")
+                * jnp.log1p(radius / native["r_s"].ustrip("kpc"))
+                / radius
+            )
+
+        def guarded(
+            c: jax.Array, mass_scale: jax.Array, hubble_scale: jax.Array
+        ) -> tuple[jax.Array, jax.Array]:
+            potential, valid = Potential.build_with_validity(
+                resolved, proposed(c, mass_scale), cosmology(hubble_scale)
+            )
+            return (
+                jax.lax.cond(
+                    valid,
+                    lambda: evaluated(potential),
+                    lambda: jnp.asarray(-jnp.inf),
+                ),
+                valid,
+            )
+
+        compiled = jax.jit(jax.value_and_grad(guarded, argnums=(0, 1, 2), has_aux=True))
+        arguments = (8.0, 1.0, 1.0)
+        (value, valid), gradients = compiled(*map(jnp.asarray, arguments))
+        assert bool(valid)
+        eager = evaluated(
+            _valid_build(
+                Potential.build_with_validity(
+                    resolved, proposed(8.0, 1.0), cosmology(1.0)
+                )
+            )
+        )
+        assert float(value) == pytest.approx(float(eager), rel=1e-5)
+        # Use the closed-form NFW potential for finite differences: galax's
+        # default G can retain its import-time float32 precision under x64.
+        for index, gradient in enumerate(gradients):
+            assert bool(jnp.isfinite(gradient))
+            step = arguments[index] * (1e-4 if x64_enabled else 5e-3)
+            above, below = list(arguments), list(arguments)
+            above[index] += step
+            below[index] -= step
+            upper = reference(*map(jnp.asarray, above))
+            lower = reference(*map(jnp.asarray, below))
+            difference = (upper - lower) / (2 * step)
+            assert float(gradient) == pytest.approx(
+                float(difference), rel=1e-5 if x64_enabled else 5e-3
+            ), index
+
+        invalid = [
+            (bad, 1.0, 1.0) for bad in (0.0, -1.0, float("nan"), float("inf"))
+        ] + [(8.0, bad, 1.0) for bad in (0.0, -1.0, float("nan"), float("inf"))]
+        # Raw positivity is insufficient: unrepresentable conversion values or
+        # derivatives, overflow in the volume, and bad cosmology remain invalid.
+        overflow_scale = jnp.finfo(value.dtype).max / 2 / mass_value
+        tiny_c = 1e-106 if x64_enabled else 1e-10
+        for c, mass_scale in ((tiny_c, 1.0), (8.0, overflow_scale)):
+            assert bool(
+                resolved["halo"]._raw_parameters_valid(proposed(c, mass_scale)["halo"])
+            )
+            invalid.append((c, mass_scale, 1.0))
+        invalid += [(8.0, 1.0, bad) for bad in (0.0, float("nan"), float("inf"))]
+        for candidate in invalid:
+            (invalid_value, invalid_flag), invalid_gradients = compiled(
+                *map(jnp.asarray, candidate)
+            )
+            assert not bool(invalid_flag), candidate
+            assert float(invalid_value) == -jnp.inf
+            assert all(float(gradient) == 0.0 for gradient in invalid_gradients), (
+                candidate
+            )
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_nfw_small_concentration_values_and_gradients(x64_enabled: bool) -> None:
+    """Independent decimal references expose cancellation shared by converters."""
+    resolved = Potential.resolve(
+        {"halo": {"type": "NFWPotential", "parameterization": "concentration_m200"}},
+        {},
+    )
+    with jax.enable_x64(x64_enabled):
+        concentrations = [
+            1e-15 if x64_enabled else 1e-7,
+            1e-4,
+            0.009999,
+            0.01,
+            0.010001,
+        ]
+        shape_and_gradient = jax.jit(jax.value_and_grad(_nfw_g))
+
+        def converted_mass(c: jax.Array) -> tuple[jax.Array, jax.Array]:
+            potential, valid = Potential.build_with_validity(
+                resolved,
+                {"halo": {"c": Quantity(c, ""), "M_200": Quantity(1e12, "Msun")}},
+                {"H": Quantity(70.0, "km / (s Mpc)")},
+            )
+            mass = potential.components["halo"].parameters["m"].ustrip("Msun")
+            return (
+                jax.lax.cond(valid, lambda: mass, lambda: jnp.asarray(-jnp.inf)),
+                valid,
+            )
+
+        mass_and_gradient = jax.jit(jax.value_and_grad(converted_mass, has_aux=True))
+        tolerance = 3e-5 if not x64_enabled else 5e-13
+        for value in concentrations:
+            c = jnp.asarray(value)
+            with localcontext() as context:
+                context.prec = 100
+                exact_c = Decimal.from_float(float(c))
+                g = (1 + exact_c).ln() - exact_c / (1 + exact_c)
+                g_prime = exact_c / (1 + exact_c) ** 2
+                exact_mass = Decimal.from_float(float(jnp.asarray(1e12))) / g
+                exact_mass_prime = -exact_mass * g_prime / g
+            actual_g, actual_g_prime = shape_and_gradient(c)
+            (mass, valid), mass_prime = mass_and_gradient(c)
+            assert bool(valid)
+            for actual, expected in (
+                (actual_g, g),
+                (actual_g_prime, g_prime),
+                (mass, exact_mass),
+                (mass_prime, exact_mass_prime),
+            ):
+                assert float(actual) == pytest.approx(float(expected), rel=tolerance)
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_traced_nfw_validity_combines_with_native_components(x64_enabled: bool) -> None:
+    resolved = Potential.resolve(
+        {
+            "halo": {
+                "type": "NFWPotential",
+                "parameterization": "concentration_m200",
+                "parameters": {},
+            },
+            "bh": {"type": "PlummerPotential", "parameters": {}},
+        },
+        {},
+    )
+
+    def build(c: jax.Array, mass: jax.Array) -> tuple[Potential, jax.Array]:
+        return Potential.build_with_validity(
+            resolved,
+            {
+                "halo": {"c": Quantity(c, ""), "M_200": Quantity(1e12, "Msun")},
+                "bh": {"m_tot": Quantity(mass, "Msun"), "r_s": Quantity(1.0, "kpc")},
+            },
+            {"H": Quantity(70.0, "km / (s Mpc)")},
+        )
+
+    with jax.enable_x64(x64_enabled):
+        compiled = jax.jit(build)
+        potential, valid = compiled(jnp.asarray(8.0), jnp.asarray(1e5))
+        assert bool(valid)
+        expected = _nfw_concentration_m200(
+            {"c": Quantity(8.0, ""), "M_200": Quantity(1e12, "Msun")},
+            {"H": Quantity(70.0, "km / (s Mpc)")},
+        )
+        for name, unit in (("m", "Msun"), ("r_s", "kpc")):
+            actual = potential.components["halo"].parameters[name].ustrip(unit)
+            assert float(actual) == pytest.approx(
+                float(expected[name].ustrip(unit)), rel=1e-5
+            )
+        assert not bool(compiled(jnp.asarray(0.0), jnp.asarray(1e5))[1])
+        assert not bool(compiled(jnp.asarray(8.0), jnp.asarray(0.0))[1])
+
+
+@pytest.mark.parametrize("malformed", ["names", "type", "dimension", "shape"])
+def test_traced_nfw_conversion_contract_errors_raise(malformed: str) -> None:
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "NFWPotential",
+            "parameterization": "concentration_m200",
+            "parameters": {},
+        },
+        {},
+        path="potential.halo",
+    )
+    output: dict[str, Quantity | float] = {
+        "m": Quantity(1.0, "Msun"),
+        "r_s": Quantity(1.0, "kpc"),
+    }
+    if malformed == "names":
+        del output["r_s"]
+    elif malformed == "type":
+        output["m"] = 1.0
+    elif malformed == "dimension":
+        output["m"] = Quantity(1.0, "s")
+    else:
+        output["m"] = Quantity(jnp.ones(2), "Msun")
+
+    def bad_converter(
+        raw: dict[str, Quantity], cosmological_parameters: object, mge: object
+    ) -> dict[str, Quantity | float]:
+        del raw, cosmological_parameters, mge
+        return output
+
+    resolved = resolved._replace(convert=bad_converter)
+
+    def build(c: jax.Array) -> jax.Array:
+        return resolved.build_with_validity(
+            {"c": Quantity(c, ""), "M_200": Quantity(1e12, "Msun")},
+            {"H": Quantity(70.0, "km / (s Mpc)")},
+        )[1]
+
+    # Malformed converter output is a programming error even when the raw
+    # numerical proposal is invalid; it must not become a false validity flag.
+    for c in (8.0, 0.0):
+        with pytest.raises((TypeError, ValueError), match="converted"):
+            jax.jit(build)(jnp.asarray(c))
+
+
 @pytest.mark.parametrize("name", ["c", "M_200"])
-def test_nfw_parameterization_rejects_invalid_raw_values_before_conversion(
+def test_nfw_parameterization_rejects_invalid_raw_values(
     name: str,
 ) -> None:
     resolved = AbstractPotentialComponent.resolve(
@@ -578,10 +1080,9 @@ def test_nfw_parameterization_rejects_invalid_raw_values_before_conversion(
     )
     raw = {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")}
     raw[name] = Quantity(0.0, raw[name].unit)
-    # Empty cosmology proves the raw-domain error occurs before the converter
-    # tries to read its required H value.
-    with pytest.raises(ValueError, match=rf"parameters\.{name}.*greater than"):
-        resolved.build(raw, {})
+    assert not bool(
+        resolved.build_with_validity(raw, {"H": Quantity(70.0, "km / (s Mpc)")})[1]
+    )
 
 
 def test_nfw_parameterization_validates_converted_native_values() -> None:
@@ -594,11 +1095,12 @@ def test_nfw_parameterization_validates_converted_native_values() -> None:
         {},
         path="potential.halo",
     )
-    with pytest.raises(ValueError, match=r"converted.*parameters\.r_s.*finite"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")},
             {"H": Quantity(0.0, "km / (s Mpc)")},
-        )
+        )[1]
+    )
 
 
 @pytest.mark.parametrize(
@@ -628,16 +1130,19 @@ def test_nfw_parameterization_is_invariant_to_declared_units() -> None:
     m200 = Quantity(1.0e12, "Msun")
     h = Quantity(70.0, "km / (s Mpc)")
 
-    internal = resolved.build(
-        {"c": Quantity(8.0, ""), "M_200": m200.to("Msun")},
-        {"H": h.to("1 / Myr")},
+    internal = _valid_build(
+        resolved.build_with_validity(
+            {"c": Quantity(8.0, ""), "M_200": m200.to("Msun")}, {"H": h.to("1 / Myr")}
+        )
     )
-    differently_declared = resolved.build(
-        {
-            "c": Quantity(8.0, ""),
-            "M_200": Quantity(100.0, "1e10 Msun"),
-        },
-        {"H": h},
+    differently_declared = _valid_build(
+        resolved.build_with_validity(
+            {
+                "c": Quantity(8.0, ""),
+                "M_200": Quantity(100.0, "1e10 Msun"),
+            },
+            {"H": h},
+        )
     )
 
     assert differently_declared.parameters["m"].ustrip("Msun") == pytest.approx(
@@ -656,9 +1161,8 @@ def test_nfw_concentration_m200_raw_dimensions() -> None:
 
 
 # ---------------------------------------------------------------------------
-# concentration_m200's inverse: (m, r_s) -> (c, M_200). No closed form, so
-# these check the numerical root-find and the round trip directly, rather
-# than against any independently derivable expected value.
+# concentration_m200's inverse: (m, r_s) -> (c, M_200). No closed form;
+# check values by round trip and gradients against finite differences.
 # ---------------------------------------------------------------------------
 
 
@@ -671,6 +1175,72 @@ def test_solve_nfw_concentration_recovers_a_known_c() -> None:
     for c in (0.01, 0.1, 1.0, 5.0, 8.0, 20.0, 100.0):
         target = c**3 / _nfw_g(c)
         assert float(_solve_nfw_concentration(target)) == pytest.approx(c, rel=1e-12)
+
+
+def test_solve_nfw_concentration_has_the_root_derivative() -> None:
+    with jax.enable_x64(True):
+        for target in (10.0, 50.0, 1000.0):
+            gradient = jax.jit(jax.grad(_solve_nfw_concentration))(target)
+            step = target * 1e-5
+            finite_difference = (
+                _solve_nfw_concentration(target + step)
+                - _solve_nfw_concentration(target - step)
+            ) / (2 * step)
+            assert float(gradient) == pytest.approx(float(finite_difference), rel=1e-7)
+
+
+@pytest.mark.parametrize("output_name", ["c", "M_200"])
+def test_nfw_concentration_m200_inverse_traces_with_gradients(
+    output_name: str,
+) -> None:
+    def converted(mass_scale: jax.Array, radius: jax.Array) -> jax.Array:
+        recovered = _nfw_concentration_m200_inverse(
+            {"m": Quantity(1e12 * mass_scale, "Msun"), "r_s": Quantity(radius, "kpc")},
+            {"M_200": "Msun"},
+            {"H": Quantity(70.0, "km/(s*Mpc)")},
+        )
+        unit = "" if output_name == "c" else "Msun"
+        scale = 1.0 if output_name == "c" else 1e12
+        return recovered[output_name].ustrip(unit) / scale
+
+    with jax.enable_x64(True):
+        masses = jnp.asarray([0.7, 1.0])
+        radii = jnp.asarray([16.0, 20.0])
+        values, (mass_gradients, radius_gradients) = jax.jit(
+            jax.vmap(jax.value_and_grad(converted, argnums=(0, 1)))
+        )(masses, radii)
+        assert bool(jnp.all(jnp.isfinite(values)))
+        assert bool(jnp.all(jnp.isfinite(mass_gradients)))
+        assert bool(jnp.all(jnp.isfinite(radius_gradients)))
+
+        for mass, radius, value, mass_gradient, radius_gradient in zip(
+            masses, radii, values, mass_gradients, radius_gradients, strict=True
+        ):
+            eager_value = converted(mass, radius)
+            single_value, single_gradients = jax.jit(
+                jax.value_and_grad(converted, argnums=(0, 1))
+            )(mass, radius)
+            assert float(value) == pytest.approx(float(eager_value), rel=1e-10)
+            assert float(single_value) == pytest.approx(float(value), rel=1e-10)
+            assert float(single_gradients[0]) == pytest.approx(float(mass_gradient))
+            assert float(single_gradients[1]) == pytest.approx(float(radius_gradient))
+
+            mass_step = float(mass) * 1e-5
+            radius_step = float(radius) * 1e-5
+            mass_difference = (
+                converted(mass + mass_step, radius)
+                - converted(mass - mass_step, radius)
+            ) / (2 * mass_step)
+            radius_difference = (
+                converted(mass, radius + radius_step)
+                - converted(mass, radius - radius_step)
+            ) / (2 * radius_step)
+            assert float(mass_gradient) == pytest.approx(
+                float(mass_difference), rel=1e-5
+            )
+            assert float(radius_gradient) == pytest.approx(
+                float(radius_difference), rel=1e-5
+            )
 
 
 def test_nfw_concentration_m200_inverse_round_trips_the_forward_conversion() -> None:
@@ -688,8 +1258,8 @@ def test_nfw_concentration_m200_inverse_round_trips_the_forward_conversion() -> 
 def test_nfw_concentration_m200_inverse_is_self_consistent_after_rescale() -> None:
     # There's no closed form for (c, M_200) after a mass rescale (rescale()
     # holds r_s fixed and scales only m -- not the same as holding c fixed
-    # and scaling M_200), so the only checkable invariant is that inverting
-    # and then re-converting forward reproduces the same rescaled (m, r_s).
+    # and scaling M_200), so check that inverting and then re-converting
+    # forward reproduces the same rescaled (m, r_s).
     h = Quantity(7.158985155319864e-05, "1 / Myr")
     raw = {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")}
     native = _nfw_concentration_m200(raw, {"H": h})
@@ -714,7 +1284,7 @@ def test_nfw_concentration_m200_inverse_is_self_consistent_after_rescale() -> No
 
 # ---------------------------------------------------------------------------
 # raw_potential_parameters: reporting a Potential in its own configured
-# parameterization, the inverse of Potential.from_settings.
+# parameterization, the inverse of Potential.build_with_validity.
 # ---------------------------------------------------------------------------
 
 
@@ -732,7 +1302,11 @@ def test_raw_potential_parameters_uses_each_component_own_parameterization() -> 
         "bh": {"m_tot": Quantity(5.0, "Msun"), "r_s": Quantity(1e-3, "kpc")},
         "dh": {"c": Quantity(8.0, ""), "M_200": Quantity(1.0e12, "Msun")},
     }
-    potential = Potential.from_settings(settings, parameter_values, {}, {"H": h})
+    potential = _valid_build(
+        Potential.build_with_validity(
+            Potential.resolve(settings, {}), parameter_values, {"H": h}
+        )
+    )
 
     raw = raw_potential_parameters(settings, potential, {"H": h})
     assert set(raw["bh"]) == {"m_tot", "r_s"}
@@ -761,9 +1335,11 @@ def test_plummer_to_galax_matches_closed_form_potential() -> None:
         {},
         path="potential.bh",
     )
-    component = resolved.build(
-        {"m_tot": Quantity(m_tot, "Msun"), "r_s": Quantity(r_s, "kpc")},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"m_tot": Quantity(m_tot, "Msun"), "r_s": Quantity(r_s, "kpc")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     galax_potential = component.to_galax(unit_system)
 
@@ -783,20 +1359,24 @@ def test_plummer_potential_is_invariant_to_declared_parameter_units() -> None:
     resolved = Potential.resolve(settings, {})
     mass = Quantity(5.0, "Msun")
 
-    internal = Potential.build(
-        resolved,
-        {"bh": {"m_tot": mass, "r_s": Quantity(1.0, "kpc")}},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    internal = _valid_build(
+        Potential.build_with_validity(
+            resolved,
+            {"bh": {"m_tot": mass, "r_s": Quantity(1.0, "kpc")}},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     ).to_galax(unit_system)
-    differently_declared = Potential.build(
-        resolved,
-        {
-            "bh": {
-                "m_tot": Quantity(float(mass.ustrip("kg")), "kg"),
-                "r_s": Quantity(1000.0, "pc"),
-            }
-        },
-        _NO_COSMOLOGICAL_PARAMETERS,
+    differently_declared = _valid_build(
+        Potential.build_with_validity(
+            resolved,
+            {
+                "bh": {
+                    "m_tot": Quantity(float(mass.ustrip("kg")), "kg"),
+                    "r_s": Quantity(1000.0, "pc"),
+                }
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     ).to_galax(unit_system)
 
     xyz = Quantity(jnp.array([2.0, 0.0, 0.0]), "kpc")
@@ -815,9 +1395,11 @@ def test_plummer_rescale_scales_only_the_mass_parameter() -> None:
         {},
         path="potential.bh",
     )
-    component = resolved.build(
-        {"m_tot": Quantity(5.0, "Msun"), "r_s": Quantity(1e-3, "kpc")},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"m_tot": Quantity(5.0, "Msun"), "r_s": Quantity(1e-3, "kpc")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     rescaled = component.rescale(2.0)
     assert rescaled.parameters["m_tot"].ustrip("Msun") == pytest.approx(10.0)
@@ -835,7 +1417,11 @@ def test_potential_composes_every_declared_component() -> None:
         "halo": {"m_tot": Quantity(100.0, "Msun"), "r_s": Quantity(1.0, "kpc")},
     }
     resolved = Potential.resolve(settings, {})
-    potential = build_potential(resolved, parameter_values, _NO_COSMOLOGICAL_PARAMETERS)
+    potential = _valid_build(
+        Potential.build_with_validity(
+            resolved, parameter_values, _NO_COSMOLOGICAL_PARAMETERS
+        )
+    )
     assert set(potential.components) == {"bh", "halo"}
 
     galax_potential = potential.to_galax(unit_system)
@@ -855,11 +1441,11 @@ def test_potential_composes_every_declared_component() -> None:
 
 
 # ---------------------------------------------------------------------------
-# NFW plumbing, independent of the parameterization gap.
+# NFW component rescaling and Galax conversion.
 # ---------------------------------------------------------------------------
 
 
-def test_nfw_component_plumbing_works_without_from_settings() -> None:
+def test_direct_nfw_component_rescales_and_converts_to_galax() -> None:
     unit_system = _internal_unit_system()
     component = GalaxPotentialComponent(
         galax_type="NFWPotential",
@@ -878,7 +1464,7 @@ def test_nfw_component_plumbing_works_without_from_settings() -> None:
 
 
 # ---------------------------------------------------------------------------
-# MGE composite types: from_settings resolution and to_galax.
+# MGE composite types: resolution, guarded construction, and to_galax.
 #
 # The basic to_galax viewing-angle tests below deliberately use q=1
 # (circular) components with a known nonsingular viewing geometry. They
@@ -886,7 +1472,7 @@ def test_nfw_component_plumbing_works_without_from_settings() -> None:
 # these tests isolate to_galax's wiring (mass-to-light/mass-scale conversion,
 # deprojection, per-component TriaxialGaussianPotential construction, and
 # CompositePotential summation) against galax's independent GaussianPotential.
-# Invalid geometries raise MGEDeprojectionError during component build;
+# Invalid geometries return a false flag during component construction;
 # genuinely triaxial validity and axis mapping are covered separately below
 # and by test_mge.py's forward-projection round-trip tests.
 # ---------------------------------------------------------------------------
@@ -894,10 +1480,11 @@ def test_nfw_component_plumbing_works_without_from_settings() -> None:
 
 def _circular_light_mge(I: list[float], sigma: list[float]) -> LightMGE:
     return LightMGE(
-        I=Quantity(jnp.array(I), "Lsun / rad2"),
+        I=Quantity(jnp.array(I), "Lsun / pc2"),
         sigma=Quantity(jnp.array(sigma), "rad"),
         q=Quantity(jnp.ones(len(I)), ""),
         PA_twist=Quantity(jnp.zeros(len(I)), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     )
 
 
@@ -1006,11 +1593,15 @@ def test_nfw_concentration_m200_is_registered_with_its_converters_and_schema() -
     )
 
 
-def _identity_forward(raw: dict, cosmological_parameters: object) -> dict:
+def _identity_forward(raw: dict, cosmological_parameters: object, mge: object) -> dict:
+    del cosmological_parameters, mge
     return raw
 
 
-def _identity_inverse(native: dict, declared_units: object, cosmo: object) -> dict:
+def _identity_inverse(
+    native: dict, declared_units: object, cosmo: object, mge: object
+) -> dict:
+    del declared_units, cosmo, mge
     return native
 
 
@@ -1045,14 +1636,17 @@ def test_register_parameterization_success_and_duplicate(monkeypatch) -> None:
     assert _registry_module._PARAMETERIZATION_REGISTRY == before
 
 
-def test_register_parameterization_rejects_a_non_galax_target_type(monkeypatch) -> None:
-    # Parameterizations convert to a component's native galax constructor
-    # kwargs and only GalaxPotentialComponent runs the inverse -- a TNT MGE
-    # composite type would silently round-trip through canonical parameters.
+def test_register_parameterization_rejects_a_fully_unknown_target_type(
+    monkeypatch,
+) -> None:
+    # A parameterization target must be a curated native galax type OR a
+    # registered TNT component type -- a typo / made-up name is neither.
     monkeypatch.setattr(_registry_module, "_PARAMETERIZATION_REGISTRY", {})
-    with pytest.raises(ValueError, match=r"not a curated native galax type"):
+    with pytest.raises(
+        ValueError, match=r"neither a curated native galax type nor a registered"
+    ):
         _registry_module.register_parameterization(
-            type_name="TriaxialLightMGEPotential",
+            type_name="NotAPotential",
             name="shape",
             convert=_identity_forward,
             invert=_identity_inverse,
@@ -1060,6 +1654,96 @@ def test_register_parameterization_rejects_a_non_galax_target_type(monkeypatch) 
             raw_constraints={},
         )
     assert _registry_module._PARAMETERIZATION_REGISTRY == {}
+
+
+def test_register_parameterization_accepts_a_registered_tnt_component_type(
+    monkeypatch,
+) -> None:
+    # A TNT composite type (in _COMPONENT_REGISTRY) is a valid target:
+    # AbstractPotentialComponent.raw_parameters dispatches to it generically.
+    monkeypatch.setattr(_registry_module, "_PARAMETERIZATION_REGISTRY", {})
+    _registry_module.register_parameterization(
+        type_name="TriaxialLightMGEPotential",
+        name="shape",
+        convert=_identity_forward,
+        invert=_identity_inverse,
+        raw_dimensions={"p": "dimensionless"},
+        raw_constraints={},
+    )
+    assert ("TriaxialLightMGEPotential", "shape") in (
+        _registry_module._PARAMETERIZATION_REGISTRY
+    )
+
+
+def test_raw_parameters_dispatches_generically_for_a_newly_registered_type(
+    monkeypatch,
+) -> None:
+    # OblateLightMGEPotential has never had its own raw_parameters override
+    # (unlike the pre-#65 triaxial types). Registering a parameterization for
+    # it must still report correctly through the base class alone -- the
+    # actual thing issue #65 was about.
+    monkeypatch.setattr(_registry_module, "_PARAMETERIZATION_REGISTRY", {})
+    light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
+        Quantity(30.0, "Mpc")
+    )
+
+    def _invert(native, declared_units, cosmological_parameters, mge):
+        del declared_units, cosmological_parameters
+        assert mge is light_mge  # the generic getattr(self, "mge", None) context
+        return {"doubled_ml": native["ml"] * 2.0, "inclination": native["inclination"]}
+
+    _registry_module.register_parameterization(
+        type_name="OblateLightMGEPotential",
+        name="doubled_ml",
+        convert=_identity_forward,  # unexercised here
+        invert=_invert,
+        raw_dimensions={"doubled_ml": "mass_to_light", "inclination": "angle"},
+        raw_constraints={},
+    )
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": "OblateLightMGEPotential", "mge": "mge_lum", "parameters": {}},
+        {"mge_lum": light_mge},
+        path="potential.stars",
+    )
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+    )
+
+    raw = component.raw_parameters("doubled_ml", {}, _NO_COSMOLOGICAL_PARAMETERS)
+
+    assert raw["doubled_ml"].ustrip("Msun / Lsun") == pytest.approx(10.0)
+
+
+def test_raw_parameters_dispatch_key_differs_for_galax_vs_tnt_types() -> None:
+    # GalaxPotentialComponent looks itself up by galax_type; a registered TNT
+    # component type by its own _type -- both via _registry_type_name().
+    galax_component = _valid_build(
+        AbstractPotentialComponent.resolve(
+            {"type": "PlummerPotential", "parameters": {}}, {}, path="potential.bh"
+        ).build_with_validity(
+            {"m_tot": Quantity(1.0e5, "Msun"), "r_s": Quantity(1.0, "kpc")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+    )
+    assert galax_component._registry_type_name() == "PlummerPotential"
+
+    light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
+        Quantity(30.0, "Mpc")
+    )
+    oblate_component = _valid_build(
+        AbstractPotentialComponent.resolve(
+            {"type": "OblateLightMGEPotential", "mge": "mge_lum", "parameters": {}},
+            {"mge_lum": light_mge},
+            path="potential.stars",
+        ).build_with_validity(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+    )
+    assert oblate_component._registry_type_name() == "OblateLightMGEPotential"
 
 
 def test_register_parameterization_rejects_unknown_constraint_name(monkeypatch) -> None:
@@ -1092,6 +1776,161 @@ def test_constraint_metadata_matches_each_registered_schema() -> None:
         )
 
 
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_constraint_predicate_matches_eager_diagnostics_under_jit(
+    x64_enabled: bool,
+) -> None:
+    constraint = ParameterConstraint(
+        minimum=0.0,
+        minimum_inclusive=False,
+        maximum=3.0,
+        unit="kpc",
+        other_parameter="reference",
+        relation=">=",
+    )
+    siblings = {"reference": Quantity(1.0, "kpc")}
+
+    def valid(value: jax.Array) -> jax.Array:
+        return constraint.valid(Quantity(value, "pc"), siblings)
+
+    with jax.enable_x64(x64_enabled):
+        traced = jax.jit(valid)
+        for value, expected in [
+            (900.0, False),
+            (1000.0, True),
+            (2900.0, True),
+            (3001.0, False),
+            (float("inf"), False),
+            (float("nan"), False),
+        ]:
+            assert bool(traced(jnp.asarray(value))) is expected
+            assert (
+                constraint.violation(Quantity(value, "pc"), siblings) is None
+            ) is expected
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_vogelsberger_upper_bound_agrees_in_eager_and_traced_builds(
+    x64_enabled: bool,
+) -> None:
+    resolved = Potential.resolve(
+        {"halo": {"type": "Vogelsberger08TriaxialNFWPotential"}}, {}
+    )
+
+    def proposed(q1: jax.Array) -> dict[str, dict[str, Quantity]]:
+        return {
+            "halo": {
+                "m": Quantity(1.0e10, "Msun"),
+                "r_s": Quantity(1.0, "kpc"),
+                "q1": Quantity(q1, ""),
+                "a_r": Quantity(0.7, ""),
+            }
+        }
+
+    with jax.enable_x64(x64_enabled):
+        boundary = jnp.asarray(3**0.5)
+        assert not bool(
+            Potential.build_with_validity(resolved, proposed(boundary), {})[1]
+        )
+        _, eager_valid = Potential.build_with_validity(resolved, proposed(boundary), {})
+        traced_valid = jax.jit(
+            lambda q1: Potential.build_with_validity(resolved, proposed(q1), {})[1]
+        )(boundary)
+        assert not bool(eager_valid)
+        assert not bool(traced_valid)
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_stone_ostriker_precision_margin_matches_eager_and_traced_builds(
+    x64_enabled: bool,
+) -> None:
+    resolved = Potential.resolve({"cluster": {"type": "StoneOstriker15Potential"}}, {})
+
+    def proposed(halo_radius: jax.Array) -> dict[str, dict[str, Quantity]]:
+        return {
+            "cluster": {
+                "m_tot": Quantity(1.0e10, "Msun"),
+                "r_c": Quantity(1.0, "kpc"),
+                "r_h": Quantity(halo_radius, "pc"),
+            }
+        }
+
+    with jax.enable_x64(x64_enabled):
+        traced_valid = jax.jit(
+            lambda radius: Potential.build_with_validity(
+                resolved, proposed(radius), {}
+            )[1]
+        )
+        for radius_pc, expected_valid in [
+            (1000.001, False),
+            (1010.0, x64_enabled),
+            (1050.0, True),
+        ]:
+            radius = jnp.asarray(radius_pc)
+            if expected_valid:
+                _valid_build(
+                    Potential.build_with_validity(resolved, proposed(radius), {})
+                )
+            else:
+                assert not bool(
+                    Potential.build_with_validity(resolved, proposed(radius), {})[1]
+                )
+            assert bool(traced_valid(radius)) is expected_valid
+
+
+@pytest.mark.parametrize("x64_enabled", [False, True])
+def test_stone_ostriker_accepted_gradient_matches_high_precision_reference(
+    x64_enabled: bool,
+) -> None:
+    resolved = Potential.resolve({"cluster": {"type": "StoneOstriker15Potential"}}, {})
+
+    with jax.enable_x64(x64_enabled):
+        xyz = Quantity(jnp.array([2.0, 1.0, 0.5]), "kpc")
+        t = Quantity(0.0, "Myr")
+
+        def guarded_value(halo_radius: jax.Array) -> tuple[jax.Array, jax.Array]:
+            potential, valid = Potential.build_with_validity(
+                resolved,
+                {
+                    "cluster": {
+                        "m_tot": Quantity(1.0e10, "Msun"),
+                        "r_c": Quantity(1.0, "kpc"),
+                        "r_h": Quantity(halo_radius, "kpc"),
+                    }
+                },
+                {},
+            )
+            value = jax.lax.cond(
+                valid,
+                lambda: (
+                    potential.to_galax(_internal_unit_system())
+                    .potential(xyz, t)
+                    .ustrip("kpc2 / Myr2")
+                ),
+                lambda: jnp.asarray(-jnp.inf),
+            )
+            return value, valid
+
+        compiled = jax.jit(jax.value_and_grad(guarded_value, has_aux=True))
+        # Independent 90-digit evaluation of the Stone-Ostriker formula.
+        accepted = (
+            [(1.001, 0.002290579505), (1.01, 0.002286174186)]
+            if x64_enabled
+            else [(1.05, 0.002266473226)]
+        )
+        for radius, reference_gradient in accepted:
+            (value, valid), gradient = compiled(jnp.asarray(radius))
+            assert bool(valid)
+            assert bool(jnp.isfinite(value))
+            assert float(gradient) == pytest.approx(reference_gradient, rel=0.002)
+
+        for rejected in [1.00001, 1.0003] if x64_enabled else [1.00001, 1.01]:
+            (value, valid), gradient = compiled(jnp.asarray(rejected))
+            assert not bool(valid)
+            assert float(value) == -jnp.inf
+            assert bool(jnp.isfinite(gradient))
+
+
 def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
     light_mge = _circular_light_mge([1.0], [1.0]).angular_to_physical(
         Quantity(30.0, "Mpc")
@@ -1105,9 +1944,11 @@ def test_mge_component_resolve_and_build_stores_the_referenced_mge() -> None:
         {"mge_lum": light_mge},
         path="potential.stars",
     )
-    component = resolved.build(
-        {"ml": Quantity(5.0, "Msun / Lsun"), **_VIEWING_ANGLES},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **_VIEWING_ANGLES},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     assert isinstance(component, TriaxialLightMGEPotential)
     assert component.mge is light_mge
@@ -1127,23 +1968,25 @@ def test_light_mge_mass_to_light_ratio_must_be_positive() -> None:
         {"mge_lum": light_mge},
         path="potential.stars",
     )
-    with pytest.raises(ValueError, match=r"parameters\.ml.*greater than"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {"ml": Quantity(0.0, "Msun / Lsun"), **_VIEWING_ANGLES},
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
-def test_mge_component_build_raises_for_invalid_geometry_not_to_galax() -> None:
+def test_mge_component_build_flags_invalid_geometry_before_to_galax() -> None:
     # theta=0.3, phi=0.96, psi=0.1 with q_obs=0.9 is a known finite-but-
     # convention-violating deprojection (q > p), see
     # test_deproject_triaxial_convention_violating_geometry_raises in
     # tests/unit_tests/test_mge.py.
     light_mge = LightMGE(
-        I=Quantity(jnp.array([2.0]), "Lsun / rad2"),
+        I=Quantity(jnp.array([2.0]), "Lsun / pc2"),
         sigma=Quantity(jnp.array([1.5]), "rad"),
         q=Quantity(jnp.array([0.9]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(Quantity(30.0, "Mpc"))
     resolved = AbstractPotentialComponent.resolve(
         {
@@ -1163,19 +2006,20 @@ def test_mge_component_build_raises_for_invalid_geometry_not_to_galax() -> None:
     # 0 < q <= p <= 1) for this q_obs=0.9 MGE.
     good_angles = {**bad_angles, "psi": Quantity(-1.08, "rad")}
 
-    # Raises from build() itself, before to_galax() is ever reached.
-    with pytest.raises(MGEDeprojectionError):
-        resolved.build(
+    # Returns a false construction flag before to_galax() is ever reached.
+    assert not bool(
+        resolved.build_with_validity(
             {"ml": Quantity(5.0, "Msun / Lsun"), **bad_angles},
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
-    # A component that *did* build successfully can't have to_galax() raise
-    # it -- deprojection already happened, and was already validated, at
-    # build time.
-    component = resolved.build(
-        {"ml": Quantity(5.0, "Msun / Lsun"), **good_angles},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    # A valid component reaches to_galax() with its deprojection already checked.
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **good_angles},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     component.to_galax(_internal_unit_system())
 
@@ -1185,7 +2029,8 @@ def test_triaxial_light_mge_to_galax_matches_spherical_gaussian() -> None:
     distance = Quantity(30.0, "Mpc")
     light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
     ml = Quantity(5.0, "Msun / Lsun")
-    component = TriaxialLightMGEPotential._build(
+    component = _build_component(
+        TriaxialLightMGEPotential,
         {"ml": ml, **_VIEWING_ANGLES},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -1228,7 +2073,8 @@ def test_triaxial_light_mge_to_galax_sums_every_component() -> None:
         distance
     )
     ml = Quantity(5.0, "Msun / Lsun")
-    component = TriaxialLightMGEPotential._build(
+    component = _build_component(
+        TriaxialLightMGEPotential,
         {"ml": ml, **_VIEWING_ANGLES},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -1267,13 +2113,15 @@ def test_triaxial_mass_mge_to_galax_uses_mge_mass_scale() -> None:
     unit_system = _internal_unit_system()
     distance = Quantity(30.0, "Mpc")
     mass_mge = MassMGE(
-        I=Quantity(jnp.array([1e2]), "Msun / rad2"),
+        I=Quantity(jnp.array([1e2]), "Msun / pc2"),
         sigma=Quantity(jnp.array([1.5]), "rad"),
         q=Quantity(jnp.array([1.0]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(distance)
     mge_mass_scale = Quantity(3.0, "")
-    component = TriaxialMassMGEPotential._build(
+    component = _build_component(
+        TriaxialMassMGEPotential,
         {"mge_mass_scale": mge_mass_scale, **_VIEWING_ANGLES},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": mass_mge},
@@ -1303,7 +2151,7 @@ def test_triaxial_mass_mge_to_galax_uses_mge_mass_scale() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Oblate axisymmetric MGE composite types: same _build/to_galax wiring as the
+# Oblate axisymmetric MGE composite types: same guarded build/to_galax wiring as the
 # triaxial pair, under a single `inclination` instead of theta/phi/psi.
 #
 # `AbstractMGE.deproject_oblate` has a real solution for any component
@@ -1333,9 +2181,11 @@ def test_oblate_mge_component_resolve_and_build_stores_the_referenced_mge() -> N
         {"mge_lum": light_mge},
         path="potential.stars",
     )
-    component = resolved.build(
-        {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     assert isinstance(component, OblateLightMGEPotential)
     assert component.mge is light_mge
@@ -1355,24 +2205,26 @@ def test_oblate_mge_inclination_domain_is_checked_before_deprojection() -> None:
         {"mge_lum": light_mge},
         path="potential.stars",
     )
-    with pytest.raises(ValueError, match=r"inclination.*at most 90.*deg"):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {
                 "ml": Quantity(5.0, "Msun / Lsun"),
                 "inclination": Quantity(jnp.pi, "rad"),
             },
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
 
-def test_oblate_mge_build_raises_for_impossible_inclination_not_to_galax() -> None:
+def test_oblate_mge_build_flags_impossible_inclination_before_to_galax() -> None:
     # q_obs = 0.5 with inclination 20 deg: cos(20 deg) ~ 0.94 > 0.5, so
     # q_obs < cos(i) and the axisymmetric deprojection has no real solution.
     flattened = LightMGE(
-        I=Quantity(jnp.array([2.0]), "Lsun / rad2"),
+        I=Quantity(jnp.array([2.0]), "Lsun / pc2"),
         sigma=Quantity(jnp.array([1.5]), "rad"),
         q=Quantity(jnp.array([0.5]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(Quantity(30.0, "Mpc"))
     resolved = AbstractPotentialComponent.resolve(
         {
@@ -1384,16 +2236,19 @@ def test_oblate_mge_build_raises_for_impossible_inclination_not_to_galax() -> No
         path="potential.stars",
     )
 
-    with pytest.raises(MGEDeprojectionError):
-        resolved.build(
+    assert not bool(
+        resolved.build_with_validity(
             {"ml": Quantity(5.0, "Msun / Lsun"), "inclination": Quantity(20.0, "deg")},
             _NO_COSMOLOGICAL_PARAMETERS,
-        )
+        )[1]
+    )
 
     # An inclination that *does* deproject builds and to_galax()es fine.
-    component = resolved.build(
-        {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
-        _NO_COSMOLOGICAL_PARAMETERS,
+    component = _valid_build(
+        resolved.build_with_validity(
+            {"ml": Quantity(5.0, "Msun / Lsun"), **_INCLINATION},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
     )
     component.to_galax(_internal_unit_system())
 
@@ -1403,7 +2258,8 @@ def test_oblate_light_mge_to_galax_matches_spherical_gaussian() -> None:
     distance = Quantity(30.0, "Mpc")
     light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
     ml = Quantity(5.0, "Msun / Lsun")
-    component = OblateLightMGEPotential._build(
+    component = _build_component(
+        OblateLightMGEPotential,
         {"ml": ml, **_INCLINATION},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -1442,13 +2298,15 @@ def test_oblate_light_mge_to_galax_sums_every_component() -> None:
     unit_system = _internal_unit_system()
     distance = Quantity(30.0, "Mpc")
     light_mge = LightMGE(
-        I=Quantity(jnp.array([2.0, 0.5]), "Lsun / rad2"),
+        I=Quantity(jnp.array([2.0, 0.5]), "Lsun / pc2"),
         sigma=Quantity(jnp.array([1.5, 4.0]), "rad"),
         q=Quantity(jnp.array([0.6, 0.4]), ""),
         PA_twist=Quantity(jnp.array([0.0, 0.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(distance)
     ml = Quantity(5.0, "Msun / Lsun")
-    component = OblateLightMGEPotential._build(
+    component = _build_component(
+        OblateLightMGEPotential,
         {"ml": ml, **_INCLINATION},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -1485,13 +2343,15 @@ def test_oblate_mass_mge_to_galax_uses_mge_mass_scale() -> None:
     unit_system = _internal_unit_system()
     distance = Quantity(30.0, "Mpc")
     mass_mge = MassMGE(
-        I=Quantity(jnp.array([1e2]), "Msun / rad2"),
+        I=Quantity(jnp.array([1e2]), "Msun / pc2"),
         sigma=Quantity(jnp.array([1.5]), "rad"),
         q=Quantity(jnp.array([1.0]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     ).angular_to_physical(distance)
     mge_mass_scale = Quantity(3.0, "")
-    component = OblateMassMGEPotential._build(
+    component = _build_component(
+        OblateMassMGEPotential,
         {"mge_mass_scale": mge_mass_scale, **_INCLINATION},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": mass_mge},
@@ -1524,7 +2384,8 @@ def test_oblate_light_mge_rescale_scales_to_galax_without_recompute() -> None:
     distance = Quantity(30.0, "Mpc")
     light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
     ml = Quantity(5.0, "Msun / Lsun")
-    component = OblateLightMGEPotential._build(
+    component = _build_component(
+        OblateLightMGEPotential,
         {"ml": ml, **_INCLINATION},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -1565,9 +2426,11 @@ def test_oblate_light_mge_to_galax_flattened_cross_checks() -> None:
         sigma=Quantity(jnp.array([2.0]), "kpc"),
         q=Quantity(jnp.array([0.7]), ""),
         PA_twist=Quantity(jnp.array([0.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     )
     ml = Quantity(5.0, "Msun / Lsun")
-    component = OblateLightMGEPotential._build(
+    component = _build_component(
+        OblateLightMGEPotential,
         {"ml": ml, "inclination": Quantity(70.0, "deg")},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -1636,6 +2499,7 @@ def test_triaxial_light_mge_to_galax_density_matches_analytic_along_each_axis() 
         sigma=Quantity(jnp.array([2.0]), "kpc"),
         q=Quantity(jnp.array([0.9]), ""),
         PA_twist=Quantity(jnp.array([-1.0]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
     )
     angles = {
         "theta": Quantity(0.3, "rad"),
@@ -1643,8 +2507,11 @@ def test_triaxial_light_mge_to_galax_density_matches_analytic_along_each_axis() 
         "psi": Quantity(0.0, "rad"),
     }
     ml = Quantity(5.0, "Msun / Lsun")
-    component = TriaxialLightMGEPotential._build(
-        {"ml": ml, **angles}, _NO_COSMOLOGICAL_PARAMETERS, {"mge": mge}
+    component = _build_component(
+        TriaxialLightMGEPotential,
+        {"ml": ml, **angles},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        {"mge": mge},
     )
     potential = component.to_galax(unit_system)
 
@@ -1673,7 +2540,8 @@ def test_triaxial_light_mge_rescale_scales_to_galax_without_ml_recompute() -> No
     distance = Quantity(30.0, "Mpc")
     light_mge = _circular_light_mge([2.0], [1.5]).angular_to_physical(distance)
     ml = Quantity(5.0, "Msun / Lsun")
-    component = TriaxialLightMGEPotential._build(
+    component = _build_component(
+        TriaxialLightMGEPotential,
         {"ml": ml, **_VIEWING_ANGLES},
         _NO_COSMOLOGICAL_PARAMETERS,
         {"mge": light_mge},
@@ -1700,3 +2568,870 @@ def test_triaxial_light_mge_rescale_scales_to_galax_without_ml_recompute() -> No
     assert rescaled_potential.ustrip(speed2) == pytest.approx(
         original_potential.ustrip(speed2) * mass_scale, rel=1e-5
     )
+
+
+# ---------------------------------------------------------------------------
+# The `pqu` parameterization for the triaxial MGE composite types:
+# intrinsic axis ratios (p, q, u) <-> viewing angles (theta, phi, psi),
+# anchored at q' = min(component q) (van den Bosch et al. 2008 / DYNAMITE
+# triax_pqu2tpp). A non-zero anchor PA_twist is folded into psi.
+# ---------------------------------------------------------------------------
+
+
+def _triaxial_light_mge() -> LightMGE:
+    return LightMGE(
+        I=Quantity(jnp.array([120.0, 45.0, 18.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([0.4, 1.8, 6.0]), "kpc"),
+        q=Quantity(jnp.array([0.88, 0.82, 0.76]), ""),  # min observed q' = 0.76
+        PA_twist=Quantity(jnp.zeros(3), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+
+
+# A (p, q, u) triple valid against _triaxial_light_mge()'s q' = 0.76:
+#   0 < q <= p <= 1  and  max(q/q', p) < u <= min(p/q', 1)
+_PQU = {"p": Quantity(0.85, ""), "q": Quantity(0.60, ""), "u": Quantity(0.93, "")}
+
+
+def test_pqu_to_tpp_round_trips_through_tpp_to_pqu() -> None:
+    mge = _triaxial_light_mge()
+    raw = {"ml": Quantity(4.0, "Msun / Lsun"), **_PQU}
+
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+    assert set(native) == {"ml", "theta", "phi", "psi"}
+    recovered = _tpp_to_pqu(
+        native, {"ml": "Msun / Lsun"}, _NO_COSMOLOGICAL_PARAMETERS, mge
+    )
+
+    for name, value in _PQU.items():
+        assert recovered[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-10)
+    assert recovered["ml"].ustrip("Msun / Lsun") == pytest.approx(4.0)
+
+
+def test_pqu_to_tpp_matches_deproject_triaxial_at_the_anchor_component() -> None:
+    # Deprojecting a single Gaussian whose observed q equals the anchor q'
+    # at the converted angles must return exactly the input (p, q).
+    mge = _triaxial_light_mge()
+    native = _pqu_to_tpp(
+        {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        mge,
+    )
+    anchor = LightMGE(
+        I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([6.0]), "kpc"),
+        q=Quantity(jnp.array([0.76]), ""),
+        PA_twist=Quantity(jnp.zeros(1), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    deprojected = anchor.deproject_triaxial(
+        native["theta"], native["phi"], native["psi"]
+    )
+    assert deprojected.p[0].ustrip("") == pytest.approx(_PQU["p"].ustrip(""), abs=1e-10)
+    assert deprojected.q[0].ustrip("") == pytest.approx(_PQU["q"].ustrip(""), abs=1e-10)
+
+
+def test_pqu_to_tpp_matches_dynamite_triax_pqu2tpp_at_a_known_point() -> None:
+    # (p, q, u, q') = (0.85, 0.6, 0.93, 0.76) run through DYNAMITE's
+    # dynamite.physical_system.TriaxialVisibleComponent.triax_pqu2tpp
+    # (van den Bosch et al. 2008); it returns (theta, psi, phi) in degrees.
+    mge = _triaxial_light_mge()  # min observed q' = 0.76
+    native = _pqu_to_tpp(
+        {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        mge,
+    )
+    deg = 180.0 / jnp.pi
+    assert float(native["theta"].ustrip("rad")) * deg == pytest.approx(
+        56.5558802, abs=1e-6
+    )
+    assert float(native["phi"].ustrip("rad")) * deg == pytest.approx(
+        42.3177283, abs=1e-6
+    )
+    assert float(native["psi"].ustrip("rad")) * deg == pytest.approx(
+        102.3159975, abs=1e-6
+    )
+
+
+def test_pqu_to_tpp_accepts_u_equal_to_one() -> None:
+    # u = 1 (major axis in the sky plane) is a valid limiting geometry; u is
+    # evaluated one precision-scaled margin inside the domain.
+    mge = _triaxial_light_mge()
+    raw = {
+        "ml": Quantity(1.0, "Msun / Lsun"),
+        "p": Quantity(0.85, ""),
+        "q": Quantity(0.60, ""),
+        "u": Quantity(1.0, ""),
+    }
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+    for angle in ("theta", "phi", "psi"):
+        assert jnp.isfinite(native[angle].ustrip("rad"))
+
+
+def _build_pqu_component(
+    type_name: str, mge: LightMGE, p: float, q: float, u: float
+) -> AbstractPotentialComponent:
+    if type_name == "TriaxialMassMGEPotential":
+        mge = mge.to_mass(Quantity(1.0, "Msun / Lsun"))
+    mass_name = "ml" if type_name == "TriaxialLightMGEPotential" else "mge_mass_scale"
+    mass_unit = "Msun / Lsun" if mass_name == "ml" else ""
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": type_name,
+            "parameterization": "pqu",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    return _valid_build(
+        resolved.build_with_validity(
+            {
+                mass_name: Quantity(1.0, mass_unit),
+                "p": Quantity(p, ""),
+                "q": Quantity(q, ""),
+                "u": Quantity(u, ""),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "type_name", ["TriaxialLightMGEPotential", "TriaxialMassMGEPotential"]
+)
+def test_pqu_u_equal_to_one_builds_and_inverts(type_name: str) -> None:
+    # u = 1 must survive full construction and report back through the
+    # inverse -- not just return finite angles -- for both component types.
+    mge = _triaxial_light_mge()  # anchor q' = 0.76, component 2
+    component = _build_pqu_component(type_name, mge, 0.85, 0.60, 1.0)
+
+    anchor_mge = (
+        mge.to_mass(Quantity(1.0, "Msun / Lsun")) if "Mass" in type_name else mge
+    )
+    p_a, q_a, u_a = anchor_mge.triaxial_intrinsic_shape(
+        *(component.parameters[k] for k in ("theta", "phi", "psi"))
+    )
+    assert (p_a, q_a) == pytest.approx((0.85, 0.60), abs=1e-6)
+    assert u_a == pytest.approx(1.0, abs=1e-6)
+
+    raw = {
+        "ml": Quantity(1.0, "Msun / Lsun"),
+        "p": Quantity(0.85, ""),
+        "q": Quantity(0.60, ""),
+        "u": Quantity(1.0, ""),
+    }
+    recovered = _tpp_to_pqu(
+        _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge),
+        {"ml": "Msun / Lsun"},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        mge,
+    )
+    assert recovered["p"].ustrip("") == pytest.approx(0.85, abs=1e-6)
+    assert recovered["q"].ustrip("") == pytest.approx(0.60, abs=1e-6)
+    assert recovered["u"].ustrip("") == pytest.approx(1.0, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    "type_name", ["TriaxialLightMGEPotential", "TriaxialMassMGEPotential"]
+)
+def test_pqu_accepts_the_upper_boundary_u_equals_p_over_qprime(type_name: str) -> None:
+    # At u = min(p/q', 1) the phi/psi weights are zero in exact
+    # arithmetic; roundoff must not push the point out of the domain, through
+    # a full build for both component types.
+    flat = LightMGE(
+        I=Quantity(jnp.array([1.0, 1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([1.0, 4.0]), "kpc"),
+        q=Quantity(jnp.array([0.90, 0.80]), ""),  # q' = 0.80
+        PA_twist=Quantity(jnp.zeros(2), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    p, q, u = 0.70, 0.55, 0.70 / 0.80  # p < q' so hi = p/q' = 0.875 < 1
+    component = _build_pqu_component(type_name, flat, p, q, u)
+
+    anchor_mge = (
+        flat.to_mass(Quantity(1.0, "Msun / Lsun")) if "Mass" in type_name else flat
+    )
+    p_a, q_a, u_a = anchor_mge.triaxial_intrinsic_shape(
+        *(component.parameters[k] for k in ("theta", "phi", "psi"))
+    )
+    assert (p_a, q_a, u_a) == pytest.approx((p, q, u), abs=1e-6)
+
+
+def test_pqu_rejects_a_domain_too_narrow_to_deproject() -> None:
+    # When (max(q/q', p), min(p/q', 1)) has no representable interior
+    # point at the working precision, the build must reject explicitly rather
+    # than divide by zero.
+    mge = _triaxial_light_mge()  # anchor q' = 0.76
+    resolved = AbstractPotentialComponent.resolve(
+        {"type": "TriaxialLightMGEPotential", "parameterization": "pqu", "mge": "m"},
+        {"m": mge},
+        path="potential.stars",
+    )
+    _, valid = resolved.build_with_validity(
+        {
+            "ml": Quantity(1.0, "Msun/Lsun"),
+            "p": Quantity(0.99999999, ""),
+            "q": Quantity(0.6, ""),
+            "u": Quantity(1.0, ""),
+        },
+        {},
+    )
+    assert not bool(valid)
+
+
+def test_pqu_u_equal_to_one_is_reliable_at_reduced_precision() -> None:
+    # Under jax_enable_x64=False the u=1 boundary must still recover
+    # the requested (p, q) to float32 tolerance, not drift by ~1e-4.
+    with jax.enable_x64(False):
+        mge = LightMGE(
+            I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+            sigma=Quantity(jnp.array([1.0]), "kpc"),
+            q=Quantity(jnp.array([0.76]), ""),
+            PA_twist=Quantity(jnp.array([0.0]), "rad"),
+            major_axis_pa=Quantity(0.0, "deg"),
+        )
+        theta, phi, psi = mge.triaxial_viewing_angles(0.85, 0.60, 1.0)
+        p_a, q_a, u_a = mge.triaxial_intrinsic_shape(theta, phi, psi)
+
+    assert (p_a, q_a) == pytest.approx((0.85, 0.60), abs=1e-4)
+    # u is honoured only to the (wider) float32 margin, ~4*sqrt(eps) ~ 1.4e-3.
+    assert u_a == pytest.approx(1.0, abs=3e-3)
+
+
+def test_pqu_tied_minimum_q_breaks_by_component_order() -> None:
+    # Two Gaussians share the minimum q' with different twists: the first one
+    # (component order) is the anchor, deterministically.
+    tied = LightMGE(
+        I=Quantity(jnp.array([1.0, 1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([1.0, 4.0]), "kpc"),
+        q=Quantity(jnp.array([0.80, 0.80]), ""),  # tie at q' = 0.80
+        PA_twist=Quantity(jnp.array([0.2, -0.3]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    first_anchor = LightMGE(
+        I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([1.0]), "kpc"),
+        q=Quantity(jnp.array([0.80]), ""),
+        PA_twist=Quantity(jnp.array([0.2]), "rad"),  # component 0's twist
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    raw = {
+        "ml": Quantity(1.0, "Msun / Lsun"),
+        "p": Quantity(0.88, ""),
+        "q": Quantity(0.70, ""),
+        "u": Quantity(0.95, ""),
+    }
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, tied)
+    deprojected = first_anchor.deproject_triaxial(
+        native["theta"], native["phi"], native["psi"]
+    )
+    assert deprojected.p[0].ustrip("") == pytest.approx(0.88, abs=1e-9)
+    assert deprojected.q[0].ustrip("") == pytest.approx(0.70, abs=1e-9)
+
+
+def test_pqu_folds_a_non_zero_anchor_twist_into_psi() -> None:
+    # When the min-q' Gaussian has PA_twist != 0, the built anchor
+    # component must still have exactly the requested (p, q), and the round
+    # trip must still recover (p, q, u).
+    twisted = LightMGE(
+        I=Quantity(jnp.array([120.0, 45.0, 18.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([0.4, 1.8, 6.0]), "kpc"),
+        q=Quantity(jnp.array([0.88, 0.82, 0.76]), ""),  # anchor = component 2
+        PA_twist=Quantity(jnp.array([0.0, 0.1, 0.3]), "rad"),  # anchor twist = 0.3
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    raw = {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU}
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, twisted)
+
+    # Deproject the anchor Gaussian on its own, with its real twist, at the
+    # converted global angles: it must come back as the requested (p, q).
+    anchor = LightMGE(
+        I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([6.0]), "kpc"),
+        q=Quantity(jnp.array([0.76]), ""),
+        PA_twist=Quantity(jnp.array([0.3]), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    deprojected = anchor.deproject_triaxial(
+        native["theta"], native["phi"], native["psi"]
+    )
+    assert deprojected.p[0].ustrip("") == pytest.approx(_PQU["p"].ustrip(""), abs=1e-9)
+    assert deprojected.q[0].ustrip("") == pytest.approx(_PQU["q"].ustrip(""), abs=1e-9)
+
+    recovered = _tpp_to_pqu(
+        native, {"ml": "Msun / Lsun"}, _NO_COSMOLOGICAL_PARAMETERS, twisted
+    )
+    for name, value in _PQU.items():
+        assert recovered[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+
+
+def test_pqu_ignores_twist_on_non_anchor_gaussians() -> None:
+    # Only the anchor's twist enters the conversion; twist on other
+    # components does not change the global angles.
+    base = _triaxial_light_mge()  # zero twist, anchor q' = 0.76 (component 2)
+    other_twist = LightMGE(
+        I=base.I,
+        sigma=base.sigma,
+        q=base.q,
+        PA_twist=Quantity(jnp.array([0.4, -0.2, 0.0]), "rad"),  # anchor still 0
+        major_axis_pa=base.major_axis_pa,
+    )
+    raw = {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU}
+    a = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, base)
+    b = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, other_twist)
+    for angle in ("theta", "phi", "psi"):
+        assert a[angle].ustrip("rad") == pytest.approx(b[angle].ustrip("rad"))
+
+
+@pytest.mark.parametrize(
+    ("bad", "reason"),
+    [
+        # q/q' = 0.80/0.76 = 1.05, so lo = max(q/q', p) = 1.05 > u
+        ({"p": 0.85, "q": 0.80, "u": 0.98}, "max.*u"),
+        # lo = max(q/q', p) = max(0.79, 0.85) = 0.85 > u
+        ({"p": 0.85, "q": 0.60, "u": 0.65}, "max.*u"),
+        # hi = min(p/q', 1) = min(0.70/0.76, 1) = 0.921 < u
+        ({"p": 0.70, "q": 0.55, "u": 0.95}, r"u <= min"),
+        ({"p": 0.80, "q": 0.80, "u": 0.90}, "prolate"),  # q == p (allowed by q <= p)
+    ],
+)
+def test_pqu_to_tpp_rejects_geometries_outside_the_mge_dependent_domain(
+    bad: dict[str, float], reason: str
+) -> None:
+    mge = _triaxial_light_mge()
+    raw = {
+        "ml": Quantity(1.0, "Msun / Lsun"),
+        **{k: Quantity(v, "") for k, v in bad.items()},
+    }
+    native = _pqu_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+    assert bool(jnp.isnan(native["theta"].ustrip("rad")))
+
+
+def test_pqu_to_tpp_rejects_a_circular_mge() -> None:
+    circular = LightMGE(
+        I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([1.0]), "kpc"),
+        q=Quantity(jnp.array([1.0]), ""),
+        PA_twist=Quantity(jnp.zeros(1), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    native = _pqu_to_tpp(
+        {"ml": Quantity(1.0, "Msun / Lsun"), **_PQU},
+        _NO_COSMOLOGICAL_PARAMETERS,
+        circular,
+    )
+    assert bool(jnp.isnan(native["theta"].ustrip("rad")))
+
+
+def test_pqu_parameterization_is_registered_for_both_triaxial_mge_types() -> None:
+    for type_name, mass_name, mass_dim in (
+        ("TriaxialLightMGEPotential", "ml", "mass_to_light"),
+        ("TriaxialMassMGEPotential", "mge_mass_scale", "dimensionless"),
+    ):
+        spec = _registry_module.get_parameterization(type_name, "pqu")
+        assert spec is not None
+        assert spec.convert is _pqu_to_tpp
+        assert spec.invert is _tpp_to_pqu
+        assert spec.raw_dimensions == {
+            mass_name: mass_dim,
+            "p": "dimensionless",
+            "q": "dimensionless",
+            "u": "dimensionless",
+        }
+        assert raw_parameter_dimensions(type_name, "pqu") == spec.raw_dimensions
+        constraints = parameter_constraints(type_name, "pqu")
+        assert set(constraints) == {mass_name, "p", "q", "u"}
+        assert constraints["q"].other_parameter == "p"
+        assert constraints["q"].relation == "<="
+        assert constraints["u"].other_parameter == "p"
+        assert constraints["u"].relation == ">"
+        assert constraints["u"].maximum == 1.0
+
+
+@pytest.mark.parametrize(
+    "type_name", ["TriaxialLightMGEPotential", "TriaxialMassMGEPotential"]
+)
+def test_pqu_config_builds_the_same_deprojection_as_the_equivalent_angles(
+    type_name: str,
+) -> None:
+    mge = _triaxial_light_mge()
+    if type_name == "TriaxialMassMGEPotential":
+        mge = mge.to_mass(Quantity(1.0, "Msun / Lsun"))
+    mass_name = "ml" if type_name == "TriaxialLightMGEPotential" else "mge_mass_scale"
+    mass_unit = "Msun / Lsun" if mass_name == "ml" else ""
+    mass_value = Quantity(3.5, mass_unit)
+
+    pqu_resolved = AbstractPotentialComponent.resolve(
+        {"type": type_name, "parameterization": "pqu", "mge": "m", "parameters": {}},
+        {"m": mge},
+        path="potential.stars",
+    )
+    pqu_component = _valid_build(
+        pqu_resolved.build_with_validity(
+            {mass_name: mass_value, **_PQU}, _NO_COSMOLOGICAL_PARAMETERS
+        )
+    )
+
+    angles = _pqu_to_tpp(
+        {mass_name: mass_value, **_PQU}, _NO_COSMOLOGICAL_PARAMETERS, mge
+    )
+    tpp_resolved = AbstractPotentialComponent.resolve(
+        {"type": type_name, "mge": "m", "parameters": {}},
+        {"m": mge},
+        path="potential.stars",
+    )
+    tpp_component = _valid_build(
+        tpp_resolved.build_with_validity(
+            {mass_name: mass_value, **{k: angles[k] for k in ("theta", "phi", "psi")}},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+    )
+
+    for attr in ("I", "sigma", "p", "q"):
+        assert jnp.allclose(
+            getattr(pqu_component.deprojected, attr).ustrip(
+                getattr(pqu_component.deprojected, attr).unit
+            ),
+            getattr(tpp_component.deprojected, attr).ustrip(
+                getattr(tpp_component.deprojected, attr).unit
+            ),
+        ), attr
+
+
+def test_pqu_raw_potential_parameters_round_trips_and_survives_rescale() -> None:
+    mge = _triaxial_light_mge()
+    settings = {
+        "stars": {
+            "type": "TriaxialLightMGEPotential",
+            "parameterization": "pqu",
+            "mge": "m",
+            "parameters": {"ml": {"unit": "Msun / Lsun"}},
+        }
+    }
+    values = {"stars": {"ml": Quantity(4.0, "Msun / Lsun"), **_PQU}}
+    potential = _valid_build(
+        Potential.build_with_validity(
+            Potential.resolve(settings, {"m": mge}), values, {}
+        )
+    )
+
+    raw = raw_potential_parameters(settings, potential, {})["stars"]
+    assert set(raw) == {"ml", "p", "q", "u"}
+    for name, value in _PQU.items():
+        assert raw[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+    assert raw["ml"].ustrip("Msun / Lsun") == pytest.approx(4.0)
+
+    rescaled = raw_potential_parameters(settings, potential.rescale(3.0), {})["stars"]
+    assert rescaled["ml"].ustrip("Msun / Lsun") == pytest.approx(12.0)
+    for name, value in _PQU.items():
+        assert rescaled[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+
+
+def test_pqu_domain_invalid_value_is_rejected_at_build_time() -> None:
+    # q > p violates the data-independent ParameterConstraint, caught before
+    # the converter (and before any MGE is consulted).
+    mge = _triaxial_light_mge()
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "TriaxialLightMGEPotential",
+            "parameterization": "pqu",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    assert not bool(
+        resolved.build_with_validity(
+            {
+                "ml": Quantity(1.0, "Msun / Lsun"),
+                "p": Quantity(0.6, ""),
+                "q": Quantity(0.8, ""),
+                "u": Quantity(0.9, ""),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )[1]
+    )
+
+
+# (T, T_maj, T_min) equivalent to _PQU, against _triaxial_light_mge()'s q' = 0.76
+# (tnt.mge._T_Tmaj_Tmin_from_p_q_u(0.85, 0.60, 0.93, 0.76)):
+_TMAJMIN = {
+    "T": Quantity(0.4335937500000001, ""),
+    "T_maj": Quantity(0.4868468468468463, ""),
+    "T_min": Quantity(0.3850103172413796, ""),
+}
+
+
+def test_tmajmin_to_tpp_round_trips_through_tpp_to_tmajmin() -> None:
+    mge = _triaxial_light_mge()
+    raw = {"ml": Quantity(1.0, "Msun / Lsun"), **_TMAJMIN}
+
+    native = _tmajmin_to_tpp(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+    recovered = _tpp_to_tmajmin(native, {}, _NO_COSMOLOGICAL_PARAMETERS, mge)
+
+    for name, value in _TMAJMIN.items():
+        assert recovered[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+
+
+def test_T_maj_min_is_registered_for_both_triaxial_mge_types() -> None:
+    for type_name, mass_name, mass_dim in (
+        ("TriaxialLightMGEPotential", "ml", "mass_to_light"),
+        ("TriaxialMassMGEPotential", "mge_mass_scale", "dimensionless"),
+    ):
+        spec = _registry_module.get_parameterization(type_name, "T_maj_min")
+        assert spec is not None
+        assert spec.convert is _tmajmin_to_tpp
+        assert spec.invert is _tpp_to_tmajmin
+        assert spec.raw_dimensions == {
+            mass_name: mass_dim,
+            "T": "dimensionless",
+            "T_maj": "dimensionless",
+            "T_min": "dimensionless",
+        }
+        assert raw_parameter_dimensions(type_name, "T_maj_min") == spec.raw_dimensions
+        constraints = parameter_constraints(type_name, "T_maj_min")
+        assert set(constraints) == {mass_name, "T", "T_maj", "T_min"}
+        for name in ("T", "T_maj", "T_min"):
+            assert constraints[name].minimum == 0.0
+            assert constraints[name].maximum == 1.0
+
+
+@pytest.mark.parametrize(
+    "type_name", ["TriaxialLightMGEPotential", "TriaxialMassMGEPotential"]
+)
+def test_T_maj_min_config_builds_the_same_deprojection_as_pqu(
+    type_name: str,
+) -> None:
+    mge = _triaxial_light_mge()
+    if type_name == "TriaxialMassMGEPotential":
+        mge = mge.to_mass(Quantity(1.0, "Msun / Lsun"))
+    mass_name = "ml" if type_name == "TriaxialLightMGEPotential" else "mge_mass_scale"
+    mass_unit = "Msun / Lsun" if mass_name == "ml" else ""
+    mass_value = Quantity(3.5, mass_unit)
+
+    tmajmin_resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": type_name,
+            "parameterization": "T_maj_min",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    tmajmin_component = _valid_build(
+        tmajmin_resolved.build_with_validity(
+            {mass_name: mass_value, **_TMAJMIN}, _NO_COSMOLOGICAL_PARAMETERS
+        )
+    )
+
+    pqu_resolved = AbstractPotentialComponent.resolve(
+        {"type": type_name, "parameterization": "pqu", "mge": "m", "parameters": {}},
+        {"m": mge},
+        path="potential.stars",
+    )
+    pqu_component = _valid_build(
+        pqu_resolved.build_with_validity(
+            {mass_name: mass_value, **_PQU}, _NO_COSMOLOGICAL_PARAMETERS
+        )
+    )
+
+    for attr in ("I", "sigma", "p", "q"):
+        assert jnp.allclose(
+            getattr(tmajmin_component.deprojected, attr).ustrip(
+                getattr(tmajmin_component.deprojected, attr).unit
+            ),
+            getattr(pqu_component.deprojected, attr).ustrip(
+                getattr(pqu_component.deprojected, attr).unit
+            ),
+        ), attr
+
+
+def test_T_maj_min_raw_potential_parameters_round_trips_and_survives_rescale() -> None:
+    mge = _triaxial_light_mge()
+    settings = {
+        "stars": {
+            "type": "TriaxialLightMGEPotential",
+            "parameterization": "T_maj_min",
+            "mge": "m",
+            "parameters": {"ml": {"unit": "Msun / Lsun"}},
+        }
+    }
+    values = {"stars": {"ml": Quantity(4.0, "Msun / Lsun"), **_TMAJMIN}}
+    potential = _valid_build(
+        Potential.build_with_validity(
+            Potential.resolve(settings, {"m": mge}), values, {}
+        )
+    )
+
+    raw = raw_potential_parameters(settings, potential, {})["stars"]
+    assert set(raw) == {"ml", "T", "T_maj", "T_min"}
+    for name, value in _TMAJMIN.items():
+        assert raw[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+    assert raw["ml"].ustrip("Msun / Lsun") == pytest.approx(4.0)
+
+    rescaled = raw_potential_parameters(settings, potential.rescale(3.0), {})["stars"]
+    assert rescaled["ml"].ustrip("Msun / Lsun") == pytest.approx(12.0)
+    for name, value in _TMAJMIN.items():
+        assert rescaled[name].ustrip("") == pytest.approx(value.ustrip(""), abs=1e-9)
+
+
+def test_T_maj_min_domain_invalid_value_is_rejected_at_build_time() -> None:
+    # T_maj > 1 violates the data-independent ParameterConstraint, caught
+    # before the converter (and before any MGE is consulted).
+    mge = _triaxial_light_mge()
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "TriaxialLightMGEPotential",
+            "parameterization": "T_maj_min",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    assert not bool(
+        resolved.build_with_validity(
+            {
+                "ml": Quantity(1.0, "Msun / Lsun"),
+                "T": Quantity(0.5, ""),
+                "T_maj": Quantity(1.5, ""),
+                "T_min": Quantity(0.5, ""),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )[1]
+    )
+
+
+def test_T_maj_min_rejects_a_point_the_domain_clamp_would_silently_move() -> None:
+    # PR-67 audit finding: near the T -> 0 (oblate) limit,
+    # triaxial_viewing_angles's own eps-margin clamp on u moved the recovered
+    # (T, T_maj, T_min) far from the requested point (0.1 requested vs.
+    # ~0.226 previously recovered for T_maj) without ever raising -- the
+    # config-layer build must now reject it as an invalid model instead.
+    mge = _triaxial_light_mge()  # anchor q' = 0.76
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "TriaxialLightMGEPotential",
+            "parameterization": "T_maj_min",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    assert not bool(
+        resolved.build_with_validity(
+            {
+                "ml": Quantity(1.0, "Msun / Lsun"),
+                "T": Quantity(1e-6, ""),
+                "T_maj": Quantity(0.1, ""),
+                "T_min": Quantity(0.2, ""),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )[1]
+    )
+
+
+def test_T_maj_min_rejects_a_zero_thickness_boundary_at_build_time() -> None:
+    # PR-67 audit finding: an exact zero-thickness anchor (q^2 == 0) is a
+    # real value that previously passed the forward conversion's own
+    # `0 <= q^2 <= 1` check, only sometimes caught later by
+    # `deproject_triaxial`'s general check depending on unrelated
+    # floating-point rounding. Now rejected explicitly and deterministically
+    # at the source.
+    mge = LightMGE(
+        I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+        sigma=Quantity(jnp.array([1.0]), "kpc"),
+        q=Quantity(jnp.array([0.5]), ""),  # anchor q' = 0.5
+        PA_twist=Quantity(jnp.zeros(1), "rad"),
+        major_axis_pa=Quantity(0.0, "deg"),
+    )
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "TriaxialLightMGEPotential",
+            "parameterization": "T_maj_min",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    assert not bool(
+        resolved.build_with_validity(
+            {
+                "ml": Quantity(1.0, "Msun / Lsun"),
+                "T": Quantity(0.5, ""),
+                "T_maj": Quantity(0.5, ""),
+                "T_min": Quantity(0.375, ""),
+            },
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )[1]
+    )
+
+
+# q_min = 0.6 against _triaxial_light_mge()'s anchor q' = 0.76 (its zero
+# PA_twist also satisfies deproject_oblate's requirement):
+_QMIN = {"q_min": Quantity(0.6, "")}
+
+
+def test_qmin_to_inclination_round_trips_through_inclination_to_qmin() -> None:
+    mge = _triaxial_light_mge()
+    raw = {"ml": Quantity(1.0, "Msun / Lsun"), **_QMIN}
+
+    native = _qmin_to_inclination(raw, _NO_COSMOLOGICAL_PARAMETERS, mge)
+    recovered = _inclination_to_qmin(native, {}, _NO_COSMOLOGICAL_PARAMETERS, mge)
+
+    assert recovered["q_min"].ustrip("") == pytest.approx(0.6, abs=1e-9)
+
+
+def test_q_min_is_registered_for_both_oblate_mge_types() -> None:
+    for type_name, mass_name, mass_dim in (
+        ("OblateLightMGEPotential", "ml", "mass_to_light"),
+        ("OblateMassMGEPotential", "mge_mass_scale", "dimensionless"),
+    ):
+        spec = _registry_module.get_parameterization(type_name, "q_min")
+        assert spec is not None
+        assert spec.convert is _qmin_to_inclination
+        assert spec.invert is _inclination_to_qmin
+        assert spec.raw_dimensions == {mass_name: mass_dim, "q_min": "dimensionless"}
+        assert raw_parameter_dimensions(type_name, "q_min") == spec.raw_dimensions
+        constraints = parameter_constraints(type_name, "q_min")
+        assert set(constraints) == {mass_name, "q_min"}
+        assert constraints["q_min"].minimum == 0.0
+        assert constraints["q_min"].minimum_inclusive is False
+        assert constraints["q_min"].maximum == 1.0
+
+
+@pytest.mark.parametrize(
+    "type_name", ["OblateLightMGEPotential", "OblateMassMGEPotential"]
+)
+def test_q_min_config_builds_the_same_deprojection_as_inclination(
+    type_name: str,
+) -> None:
+    mge = _triaxial_light_mge()
+    if type_name == "OblateMassMGEPotential":
+        mge = mge.to_mass(Quantity(1.0, "Msun / Lsun"))
+    mass_name = "ml" if type_name == "OblateLightMGEPotential" else "mge_mass_scale"
+    mass_unit = "Msun / Lsun" if mass_name == "ml" else ""
+    mass_value = Quantity(3.5, mass_unit)
+
+    qmin_resolved = AbstractPotentialComponent.resolve(
+        {"type": type_name, "parameterization": "q_min", "mge": "m", "parameters": {}},
+        {"m": mge},
+        path="potential.stars",
+    )
+    qmin_component = _valid_build(
+        qmin_resolved.build_with_validity(
+            {mass_name: mass_value, **_QMIN}, _NO_COSMOLOGICAL_PARAMETERS
+        )
+    )
+
+    inclination = _qmin_to_inclination(
+        {mass_name: mass_value, **_QMIN}, _NO_COSMOLOGICAL_PARAMETERS, mge
+    )["inclination"]
+    incl_resolved = AbstractPotentialComponent.resolve(
+        {"type": type_name, "mge": "m", "parameters": {}},
+        {"m": mge},
+        path="potential.stars",
+    )
+    incl_component = _valid_build(
+        incl_resolved.build_with_validity(
+            {mass_name: mass_value, "inclination": inclination},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )
+    )
+
+    for attr in ("I", "sigma", "p", "q"):
+        assert jnp.allclose(
+            getattr(qmin_component.deprojected, attr).ustrip(
+                getattr(qmin_component.deprojected, attr).unit
+            ),
+            getattr(incl_component.deprojected, attr).ustrip(
+                getattr(incl_component.deprojected, attr).unit
+            ),
+        ), attr
+
+
+def test_q_min_raw_potential_parameters_round_trips_and_survives_rescale() -> None:
+    mge = _triaxial_light_mge()
+    settings = {
+        "stars": {
+            "type": "OblateLightMGEPotential",
+            "parameterization": "q_min",
+            "mge": "m",
+            "parameters": {"ml": {"unit": "Msun / Lsun"}},
+        }
+    }
+    values = {"stars": {"ml": Quantity(4.0, "Msun / Lsun"), **_QMIN}}
+    potential = _valid_build(
+        Potential.build_with_validity(
+            Potential.resolve(settings, {"m": mge}), values, {}
+        )
+    )
+
+    raw = raw_potential_parameters(settings, potential, {})["stars"]
+    assert set(raw) == {"ml", "q_min"}
+    assert raw["q_min"].ustrip("") == pytest.approx(0.6, abs=1e-9)
+    assert raw["ml"].ustrip("Msun / Lsun") == pytest.approx(4.0)
+
+    rescaled = raw_potential_parameters(settings, potential.rescale(3.0), {})["stars"]
+    assert rescaled["ml"].ustrip("Msun / Lsun") == pytest.approx(12.0)
+    assert rescaled["q_min"].ustrip("") == pytest.approx(0.6, abs=1e-9)
+
+
+def test_q_min_domain_invalid_value_is_rejected_at_build_time() -> None:
+    # q_min > 1 violates the data-independent ParameterConstraint, caught
+    # before the converter (and before any MGE is consulted).
+    mge = _triaxial_light_mge()
+    resolved = AbstractPotentialComponent.resolve(
+        {
+            "type": "OblateLightMGEPotential",
+            "parameterization": "q_min",
+            "mge": "m",
+            "parameters": {},
+        },
+        {"m": mge},
+        path="potential.stars",
+    )
+    assert not bool(
+        resolved.build_with_validity(
+            {"ml": Quantity(1.0, "Msun / Lsun"), "q_min": Quantity(1.5, "")},
+            _NO_COSMOLOGICAL_PARAMETERS,
+        )[1]
+    )
+
+
+def test_q_min_rejects_a_thin_disk_the_cancellation_would_silently_move() -> None:
+    # PR-68 audit finding: deproject_oblate's own q**2 = q_obs**2 - cos(i)**2
+    # subtracts two nearly equal quantities whenever q_min is small relative
+    # to q_obs -- at float32, q_min = 0.001 against q_obs = 0.76 previously
+    # recovered ~0.00106249 (+6.2% relative error) without ever raising. The
+    # config-layer build must now reject it as an invalid model instead.
+    with jax.enable_x64(False):
+        mge = LightMGE(
+            I=Quantity(jnp.array([1.0]), "Lsun / pc2"),
+            sigma=Quantity(jnp.array([1.0]), "kpc"),
+            q=Quantity(jnp.array([0.76]), ""),  # anchor q' = 0.76
+            PA_twist=Quantity(jnp.zeros(1), "rad"),
+            major_axis_pa=Quantity(0.0, "deg"),
+        )
+        resolved = AbstractPotentialComponent.resolve(
+            {
+                "type": "OblateLightMGEPotential",
+                "parameterization": "q_min",
+                "mge": "m",
+                "parameters": {},
+            },
+            {"m": mge},
+            path="potential.stars",
+        )
+        assert not bool(
+            resolved.build_with_validity(
+                {"ml": Quantity(1.0, "Msun / Lsun"), "q_min": Quantity(0.001, "")},
+                _NO_COSMOLOGICAL_PARAMETERS,
+            )[1]
+        )

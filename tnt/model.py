@@ -1,7 +1,4 @@
-"""One evaluated point in the model search: a potential and its solved weights.
-
-Signature-only scaffold.
-"""
+"""One proposed model-search point and the outcome of its evaluation."""
 
 from __future__ import annotations
 
@@ -22,14 +19,14 @@ class Model(eqx.Module):
     mass through `potential`'s own component parameters (`ml`/
     `mge_mass_scale`), the same as any other model.
 
-    `potential` is `None` only if building it from the proposed point failed
-    outright (e.g. `tnt.mge.MGEDeprojectionError` for an invalid MGE viewing
-    geometry) -- otherwise it's always set, since it's the proposed point
-    being evaluated, known before orbit integration starts.
+    `potential` is `None` when `Potential.build_with_validity` returns a false
+    flag (e.g. for an invalid MGE viewing geometry). The iterator discards the
+    returned placeholder; static setup errors propagate instead of producing
+    a `Model`. Valid potentials are set before orbit integration starts.
     `ModelIterator._evaluate` is responsible for setting `valid_potential`/
     `orblib_done`/`weights_done` (and `weights`/`chi2`) to reflect what
     actually happened: `valid_potential` is `False` if `potential` itself
-    couldn't be built, `orblib_done` is `False` if orbit integration itself
+    failed numerical validation, `orblib_done` is `False` if orbit integration itself
     failed (implies `valid_potential` is `True` -- orbit integration was
     only attempted because building the potential succeeded), and
     `weights_done` is `False` if weight solving failed on its single

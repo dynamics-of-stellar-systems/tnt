@@ -9,7 +9,9 @@ system_attributes:
   name: "NGC6278"
 
 MGEs:
-  mge_lum: "mge_lum.ecsv"
+  mge_lum:
+    file: "mge_lum.ecsv"
+    major_axis_pa: {value: 126.0, unit: "deg"}
 
 spatial_binnings:
   kinset1_binning:
@@ -17,7 +19,7 @@ spatial_binnings:
     min_y: {value: -26.5, unit: "arcsec"}
     x_extent: {value: 58.0, unit: "arcsec"}
     y_extent: {value: 52.0, unit: "arcsec"}
-    PA: {value: 126.0, unit: "deg"}
+    y_axis_pa: {value: 0.0, unit: "deg"}
     bins_file: "bins.npy"
 
 potential:

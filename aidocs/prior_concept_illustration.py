@@ -44,6 +44,7 @@ _MGE = LightMGE(
     sigma=Quantity(jnp.array([0.3, 1.2, 4.0]), "kpc"),
     q=Quantity(jnp.array([0.85, 0.78, 0.90]), ""),
     PA_twist=Quantity(jnp.zeros(3), "rad"),
+    major_axis_pa=Quantity(0.0, "deg"),
 )
 
 _POTENTIAL = {
@@ -97,8 +98,12 @@ def _enclosed(resolved, ml: jnp.ndarray, m_halo: jnp.ndarray) -> jnp.ndarray:
             **{n: Quantity(v, "rad") for n, v in _ANGLES.items()},
         },
     }
-    built = Potential.build(resolved, parameters, {}, validate=False).to_galax(_UNITS)
-    return gp.spherical_mass_enclosed(built, _R_10_KPC, _T0).ustrip("Msun")
+    # Called under `jax.vmap`, so the validity flag can't be asserted here;
+    # every drawn `ml`/`m_halo` in this illustration is physically valid.
+    built, _valid = Potential.build_with_validity(resolved, parameters, {})
+    return gp.spherical_mass_enclosed(built.to_galax(_UNITS), _R_10_KPC, _T0).ustrip(
+        "Msun"
+    )
 
 
 def main() -> None:
