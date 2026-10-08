@@ -445,6 +445,22 @@ path -- with one consistent ~3% worst case at the innermost shell's
 near-origin point, explained in that repo's own README rather than left
 as an open question.
 
-The other three notes (the crossing-cap comment, the fallback test's
-coverage gap, and `_outer_tube_boundary`'s wasted post-`broken`
-computation) are not yet addressed.
+**The crossing-cap comment -- fixed.** Traced `findtubeorbitwidth`'s
+`SOLOUTOB` callback directly: it stops integration once its own crossing
+count reaches `size(pos_t, 1) == intsteps` (`orbitstart_f.f90:784`,
+`if (count >= size(pos_t, 1)) IRTRN = -1`), counting one increment per
+genuine bisection-refined crossing -- confirming the comment's claimed
+semantics are right, only the number (100 vs. DYNAMITE's actual 400) was
+wrong. Tried raising `_TUBE_SEARCH_N_CROSSINGS` to 400 to genuinely match:
+`test_orbit_library.py` still passed (31 passed) but at a real, meaningful
+cost (74.65s vs. 47.00s, +59% -- this is evaluated for every trial radius
+a boundary search tries, not once per shell). Decision: keep `100`, since
+a converging trial's width already stabilizes well before that in
+practice; the comment was fixed to describe this as a deliberate
+reduction instead of a false "exact match" claim, matching the style
+`_TUBE_SEARCH_TIME_PERIODS`'s own neighbouring comment already uses for
+its own reduction from DYNAMITE's budget.
+
+The remaining two notes (the fallback test's coverage gap and
+`_outer_tube_boundary`'s wasted post-`broken` computation) are not yet
+addressed.

@@ -67,8 +67,14 @@ from tnt.orbit_library.common import (
 )
 from tnt.orbit_library.xz_grid_from_origin import _single_shell_ics
 
-# Matches `findtubeorbitwidth`'s own crossing-count cap (`intsteps = 400`,
-# `orbitstart_f.f90:645`) exactly.
+# `findtubeorbitwidth`'s own crossing-count cap is `intsteps = 400`
+# (`orbitstart_f.f90:645`) -- its `SOLOUTOB` callback stops integration
+# once its own crossing count reaches `size(pos_t, 1) == intsteps`, the
+# same semantics as `_orbit_width_over_crossings`'s own `n_crossings <
+# _TUBE_SEARCH_N_CROSSINGS` condition. Deliberately reduced here: a
+# converging trial's width stabilizes well before 100 crossings in
+# practice, and this is evaluated for every trial radius a boundary
+# search tries, not once per shell.
 _TUBE_SEARCH_N_CROSSINGS = 100
 # `findtubeorbitwidth` integrates for up to `500 * intsteps * tcirc` =
 # 200,000 periods (`orbitstart_f.f90:645,668`) as a safety ceiling for
