@@ -14,6 +14,7 @@ from tnt.orbit_library import (
     XZGridFromBoundaryOrbitSampler,
     XZGridFromOriginOrbitSampler,
 )
+from tnt.orbit_library.common import EquipotentialSearchError, _equipotential_radius
 
 UNITS = unitsystem("kpc", "Myr", "Msun", "rad")
 
@@ -34,6 +35,53 @@ def _flattened_potential() -> gp.AbstractPotential:
         phi=Quantity(0.0, "rad"),
         units=UNITS,
     )
+
+
+def _extremely_flattened_potential() -> gp.AbstractPotential:
+    """`q3=1e-5`: along the z-axis, the true equipotential root collapses
+    far below even `_equipotential_radius`'s now-per-shell bracket.
+    """
+    return gp.LMJ09LogarithmicPotential(
+        v_c=Quantity(200.0, "km/s"),
+        r_s=Quantity(1.0, "kpc"),
+        q1=1.0,
+        q2=1.0,
+        q3=1e-5,
+        phi=Quantity(0.0, "rad"),
+        units=UNITS,
+    )
+
+
+def test_equipotential_radius_flags_a_direction_outside_its_bracket():
+    potential = _extremely_flattened_potential()
+    t0 = Quantity(0.0, "Myr")
+    r_ref = jnp.asarray(1.0)
+    energy = potential.potential(
+        Quantity(jnp.array([1.0, 0.0, 0.0]), "kpc"), t0
+    ).ustrip("kpc2/Myr2")
+
+    _, valid_z = jax.jit(
+        lambda: _equipotential_radius(
+            potential, jnp.array([0.0, 0.0, 1.0]), energy, r_ref, t0
+        )
+    )()
+    assert not bool(valid_z)
+
+    _, valid_x = jax.jit(
+        lambda: _equipotential_radius(
+            potential, jnp.array([1.0, 0.0, 0.0]), energy, r_ref, t0
+        )
+    )()
+    assert bool(valid_x)
+
+
+def test_generate_ics_raises_when_the_equipotential_search_fails():
+    potential = _extremely_flattened_potential()
+    sampler = StationaryGridOrbitSampler(
+        rmin=Quantity(0.5, "kpc"), rmax=Quantity(2.0, "kpc"), nE=2, nI2=4, nI3=4
+    )
+    with pytest.raises(EquipotentialSearchError):
+        sampler.generate_ics(potential)
 
 
 def _sampler(nE: int = 3, nI2: int = 4, nI3: int = 4) -> StationaryGridOrbitSampler:

@@ -90,6 +90,16 @@
   mild/strong triaxial, near-prolate), six energy shells each from
   `r = 0.01` to `100 kpc`: box orbits agree to 5-6 significant figures and
   boundary-searched tube orbits to 3-4, in every shell and geometry.
+- `common._equipotential_radius` brackets its search from each energy
+  shell's own x-axis equipotential radius (`[0.01, 1.1] * r_ref`), matching
+  DYNAMITE's own `findReq` (`orbitstart_f.f90:543-592`) exactly, rather than
+  one fixed bracket shared across every shell. It returns a validity flag
+  (bracket actually contains a sign change, solver converged, residual
+  within DYNAMITE's own `1e-7` relative tolerance) that each sampler's
+  `generate_ics` aggregates and raises `EquipotentialSearchError` on,
+  eagerly -- orbit sampling isn't part of the differentiable
+  `Potential.build_with_validity` contract, so there is no traced flag to
+  thread through instead.
 
 ## Angular reference frames
 

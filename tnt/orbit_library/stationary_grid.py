@@ -20,8 +20,7 @@ from unxt import Quantity
 
 from tnt.orbit_library.base import AbstractOrbitSampler
 from tnt.orbit_library.common import (
-    _R_CEILING_FACTOR,
-    _R_FLOOR_FACTOR,
+    EquipotentialSearchError,
     _box_orbit_ic,
     _potential_at,
 )
@@ -58,8 +57,6 @@ class StationaryGridOrbitSampler(AbstractOrbitSampler):
         length_unit = potential.units["length"]
         rmin_val = self.rmin.ustrip(length_unit)
         rmax_val = self.rmax.ustrip(length_unit)
-        r_floor = rmin_val * _R_FLOOR_FACTOR
-        r_ceiling = rmax_val * _R_CEILING_FACTOR
 
         r_grid = 10.0 ** jnp.linspace(jnp.log10(rmin_val), jnp.log10(rmax_val), self.nE)
         x_axis_points = jnp.stack(
@@ -76,8 +73,16 @@ class StationaryGridOrbitSampler(AbstractOrbitSampler):
             a.reshape(-1)
             for a in jnp.meshgrid(energies, theta_grid, phi_grid, indexing="ij")
         )
-        return jax.vmap(
-            lambda e, th, ph: _box_orbit_ic(
-                potential, e, th, ph, r_floor, r_ceiling, t0
+        r_ref_full = jnp.broadcast_to(
+            r_grid[:, None, None], (self.nE, self.nI2, self.nI3)
+        ).reshape(-1)
+        ics, valid = jax.vmap(
+            lambda e, r_ref, th, ph: _box_orbit_ic(potential, e, th, ph, r_ref, t0)
+        )(e_grid, r_ref_full, theta_full, phi_full)
+        if not bool(jnp.all(valid)):
+            raise EquipotentialSearchError(
+                "Could not locate the equipotential for every (energy, theta, "
+                "phi) bundle -- see `_equipotential_radius` for what this "
+                "requires."
             )
-        )(e_grid, theta_full, phi_full)
+        return ics

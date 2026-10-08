@@ -27,8 +27,8 @@ from unxt import Quantity
 
 from tnt.orbit_library.base import AbstractOrbitSampler
 from tnt.orbit_library.common import (
-    _R_CEILING_FACTOR,
     _R_FLOOR_FACTOR,
+    EquipotentialSearchError,
     _equipotential_radius,
     _potential_at,
     _xz_direction,
@@ -41,21 +41,28 @@ def _single_shell_ics(
     energy: jnp.ndarray,
     theta_grid: jnp.ndarray,
     r_floor: jnp.ndarray,
-    r_ceiling: jnp.ndarray,
+    r_ref: jnp.ndarray,
     t0: Quantity,
     nI3: int,
-) -> jnp.ndarray:
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     """One energy shell's `(x, z)`-plane grid: `len(theta_grid) * nI3` orbits.
 
     At each `theta` in `theta_grid`, `nI3` orbits span `[r_floor,
     r_outer(theta)]` via the "nearly closed" fractional spacing `(k - 0.9) /
     (nI3 - 0.8)` -- landing exactly on `r_floor` has no special meaning, but
     landing exactly on the equipotential is degenerate (`v_y = 0` there), so
-    neither endpoint is ever sampled exactly.
+    neither endpoint is ever sampled exactly. `r_ref` is this shell's own
+    x-axis equipotential radius, setting `_equipotential_radius`'s search
+    bracket for `r_outer` -- unrelated to `r_floor`, the fixed physical
+    near-origin floor.
+
+    Returns:
+        `(ics, valid)`: `valid` is `False` if `_equipotential_radius`
+        failed for any `theta` in this shell.
     """
-    r_outer = jax.vmap(
+    r_outer, valid = jax.vmap(
         lambda th: _equipotential_radius(
-            potential, _xz_direction(th), energy, r_floor, r_ceiling, t0
+            potential, _xz_direction(th), energy, r_ref, t0
         )
     )(theta_grid)
 
@@ -67,9 +74,10 @@ def _single_shell_ics(
     theta_full = jnp.broadcast_to(theta_grid[:, None], shape).reshape(-1)
     r_full = r_grid.reshape(-1)
 
-    return jax.vmap(lambda th, r: _xz_orbit_ic(potential, energy, th, r, t0))(
+    ics = jax.vmap(lambda th, r: _xz_orbit_ic(potential, energy, th, r, t0))(
         theta_full, r_full
     )
+    return ics, jnp.all(valid)
 
 
 class XZGridFromOriginOrbitSampler(AbstractOrbitSampler):
@@ -109,7 +117,6 @@ class XZGridFromOriginOrbitSampler(AbstractOrbitSampler):
         rmin_val = self.rmin.ustrip(length_unit)
         rmax_val = self.rmax.ustrip(length_unit)
         r_floor = rmin_val * _R_FLOOR_FACTOR
-        r_ceiling = rmax_val * _R_CEILING_FACTOR
 
         r_grid = 10.0 ** jnp.linspace(jnp.log10(rmin_val), jnp.log10(rmax_val), self.nE)
         x_axis_points = jnp.stack(
@@ -121,9 +128,14 @@ class XZGridFromOriginOrbitSampler(AbstractOrbitSampler):
 
         theta_grid = (jnp.arange(self.nI2) + 0.5) * (jnp.pi / 2) / self.nI2
 
-        ics = jax.vmap(
-            lambda e: _single_shell_ics(
-                potential, e, theta_grid, r_floor, r_ceiling, t0, self.nI3
+        ics, valid = jax.vmap(
+            lambda e, r_ref: _single_shell_ics(
+                potential, e, theta_grid, r_floor, r_ref, t0, self.nI3
             )
-        )(energies)
+        )(energies, r_grid)
+        if not bool(jnp.all(valid)):
+            raise EquipotentialSearchError(
+                "Could not locate the equipotential for every (energy, theta) "
+                "shell -- see `_equipotential_radius` for what this requires."
+            )
         return ics.reshape(-1, 6)

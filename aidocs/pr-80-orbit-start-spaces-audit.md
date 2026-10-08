@@ -207,6 +207,67 @@ Assisted by Codex (OpenAI).
 
 ## Responses
 
+Two fixes below go beyond what any single numbered finding asked for, each
+surfaced while addressing one -- moved up front since they're referenced
+from more than one response.
+
+### Extra fix: Match DYNAMITE's `nI2`/`nI3` field naming (found while addressing finding 5)
+
+Checking finding 5's reference source surfaced a naming discrepancy worth
+fixing on its own: **TNT's `nI1`/`nI2` fields had swapped roles relative to
+DYNAMITE's own `nI2`/`nI3`.** DYNAMITE's comment block
+(`initial_parameters.f90:62`, `! nEner = # energies, nI2 = # I2, nI3 = #
+I3`) and its box-orbit grid (`orbitstart_f.f90:287-291`, `Theta ... /nI2`,
+`Phi ... /nI3`) fix `nI2` as the (first) angular grid count and `nI3` as
+the second non-energy dimension, consistently across both the box- and
+tube-orbit code -- the same positional roles TNT already gave its own
+`nI1`/`nI2`, just one letter off. Finding 2's own fix already had to spell
+out that DYNAMITE's `Ni3` (not `nI2`) was the radial count being matched;
+this was the same cross-naming surfacing again. Renamed `nI1`->`nI2`,
+`nI2`->`nI3` throughout `tnt/orbit_library/`,
+`tnt/configuration/validation.py`, both default/test configs, the docs
+page, `KNOWLEDGE.md`, and both test files, so TNT's field names now match
+DYNAMITE's letter-for-letter, not just positionally. Triple-checked
+against the actual Fortran source (not just the earlier citations) before
+renaming anything.
+
+### Extra fix: Scale the equipotential search bracket per energy shell (found while addressing finding 6)
+
+Checked DYNAMITE's own equivalent, `findReq` (`orbitstart_f.f90:543-592`),
+rather than just adding a validity check on top of the existing fixed
+bracket. Two things there matter beyond "validate and raise":
+
+- Its bracket is `[0.01, 1.1] * Req`, where `Req` (`Rcirc(j)` at the call
+  site) is *that energy shell's own x-axis equipotential radius* -- not one
+  fixed bracket shared across every shell regardless of its own natural
+  scale, which is what TNT's `[rmin * 1e-3, rmax * 1e2]` was. Re-centering
+  the bracket per shell is the actual fix for the failure mode, not just a
+  check on top of a bracket that stays badly scoped; the audit's probe
+  needed the equipotential to collapse to `1e-5 kpc` precisely because the
+  old bracket's floor (`rmin * 1e-3`) had no relationship to that shell's
+  own scale at all.
+- Non-convergence there is a hard, loud failure (`stop "Can not find
+  R_eq"`), not a silently accepted endpoint.
+
+`_equipotential_radius` now takes `r_ref` (each shell's own x-axis radius,
+already computed by every sampler to define that shell's energy -- none of
+the three needed a new quantity, just to stop discarding one they already
+had) and derives `[r_ref * 0.01, r_ref * 1.1]` internally, matching
+`findReq`'s factors exactly. It returns `(r0, valid)`: `valid` requires the
+bracket to contain an actual sign change, the solver's own result to be
+`optx.RESULTS.successful`, and the residual at `r0` to be within `1e-7`
+relative to the shell's energy -- DYNAMITE's own `findReq` convergence
+tolerance. `_box_orbit_ic`/`_single_shell_ics`/`XZGridFromBoundaryOrbitSampler
+.generate_ics`'s own per-shell search all thread this through; each
+sampler's `generate_ics` aggregates validity across its whole grid and
+raises a new `EquipotentialSearchError` (not a traced flag: orbit sampling
+isn't part of the differentiable `build_with_validity` contract, so eager
+is the right level here, matching `tnt.mge`'s own eager
+`MGEDeprojectionError` convention) rather than returning as if nothing had
+gone wrong. `_R_CEILING_FACTOR` is gone -- it was only ever the old global
+bracket's outer factor; `_R_FLOOR_FACTOR` remains, unrelated, as the
+`(x, z)`-plane samplers' own physical near-origin sampling floor.
+
 ### 1. [P1] Stop the integration driver on failure or lack of progress -- fixed
 
 Confirmed by direct reproduction: a nonfinite-derivative injection that
@@ -321,25 +382,8 @@ DYNAMITE's own source rather than a judgement call: `find_outerboundary`'s
 and `find_innerboundary`'s own first executable line is
 `if (nI2 <= 3) stop "nI2 is smaller then 4"` -- DYNAMITE refuses to run the
 boundary search below 4 theta angles at all; there is no reference
-single-angle behaviour to port.
-
-Checking the reference source for this also surfaced a naming
-discrepancy it's worth recording: **TNT's `nI1`/`nI2` fields had swapped
-roles relative to DYNAMITE's own `nI2`/`nI3`.** DYNAMITE's comment block
-(`initial_parameters.f90:62`, `! nEner = # energies, nI2 = # I2, nI3 = # I3`)
-and its box-orbit grid (`orbitstart_f.f90:287-291`, `Theta ... /nI2`,
-`Phi ... /nI3`) fix `nI2` as the (first) angular grid count and `nI3` as the
-second non-energy dimension, consistently across both the box- and
-tube-orbit code -- the same positional roles TNT already gave its own
-`nI1`/`nI2`, just one letter off. Finding 2's own fix already had to
-spell out that DYNAMITE's `Ni3` (not `nI2`) was the radial count being
-matched; this was the same cross-naming surfacing again. Renamed
-`nI1`->`nI2`, `nI2`->`nI3` throughout `tnt/orbit_library/`,
-`tnt/configuration/validation.py`, both default/test configs, the docs
-page, `KNOWLEDGE.md`, and both test files, so TNT's field names now match
-DYNAMITE's letter-for-letter, not just positionally. Triple-checked
-against the actual Fortran source (not just the earlier citations) before
-renaming anything.
+single-angle behaviour to port. Checking this also surfaced the
+`nI1`/`nI2` naming discrepancy fixed above.
 
 With the rename in place, added the DYNAMITE-matching floor scoped to
 `XZGridFromBoundary` only (`StationaryGrid`/`XZGridFromOrigin` keep
@@ -356,7 +400,30 @@ finding 4).
 51.92s. `sphinx-build -W` still succeeds after the `orbit_library.md`
 rename.
 
-### 6. [P2] Validate equipotential brackets and solved roots
+### 6. [P2] Validate equipotential brackets and solved roots -- fixed
+
+Fixed by scaling the search bracket per energy shell and adding the
+bracket/convergence/residual validity check, matching DYNAMITE's own
+`findReq` -- see the fix above.
+
+Reproduced the audit's own probe directly against `_equipotential_radius`:
+the z-axis direction in a `q1=q2=1, q3=1e-5` potential is now flagged
+`valid=False` (previously returned the clamped `.001 * r_ref` endpoint
+silently); the x-axis direction (the true root) stays `valid=True`. Ran
+the same potential end-to-end through `StationaryGridOrbitSampler.
+generate_ics` and `XZGridFromOriginOrbitSampler.generate_ics`: both raise
+`EquipotentialSearchError` as intended.
+`XZGridFromBoundaryOrbitSampler.generate_ics` on the same potential hits a
+separate, pre-existing failure first -- `galax`'s own orbit integrator
+(`gd.compute_orbit`, inside `_classify_orbit_type`, untouched by this fix)
+hits its max-step limit on a potential this degenerate. Not a regression
+from this change and out of this finding's scope (it's an orbit-
+integration robustness gap, not an equipotential-search one), but worth
+recording since the probe surfaced it.
+
+`test_orbit_library.py`: 31 passed (29 + 2 new), 46.04s (up from the
+35-40s range after findings 1-5 -- the added per-call residual/convergence
+check is the expected cost, not a regression).
 
 ### Coverage and scope notes
 

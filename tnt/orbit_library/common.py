@@ -16,22 +16,43 @@ import jax.numpy as jnp
 import optimistix as optx
 from unxt import Quantity
 
+
+class EquipotentialSearchError(Exception):
+    """`_equipotential_radius` failed to locate a genuine equipotential.
+
+    Raised eagerly by a sampler's own `generate_ics`, after aggregating
+    `_equipotential_radius`'s `valid` flag across its whole grid -- orbit
+    sampling is not part of the differentiable `Potential.build_with_validity`
+    contract, so there is no traced flag to thread through here; a failed
+    search is a configuration/potential-shape problem to fix, not a
+    proposal to reject and move on from.
+    """
+
+
 # `flip=False`, not `optimistix`'s default `flip="detect"`: `detect`'s
 # runtime bracket check doesn't batch correctly under `jax.vmap` (as of
-# optimistix 0.1.0). Safe here because the bracket order is known
-# analytically -- `r_lo` is always deep in the potential well (very negative
-# `potential - energy`), `r_hi` always far out (positive) -- so `flip=False`
-# is simply correct, not a workaround for the vmap issue.
+# optimistix 0.1.0). Expected to be correct, not just assumed: `r_lo` is
+# normally deep in the potential well (negative `potential - energy`),
+# `r_hi` normally far out (positive) -- `_equipotential_radius` checks this
+# explicitly rather than trusting it blindly, since it can fail for an
+# extreme enough direction/shape (see that function's own docstring).
 _EQUIPOTENTIAL_SOLVER = optx.Bisection(rtol=1e-10, atol=1e-12, flip=False)
 _EQUIPOTENTIAL_MAX_STEPS = 200
 
-# A fixed, direction- and energy-independent bracket for every equipotential
-# search: wide enough that the true root -- which varies with direction in a
-# non-spherical potential -- stays safely inside it for every (E, theta, phi)
-# this sampler ever requests, given a potential that increases monotonically
-# outward along every ray from the centre.
+# `findReq`'s own bracket (`orbitstart_f.f90:560-561`, `rmx = 1.1*Req`,
+# `rmn = 0.01*Req`) -- scaled per energy shell from that shell's own x-axis
+# equipotential radius (`Req`/`Rcirc` there), not one fixed bracket shared
+# across every shell regardless of its own natural scale. `_R_FLOOR_FACTOR`
+# is a separate, physical near-origin floor for the `(x, z)`-plane samplers'
+# own sampled population (not an equipotential-search bracket bound) --
+# unrelated to either of these factors.
+_EQUIPOTENTIAL_SEARCH_INNER_FACTOR = 0.01
+_EQUIPOTENTIAL_SEARCH_OUTER_FACTOR = 1.1
+# `findReq`'s own convergence tolerance (`orbitstart_f.f90:572`,
+# `abs((E - pot)/E) < 1.0e-7`).
+_EQUIPOTENTIAL_RESIDUAL_RTOL = 1e-7
+
 _R_FLOOR_FACTOR = 1e-3
-_R_CEILING_FACTOR = 1e2
 
 
 def _energy_unit(potential: gp.AbstractPotential) -> Any:
@@ -55,20 +76,40 @@ def _equipotential_radius(
     potential: gp.AbstractPotential,
     direction: jnp.ndarray,
     energy: jnp.ndarray,
-    r_lo: jnp.ndarray,
-    r_hi: jnp.ndarray,
+    r_ref: jnp.ndarray,
     t0: Quantity,
-) -> jnp.ndarray:
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     """The radius `r` along `direction` where `potential(r * direction) == energy`.
 
-    Bisected between `r_lo` and `r_hi`. `direction` is a unit vector; the
-    equipotential radius varies with it in a non-spherical potential -- this
-    is what makes the stationary start space's box orbits actually sample
-    the ellipsoidal equipotential surface, not a sphere.
+    `direction` is a unit vector; the equipotential radius varies with it in
+    a non-spherical potential -- this is what makes the stationary start
+    space's box orbits actually sample the ellipsoidal equipotential
+    surface, not a sphere.
+
+    Bisected within `[r_ref * _EQUIPOTENTIAL_SEARCH_INNER_FACTOR, r_ref *
+    _EQUIPOTENTIAL_SEARCH_OUTER_FACTOR]` -- DYNAMITE's own `findReq`
+    bracket, scaled from `r_ref`, the same energy shell's own x-axis
+    equipotential radius (`potential(r_ref, 0, 0) == energy` by
+    construction), rather than one fixed bracket shared across every shell
+    regardless of its own natural scale. A direction far enough from the
+    x-axis in a sufficiently flattened potential can still place the true
+    root outside even this bracket.
+
+    Returns:
+        `(r0, valid)`: `valid` requires the bracket to actually contain a
+        sign change (`potential(r_lo) <= energy <= potential(r_hi)`), the
+        solver's own result to report success, and the residual at `r0` to
+        be within `_EQUIPOTENTIAL_RESIDUAL_RTOL` -- DYNAMITE's own `findReq`
+        convergence tolerance. A caller must not use `r0` where `valid` is
+        `False`; it is not a located equipotential.
     """
+    r_lo = r_ref * _EQUIPOTENTIAL_SEARCH_INNER_FACTOR
+    r_hi = r_ref * _EQUIPOTENTIAL_SEARCH_OUTER_FACTOR
 
     def objective(r: jnp.ndarray, _args: None) -> jnp.ndarray:
         return _potential_at(potential, r * direction, t0) - energy
+
+    bracket_valid = (objective(r_lo, None) <= 0) & (objective(r_hi, None) >= 0)
 
     solution = optx.root_find(
         objective,
@@ -78,7 +119,10 @@ def _equipotential_radius(
         max_steps=_EQUIPOTENTIAL_MAX_STEPS,
         throw=False,
     )
-    return solution.value
+    converged = solution.result == optx.RESULTS.successful
+    residual = jnp.abs(objective(solution.value, None) / energy)
+    valid = bracket_valid & converged & (residual < _EQUIPOTENTIAL_RESIDUAL_RTOL)
+    return solution.value, valid
 
 
 def _spherical_direction(theta: jnp.ndarray, phi: jnp.ndarray) -> jnp.ndarray:
@@ -104,20 +148,21 @@ def _box_orbit_ic(
     energy: jnp.ndarray,
     theta: jnp.ndarray,
     phi: jnp.ndarray,
-    r_lo: jnp.ndarray,
-    r_hi: jnp.ndarray,
+    r_ref: jnp.ndarray,
     t0: Quantity,
-) -> jnp.ndarray:
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     """One stationary-start-space box orbit's `(x, y, z, vx, vy, vz)`.
 
     Launched from rest exactly on the equipotential at `(energy, theta,
     phi)` -- the defining condition for box-orbit support (Schwarzschild
     1979): zero velocity everywhere, the point itself found by
-    `_equipotential_radius`.
+    `_equipotential_radius`. `r_ref` is this energy shell's own x-axis
+    equipotential radius; see that function for the search bracket it sets
+    and the `valid` flag's meaning.
     """
     direction = _spherical_direction(theta, phi)
-    r0 = _equipotential_radius(potential, direction, energy, r_lo, r_hi, t0)
-    return jnp.concatenate([r0 * direction, jnp.zeros(3)])
+    r0, valid = _equipotential_radius(potential, direction, energy, r_ref, t0)
+    return jnp.concatenate([r0 * direction, jnp.zeros(3)]), valid
 
 
 def _xz_orbit_ic(

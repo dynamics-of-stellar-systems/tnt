@@ -56,8 +56,8 @@ from unxt import Quantity
 
 from tnt.orbit_library.base import AbstractOrbitSampler
 from tnt.orbit_library.common import (
-    _R_CEILING_FACTOR,
     _R_FLOOR_FACTOR,
+    EquipotentialSearchError,
     _circular_period,
     _equipotential_radius,
     _phase_space_derivs,
@@ -830,7 +830,6 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
         rmin_val = self.rmin.ustrip(length_unit)
         rmax_val = self.rmax.ustrip(length_unit)
         r_floor = rmin_val * _R_FLOOR_FACTOR
-        r_ceiling = rmax_val * _R_CEILING_FACTOR
 
         r_grid = 10.0 ** jnp.linspace(jnp.log10(rmin_val), jnp.log10(rmax_val), self.nE)
         x_axis_points = jnp.stack(
@@ -853,10 +852,10 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
         @jax.jit
         def per_shell(
             energy: jnp.ndarray, r_x_axis: jnp.ndarray
-        ) -> tuple[jnp.ndarray, jnp.ndarray]:
-            r_outer_grid = jax.vmap(
+        ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+            r_outer_grid, valid_outer = jax.vmap(
                 lambda th: _equipotential_radius(
-                    potential, _xz_direction(th), energy, r_floor, r_ceiling, t0
+                    potential, _xz_direction(th), energy, r_x_axis, t0
                 )
             )(theta_grid)
 
@@ -897,11 +896,17 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
                 t0,
             )
 
-            return boundin_grid, boundmid_grid, irregular_inner & ~notubes
+            return (
+                boundin_grid,
+                boundmid_grid,
+                irregular_inner & ~notubes,
+                jnp.all(valid_outer),
+            )
 
         frac = (jnp.arange(1, self.nI3 + 1) - 0.9) / (self.nI3 - 0.8)
 
         shell_rows: list[jnp.ndarray] = [None] * self.nE  # type: ignore[list-item]
+        shell_valid: list[jnp.ndarray] = [None] * self.nE  # type: ignore[list-item]
 
         # Outermost -> innermost, stopping the boundary search the instant a
         # shell comes back locally irregular. That shell, and every one
@@ -914,15 +919,19 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
         for i in range(self.nE - 1, -1, -1):
             energy, r_x_axis = energies[i], r_grid[i]
             if propagating:
-                shell_rows[i] = _single_shell_ics(
-                    potential, energy, theta_grid, r_floor, r_ceiling, t0, self.nI3
+                shell_rows[i], shell_valid[i] = _single_shell_ics(
+                    potential, energy, theta_grid, r_floor, r_x_axis, t0, self.nI3
                 )
                 continue
-            boundin_grid, boundmid_grid, irregular = per_shell(energy, r_x_axis)
+            boundin_grid, boundmid_grid, irregular, valid = per_shell(
+                energy, r_x_axis
+            )
+            shell_valid[i] = valid
             if bool(irregular):
-                shell_rows[i] = _single_shell_ics(
-                    potential, energy, theta_grid, r_floor, r_ceiling, t0, self.nI3
+                shell_rows[i], delegated_valid = _single_shell_ics(
+                    potential, energy, theta_grid, r_floor, r_x_axis, t0, self.nI3
                 )
+                shell_valid[i] = shell_valid[i] & delegated_valid
                 propagating = True
                 continue
             r_shell = (
@@ -936,4 +945,9 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
                 r_shell.reshape(-1),
             )
 
+        if not bool(jnp.all(jnp.stack(shell_valid))):
+            raise EquipotentialSearchError(
+                "Could not locate the equipotential for every energy shell -- "
+                "see `_equipotential_radius` for what this requires."
+            )
         return jnp.concatenate(shell_rows, axis=0)
