@@ -23,6 +23,7 @@ from tnt.potential.registry import (
 from tnt.units import (
     declared_quantity,
     declared_quantity_value,
+    reference_unit,
     validate_declared_unit,
     validate_position_angle,
 )
@@ -668,36 +669,44 @@ def _validate_orbit_library_settings(settings: ConfigDict) -> None:
     _positive_number(settings["accuracy"], f"{path}.accuracy")
 
 
-_ORBIT_SAMPLER_TYPES = {"Grid", "Random"}
+_ORBIT_SAMPLER_TYPES = {"StationaryGrid", "XZGridFromOrigin", "XZGridFromBoundary"}
 
 
 def _validate_orbit_sampler(settings: ConfigDict, path: str) -> None:
     """Validate an `orbit_library_settings.orbit_sampler` entry.
 
-    `logrmin`/`logrmax` (the radial log-extent orbits are sampled within)
-    are required for every scheme. Only `Grid`'s further fields (`nE`/
-    `nI2`/`nI3`) are otherwise known and checked here -- `Random`'s own
-    settings are still undecided, mirroring
-    `weight_solver_settings.nnls_solver`.
+    Every registered sampler (`tnt.orbit_library`'s `StationaryGridOrbitSampler`/
+    `XZGridFromOriginOrbitSampler`/`XZGridFromBoundaryOrbitSampler`) shares the
+    same schema: `rmin`/`rmax` (an explicit length `Quantity` pair bounding
+    the logarithmic energy grid), `nE` (energy shells), and `nI2`/`nI3`
+    (each sampler's own two non-energy grid dimensions -- see the owning
+    class's docstring for what they mean for that sampler specifically).
     """
-    _require_keys(settings, {"type", "logrmin", "logrmax"}, path)
-    sampler_type = _choice(settings["type"], _ORBIT_SAMPLER_TYPES, f"{path}.type")
-    logrmin = _number(settings["logrmin"], f"{path}.logrmin")
-    logrmax = _number(settings["logrmax"], f"{path}.logrmax")
-    if logrmin >= logrmax:
-        raise ValueError(f"{path}.logrmin must be less than logrmax.")
-    if sampler_type != "Grid":
-        return
-    keys = {"type", "logrmin", "logrmax", "nE", "nI2", "nI3"}
+    keys = {"type", "rmin", "rmax", "nE", "nI2", "nI3"}
     _reject_unknown_keys(settings, keys, path)
     _require_keys(settings, keys, path)
-    for key in ("nE", "nI3"):
+    _choice(settings["type"], _ORBIT_SAMPLER_TYPES, f"{path}.type")
+    rmin = declared_quantity(settings["rmin"], "length", f"{path}.rmin")
+    rmax = declared_quantity(settings["rmax"], "length", f"{path}.rmax")
+    length_unit = reference_unit("length")
+    rmin_value, rmax_value = rmin.ustrip(length_unit), rmax.ustrip(length_unit)
+    if rmin_value <= 0:
+        raise ValueError(f"{path}.rmin must be positive.")
+    if rmin_value >= rmax_value:
+        raise ValueError(f"{path}.rmin must be less than rmax.")
+    for key in ("nE", "nI2", "nI3"):
         value = _integer(settings[key], f"{path}.{key}")
         if value <= 0:
             raise ValueError(f"{path}.{key} must be a positive integer.")
-    n_i2 = _integer(settings["nI2"], f"{path}.nI2")
-    if n_i2 < 4:
-        raise ValueError(f"{path}.nI2 must be at least 4.")
+    # `orbitstart_f.f90`'s own `if (nI2 <= 3) stop "nI2 is smaller then 4"`:
+    # `XZGridFromBoundary`'s continuation search needs at least a second and
+    # third theta step beyond the x-axis seed to run at all (`_inner_tube_
+    # boundary`'s own stages), not a restriction either of the other two
+    # samplers shares.
+    if settings["type"] == "XZGridFromBoundary" and _integer(
+        settings["nI2"], f"{path}.nI2"
+    ) <= 3:
+        raise ValueError(f"{path}.nI2 must be at least 4 for XZGridFromBoundary.")
 
 
 _DITHERING_TYPES = {"Cubic"}

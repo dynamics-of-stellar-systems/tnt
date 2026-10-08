@@ -139,9 +139,9 @@ population_data:
 
 orbit_library_settings:
   orbit_sampler:
-    type: "Grid"
-    logrmin: -0.101275
-    logrmax: 1.99123
+    type: "StationaryGrid"
+    rmin: {value: 0.01, unit: "kpc"}
+    rmax: {value: 100.0, unit: "kpc"}
     nE: 6
     nI2: 5
     nI3: 4

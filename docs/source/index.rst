@@ -11,6 +11,7 @@ configuration, scientific inputs, potential construction, and model searches.
    data_preparation
    units
    potential
+   orbit_library
    logging
    model_search
    dynamite_users
