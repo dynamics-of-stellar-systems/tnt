@@ -78,7 +78,9 @@ class ParameterConstraint(NamedTuple):
     """Bounds and an optional same-component parameter relationship.
 
     Numeric bounds are interpreted in ``unit`` when supplied, or in the
-    parameter value's own unit otherwise. Runtime validation independently
+    parameter value's own unit otherwise. An empty unit string means unit-free
+    ratios, so scaled dimensionless units such as percent compare correctly.
+    Runtime validation independently
     requires every potential parameter to be scalar and finite, including
     parameters with no additional constraint entry. When both
     ``other_parameter`` and ``relation`` are supplied, the rule is interpreted
@@ -129,7 +131,7 @@ class ParameterConstraint(NamedTuple):
 
     def valid(self, value: Quantity, siblings: Mapping[str, Quantity]) -> jax.Array:
         """JAX scalar boolean for this constraint, including finite values."""
-        unit = self.unit or value.unit
+        unit = value.unit if self.unit is None else self.unit
         number = value.ustrip(unit)
         other = (
             siblings[self.other_parameter].ustrip(unit)
@@ -149,7 +151,7 @@ class ParameterConstraint(NamedTuple):
         caller must first verify the parameter mapping's names, types,
         dimensions, scalar shapes, and finite values.
         """
-        unit = self.unit or value.unit
+        unit = value.unit if self.unit is None else self.unit
         try:
             number = value.ustrip(unit)
         except (TypeError, ValueError):

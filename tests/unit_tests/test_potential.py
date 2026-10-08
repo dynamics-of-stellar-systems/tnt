@@ -31,15 +31,17 @@ from tnt.potential import (
     Potential,
     TriaxialLightMGEPotential,
     TriaxialMassMGEPotential,
-    _nfw_concentration_m200,
-    _nfw_concentration_m200_inverse,
-    _nfw_g,
-    _solve_nfw_concentration,
     raw_parameter_dimensions,
     raw_potential_parameters,
 )
 from tnt.potential import registry as _registry_module
-from tnt.potential.nfw import _newtonian_gravitational_constant
+from tnt.potential.nfw import (
+    _newtonian_gravitational_constant,
+    _nfw_concentration_m200,
+    _nfw_concentration_m200_inverse,
+    _nfw_g,
+    _solve_nfw_concentration,
+)
 from tnt.potential.oblate_mge import _inclination_to_qmin, _qmin_to_inclination
 from tnt.potential.registry import (
     _COMPONENT_REGISTRY,
@@ -2700,7 +2702,7 @@ def _build_pqu_component(
     "type_name", ["TriaxialLightMGEPotential", "TriaxialMassMGEPotential"]
 )
 def test_pqu_u_equal_to_one_builds_and_inverts(type_name: str) -> None:
-    # High 1: u = 1 must survive full construction and report back through the
+    # u = 1 must survive full construction and report back through the
     # inverse -- not just return finite angles -- for both component types.
     mge = _triaxial_light_mge()  # anchor q' = 0.76, component 2
     component = _build_pqu_component(type_name, mge, 0.85, 0.60, 1.0)
@@ -2735,7 +2737,7 @@ def test_pqu_u_equal_to_one_builds_and_inverts(type_name: str) -> None:
     "type_name", ["TriaxialLightMGEPotential", "TriaxialMassMGEPotential"]
 )
 def test_pqu_accepts_the_upper_boundary_u_equals_p_over_qprime(type_name: str) -> None:
-    # High 1: at u = min(p/q', 1) the phi/psi weights are zero in exact
+    # At u = min(p/q', 1) the phi/psi weights are zero in exact
     # arithmetic; roundoff must not push the point out of the domain, through
     # a full build for both component types.
     flat = LightMGE(
@@ -2758,7 +2760,7 @@ def test_pqu_accepts_the_upper_boundary_u_equals_p_over_qprime(type_name: str) -
 
 
 def test_pqu_rejects_a_domain_too_narrow_to_deproject() -> None:
-    # High 1a: when (max(q/q', p), min(p/q', 1)) has no representable interior
+    # When (max(q/q', p), min(p/q', 1)) has no representable interior
     # point at the working precision, the build must reject explicitly rather
     # than divide by zero.
     mge = _triaxial_light_mge()  # anchor q' = 0.76
@@ -2780,7 +2782,7 @@ def test_pqu_rejects_a_domain_too_narrow_to_deproject() -> None:
 
 
 def test_pqu_u_equal_to_one_is_reliable_at_reduced_precision() -> None:
-    # High 1b: under jax_enable_x64=False the u=1 boundary must still recover
+    # Under jax_enable_x64=False the u=1 boundary must still recover
     # the requested (p, q) to float32 tolerance, not drift by ~1e-4.
     with jax.enable_x64(False):
         mge = LightMGE(
@@ -2830,7 +2832,7 @@ def test_pqu_tied_minimum_q_breaks_by_component_order() -> None:
 
 
 def test_pqu_folds_a_non_zero_anchor_twist_into_psi() -> None:
-    # High 2: when the min-q' Gaussian has PA_twist != 0, the built anchor
+    # When the min-q' Gaussian has PA_twist != 0, the built anchor
     # component must still have exactly the requested (p, q), and the round
     # trip must still recover (p, q, u).
     twisted = LightMGE(

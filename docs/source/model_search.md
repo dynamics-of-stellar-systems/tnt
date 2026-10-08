@@ -242,19 +242,21 @@ configuration-selectable generator:
 
 ## Model
 
-A `Model` is one evaluated point: the `Potential` that was proposed, plus
-whatever its evaluation produced. `potential` is always set -- it's known
-before evaluation even starts -- but the rest reflects what actually
-happened, since evaluating a point can fail at more than one stage:
+A `Model` records one proposed point and the outcome of its evaluation.
+Its fields reflect the stage reached:
 
+- `valid_potential` is `False` and `potential` is `None` if construction
+  fails. `raw_parameters` retains the original proposal in that case;
+  otherwise it reports the constructed potential in the configuration's
+  parameterization and declared units.
 - `orblib_done` is `False` if integrating the potential's orbit library
-  itself failed.
+  failed or construction failed before integration could start.
 - `weights_done` is `False` if orbit integration succeeded but solving for
-  orbit weights against the kinematic data failed.
+  orbit weights against the kinematic data failed, or an earlier stage failed.
 - `weights`/`chi2` are only set once `weights_done` is `True`; otherwise
   they're `None`.
-- `iteration` is the 0-based search round (`ModelIterator.run()` call) that
-  produced this model.
+- `iteration` is the cumulative, 0-based search round that produced this
+  model. One `ModelIterator.run()` call can complete several rounds.
 
 A single evaluated `ParameterSet` can produce more than one `Model`: if
 `parameter_space_settings.potential_rescalings.enabled`, the same orbit
@@ -270,9 +272,10 @@ column's unit). Its columns are:
 - one column per potential-component parameter, with unit where applicable
   (e.g. `bh.m`, `stars.ml`) -- always present, since a proposed point's
   parameters are known before evaluation;
-- `orblib_done`/`weights_done`, mirroring `Model`'s own flags;
-- one column per chi2 metric (e.g. `chi2`, `kinchi2`), once at least one
-  appended model has `weights_done`.
+- `iteration`, the cumulative search-round number;
+- `valid_potential`/`orblib_done`/`weights_done`, mirroring `Model`'s own flags;
+- one column per chi2 metric (e.g. `chi2`, `kinchi2`), added when a
+  successful model first reports that metric.
 
 Because some models fail, chi2 columns can contain `nan` for rows that never
 got that far. `AllModels.best(which_chi2)` returns the row with the lowest

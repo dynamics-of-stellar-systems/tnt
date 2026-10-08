@@ -104,7 +104,7 @@
   at `/workspace`; its macOS `.venv` is never used in the container because
   `UV_PROJECT_ENVIRONMENT` points to `/opt/tnt-venv` inside the image.
 - For this checkout's local macOS workflow, use Docker's `colima` context.
-  The local Colima VM has 2 GB of memory. Run scientific test suites
+  The local Colima VM has 4 GB of memory. Run scientific test suites
   sequentially, preferably in separate processes; do not run multiple JAX
   test processes in parallel. Accumulated compiled graphs can also exhaust
   memory within one process. The native MGE gradient tests clear JAX's
@@ -263,6 +263,17 @@
   MGE `q_min`, `pqu`, and `T_maj_min` conversions are traceable. The standalone
   scientific methods and registry adapters share numerical candidates and
   predicates, including anchor twists, endpoint margins and round-trip checks.
+  Their standalone `with_validity` counterparts use the same
+  `_guard_construction` scaffold as potential construction. Numerical validity
+  does not certify derivatives: edge-on `q_min` remains accepted despite its
+  unbounded conversion derivative, and inclusive `pqu` compression endpoints
+  retain their precision-margin clamp and clipped compression derivative.
+  Regression tests cover interior recovered-shape identity derivatives and
+  these endpoint limitations; per-proposal derivative checks remain removed.
+  Shape constraints compare unit-free ratios, including percent declarations;
+  inverse reporting restores the declared shape-coordinate units. In
+  `ParameterConstraint`, `unit=""` means a unit-free comparison and only
+  `unit=None` selects the proposed value's own unit.
   `Potential.build_with_validity` is the only potential construction interface;
   `build_potential`, `Potential.build`, `Potential.from_settings`, component
   `build`, and the four MGE `_build` factories have been removed.
@@ -634,17 +645,20 @@
   `deproject_oblate` requires every component's twist to be zero). Both
   directions are `AbstractMGE` methods: `inclination_from_q_min(q_min) ->
   inclination` and its inverse `q_min_from_inclination(inclination) ->
-  q_min`, which reads the anchor's own intrinsic `q` off a full
-  `deproject_oblate` call rather than duplicating that method's unit/twist/
-  domain validation. `_qmin_to_inclination` / `_inclination_to_qmin` in
+  q_min`, which reads the anchor's own intrinsic `q` using shared oblate
+  geometry checks rather than integrating the unscaled template's luminosity
+  or mass. Forward shape conversion is also geometry-only; construction checks
+  density and mass after the proposal's normalization. Unit/twist/domain rules
+  remain shared with deprojection. `_qmin_to_inclination` / `_inclination_to_qmin` in
   `tnt.potential.oblate_mge` are the registry adapters, mirroring
   `_pqu_to_tpp` / `_tpp_to_pqu`. Data-independent bound: `0 < q_min <= 1`
   (`ParameterConstraint`); `inclination_from_q_min` additionally rejects a
   circular anchor (`q_obs' == 1`), `q_min` outside `0 < q_min <= q_obs'`,
   and `q_min` too close to 1 to divide by reliably at the working precision
   (`eps`-scaled, same style as `pqu`'s own guards). Unlike `pqu`'s `u`
-  boundary, `q_min == q_obs'` (edge-on, `i = 90 deg`) is not a singularity,
-  so it needs no precision margin.
+  boundary, `q_min == q_obs'` (edge-on, `i = 90 deg`) needs no value-level
+  precision margin. Its inclination derivative is unbounded; acceptance
+  certifies numerical values only.
   The forward conversion also deprojects at the computed inclination and
   checks `abs(q_recovered - q_min) / q_min <= 50 * sqrt(eps)`, where `eps`
   is for the active JAX float type. This is a relative shape-error ceiling:
