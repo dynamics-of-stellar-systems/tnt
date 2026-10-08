@@ -280,8 +280,9 @@
   `ModelIterator._evaluate()` checks the scalar flag before any use of the
   potential, logs a generic numerical-validation rejection with raw parameters,
   and records an invalid model. Static setup errors propagate. Construction
-  supports `vmap`; iterator batching and prior integration remain deferred.
-  The iterator still returns a variable-length `list[Model]`; orbit integration
+  supports `vmap`; iterator batching remains deferred (prior integration is
+  done -- see `tnt.priors`/`PriorSampler` below). The iterator still returns
+  a variable-length `list[Model]`; orbit integration
   and weight solving remain scaffolding.
 - Issue #72 fixes the execution target as one proposal evaluated inside a JAX
   trace. `ParameterConstraint.valid()` now exposes JAX scalar predicates for
@@ -302,7 +303,8 @@
   dtypes for zero placeholders used by invalid converted components; these
   are not usable physical models. Converters must themselves support JAX
   tracing, and their output names/types/dimensions/scalar shapes remain hard
-  contract checks. Iterator batching and prior integration are deferred.
+  contract checks. Iterator batching is deferred (prior integration is
+  done -- see `tnt.priors`/`PriorSampler` below).
 - Eager constraint diagnostics and traced validity evaluate the same JAX
   predicates at the proposed value's active precision; converting eager values
   to Python floats would change half-open bound decisions in float32. For
@@ -808,10 +810,7 @@
   reuses it rather than rebuilding and registering a second site. `Prior`
   captures the run's `resolved` potential + cosmology + unit system to make
   this work; a `Prior` built without them (a unit test exercising only
-  sample sites) leaves `build_potential()` raising. The NFW
-  `concentration_m200` forward converter is *not* yet usable this way -- its
-  `(volume Quantity) ** (1/3)` trips quaxed dispatch under NUTS's trace;
-  native-parameter NFW (`m`, `r_s`) is fine. A plugin may only call
+  sample sites) leaves `build_potential()` raising. A plugin may only call
   `numpyro.factor` -- never `sample`/`deterministic` -- so it can add a soft
   preference over already-established values but can never independently
   assign or overwrite a parameter, ruling out any collision with that
