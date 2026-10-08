@@ -784,7 +784,7 @@
   `parameterization`. TNT ships no built-in priors, including a
   mass-fraction one -- only the mechanism (`tnt.priors.Prior`, the
   `sample`/`factor` plugin contract) and a documented worked example (see
-  `docs/source/model_search.md`'s "Priors" section). A plugin is a plain
+  `docs/source/priors.md`). A plugin is a plain
   Python function loaded from its own `.py` file (file-path-only, resolved
   relative to `io_settings.input_directory`, not an installed package) with a
   fixed signature: `def fn(context: tnt.priors.PriorContext) -> None`,

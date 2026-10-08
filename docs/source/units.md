@@ -67,8 +67,8 @@ YAML sequence such as `[39.96, Mpc]` is deliberately not supported: naming
 errors.
 
 Unitful parameters require one sibling `unit` applying to their value and, if
-declared, their search-space `prior` (see [Model search](model_search.md) for
-`prior` and `PriorSampler`):
+declared, their search-space `prior` (see [Priors](priors.md) for `prior`,
+and [Model search](model_search.md) for `PriorSampler`):
 
 ```yaml
 parameters:

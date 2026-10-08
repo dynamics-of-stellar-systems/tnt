@@ -501,8 +501,8 @@ string and numeric `args`. It does not check that `distribution` names a
 real `numpyro.distributions` class, or load and inspect the plugin file
 itself; both are the plugin author's responsibility. Neither a parameter's
 `prior` nor `parameter_space_settings.priors` is resume-critical -- see
-[Model search](model_search.md) for the full `PriorSampler`/`Prior` model
-and the `sample`/`factor` plugin contract.
+[Priors](priors.md) for the full `PriorSampler`/`Prior` model and the
+`sample`/`factor` plugin contract.
 
 ## Paths and side effects
 
