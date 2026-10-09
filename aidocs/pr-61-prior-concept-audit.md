@@ -111,6 +111,25 @@ distinct bounds, and positive bounds for LogUniform. Add regression coverage for
 non-positive LogUniform bounds, and invalid scales. Preparation can remain
 structural; it need not begin scientific execution.
 
+**Response -- fixed.** Added `tnt.priors._resolve_prior_distribution()`,
+called once per site when `Prior` is constructed (not re-run on every model
+trace): checks `distribution` names a real `numpyro.distributions.Distribution`
+subclass (`TypeError` otherwise, with the config path), constructs it with
+`validate_args=True` (confirmed this alone already catches `Normal(5, -1)`
+and `LogUniform(-1, 9)`, since numpyro declares `Normal.scale`/`LogUniform.low`/
+`high` as precise `arg_constraints`, just never checked because nothing
+upstream passed `validate_args` at all), and separately requires `low <
+high` whenever the constructed distribution exposes both (`Uniform`,
+`LogUniform`) -- confirmed by reading `Uniform.__init__`'s actual source
+that this ordering is never checked by numpyro itself, `validate_args` or
+not, since `low`/`high` are declared `constraints.dependent` (numpyro's own
+"the distribution must check this itself" marker). All four reproductions
+now raise `ValueError`/`TypeError` at `Prior.__init__` instead of silently
+sampling. 6 new tests in `tests/unit_tests/test_priors.py` (the 4
+reproductions, a bogus `distribution` name, and a well-formed case).
+Preparation (`tnt/configuration/validation.py`) is unchanged, still
+structural-only, per the suggested fix.
+
 ### F3 — P1: a severely divergent chain is returned as successful sampling
 
 Location: `tnt/priors.py:367-374`; the narrow-region acceptance test is

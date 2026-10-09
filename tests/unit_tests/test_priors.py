@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import galax.potential as gp
 import jax
@@ -409,3 +410,59 @@ def test_plugin_factor_on_enclosed_mass_rejects_invalid_pqu_shape_draws() -> Non
     assert float(jnp.mean(enclosed)) == pytest.approx(
         _ENCLOSED_TARGET, abs=2 * _ENCLOSED_WIDTH
     )
+
+
+# ---------------------------------------------------------------------------
+# A prior's distribution is resolved and validated once, at Prior
+# construction time -- nothing upstream (config preparation deliberately
+# never imports numpyro; `distribution_cls(*args)` without
+# `validate_args=True`) previously caught a reversed/degenerate Uniform
+# range, a non-positive LogUniform range, a non-positive Normal scale, or a
+# `distribution` name that isn't a real numpyro.distributions class.
+# ---------------------------------------------------------------------------
+
+
+def _single_parameter_potential_settings(
+    distribution: str, args: list[float]
+) -> dict[str, dict[str, Any]]:
+    return {
+        "dh": {
+            "parameters": {
+                "m": {
+                    "unit": "Msun",
+                    "fixed": False,
+                    "prior": {"distribution": distribution, "args": args},
+                },
+            },
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("distribution", "args"),
+    [
+        ("Uniform", [9.0, 1.0]),  # reversed bounds
+        ("Uniform", [1.0, 1.0]),  # degenerate (equal) bounds
+        ("LogUniform", [-1.0, 9.0]),  # non-positive low
+        ("Normal", [5.0, -1.0]),  # non-positive scale
+    ],
+)
+def test_prior_rejects_invalid_distribution_arguments(
+    distribution: str, args: list[float]
+) -> None:
+    settings = _single_parameter_potential_settings(distribution, args)
+    with pytest.raises(ValueError, match=r"dh\.m"):
+        Prior(settings, {}, {})
+
+
+def test_prior_rejects_a_distribution_name_that_is_not_a_numpyro_distribution() -> None:
+    settings = _single_parameter_potential_settings("not_a_distribution", [1.0])
+    with pytest.raises(TypeError, match="not a numpyro.distributions class"):
+        Prior(settings, {}, {})
+
+
+def test_prior_accepts_a_well_formed_distribution() -> None:
+    settings = _single_parameter_potential_settings("Uniform", [1.0, 9.0])
+    prior = Prior(settings, {}, {})
+    samples = prior.sample(jax.random.PRNGKey(0), num_samples=4)
+    assert samples["dh.m"].shape == (4,)

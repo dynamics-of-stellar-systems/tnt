@@ -214,6 +214,57 @@ def _make_potential_builder(
     return build
 
 
+def _resolve_prior_distribution(
+    prior: Mapping[str, Any], site: str
+) -> numpyro.distributions.Distribution:
+    """Build and validate one parameter's declared prior distribution.
+
+    `tnt.configuration.validation._validate_prior` only checks structure
+    (`distribution` is a string, `args` are numbers) -- it deliberately
+    never imports `numpyro`, so resolving whether `distribution` actually
+    names a usable distribution is this function's job, the first point
+    that does import `numpyro`.
+
+    `distribution` must name a real `numpyro.distributions.Distribution`
+    subclass, not just any attribute of the module. The distribution is
+    then constructed with `validate_args=True`, so every argument that
+    numpyro itself declares a precise `arg_constraints` entry for actually
+    gets checked (e.g. `Normal`'s `scale > 0`, `LogUniform`'s `low`/`high >
+    0`) -- which otherwise silently isn't, since nothing before this point
+    passes `validate_args` at all. `Uniform`/`LogUniform` additionally declare
+    `low`/`high` as `constraints.dependent` -- numpyro's own escape hatch
+    for "the framework can't check this generically, the distribution must
+    do it itself in `__init__`" -- and neither actually does, so reversed
+    or degenerate bounds (`low >= high`) pass silently even with
+    `validate_args=True`; check that ourselves.
+    """
+    distribution_name = prior["distribution"]
+    distribution_cls = getattr(numpyro.distributions, distribution_name, None)
+    if not (
+        isinstance(distribution_cls, type)
+        and issubclass(distribution_cls, numpyro.distributions.Distribution)
+    ):
+        raise TypeError(
+            f"{site}: prior distribution {distribution_name!r} is not a "
+            "numpyro.distributions class."
+        )
+    try:
+        distribution = distribution_cls(*prior["args"], validate_args=True)
+    except Exception as error:
+        raise ValueError(
+            f"{site}: invalid prior distribution arguments {prior['args']} for "
+            f"{distribution_name}: {error}"
+        ) from error
+    low = getattr(distribution, "low", None)
+    high = getattr(distribution, "high", None)
+    if low is not None and high is not None and not (low < high):
+        raise ValueError(
+            f"{site}: prior bounds must be ordered and distinct, got "
+            f"low={low}, high={high}."
+        )
+    return distribution
+
+
 def _build_model(
     potential_settings: Mapping[str, Mapping[str, Any]],
     prior_plugins: Mapping[str, PriorPlugin],
@@ -230,6 +281,11 @@ def _build_model(
     receiving a `PriorContext` over the assembled `candidate` (and, when
     available, `build_potential`) and adding factor terms only.
 
+    Each site's distribution is resolved and validated once here (via
+    `_resolve_prior_distribution`), not rebuilt and re-validated on every
+    trace of the returned model -- so a malformed prior raises immediately,
+    when the `Prior` is constructed, rather than lazily on first `sample()`.
+
     `build_potential` (if given) is wrapped in a per-draw, memoized,
     zero-arg closure before being handed to `PriorContext`: the first
     plugin to call `context.build_potential()` in a draw triggers the real
@@ -238,24 +294,33 @@ def _build_model(
     later call in the same draw -- any plugin -- reuses the cached result
     rather than rebuilding and registering a second site.
     """
+    sample_sites: list[tuple[str, str, numpyro.distributions.Distribution]] = []
+    fixed_values: list[tuple[str, str, Any]] = []
+    for component_name, component in potential_settings.items():
+        for parameter_name, parameter in component.get("parameters", {}).items():
+            if parameter.get("fixed", True):
+                fixed_values.append(
+                    (component_name, parameter_name, parameter["value"])
+                )
+                continue
+            prior = parameter.get("prior")
+            if prior is None:
+                continue
+            site = f"{component_name}.{parameter_name}"
+            distribution = _resolve_prior_distribution(prior, site)
+            sample_sites.append((component_name, parameter_name, distribution))
 
     def _model() -> dict[str, dict[str, Any]]:
-        candidate: dict[str, dict[str, Any]] = {}
-        for component_name, component in potential_settings.items():
-            component_values: dict[str, Any] = {}
-            for parameter_name, parameter in component.get("parameters", {}).items():
-                if parameter.get("fixed", True):
-                    component_values[parameter_name] = parameter["value"]
-                    continue
-                prior = parameter.get("prior")
-                if prior is None:
-                    continue
-                site = f"{component_name}.{parameter_name}"
-                distribution_cls = getattr(numpyro.distributions, prior["distribution"])
-                component_values[parameter_name] = numpyro.sample(
-                    site, distribution_cls(*prior["args"])
-                )
-            candidate[component_name] = component_values
+        candidate: dict[str, dict[str, Any]] = {
+            component_name: {} for component_name in potential_settings
+        }
+        for component_name, parameter_name, value in fixed_values:
+            candidate[component_name][parameter_name] = value
+        for component_name, parameter_name, distribution in sample_sites:
+            site = f"{component_name}.{parameter_name}"
+            candidate[component_name][parameter_name] = numpyro.sample(
+                site, distribution
+            )
 
         cached_potential: list[Potential] = []
 
