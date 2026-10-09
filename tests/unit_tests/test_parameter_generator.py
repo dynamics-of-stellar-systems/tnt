@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from unxt import Quantity
 
 from tnt.all_models import AllModels
+from tnt.model import Model
 from tnt.parameter_generator import (
     PriorSampler,
     SinglePointParameterGenerator,
@@ -12,6 +14,7 @@ from tnt.parameter_generator import (
     parameter_generator_required_settings,
     parameter_generator_type_names,
 )
+from tnt.potential import Potential
 from tnt.priors import Prior
 
 
@@ -145,6 +148,67 @@ def test_prior_sampler_caps_at_max_new_mods_per_iter() -> None:
     )
 
     assert len(generator.generate_parameters(AllModels())) == 3
+
+
+def _completed_iteration_model(iteration: int) -> Model:
+    return Model(
+        potential=Potential(components={}),
+        valid_potential=True,
+        raw_parameters={"dh": {"c": Quantity(8.0, "")}},
+        orblib_done=False,
+        weights_done=False,
+        weights=None,
+        chi2=None,
+        iteration=iteration,
+    )
+
+
+def test_prior_sampler_draws_a_fresh_batch_each_iteration() -> None:
+    # PR 61 audit F1: PriorSampler used to reconstruct jax.random.PRNGKey(seed)
+    # on every call, ignoring all_models entirely, so every iteration (and
+    # every resume) repeated the exact first batch. Folding
+    # all_models.n_iterations() into the key fixes this without making
+    # PriorSampler score-conditioned -- it still never reads chi2.
+    prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
+    generator = PriorSampler(
+        potential_settings=_PRIOR_SAMPLER_POTENTIAL_SETTINGS,
+        generator_settings={"seed": 0, "num_warmup": 10},
+        max_new_mods_per_iter=4,
+        prior=prior,
+        seed=0,
+        num_warmup=10,
+    )
+
+    first_round = [
+        c["dh"]["M_200"].ustrip("Msun")
+        for c in generator.generate_parameters(AllModels())
+    ]
+
+    one_iteration_done = AllModels().append(_completed_iteration_model(0))
+    assert one_iteration_done.n_iterations() == 1
+    second_round = [
+        c["dh"]["M_200"].ustrip("Msun")
+        for c in generator.generate_parameters(one_iteration_done)
+    ]
+
+    assert first_round != second_round
+
+    # Reproducible: resuming from the same recorded history (same
+    # n_iterations()) proposes the identical next batch, not a new one.
+    resumed_second_round = [
+        c["dh"]["M_200"].ustrip("Msun")
+        for c in generator.generate_parameters(one_iteration_done)
+    ]
+    assert second_round == resumed_second_round
+
+    # And matches an uninterrupted run that reached the same point directly.
+    two_iterations_done = one_iteration_done.append(_completed_iteration_model(1))
+    assert two_iterations_done.n_iterations() == 2
+    third_round = [
+        c["dh"]["M_200"].ustrip("Msun")
+        for c in generator.generate_parameters(two_iterations_done)
+    ]
+    assert third_round != second_round
 
 
 def test_build_parameter_generator_dispatches_prior_sampler() -> None:

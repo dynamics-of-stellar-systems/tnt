@@ -248,12 +248,15 @@ def _parameter_sets_from_samples(
 class PriorSampler(AbstractParameterGenerator):
     """Proposes parameters by sampling from a `tnt.priors.Prior`.
 
-    Ignores `all_models` -- `Prior.sample` doesn't condition on anything
-    data-dependent this round; that's a future chi2-conditioned generator's
-    job. A thin adapter: all model composition, factor detection, and the
-    `Predictive`-vs-`MCMC` choice live on `Prior` itself, reusable by
-    whatever generator needs them next -- this class only derives a PRNG
-    key, calls `Prior.sample`, and converts the result into `ParameterSet`s.
+    Reads only `all_models.n_iterations()`, to fold into its PRNG key so
+    each call draws a fresh batch rather than repeating the same one --
+    never the fitted chi2/scores `all_models` also holds, so this is not
+    score-conditioned; a generator that refines its proposals from fitted
+    scores is a distinct, future generator. A thin adapter beyond that: all
+    model composition, factor detection, and the `Predictive`-vs-`MCMC`
+    choice live on `Prior` itself, reusable by whatever generator needs
+    them next -- this class only derives a PRNG key, calls `Prior.sample`,
+    and converts the result into `ParameterSet`s.
     """
 
     _type: ClassVar[str] = "PriorSampler"
@@ -266,8 +269,12 @@ class PriorSampler(AbstractParameterGenerator):
     num_warmup: int
 
     def _propose_free_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
-        del all_models
-        key = jax.random.PRNGKey(self.seed)
+        # Folding in the cumulative iteration count (not conditioning on
+        # fitted scores) is enough to stop a repeated call -- another
+        # iteration, or a resumed run -- from redrawing an identical batch.
+        key = jax.random.fold_in(
+            jax.random.PRNGKey(self.seed), all_models.n_iterations()
+        )
         samples = self.prior.sample(
             key, num_samples=self.max_new_mods_per_iter, num_warmup=self.num_warmup
         )

@@ -69,15 +69,20 @@ differs, remains reproducible, and matches an uninterrupted run after resume.
 The reproduction also confirmed the repeated batch after advancing a real
 `AllModels` history to one completed iteration.
 
-**Response -- deferred, not a merge blocker.** `PriorSampler` is one example
-`AbstractParameterGenerator` that consumes `tnt.priors`; it is not meant to
-drive an entire multi-iteration search on its own, only an initial or
-exploratory phase (plausibly just its first call). Generators that update
-their proposals per iteration from the current `all_models` -- the actual
-fix this finding is reaching for -- are a distinct, deferred class of
-generator, not something this PR implements or needs to. Repeating the same
-batch if `PriorSampler` is called again across iterations (or on resume) is
-a known limitation within that scope, left unaddressed here.
+**Response -- fixed.** `PriorSampler._propose_free_parameters` now derives
+its key as `jax.random.fold_in(jax.random.PRNGKey(self.seed),
+all_models.n_iterations())`, exactly the suggested fix: distinct,
+deterministic draws per cumulative iteration, with no conditioning on
+fitted scores. `PriorSampler` still doesn't read chi2/scores -- a generator
+that refines its proposals from fitted scores remains a distinct, future
+generator -- but repeating a batch across iterations or resumes is no
+longer a consequence of this one. New regression
+`test_prior_sampler_draws_a_fresh_batch_each_iteration` in
+`tests/unit_tests/test_parameter_generator.py`: advances a real `AllModels`
+history (via lightweight `Model` fixtures) through one and then two
+completed iterations, and checks the next batch differs from the previous
+one, is reproducible when resumed at the same `n_iterations()`, and matches
+an uninterrupted run that reaches the same point directly.
 
 ### F2 — P1: invalid distribution arguments silently produce bogus draws
 

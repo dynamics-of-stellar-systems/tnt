@@ -244,7 +244,10 @@ configuration-selectable generator:
   so it's meant for evaluating one nominal potential rather than searching --
   pair it with `stopping_criteria.n_new_iter: 1` to stop after that one round.
 - `PriorSampler` proposes parameters by sampling from a `tnt.priors.Prior` --
-  see [Priors](priors.md). Also ignores `all_models`.
+  see [Priors](priors.md). Reads only `all_models.n_iterations()`, folded
+  into its PRNG key so repeated calls draw fresh batches instead of
+  repeating one -- never the fitted chi2/scores `all_models` also holds,
+  so this is not score-conditioned proposing.
 
 ## Model
 
