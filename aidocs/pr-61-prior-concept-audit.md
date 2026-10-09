@@ -69,6 +69,16 @@ differs, remains reproducible, and matches an uninterrupted run after resume.
 The reproduction also confirmed the repeated batch after advancing a real
 `AllModels` history to one completed iteration.
 
+**Response -- deferred, not a merge blocker.** `PriorSampler` is one example
+`AbstractParameterGenerator` that consumes `tnt.priors`; it is not meant to
+drive an entire multi-iteration search on its own, only an initial or
+exploratory phase (plausibly just its first call). Generators that update
+their proposals per iteration from the current `all_models` -- the actual
+fix this finding is reaching for -- are a distinct, deferred class of
+generator, not something this PR implements or needs to. Repeating the same
+batch if `PriorSampler` is called again across iterations (or on resume) is
+a known limitation within that scope, left unaddressed here.
+
 ### F2 — P1: invalid distribution arguments silently produce bogus draws
 
 Location: `tnt/priors.py:253-257`; configuration structure is checked in
