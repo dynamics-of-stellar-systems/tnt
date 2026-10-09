@@ -58,6 +58,7 @@ from tnt.potential import (
     ResolvedPotentialComponent,
     raw_potential_parameters,
 )
+from tnt.priors import Prior, load_prior_plugins
 from tnt.run_config_log import (
     RunConfigLog,
     RunManifestReference,
@@ -170,6 +171,17 @@ class ModelIterator:
         cosmological_parameters = resolve_cosmological_parameters(
             config["cosmological_parameters"]
         )
+        prior_plugins = load_prior_plugins(
+            parameter_space_settings["priors"], input_directory
+        )
+        prior = Prior(
+            potential_settings,
+            prior_plugins,
+            mges,
+            resolved_potential=resolved_potential,
+            cosmological_parameters=cosmological_parameters,
+            unit_system=unit_system,
+        )
 
         return cls(
             potential_settings=potential_settings,
@@ -180,7 +192,7 @@ class ModelIterator:
             population_data=population_data,
             weight_solver=build_weight_solver(config["weight_solver_settings"]),
             parameter_generator=build_parameter_generator(
-                parameter_space_settings, potential_settings
+                parameter_space_settings, potential_settings, prior=prior
             ),
             orbit_library_settings=config["orbit_library_settings"],
             orbit_sampler=build_orbit_sampler(config["orbit_library_settings"]),

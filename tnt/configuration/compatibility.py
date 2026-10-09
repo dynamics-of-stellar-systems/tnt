@@ -18,8 +18,8 @@ from tnt.validation import _required_mapping as _parse_required_mapping
 
 _NON_SCHEMA_PARAMETER_KEYS = {
     "fixed",
-    "generator_settings",
     "latex_label",
+    "prior",
     "unit",
     "value",
 }

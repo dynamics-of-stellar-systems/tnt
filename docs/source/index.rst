@@ -13,6 +13,7 @@ configuration, scientific inputs, potential construction, and model searches.
    potential
    logging
    model_search
+   priors
    dynamite_users
 
 .. toctree::
