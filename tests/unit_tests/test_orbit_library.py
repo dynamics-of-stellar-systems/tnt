@@ -27,6 +27,7 @@ from tnt.orbit_library.common import (
 from tnt.orbit_library.xz_grid_from_boundary import (
     _R_FLOOR_FACTOR,
     _inner_tube_boundary,
+    _minimize_tube_width,
     _orbit_width_over_crossings,
     _outer_tube_boundary,
     _shell_integration_budgets,
@@ -441,21 +442,23 @@ def _regular_shell_boundary(nE: int = 2, nI2: int = 4, nI3: int = 4):
     inner_t_ceiling, inner_classify_time = _shell_integration_budgets(
         potential, rough_r, t0
     )
-    boundin_grid, irregular_inner = _inner_tube_boundary(
+    boundin_grid, irregular_inner, inner_search_valid = _inner_tube_boundary(
         potential, energy, theta_grid, r_floor, r_outer_grid,
         inner_t_ceiling, inner_classify_time, t0,
     )
     assert not bool(irregular_inner)
+    assert bool(inner_search_valid)
 
     refined_r = boundin_grid[-1]
     outer_t_ceiling, outer_classify_time = _shell_integration_budgets(
         potential, refined_r, t0
     )
-    boundmid_grid, notubes = _outer_tube_boundary(
+    boundmid_grid, notubes, outer_search_valid = _outer_tube_boundary(
         potential, energy, theta_grid, boundin_grid, r_outer_grid, r_floor,
         outer_t_ceiling, outer_classify_time, nI3, t0,
     )
     assert not bool(notubes)
+    assert bool(outer_search_valid)
 
     return (
         potential, t0, energy, theta_grid, r_outer_grid,
@@ -516,6 +519,39 @@ def test_orbit_width_over_crossings_flags_step_attempt_exhaustion_as_failure(
     width = _orbit_width_over_crossings(potential, ic, "y", t_ceiling, t0)
 
     assert bool(jnp.isinf(width))
+
+
+def test_minimize_tube_width_flags_an_all_infinite_objective_as_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR 80 follow-up audit finding 8: when every trial the golden-section
+    search actually keeps comes back `inf` (`_orbit_width_over_crossings`
+    found no usable width anywhere in the bracket), the search result must
+    not be reported as a located boundary radius.
+
+    Reproduces the audit's own setup: replace the width objective with a
+    constant `inf` and run the minimizer over an arbitrary bracket -- before
+    the fix this silently returned a finite radius (the bracket's own
+    golden-section bookkeeping, clipped into range) with no way for a
+    caller to tell it apart from a real result.
+    """
+    monkeypatch.setattr(
+        xz_grid_from_boundary_module,
+        "_orbit_width_over_crossings",
+        lambda *args, **kwargs: jnp.inf,
+    )
+    potential = _nfw_potential()
+    t0 = Quantity(0.0, "Myr")
+    energy = jnp.asarray(-1.0)
+    theta = jnp.asarray(jnp.pi / 4)
+
+    best, valid = _minimize_tube_width(
+        potential, energy, theta, "x", jnp.asarray(0.2), jnp.asarray(0.8),
+        jnp.asarray(100.0), t0,
+    )
+
+    assert jnp.isfinite(best)
+    assert not bool(valid)
 
 
 def test_boundary_search_boundmid_is_strictly_bracketed_in_a_regular_shell():

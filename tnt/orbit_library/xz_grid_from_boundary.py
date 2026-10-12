@@ -464,7 +464,7 @@ def _minimize_tube_width(
     hi: jnp.ndarray,
     t_ceiling: jnp.ndarray,
     t0: Quantity,
-) -> jnp.ndarray:
+) -> tuple[jnp.ndarray, jnp.ndarray]:
     """`argmin_r _orbit_width_over_crossings` at fixed `(energy, theta)`,
     bracketed in `[lo, hi]` -- the search step shared by
     `_inner_tube_boundary` and `_outer_tube_boundary`.
@@ -482,6 +482,15 @@ def _minimize_tube_width(
     clipped back into `[lo, hi]` regardless, so a poorly-behaved objective
     degrades to "a valid-but-possibly-suboptimal value" rather than
     poisoning the continuation searches this feeds.
+
+    Returns:
+        `(best, valid)`: `valid` is `False` when every trial the search
+        actually kept -- the final pair of candidate points -- came back
+        `inf` (`_orbit_width_over_crossings` found no usable width
+        anywhere), meaning `best` is not a located minimum, just whatever
+        the golden-section bookkeeping and final `[lo, hi]` clip happened
+        to leave behind. A caller must not treat `best` as a real boundary
+        radius where `valid` is `False`.
     """
 
     def objective(r: jnp.ndarray) -> jnp.ndarray:
@@ -514,8 +523,9 @@ def _minimize_tube_width(
     (_, _, x1_f, x2_f, f1_f, f2_f), _ = jax.lax.scan(
         step, (lo, hi, x1, x2, f1, f2), None, length=_TUBE_SEARCH_N_ITER
     )
+    best_objective = jnp.minimum(f1_f, f2_f)
     best = jnp.where(f1_f < f2_f, x1_f, x2_f)
-    return jnp.clip(best, lo, hi)
+    return jnp.clip(best, lo, hi), jnp.isfinite(best_objective)
 
 
 def _inner_tube_boundary(
@@ -527,7 +537,7 @@ def _inner_tube_boundary(
     t_ceiling: jnp.ndarray,
     classify_integration_time: jnp.ndarray,
     t0: Quantity,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """`boundin` at one energy shell, for every `theta` in `theta_grid` --
     van den Bosch et al. (2008)'s `find_innerboundary`
     (`orbitstart_f.f90:306-384`).
@@ -547,10 +557,15 @@ def _inner_tube_boundary(
     explicitly, the rest via `jax.lax.scan`.
 
     Returns:
-        `(boundin_grid, irregular)`: `boundin_grid` has the same shape as
-        `theta_grid`. `irregular` is `True` when any step's solution landed
-        on its own bracket edge, or when a long-axis tube was never
-        classified anywhere along the sweep.
+        `(boundin_grid, irregular, search_valid)`: `boundin_grid` has the
+        same shape as `theta_grid`. `irregular` is `True` when any step's
+        solution landed on its own bracket edge, or when a long-axis tube
+        was never classified anywhere along the sweep -- a documented
+        physical-structure signal (see this module's own docstring), kept
+        separate from `search_valid`, which is `False` when any step's own
+        `_minimize_tube_width` call found no usable width anywhere in its
+        bracket (a numerical failure, not a physical one -- see that
+        function's own docstring).
     """
     theta_desc = theta_grid[::-1]
     r_outer_desc = r_outer_grid[::-1]
@@ -570,7 +585,7 @@ def _inner_tube_boundary(
     # Stage 1 -- the x-axis step (`orbitstart_f.f90:328-338`).
     lo0 = jnp.maximum(r_floor, _GUESS_MARGIN_LOWER_FRACTION * r_outer_x_axis)
     hi0 = _GUESS_MARGIN_UPPER_FRACTION * r_outer_x_axis
-    boundin0 = _minimize_tube_width(
+    boundin0, valid0 = _minimize_tube_width(
         potential, energy, theta_desc[0], "y", lo0, hi0, t_ceiling, t0
     )
     edge0 = on_edge(boundin0, lo0, hi0)
@@ -590,7 +605,7 @@ def _inner_tube_boundary(
     hi1 = jnp.minimum(
         guess1 + _INNER_SECOND_STEP_HALF_WIDTH_FRACTION * r_outer_1, r_outer_1
     )
-    boundin1 = _minimize_tube_width(
+    boundin1, valid1 = _minimize_tube_width(
         potential, energy, theta_desc[1], "y", lo1, hi1, t_ceiling, t0
     )
     edge1 = on_edge(boundin1, lo1, hi1)
@@ -598,7 +613,7 @@ def _inner_tube_boundary(
 
     # Stage 3 -- every remaining theta step (`orbitstart_f.f90:354-379`).
     def step(carry: tuple, xs: tuple) -> tuple[tuple, jnp.ndarray]:
-        prev_boundin, found_x_acc, edge_acc = carry
+        prev_boundin, found_x_acc, edge_acc, valid_acc = carry
         theta_i, r_outer_i = xs
         guess = jnp.clip(
             prev_boundin,
@@ -612,23 +627,28 @@ def _inner_tube_boundary(
         hi = jnp.minimum(
             guess + _INNER_STEP_HALF_WIDTH_FRACTION * r_outer_x_axis, r_outer_i
         )
-        boundin_i = _minimize_tube_width(
+        boundin_i, valid_i = _minimize_tube_width(
             potential, energy, theta_i, "y", lo, hi, t_ceiling, t0
         )
         edge_i = on_edge(boundin_i, lo, hi)
         found_x_i = is_x_tube(theta_i, boundin_i)
-        new_carry = (boundin_i, found_x_acc | found_x_i, edge_acc | edge_i)
+        new_carry = (
+            boundin_i,
+            found_x_acc | found_x_i,
+            edge_acc | edge_i,
+            valid_acc & valid_i,
+        )
         return new_carry, boundin_i
 
-    init_carry = (boundin1, found_x0 | found_x1, edge0 | edge1)
-    (_, found_x_final, edge_final), boundin_rest_desc = jax.lax.scan(
+    init_carry = (boundin1, found_x0 | found_x1, edge0 | edge1, valid0 & valid1)
+    (_, found_x_final, edge_final, valid_final), boundin_rest_desc = jax.lax.scan(
         step, init_carry, (theta_desc[2:], r_outer_desc[2:])
     )
 
     boundin_grid = jnp.concatenate(
         [boundin0[None], boundin1[None], boundin_rest_desc]
     )[::-1]
-    return boundin_grid, edge_final | (~found_x_final)
+    return boundin_grid, edge_final | (~found_x_final), valid_final
 
 
 def _outer_tube_boundary(
@@ -642,7 +662,7 @@ def _outer_tube_boundary(
     classify_integration_time: jnp.ndarray,
     nI3: int,
     t0: Quantity,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """`boundmid` at one energy shell, for every `theta` in `theta_grid` --
     van den Bosch et al. (2008)'s `find_outerboundary`
     (`orbitstart_f.f90:386-520`).
@@ -677,8 +697,14 @@ def _outer_tube_boundary(
     that guess by a fraction depending on `rel_rbi` and `nI3`.
 
     Returns:
-        `(boundmid_grid, notubes)`: `boundmid_grid` has the same shape as
-        `theta_grid`; `notubes` is the scalar bool described above.
+        `(boundmid_grid, notubes, search_valid)`: `boundmid_grid` has the
+        same shape as `theta_grid`; `notubes` is the scalar bool described
+        above. `search_valid` is `False` when any searched row's own
+        `_minimize_tube_width` call found no usable width anywhere in its
+        bracket -- a numerical failure (see that function's own docstring),
+        kept separate from `notubes`/the shell's physical irregularity. An
+        unsearched row (past the onset, or the whole grid when `notubes`)
+        trivially contributes `True`: nothing was searched there to fail.
     """
     n_theta = theta_grid.shape[0]
     theta_top, boundin_top, r_outer_top = (
@@ -778,7 +804,7 @@ def _outer_tube_boundary(
     r_outer_at_onset = r_outer_grid[jnp.clip(effective_onset_idx, 0, n_theta - 1)]
 
     def step(carry: tuple, xs: tuple) -> tuple[tuple, jnp.ndarray]:
-        prev_boundmid, prev_r_outer = carry
+        prev_boundmid, prev_r_outer, valid_acc = carry
         theta_i, r_outer_i, idx_i = xs
         searched = idx_i < effective_onset_idx
 
@@ -804,29 +830,33 @@ def _outer_tube_boundary(
             lo = jnp.where(rbi >= rbu, r_floor, rbi)
             hi = jnp.where(rbi >= rbu, r_outer_i, rbu)
 
-            boundmid_i = _minimize_tube_width(
+            boundmid_i, valid_i = _minimize_tube_width(
                 potential, energy, theta_i, "x", lo, hi, t_ceiling, t0
             )
-            return boundmid_i, r_outer_i
+            return boundmid_i, r_outer_i, valid_i
 
         # `jax.lax.cond`, not `jnp.where`: a row past the onset has its
         # `_minimize_tube_width` result -- ~60 full trial-orbit
         # integrations -- discarded unconditionally below, so skip running
         # it at all rather than computing and masking it.
-        new_boundmid, new_r_outer = jax.lax.cond(
-            searched, do_search, lambda _: (prev_boundmid, prev_r_outer), operand=None
+        new_boundmid, new_r_outer, valid_i = jax.lax.cond(
+            searched,
+            do_search,
+            lambda _: (prev_boundmid, prev_r_outer, jnp.asarray(True)),
+            operand=None,
         )
         result_i = jnp.where(searched, new_boundmid, r_outer_i)
-        return (new_boundmid, new_r_outer), result_i
+        new_valid_acc = valid_acc & jnp.where(searched, valid_i, True)
+        return (new_boundmid, new_r_outer, new_valid_acc), result_i
 
-    init_carry = (r_outer_top, r_outer_top)
-    _, boundmid_rest_desc = jax.lax.scan(
+    init_carry = (r_outer_top, r_outer_top, jnp.asarray(True))
+    (_, _, search_valid), boundmid_rest_desc = jax.lax.scan(
         step, init_carry, (theta_desc2, r_outer_desc2, idx_desc)
     )
     boundmid_searched = jnp.concatenate([boundmid_rest_desc[::-1], r_outer_top[None]])
 
     boundmid_grid = jnp.where(notubes, r_outer_grid, boundmid_searched)
-    return boundmid_grid, notubes
+    return boundmid_grid, notubes, search_valid | notubes
 
 
 class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
@@ -910,7 +940,7 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
             inner_t_ceiling, inner_classify_time = _shell_integration_budgets(
                 potential, rough_r, t0
             )
-            boundin_grid, irregular_inner = _inner_tube_boundary(
+            boundin_grid, irregular_inner, inner_search_valid = _inner_tube_boundary(
                 potential,
                 energy,
                 theta_grid,
@@ -925,7 +955,7 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
             outer_t_ceiling, outer_classify_time = _shell_integration_budgets(
                 potential, refined_r, t0
             )
-            boundmid_grid, notubes = _outer_tube_boundary(
+            boundmid_grid, notubes, outer_search_valid = _outer_tube_boundary(
                 potential,
                 energy,
                 theta_grid,
@@ -942,7 +972,7 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
                 boundin_grid,
                 boundmid_grid,
                 irregular_inner & ~notubes,
-                jnp.all(valid_outer),
+                jnp.all(valid_outer) & inner_search_valid & outer_search_valid,
             )
 
         frac = (jnp.arange(1, self.nI3 + 1) - 0.9) / (self.nI3 - 0.8)
@@ -989,7 +1019,9 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
 
         if not bool(jnp.all(jnp.stack(shell_valid))):
             raise EquipotentialSearchError(
-                "Could not locate the equipotential for every energy shell -- "
-                "see `_equipotential_radius` for what this requires."
+                "Could not locate the equipotential, or the tube-orbit "
+                "boundary search failed, for every energy shell -- see "
+                "`_equipotential_radius` and `_minimize_tube_width` for "
+                "what each requires."
             )
         return jnp.concatenate(shell_rows, axis=0)

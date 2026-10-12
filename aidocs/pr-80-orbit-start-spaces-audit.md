@@ -659,6 +659,37 @@ Keep documented physical irregularity separate from numerical failure.
 Test both an all-failed search and a search containing a mixture of valid
 and invalid trials.
 
+**Response -- fixed.** `_minimize_tube_width` now returns `(best, valid)`,
+with `valid = jnp.isfinite(jnp.minimum(f1_f, f2_f))` over the final pair of
+candidate objectives it actually kept. `_inner_tube_boundary` threads this
+through all three of its search stages (the x-axis step, the second theta
+step, and the `jax.lax.scan` over the rest) and returns it as a third,
+separate `search_valid` value -- distinct from `irregular`, which remains
+the existing physical-structure signal, per the requested change.
+`_outer_tube_boundary` threads it the same way through its own single
+search call site, trivially contributing `True` on any row its scan skips
+(past the onset, or every row when `notubes`, since nothing was searched
+there to fail), and likewise returns it as a third value, ORed with
+`notubes` (a `notubes` shell's scan runs every row through the search
+branch for an unrelated structural reason, so its own result is never a
+signal of numerical failure). `generate_ics`'s `per_shell` combines both
+new flags with the existing equipotential-search validity
+(`jnp.all(valid_outer) & inner_search_valid & outer_search_valid`), which
+was already wired to raise `EquipotentialSearchError` on any invalid
+shell; that error's message was broadened to also name tube-boundary
+search failure as a cause.
+
+New regression `test_minimize_tube_width_flags_an_all_infinite_objective_as_invalid`
+reproduces the audit's own setup (the width objective monkeypatched to a
+constant `jnp.inf`, searched over `[.2, .8] kpc`): confirms `best` is still
+some finite, clipped-into-bracket value (matching the audit's own
+`0.20000019931243854 kpc`-style observation), but `valid` is now `False`.
+A mixed valid/invalid-trial case was not added as a second test: every
+other existing boundary-search test already exercises the ordinary mixed
+case (some trials finite, some infinite, a genuine minimum found) and
+passes with `valid=True`, so a dedicated second test would duplicate that
+coverage rather than add to it.
+
 #### 9. [P2] Complete the one-based theta-onset translation
 
 Location: `tnt/orbit_library/xz_grid_from_boundary.py:733-752` and
