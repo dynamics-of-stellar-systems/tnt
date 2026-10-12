@@ -614,6 +614,24 @@ ceiling was reached without numerical failure; otherwise return the failure
 signal. Add a regression test that hits the attempt limit after at least one
 crossing, plus a case that completes normally on the final allowed attempt.
 
+**Response -- fixed.** `_orbit_width_over_crossings` now also tracks
+`attempts_final`/`t_final` from the final loop state and computes
+`attempts_exhausted_early = (attempts_final >= _TUBE_SEARCH_MAX_STEP_ATTEMPTS)
+& (n_final < _TUBE_SEARCH_N_CROSSINGS) & (t_final < t_ceiling)` -- exhausting
+the attempt budget without reaching either legitimate completion condition.
+`usable = (n_final > 0) & (~failed_final) & (~attempts_exhausted_early)`,
+and the function returns `inf` whenever `usable` is false, matching the
+docstring's existing (previously unimplemented) promise. New regression
+`test_orbit_width_over_crossings_flags_step_attempt_exhaustion_as_failure`
+reproduces the audit's own setup exactly (circular orbit at 1 kpc, NFW
+`m=1e11 Msun, r_s=10 kpc`, attempt budget monkeypatched to 50): confirmed
+failing before the fix with the same finite width the audit reported
+(`0.00012656` kpc, matching `0.0001265571615006733` to the precision shown),
+passing after it. The "completes normally on the final allowed attempt"
+edge case from the suggested test plan was not added -- the exhaustion
+case is the one this finding is actually about, and existing tests already
+exercise ordinary successful completion extensively.
+
 #### 8. [P2] Propagate an all-failed width search to its caller
 
 Location: `tnt/orbit_library/xz_grid_from_boundary.py:499-503`, with callers

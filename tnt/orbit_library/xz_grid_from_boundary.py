@@ -357,14 +357,29 @@ def _orbit_width_over_crossings(
         jnp.asarray(False),
     )
     final_state = jax.lax.while_loop(cond, body, init)
-    n_final, radius_min, radius_max, failed_final = (
+    t_final, n_final, radius_min, radius_max, attempts_final, failed_final = (
+        final_state[0],
         final_state[6],
         final_state[7],
         final_state[8],
+        final_state[10],
         final_state[11],
     )
+    # The loop can also exit by exhausting _TUBE_SEARCH_MAX_STEP_ATTEMPTS
+    # without ever reaching _TUBE_SEARCH_N_CROSSINGS or t_ceiling -- a step
+    # that keeps getting accepted and reported successful, but makes so
+    # little progress per step that the attempt budget runs out first. That
+    # is itself the failure this budget exists to catch (see this function's
+    # own docstring); it must not be reported as a reliable width just
+    # because some partial crossings were found before the budget ran out.
+    attempts_exhausted_early = (
+        (attempts_final >= _TUBE_SEARCH_MAX_STEP_ATTEMPTS)
+        & (n_final < _TUBE_SEARCH_N_CROSSINGS)
+        & (t_final < t_ceiling)
+    )
     width = radius_max - radius_min
-    return jnp.where((n_final > 0) & (~failed_final), width, jnp.inf)
+    usable = (n_final > 0) & (~failed_final) & (~attempts_exhausted_early)
+    return jnp.where(usable, width, jnp.inf)
 
 
 def _classify_orbit_type(

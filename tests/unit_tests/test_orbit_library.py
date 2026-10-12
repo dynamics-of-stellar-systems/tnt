@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import pytest
 from unxt import Quantity, unitsystem
 
+import tnt.orbit_library.xz_grid_from_boundary as xz_grid_from_boundary_module
 from tnt.orbit_library import (
     StationaryGridOrbitSampler,
     XZGridFromBoundaryOrbitSampler,
@@ -16,7 +17,10 @@ from tnt.orbit_library import (
 )
 from tnt.orbit_library.common import (
     EquipotentialSearchError,
+    _circular_period,
     _equipotential_radius,
+    _potential_at,
+    _v_circ,
     _xz_direction,
     _xz_orbit_ic,
 )
@@ -478,6 +482,40 @@ def test_boundary_search_boundin_is_a_local_width_minimum_in_a_regular_shell():
                 _orbit_width_over_crossings(potential, ic, "y", t_ceiling, t0)
             )
             assert width0 < width
+
+
+def test_orbit_width_over_crossings_flags_step_attempt_exhaustion_as_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR 80 follow-up audit finding 7: exhausting the step-attempt budget
+    without ever reaching the crossing target or the time ceiling must be
+    reported as a failure (`inf`), not a finite width built from whatever
+    partial crossings happened before the budget ran out.
+
+    Reproduces the audit's own setup directly: a circular orbit at 1 kpc in
+    an NFW potential (`m=1e11 Msun`, `r_s=10 kpc`), attempt budget reduced
+    to 50 (the production budget, 200_000, is high enough that a converging
+    search reaches its target or ceiling long before exhausting it -- this
+    is a controlled reproduction of the failure path, not a claim that
+    ordinary fixtures exhaust the real budget).
+    """
+    monkeypatch.setattr(
+        xz_grid_from_boundary_module, "_TUBE_SEARCH_MAX_STEP_ATTEMPTS", 50
+    )
+    potential = _nfw_potential()
+    t0 = Quantity(0.0, "Myr")
+    r = jnp.asarray(1.0)
+    theta = jnp.asarray(jnp.pi / 2)  # _xz_direction(pi/2) == x-axis
+    v_circ = _v_circ(potential, r, t0)
+    energy = (
+        _potential_at(potential, r * jnp.array([1.0, 0.0, 0.0]), t0) + 0.5 * v_circ**2
+    )
+    ic = _xz_orbit_ic(potential, energy, theta, r, t0)
+    t_ceiling = 1000.0 * _circular_period(potential, r, t0)
+
+    width = _orbit_width_over_crossings(potential, ic, "y", t_ceiling, t0)
+
+    assert bool(jnp.isinf(width))
 
 
 def test_boundary_search_boundmid_is_strictly_bracketed_in_a_regular_shell():
