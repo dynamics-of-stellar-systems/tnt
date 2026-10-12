@@ -18,14 +18,14 @@ from unxt import Quantity
 
 
 class EquipotentialSearchError(Exception):
-    """`_equipotential_radius` failed to locate a genuine equipotential.
+    """An equipotential or tube-boundary search failed numerically.
 
     Raised eagerly by a sampler's own `generate_ics`, after aggregating
-    `_equipotential_radius`'s `valid` flag across its whole grid -- orbit
-    sampling is not part of the differentiable `Potential.build_with_validity`
-    contract, so there is no traced flag to thread through here; a failed
-    search is a configuration/potential-shape problem to fix, not a
-    proposal to reject and move on from.
+    equipotential validity and, for the boundary sampler, inner/outer
+    search validity. Physical irregularity can delegate to the origin
+    grid; numerical search failure raises this exception. Orbit sampling
+    is outside the differentiable `Potential.build_with_validity`
+    contract and reports failure eagerly.
     """
 
 
@@ -48,8 +48,9 @@ _EQUIPOTENTIAL_MAX_STEPS = 200
 # unrelated to either of these factors.
 _EQUIPOTENTIAL_SEARCH_INNER_FACTOR = 0.01
 _EQUIPOTENTIAL_SEARCH_OUTER_FACTOR = 1.1
-# `findReq`'s own convergence tolerance (`orbitstart_f.f90:572`,
-# `abs((E - pot)/E) < 1.0e-7`).
+# The numerical tolerance from `findReq` (`orbitstart_f.f90:572`). TNT
+# scales the residual by the bracket's potential swing instead of `E`,
+# preserving a meaningful check at zero-energy shells.
 _EQUIPOTENTIAL_RESIDUAL_RTOL = 1e-7
 
 _R_FLOOR_FACTOR = 1e-3
@@ -101,8 +102,9 @@ def _equipotential_radius(
         solver's own result to report success, and the residual at `r0`,
         scaled by the potential's own swing across the bracket (not by
         `energy` itself -- meaningless at a zero-energy shell), to be
-        within `_EQUIPOTENTIAL_RESIDUAL_RTOL` -- DYNAMITE's own `findReq`
-        convergence tolerance. A caller must not use `r0` where `valid` is
+        within `_EQUIPOTENTIAL_RESIDUAL_RTOL`. The numerical tolerance
+        matches DYNAMITE's `findReq`; the energy scale differs to support
+        zero-energy shells. A caller must not use `r0` where `valid` is
         `False`; it is not a located equipotential.
     """
     r_lo = r_ref * _EQUIPOTENTIAL_SEARCH_INNER_FACTOR

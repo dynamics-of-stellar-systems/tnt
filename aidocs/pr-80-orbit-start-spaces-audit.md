@@ -902,3 +902,137 @@ The last checks the separately downloaded reference artifacts with Python's
 standard library. These are review probes, not committed regression tests.
 
 Assisted by Codex (OpenAI).
+
+## Follow-up audit — 2026-10-12
+
+Reviewed by Codex for Thomas. This reply is appended below the existing
+audit and author responses, preserving their history.
+
+Reviewed head: `a12e78a8bedd218f5a94eb191124a9e87e4bbb83`.
+Base: `3f202994fe384f39cc5639f499fd99b577f6d017` (`main`).
+Branch: `box_tube_start_spaces`.
+
+### Merge recommendation
+
+**Recommend merging.** The documentation cleanup described below is applied.
+All four findings from the previous follow-up are now addressed, and the six
+original findings remain resolved. No additional blocking correctness
+finding was identified in the five new commits. No further production-code
+correction is requested on the evidence from this review.
+
+The previously stated hold recommendation is superseded by this assessment
+at the reviewed head. Deferred integration, library assembly, configuration
+builders, dithering, and mirror construction remain outside this PR's scope.
+
+### Verification of findings 7–10
+
+| Finding | Assessment | Independent verification |
+| --- | --- | --- |
+| 7. Step-attempt exhaustion | Fixed | The original real-integrator, 50-attempt probe now returns `inf`. Controlled terminal states accept reaching either the crossing target or time ceiling on the last allowed attempt, while rejecting partial completion and explicit numerical failure. |
+| 8. All-failed minimization | Fixed | An all-infinite objective produces `valid=False`; a controlled mixture of finite/infinite trials locates the known `.5 kpc` minimum with `valid=True`. Invalid inner and outer flags reach the public sampler's exception, including an invalid inner search that also marks the shell irregular. |
+| 9. Theta-onset translation | Fixed | All four cases from the previous table now match the pinned Fortran: middle onset searches rows 0/1; highest secondary onset searches rows 0/1; lowest onset and no onset search none. The direct-radial-x-tube and `notubes` cases also retain their intended behavior. |
+| 10. Zero-energy equipotential | Fixed | Zero and near-zero shell energies on either side of `.8 kpc` produce valid roots. Both public stationary and origin samplers now generate finite initial conditions for the original zero-energy example. |
+
+Finding 7's completion test checks the return decision with controlled final
+driver states; its exhaustion reproduction retains the actual integrator.
+Finding 8's public checks inject validity results into the helpers while
+retaining the public sampler's shell selection, delegation, and error
+handling. The onset checks use the previous controlled classifier and
+bracket-midpoint minimizer. These probes isolate the specified branches;
+the committed regular-shell tests separately exercise real integrations.
+
+The new validity flag is carried through all inner/outer search call sites
+and combined with equipotential validity. A failed inner search is not
+cleared when physical irregularity delegates to the origin sampler. A
+failed outer search cannot silently supply a boundary radius to a successful
+public result. Successful ordinary calls still return finite output.
+
+The author's clarification of the nested Fortran guards is correct:
+the outer `i > 1` guard assigns the seed's equipotential, while the inner
+`i > 2` guard controls the downward searches. The port's zero-based cap
+and search-entry predicate now reproduce the observable behavior of both.
+Moving the interior-transition test to the middle shell is justified:
+the old outer-shell fixture actually has no onset and should retain the
+equipotential, which the new dedicated real-shell test verifies.
+
+Scaling the root residual by the bracket's potential swing removes the
+division by the shell's absolute energy while retaining bracket and solver
+checks. The independent near-zero probes pass at energies approximately
+`-3.347e-10`, `0`, and `+3.347e-10 kpc2/Myr2`; both signs matter because
+the energy reference must not determine validity.
+
+Some suggested cases were not added as committed tests. I checked those
+branches independently here (last-attempt success, mixed valid/invalid
+trials, public propagation, all onset positions, and near-zero energies).
+That remaining regression-test coverage detail does not block merging the
+verified implementation.
+
+### Validation and comparison provenance
+
+Scientific Python checks ran sequentially in the documented Colima Linux
+container.
+
+| Check | Result |
+| --- | --- |
+| `pytest -q tests/unit_tests/test_orbit_library.py` | 37 passed |
+| Configuration/session, compatibility, defaults, model iterator, and named-input tests | 143 passed |
+| `ruff check .` | Passed |
+| `sphinx-build -E -b html -W docs/source /tmp/tnt-pr80-round3-docs` | Passed |
+| PR diff and appended-audit whitespace checks | Passed |
+| Independent probes in `/private/tmp/tnt_pr80_round3_probes.py` | All assertions passed |
+
+Total: **180 selected tests passed**. The existing TensorFlow
+Probability/JAX deprecation warning remains. The complete repository test
+suite and a fresh compiled DYNAMITE comparison were not rerun.
+
+Verified the public comparison's
+[`0df1756` provenance update](https://github.com/dynamics-of-stellar-systems/tnt-dynamite-comparison/commit/0df175616073749a5b1453acb326733a62d4dbbb).
+It now pins TNT `c1b63564866f41855b01a0fb56701792e7215cbb` and the existing
+exact DYNAMITE revision. Between that TNT commit and the reviewed head,
+only the audit document changed: the production code matches the pinned
+comparison revision. The author's reported rerun is now attributable to an
+exact revision. Previously preserved raw outputs and array statistics were
+rechecked; this is artifact verification, not an independent rerun of the
+complete four-geometry scientific calculation.
+
+### Documentation cleanup applied — 2026-10-12
+
+Updated `docs/source/orbit_library.md` with the current sampler schema,
+angular-count restriction, numerical-failure behavior, and pinned public
+comparison. The comparison summary now distinguishes the median tube
+relative errors (`1.1e-5–7.8e-5`) from the approximately `3.1%` worst case,
+and replaces the blanket significant-figure claim with actual statistics.
+
+Updated the corresponding `aidocs/KNOWLEDGE.md` notes, including exact
+comparison revisions, removed scaffold names, stationary starts' zero
+velocity, and the distinction between numerical failure and physical
+irregularity. Related comments/docstrings in `base.py`, `common.py`,
+`xz_grid_from_origin.py`, and `xz_grid_from_boundary.py` now accurately
+describe residual scaling, minimizer validity, the documentation path,
+and the completed Fortran loop index. Runtime behavior is unchanged.
+
+Prash's original PR description is preserved as Thomas requested. Added a
+[PR comment summarizing the review and documentation cleanup](https://github.com/dynamics-of-stellar-systems/tnt/pull/80#issuecomment-6129245082)
+instead, including the current test counts and comparison link. The linked
+comment tracks publication of the documentation/audit edits.
+
+Cleanup validation: Ruff, the Sphinx build with warnings treated as errors,
+and whitespace checks passed. Comparing parsed Python syntax with the
+reviewed head confirmed that the four source modules differ only in
+comments/docstrings. Scientific tests were not repeated for these edits;
+the 180-test review result above remains applicable to unchanged behavior.
+
+The final stale-content pass also corrected the exception's documented
+boundary-search use, the unimplemented builders' descriptions, the capped
+onset rule, the nearest-x-axis row terminology, and the first-step crossing
+exclusion. Reviewed the orbit-sampler and configuration tests and fixtures;
+no obsolete tests or old sampler-schema references were found in the active
+PR-related files. Historical audit examples and author responses are kept
+as review history. Runtime behavior and test assertions are unchanged.
+
+The documentation cleanup is complete. Removing this audit document remains
+part of eventual merge preparation under the project's documented workflow;
+it is retained now for review, with history preserved in Git when removed.
+No merge was performed.
+
+Assisted by Codex (OpenAI).

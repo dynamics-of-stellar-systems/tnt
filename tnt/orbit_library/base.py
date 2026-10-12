@@ -29,8 +29,10 @@ class AbstractOrbitSampler(eqx.Module):
 
     `_type` matches `orbit_library_settings.orbit_sampler.type`. Concrete
     subclasses hold their own resolved settings as fields (e.g.
-    `StationaryGridOrbitSampler.nE`), built once by `build_orbit_sampler`
-    rather than re-reading `orbit_library_settings` on every call.
+    `StationaryGridOrbitSampler.nE`). Samplers are currently constructed
+    directly; `build_orbit_sampler` is the planned configuration builder
+    and remains unimplemented. Calls use the stored fields rather than
+    re-reading `orbit_library_settings`.
 
     `_add_reverse_copies` is fixed by which orbit family this sampler
     produces, not a free modeling choice -- `True` for a sampler whose
@@ -52,9 +54,9 @@ class AbstractOrbitSampler(eqx.Module):
         configuration boundary, but a sampler built directly (e.g. in a
         test, or once `build_orbit_sampler` exists and is called with
         already-resolved values) does not go through that check. `rmin`
-        sets every sampler's radial search floor via `log10(rmin)`; zero or
-        negative values silently produce non-finite radii rather than an
-        explicit error.
+        sets the logarithmic energy-grid lower bound, and also the radial
+        floor for the two `(x, z)` samplers. This check rejects zero or
+        negative values before logarithms can produce non-finite radii.
         """
         length_unit = reference_unit("length")
         rmin = self.rmin.ustrip(length_unit)
@@ -93,7 +95,8 @@ class AbstractOrbitDithering(eqx.Module):
 
     `_type` matches `orbit_library_settings.dithering.type`. Concrete
     subclasses hold their own resolved settings as fields (e.g.
-    `CubicOrbitDithering.n_dither`), built once by `build_orbit_dithering`.
+    `CubicOrbitDithering.n_dither`). The planned `build_orbit_dithering`
+    configuration builder remains unimplemented.
     """
 
     _type: ClassVar[str]

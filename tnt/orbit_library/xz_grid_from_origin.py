@@ -5,7 +5,7 @@ At each `(energy, theta)`, samples radii directly over `[r_floor,
 r_outer(theta)]` -- no search for where tube-orbit support actually begins
 or ends, the kind `xz_grid_from_boundary.py`'s boundary search does. This is
 exactly what an irregular energy shell there already falls back to (see
-`docs/source/orbit_sampling.md`'s "irregular shell" discussion): a uniform
+`docs/source/orbit_library.md`'s "irregular shell" discussion): a uniform
 grid reaching to the centre, with no boundary search at all, made the rule
 here instead of the fallback for some shells -- `_single_shell_ics` below is
 that same fallback, reused directly rather than reimplemented.

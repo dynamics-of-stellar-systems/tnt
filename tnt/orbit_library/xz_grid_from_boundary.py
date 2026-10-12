@@ -3,9 +3,8 @@ search for the `(x, z)`-plane start space.
 
 Implements van den Bosch et al. (2008, MNRAS 385, 647) sec. 4.3 -- the
 scheme DYNAMITE, and its Schwarzschild orbit-superposition antecedents, use
-to build a tube-orbit library with a completeness guarantee: every genuine
-tube-orbit family at a given energy gets sampled, not just whichever radii
-happen to fall in a fixed grid. Ported directly from DYNAMITE's own Fortran
+to adapt radial sampling to tube-orbit family boundaries at each energy.
+Ported from DYNAMITE's own Fortran
 reference (`orbitstart_f.f90`), matching its early-stopping search and
 per-step bracket formulas.
 
@@ -17,16 +16,17 @@ picture cleanly: box orbits near the centre, then a short-axis-tube
 annulus, then (at some shells) a long-axis-tube annulus further out. This
 sampler locates the two edges of that short-axis-tube annulus directly --
 `boundin` (`_inner_tube_boundary`): a continuation search across `theta`,
-starting at the x-axis (where the box <-> short-axis-tube edge is found
-cleanly) and working toward the z-axis; `boundmid` (`_outer_tube_boundary`):
-the short- <-> long-axis-tube edge, or the equipotential itself where no
-such edge exists at that `(energy, theta)` -- and samples the `(x, z)`
-start space's radial sub-grid between them.
+starting at the row nearest the x-axis (where the box <-> short-axis-tube
+edge is found cleanly) and working toward the z-axis; `boundmid`
+(`_outer_tube_boundary`): the short- <-> long-axis-tube edge, or the
+equipotential itself where no such edge exists at that `(energy, theta)`.
+The sampler places the `(x, z)` start space's radial sub-grid between them.
 
 Not every shell has a clean four-region structure. A shell comes back
 `irregular` when `_inner_tube_boundary`'s own continuation search hits its
-bracket edge, or a long-axis tube is never found along the sweep
-(DYNAMITE's own `notubes` condition, `orbitstart_f.f90:434`). Irregularity
+bracket edge, or a long-axis tube is never found along the inner sweep.
+The outer search's `notubes` result can override this physical flag;
+numerical search validity is checked separately. Irregularity
 also isn't purely local to one shell: DYNAMITE's own global step
 (`orbitstart_f.f90:124-138`) marks every shell *inward* of the outermost
 irregular one irregular too, without running the boundary search for them
@@ -211,10 +211,11 @@ def _orbit_width_over_crossings(
     all is found within the time budget, so an enclosing minimization skips
     over it.
 
-    The very first accepted step is never counted as a crossing: `ic` sits
-    exactly on the tracked plane by construction (`_xz_orbit_ic` launches
-    from it), so the tracked coordinate is exactly `0.0` at `t = 0` -- a
-    trivial "crossing" from the launch itself, not a genuine return.
+    The very first accepted step is never counted as a crossing. For the
+    `y` plane, `_xz_orbit_ic` launches at exactly `y = 0`; excluding that
+    step avoids counting the launch as a return. The same first-step
+    exclusion is used for the `x` plane, although an open-grid launch
+    generally has `x > 0`.
 
     A step whose solver or stepsize-controller result is not `successful`,
     whose proposed next time is non-finite, or that fails to advance past
@@ -478,16 +479,14 @@ def _minimize_tube_width(
     trial-orbit integration) every iteration regardless of which one is
     kept.
 
-    The width objective isn't guaranteed unimodal in `r` -- the result is
-    clipped back into `[lo, hi]` regardless, so a poorly-behaved objective
-    degrades to "a valid-but-possibly-suboptimal value" rather than
-    poisoning the continuation searches this feeds.
+    The width objective isn't guaranteed unimodal in `r`. Clipping the
+    result into `[lo, hi]` preserves the radius bounds, but a finite
+    candidate can still be suboptimal. Validity is checked separately.
 
     Returns:
-        `(best, valid)`: `valid` is `False` when every trial the search
-        actually kept -- the final pair of candidate points -- came back
-        `inf` (`_orbit_width_over_crossings` found no usable width
-        anywhere), meaning `best` is not a located minimum, just whatever
+        `(best, valid)`: `valid` requires a finite minimum objective among
+        the final pair of retained candidates. An all-failed search has
+        `valid=False`, meaning `best` is not a located minimum, just whatever
         the golden-section bookkeeping and final `[lo, hi]` clip happened
         to leave behind. A caller must not treat `best` as a real boundary
         radius where `valid` is `False`.
@@ -542,19 +541,19 @@ def _inner_tube_boundary(
     van den Bosch et al. (2008)'s `find_innerboundary`
     (`orbitstart_f.f90:306-384`).
 
-    A continuation search across `theta`, run backwards from the x-axis
-    (`theta_grid[-1]`, where the box <-> short-axis-tube edge is found
-    cleanly) toward the z-axis. `theta_grid` must be ascending; the search
-    runs in reverse internally, and the returned grid is re-ordered back to
-    match `theta_grid`.
+    A continuation search across `theta`, run backwards from the row
+    nearest the x-axis (`theta_grid[-1]`, where the box <-> short-axis-tube
+    edge is found cleanly) toward the z-axis. `theta_grid` must be ascending;
+    the search runs in reverse internally, and the returned grid is
+    re-ordered back to match `theta_grid`.
 
     Ported as three distinct stages, matching `find_innerboundary` exactly:
-    the x-axis step itself (a fixed bracket, `_GUESS_MARGIN_*`), the second
-    theta step in (its own guess-clamp/half-width pair,
+    the highest-theta row (a fixed bracket, `_GUESS_MARGIN_*`), the second
+    theta row (its own guess-clamp/half-width pair,
     `_INNER_SECOND_STEP_*`), and every remaining step (a third pair,
-    `_INNER_STEP_*`, with the half-width scaled by the x-axis equipotential
-    radius rather than the current step's own) -- the first two unrolled
-    explicitly, the rest via `jax.lax.scan`.
+    `_INNER_STEP_*`, with the half-width scaled by the highest-theta row's
+    equipotential radius rather than the current row's own) -- the first
+    two unrolled explicitly, the rest via `jax.lax.scan`.
 
     Returns:
         `(boundin_grid, irregular, search_valid)`: `boundin_grid` has the
@@ -582,7 +581,7 @@ def _inner_tube_boundary(
         )
         return orbit_type == _ORBIT_TYPE_X_TUBE
 
-    # Stage 1 -- the x-axis step (`orbitstart_f.f90:328-338`).
+    # Stage 1 -- the row nearest the x-axis (`orbitstart_f.f90:328-338`).
     lo0 = jnp.maximum(r_floor, _GUESS_MARGIN_LOWER_FRACTION * r_outer_x_axis)
     hi0 = _GUESS_MARGIN_UPPER_FRACTION * r_outer_x_axis
     boundin0, valid0 = _minimize_tube_width(
@@ -667,7 +666,7 @@ def _outer_tube_boundary(
     van den Bosch et al. (2008)'s `find_outerboundary`
     (`orbitstart_f.f90:386-520`).
 
-    Three outcomes from a radial scan at `theta_grid[-1]` (the x-axis),
+    Three outcomes from a radial scan at `theta_grid[-1]` (nearest the x-axis),
     walked sequentially outward from `boundin` toward the equipotential and
     classifying at each step, exiting the instant an `x_tube` or `box` is
     found (at `k >= 2`):
@@ -682,9 +681,10 @@ def _outer_tube_boundary(
       searched `boundmid`;
     * it finds a box orbit (or ends on anything other than `z_tube`) -- a
       `theta` sweep toward the z-axis, at that same relative radius,
-      locates the row where long-axis tubes first appear; that row and
-      every `theta` below it gets a searched `boundmid`, seeded from the
-      row immediately above it (the unsearched equipotential).
+      locates the row where long-axis tubes first appear. The next row
+      above becomes the unsearched equipotential seed, capped at zero-based
+      index `n_theta - 2`. Rows below that seed are searched only when its
+      index exceeds 1; no found onset means no downward search.
 
     Wherever a search is called for, it's a second continuation search
     (tracking `x = 0` crossings -- `plane="x"`), with its own bracket
@@ -702,9 +702,10 @@ def _outer_tube_boundary(
         above. `search_valid` is `False` when any searched row's own
         `_minimize_tube_width` call found no usable width anywhere in its
         bracket -- a numerical failure (see that function's own docstring),
-        kept separate from `notubes`/the shell's physical irregularity. An
-        unsearched row (past the onset, or the whole grid when `notubes`)
-        trivially contributes `True`: nothing was searched there to fail.
+        kept separate from `notubes`/the shell's physical irregularity. A
+        row skipped by the scan contributes `True`. A `notubes` result
+        discards all searched radii and reports outer-search validity as
+        `True`, since its output uses only the equipotential grid.
     """
     n_theta = theta_grid.shape[0]
     theta_top, boundin_top, r_outer_top = (
@@ -784,7 +785,7 @@ def _outer_tube_boundary(
     # resulting one-based seed is greater than 2 -- zero-based, greater
     # than 1. This guard also correctly handles the no-onset case: when the
     # theta scan's own backward loop never finds an x-tube, Fortran's `i`
-    # stays at its initial 0, so the translated seed is
+    # finishes at 0 (one past the last loop value), so the translated seed is
     # `min(0 + 1, nI2 - 1) = 1` one-based, zero-based 0 -- which fails this
     # same `> 1` guard, so it searches nothing. It is not a "fall back to
     # the top row and search everything" case, as an earlier port assumed.

@@ -22,6 +22,10 @@ match DYNAMITE's own (`orbitstart_f.f90`'s `nEner`/`nI2`/`nI3`) exactly:
 non-energy dimension -- a second angle for `StationaryGrid`, a radial
 count for the two `(x, z)`-plane samplers.
 
+All samplers require `0 < rmin < rmax` and positive grid counts.
+`XZGridFromBoundary` additionally requires `nI2 >= 4`; the simpler
+samplers support a single angular row.
+
 ### `StationaryGrid` -- box orbits
 
 Box orbits only, launched from rest exactly on the equipotential surface
@@ -43,8 +47,8 @@ direction -- via the "nearly closed" fractional spacing `(k - 0.9) /
 (nI3 - 0.8)`, since landing exactly on the equipotential is itself
 degenerate (`v_y = 0` there). No search for where tube-orbit support
 actually begins or ends: every shell samples the same fixed range, faster
-than `XZGridFromBoundary` but without its orbit-family completeness
-guarantee.
+than `XZGridFromBoundary`, whose boundary search adapts the radial grid
+to the located orbit-family transitions.
 
 ### `XZGridFromBoundary` -- tube orbits, DYNAMITE-matching boundary search
 
@@ -62,11 +66,34 @@ found along the sweep. Irregularity isn't purely local to one shell either
 on, every shell inward of it delegates directly to `XZGridFromOrigin`'s own
 uniform-grid procedure, without running its own boundary search at all.
 
-Verified directly against a real run of DYNAMITE's compiled `orbitstart`
-binary across four viewing geometries (oblate, mild/strong triaxial, near
-prolate) and six energy shells each: box orbits agree with DYNAMITE to 5-6
-significant figures, boundary-searched tube orbits to 3-4, in every shell
-and geometry.
+### Numerical checks and comparison with DYNAMITE
+
+Every sampler validates the equipotential bracket, root-solver result, and
+residual. The residual tolerance is `1e-7` relative to the potential change
+across the bracket, so a zero-energy shell remains valid. An unsupported
+bracket or failed root search raises `EquipotentialSearchError`.
+
+The boundary sampler also rejects unusable tube-width searches. Numerical
+integration failure or exhaustion of the step-attempt budget before either
+the crossing target or time ceiling is reached makes a trial unusable. If
+the minimization finds no usable candidate, the public sampler raises
+`EquipotentialSearchError`. Physical irregularity retains the documented
+origin-grid delegation above; a numerical failure is reported explicitly.
+
+A comparison against DYNAMITE's compiled `orbitstart` binary covers four
+NGC6278-based viewing geometries (oblate, mild/strong triaxial, near-prolate)
+and six energy shells each, from `0.01` to `100 kpc`. Box-orbit median
+relative errors are approximately `2.9e-7` to `4.0e-7`, with maximum errors
+of `4.2e-6` to `4.6e-6`. Boundary-sampled tube-orbit median relative errors
+are approximately `1.1e-5` to `7.8e-5`; the maximum is approximately
+`3.1%` in each geometry, at an innermost-shell near-origin point. The median
+agreement therefore does not describe every sampled point.
+
+The [public comparison](https://github.com/dynamics-of-stellar-systems/tnt-dynamite-comparison/tree/0df175616073749a5b1453acb326733a62d4dbbb/orbit-start-spaces)
+preserves resolved inputs, raw DYNAMITE output, saved arrays, a reproduction
+script, and a notebook. It pins TNT
+`c1b63564866f41855b01a0fb56701792e7215cbb` and DYNAMITE
+`0bd10a9586936bf6b9bcfdcd3679477d812a01d0`.
 
 ## Counter-rotating orbits
 

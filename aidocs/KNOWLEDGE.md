@@ -57,9 +57,8 @@
   `build_orbit_sampler`/`build_orbit_dithering`/`generate_ics` entry points
   in `base.py`; equipotential-search and launch-point numerics shared across
   samplers in `common.py`; and one concrete `AbstractOrbitSampler` per
-  sibling module (`grid.py`, `random.py` -- unimplemented scaffolds;
-  `stationary_grid.py`, `xz_grid_from_origin.py`, `xz_grid_from_boundary.py`
-  -- implemented). `AbstractOrbitSampler.generate_ics` takes an
+  sibling module (`stationary_grid.py`, `xz_grid_from_origin.py`,
+  `xz_grid_from_boundary.py`). `AbstractOrbitSampler.generate_ics` takes an
   already-built `galax` potential, not a `tnt.potential.Potential`; the
   module-level `generate_ics` in `base.py` is the one place a unit system
   is needed, to build that `galax` potential once.
@@ -77,35 +76,46 @@
   radii bracketed by a `boundin`/`boundmid` continuation search -- van den
   Bosch et al. 2008, MNRAS 385, 647, sec. 4.3, ported from DYNAMITE's own
   `orbitstart_f.f90`). All three share `rmin`/`rmax`/`nE`/`nI2`/`nI3`
-  fields and produce only the `+v_y` population; the counter-rotating
-  mirror and per-bundle dithering are separate, not-yet-implemented
-  concerns.
+  fields. Stationary starts have zero velocity; the two `(x, z)`-plane
+  samplers produce only the `+v_y` population. The counter-rotating mirror
+  and per-bundle dithering are separate, not-yet-implemented concerns.
 - `XZGridFromBoundaryOrbitSampler` walks energy shells outermost-to-
   innermost. From the first shell whose boundary search comes back
   irregular, it delegates directly to `XZGridFromOriginOrbitSampler`'s own
   `_single_shell_ics` for that shell and every shell inward of it, rather
   than re-deriving the uniform-grid-to-the-centre fallback inline.
 - Verified directly against a real run of DYNAMITE's compiled `orbitstart`
-  Fortran binary (DYNAMITE commit `0bd10a9`), across four NGC6278-based
+  Fortran binary (DYNAMITE commit
+  `0bd10a9586936bf6b9bcfdcd3679477d812a01d0`, TNT commit
+  `c1b63564866f41855b01a0fb56701792e7215cbb`), across four NGC6278-based
   viewing geometries (oblate, mild/strong triaxial, near-prolate), six
-  energy shells each from `r = 0.01` to `100 kpc`: box orbits agree to 5-6
-  significant figures and boundary-searched tube orbits to 4-5 in the
-  typical case (one consistent ~3% worst case at the innermost shell's
-  near-origin point). Numerical comparisons like this one against DYNAMITE
+  energy shells each from `r = 0.01` to `100 kpc`: box median/max relative
+  errors are approximately `2.9e-7–4.0e-7` / `4.2e-6–4.6e-6`;
+  boundary-sampled tube medians are approximately `1.1e-5–7.8e-5`, with
+  approximately `3.1%` maximum relative error at an innermost-shell
+  near-origin point in each geometry. Numerical comparisons against DYNAMITE
   live in the separate `dynamics-of-stellar-systems/tnt-dynamite-comparison`
   repo, not in TNT itself -- DYNAMITE is not a TNT test dependency. This
-  comparison (including DYNAMITE's resolved input/output, the reproduction
-  script, and a visualisation notebook) is there under `orbit-start-spaces/`.
+  [comparison](https://github.com/dynamics-of-stellar-systems/tnt-dynamite-comparison/tree/0df175616073749a5b1453acb326733a62d4dbbb/orbit-start-spaces)
+  includes DYNAMITE's resolved input/output, the reproduction script, saved
+  arrays, and a visualisation notebook.
 - `common._equipotential_radius` brackets its search from each energy
   shell's own x-axis equipotential radius (`[0.01, 1.1] * r_ref`), matching
   DYNAMITE's own `findReq` (`orbitstart_f.f90:543-592`) exactly, rather than
   one fixed bracket shared across every shell. It returns a validity flag
   (bracket actually contains a sign change, solver converged, residual
-  within DYNAMITE's own `1e-7` relative tolerance) that each sampler's
+  within `1e-7` relative to the potential swing across the bracket, rather
+  than the absolute shell energy) that each sampler's
   `generate_ics` aggregates and raises `EquipotentialSearchError` on,
   eagerly -- orbit sampling isn't part of the differentiable
   `Potential.build_with_validity` contract, so there is no traced flag to
   thread through instead.
+- Tube-width integration failures and early step-attempt exhaustion return
+  an unusable-trial signal. If minimization finds no finite candidate,
+  the boundary helpers propagate `search_valid=False` and public sampling
+  raises `EquipotentialSearchError`, including when the shell is physically
+  irregular. This numerical failure does not authorize origin-grid
+  delegation; the documented physical-irregularity rule remains separate.
 
 ## Angular reference frames
 
