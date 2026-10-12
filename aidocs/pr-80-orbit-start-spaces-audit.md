@@ -722,6 +722,63 @@ therefore takes the box-to-theta-scan path. Indices below are zero-based:
 | First x tube at index 0 (lowest row) | 0 | None |
 | No x tube found | 0, 1, 2 | None |
 
+**Response -- fixed.** Checked the pinned Fortran directly rather than
+relying on either audit's own paraphrase (its "> 2" description turned out
+to only describe the inner of two nested guards -- see below). The
+relevant block, `orbitstart_f.f90:445-473`:
+
+```fortran
+do i = nI2 - 1, 1, -1
+    call find_type(boundout(j, i)*bp, theta(i), Epot(j), tcirc(j), o1)
+    if (o1 == 1) exit ! x tubes found; done
+end do
+i = minval((/i + 1, nI2 - 1/))
+...
+if (notubes == 0 .and. i > 1) then
+    boundmid(j, i) = boundout(j, i)
+    if (i > 2) then
+        do k = i - 1, 1, -1
+            ...
+```
+
+A Fortran `do i = N, 1, -1` loop that exits via `exit` leaves `i` at the
+row where it broke; one that runs to completion leaves `i = 0` (one past
+the final value, Fortran's own loop-variable convention) -- not the "no
+onset -> top row" fallback the existing port assumed. Translating `i`
+(one-based) to the port's zero-based `onset_found_idx` (`f = i - 1`) gives
+`seed = min(f + 1, n_theta - 2)` when an onset is found, matching the
+first part of this finding, and `seed = 0` when none is found (Fortran's
+`i=0` one-based: `min(0+1, nI2-1) = 1` one-based = `0` zero-based) --
+confirmed against the audit's own four-case table below.
+
+The guard is actually two nested conditions, not one: the outer
+(`i > 1` one-based, `seed > 0` zero-based) only controls a no-op
+assignment for this port (`boundmid(j, i) = boundout(j, i)`, already true
+by construction for an unsearched seed row here), so only the inner guard
+(`i > 2` one-based, `seed > 1` zero-based) has an observable effect --
+it must suppress the search entirely, not merely shrink its range, since
+`do k = i - 1, 1, -1` at `i = 2` would otherwise still run once. Both
+`_inner_tube_boundary`'s fix (finding 8) and this port's existing row-skip
+mechanism (`searched = idx_i < effective_onset_idx`) already express "no
+search" as `effective_onset_idx = 0`, so the fix sets exactly that
+whenever the inner guard fails, rather than adding a separate branch.
+
+Re-ran the audit's own four-case table against the fixed code (ascending
+theta `[.2, .4, .6, .8]`, box/x-tube threshold classifier, bracket-midpoint
+minimizer): all four now match the pinned reference exactly, including the
+two cases (`index 2`, `no x tube found`) that previously over-searched.
+New regression
+`test_boundary_search_boundmid_is_the_equipotential_when_no_onset_is_found`
+exercises the real fixture's own outermost shell (confirmed to hit the
+no-onset case directly, not a synthetic classifier), asserting `boundmid`
+trivially equals the equipotential everywhere. The existing
+`test_boundary_search_boundmid_is_strictly_bracketed_in_a_regular_shell`,
+which asserted a genuine interior transition exists, relied on the
+previous port's wrong "search everything" fallback for that same
+outermost shell -- the shell it exercises is now a 3-shell grid's middle
+shell instead (confirmed to actually exercise a found onset), since a
+correct interior-transition check needs a fixture where one exists.
+
 For the highest-row case, the port returns
 `[.299999875, .39999975, .5999995, 1]`, replacing reference seed row 2's
 equipotential with a searched radius and changing subsequent continuation

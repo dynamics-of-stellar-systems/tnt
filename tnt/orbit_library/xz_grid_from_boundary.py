@@ -771,25 +771,35 @@ def _outer_tube_boundary(
     )(theta_grid[idx_desc], r_outer_grid[idx_desc] * bp)
     is_x_theta = types_theta_scan == _ORBIT_TYPE_X_TUBE
     found_onset = jnp.any(is_x_theta)
-    onset_idx_from_scan = jnp.where(
-        found_onset, idx_desc[jnp.argmax(is_x_theta)], n_theta - 1
-    )
+    onset_found_idx = idx_desc[jnp.argmax(is_x_theta)]
 
-    # `orbitstart_f.f90:452`: `i = min(i_found + 1, nI3 - 1)` -- the row
-    # *above* where the theta scan actually found a long-axis tube becomes
-    # the unsearched equipotential seed; the found row itself (`i_found`,
-    # `onset_idx_from_scan` here) is where the real search starts, one step
-    # below the seed. `found_x_directly` is a separate code path (the
-    # initial radial scan at `theta_top` already found an x-tube, never
-    # entering the secondary theta loop that produces `i_found`) and keeps
-    # its own already-correct `n_theta - 1` seed unchanged.
+    # `orbitstart_f.f90:452`: `i = min(i_found + 1, nI2 - 1)` (one-based) --
+    # the row *above* where the theta scan actually found a long-axis tube
+    # becomes the unsearched equipotential seed; the found row itself
+    # (`onset_found_idx`) is where the real search starts, one step below
+    # the seed. Translated to zero-based indices, the cap is `n_theta - 2`,
+    # not `n_theta - 1` -- `nI2 - 1` one-based is `n_theta - 2` zero-based.
+    seed_from_scan = jnp.minimum(onset_found_idx + 1, n_theta - 2)
+    # `orbitstart_f.f90:473`: the downward search only runs when the
+    # resulting one-based seed is greater than 2 -- zero-based, greater
+    # than 1. This guard also correctly handles the no-onset case: when the
+    # theta scan's own backward loop never finds an x-tube, Fortran's `i`
+    # stays at its initial 0, so the translated seed is
+    # `min(0 + 1, nI2 - 1) = 1` one-based, zero-based 0 -- which fails this
+    # same `> 1` guard, so it searches nothing. It is not a "fall back to
+    # the top row and search everything" case, as an earlier port assumed.
+    search_from_scan = found_onset & (seed_from_scan > 1)
+    # `found_x_directly` is a separate code path (the initial radial scan
+    # at `theta_top` already found an x-tube, never entering the secondary
+    # theta loop above) and keeps its own already-correct `n_theta - 1`
+    # seed, searching unconditionally.
     effective_onset_idx = jnp.where(
         notubes,
         n_theta,
         jnp.where(
             found_x_directly,
             n_theta - 1,
-            jnp.minimum(onset_idx_from_scan + 1, n_theta - 1),
+            jnp.where(search_from_scan, seed_from_scan, 0),
         ),
     )
 

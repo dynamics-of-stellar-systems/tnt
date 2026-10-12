@@ -414,18 +414,29 @@ def test_xz_boundary_delegates_to_xz_grid_from_origin_once_a_shell_is_irregular(
     assert not any(matches_origin[last_delegated + 1 :])
 
 
-def _regular_shell_boundary(nE: int = 2, nI2: int = 4, nI3: int = 4):
+def _regular_shell_boundary(
+    nE: int = 3, nI2: int = 4, nI3: int = 4, shell_idx: int = 1
+):
     """Run `_inner_tube_boundary`/`_outer_tube_boundary` directly, for a
     shell confirmed regular (neither delegates), on the module's own
     standard `(q1=0.8, q2=0.6)` triaxial fixture -- independent of the
     already-covered irregular/delegation path above.
+
+    Defaults to the middle shell of a 3-shell grid, not the outermost: the
+    outermost shell's own theta scan (`_outer_tube_boundary`'s own search
+    for where long-axis tubes first appear) finds no onset at all for this
+    fixture, so its own `boundmid` trivially equals the equipotential
+    everywhere -- a real DYNAMITE result (see PR 80 follow-up audit finding
+    9's own commit), just not one that exercises an actual interior search.
+    The middle shell does find an onset and so is the one used to check
+    that an actual search produces a genuine interior transition.
     """
     potential = _triaxial_hernquist()
     t0 = Quantity(0.0, "Myr")
     rmin_val, rmax_val = 0.5, 30.0
     r_floor = rmin_val * _R_FLOOR_FACTOR
     r_grid = 10.0 ** jnp.linspace(jnp.log10(rmin_val), jnp.log10(rmax_val), nE)
-    r_x_axis = r_grid[-1]
+    r_x_axis = r_grid[shell_idx]
     energy = potential.potential(
         Quantity(jnp.array([r_x_axis, 0.0, 0.0]), "kpc"), t0
     ).ustrip("kpc2/Myr2")
@@ -569,3 +580,23 @@ def test_boundary_search_boundmid_is_strictly_bracketed_in_a_regular_shell():
     assert bool(jnp.all(boundin_grid < boundmid_grid))
     assert bool(jnp.all(boundmid_grid <= r_outer_grid))
     assert bool(jnp.any(boundmid_grid < r_outer_grid))
+
+
+def test_boundary_search_boundmid_is_the_equipotential_when_no_onset_is_found():
+    """PR 80 follow-up audit finding 9: when `_outer_tube_boundary`'s own
+    theta scan never finds a long-axis-tube onset, DYNAMITE searches
+    nothing at all (`orbitstart_f.f90:462`'s `i > 1` guard fails for the
+    translated seed), so every row's `boundmid` must trivially equal its
+    own equipotential -- not the pre-fix port's fallback of treating the
+    top row as the seed and searching the whole remaining grid regardless.
+
+    The module's own standard triaxial fixture's outermost shell exercises
+    exactly this case (confirmed directly: its theta scan finds no x-tube
+    at any row), making it a real regression case rather than a contrived
+    one.
+    """
+    _, _, _, _, r_outer_grid, boundin_grid, boundmid_grid, _ = (
+        _regular_shell_boundary(nE=3, shell_idx=2)
+    )
+    assert bool(jnp.all(boundin_grid < boundmid_grid))
+    assert bool(jnp.all(boundmid_grid == r_outer_grid))
