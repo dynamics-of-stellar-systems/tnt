@@ -92,6 +92,41 @@ def test_equipotential_radius_flags_a_direction_outside_its_bracket():
     assert bool(valid_x)
 
 
+def test_equipotential_radius_accepts_a_zero_energy_shell():
+    """PR 80 follow-up audit finding 10: a shell whose reference energy is
+    exactly zero is just an additive zero-point choice in the potential --
+    it must not make a correctly bracketed, converged root look like a
+    search failure merely because the old residual check divided by the
+    (here zero) energy itself.
+
+    Reproduces the audit's own setup exactly: a spherical
+    `LMJ09LogarithmicPotential` (`q1=q2=q3=1`, `r_s=.6 kpc`,
+    `v_c=200 km/s`) at `r=.8 kpc`, whose shell energy comes out to exactly
+    `0.0 kpc2/Myr2`.
+    """
+    potential = gp.LMJ09LogarithmicPotential(
+        v_c=Quantity(200.0, "km/s"),
+        r_s=Quantity(0.6, "kpc"),
+        q1=1.0,
+        q2=1.0,
+        q3=1.0,
+        phi=Quantity(0.0, "rad"),
+        units=UNITS,
+    )
+    t0 = Quantity(0.0, "Myr")
+    r_ref = jnp.asarray(0.8)
+    energy = potential.potential(
+        Quantity(jnp.array([0.8, 0.0, 0.0]), "kpc"), t0
+    ).ustrip("kpc2/Myr2")
+    assert energy == 0.0
+
+    r0, valid = _equipotential_radius(
+        potential, jnp.array([1.0, 0.0, 0.0]), energy, r_ref, t0
+    )
+    assert bool(valid)
+    assert jnp.isclose(r0, 0.8)
+
+
 def test_generate_ics_raises_when_the_equipotential_search_fails():
     potential = _extremely_flattened_potential()
     sampler = StationaryGridOrbitSampler(

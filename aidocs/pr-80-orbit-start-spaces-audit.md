@@ -818,6 +818,25 @@ at zero energy, such as an absolute-plus-relative tolerance with a suitable
 local energy scale. Test zero and near-zero shells as well as the existing
 out-of-bracket failure. Preserve the bracket and solver-status checks.
 
+**Response -- fixed.** `_equipotential_radius` now scales the residual by
+the potential's own swing across the search bracket
+(`|potential(r_hi) - potential(r_lo)|`, reusing the two values already
+computed for `bracket_valid`) instead of by `energy`. This scale is
+strictly positive whenever `bracket_valid` holds -- a non-degenerate
+potential actually changes across a real bracket -- and is the same order
+of magnitude as `|energy|` for an ordinary shell, since `r_lo`/`r_hi` are
+built to straddle it by construction; it degrades to a meaningful,
+non-zero scale precisely in the case the old check broke on. The bracket
+and solver-status checks are unchanged. New regression
+`test_equipotential_radius_accepts_a_zero_energy_shell` reproduces the
+audit's own setup exactly (spherical `LMJ09LogarithmicPotential`,
+`q1=q2=q3=1`, `r_s=.6 kpc`, `v_c=200 km/s`, `r=.8 kpc`, confirmed to give
+exactly zero shell energy): `valid` is now `True`. A separate near-zero
+case was not added -- the fix removes the singularity at its source
+(dividing by the bracket's own potential swing, never by `energy`
+directly), so there is no separate near-zero code path left to exercise;
+the existing out-of-bracket test continues to pass unchanged.
+
 ### Validation and reference evidence
 
 Python scientific checks ran sequentially in the documented Colima Linux

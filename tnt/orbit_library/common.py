@@ -98,8 +98,10 @@ def _equipotential_radius(
     Returns:
         `(r0, valid)`: `valid` requires the bracket to actually contain a
         sign change (`potential(r_lo) <= energy <= potential(r_hi)`), the
-        solver's own result to report success, and the residual at `r0` to
-        be within `_EQUIPOTENTIAL_RESIDUAL_RTOL` -- DYNAMITE's own `findReq`
+        solver's own result to report success, and the residual at `r0`,
+        scaled by the potential's own swing across the bracket (not by
+        `energy` itself -- meaningless at a zero-energy shell), to be
+        within `_EQUIPOTENTIAL_RESIDUAL_RTOL` -- DYNAMITE's own `findReq`
         convergence tolerance. A caller must not use `r0` where `valid` is
         `False`; it is not a located equipotential.
     """
@@ -109,7 +111,9 @@ def _equipotential_radius(
     def objective(r: jnp.ndarray, _args: None) -> jnp.ndarray:
         return _potential_at(potential, r * direction, t0) - energy
 
-    bracket_valid = (objective(r_lo, None) <= 0) & (objective(r_hi, None) >= 0)
+    residual_lo = objective(r_lo, None)
+    residual_hi = objective(r_hi, None)
+    bracket_valid = (residual_lo <= 0) & (residual_hi >= 0)
 
     solution = optx.root_find(
         objective,
@@ -120,7 +124,19 @@ def _equipotential_radius(
         throw=False,
     )
     converged = solution.result == optx.RESULTS.successful
-    residual = jnp.abs(objective(solution.value, None) / energy)
+    # `orbitstart_f.f90:572`'s own tolerance, `abs((E - pot)/E) < 1e-7`,
+    # divides by the shell's reference energy -- undefined at a shell whose
+    # energy is exactly (or very nearly) zero, an energy zero-point choice
+    # that doesn't change the physical equipotential and must not decide
+    # whether the search is reported as having failed. The potential swing
+    # across the search bracket itself (`residual_hi - residual_lo`, both
+    # already shifted by `energy` the same way the residual is) is a local
+    # energy scale that stays meaningful there: strictly positive whenever
+    # `bracket_valid` holds (a non-degenerate potential actually changes
+    # across the bracket), and the same order of magnitude as `|energy|`
+    # for an ordinary shell, since `r_lo`/`r_hi` are built to straddle it.
+    energy_scale = jnp.abs(residual_hi - residual_lo)
+    residual = jnp.abs(objective(solution.value, None)) / energy_scale
     valid = bracket_valid & converged & (residual < _EQUIPOTENTIAL_RESIDUAL_RTOL)
     return solution.value, valid
 
