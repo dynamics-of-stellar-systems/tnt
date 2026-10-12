@@ -874,6 +874,18 @@ comparison pins DYNAMITE exactly, but its TNT provenance remains a branch
 and "after fixes" description; recording the exact TNT commit would make
 future numerical changes easier to attribute.
 
+**Response -- fixed.** Re-ran the full four-geometry comparison against
+this branch's head after findings 7–10 were fixed
+(`c1b63564866f41855b01a0fb56701792e7215cbb`) and pinned that exact commit
+in `tnt-dynamite-comparison/orbit-start-spaces/README.md` in place of the
+branch/"after fixes" description
+([`0df1756`](https://github.com/dynamics-of-stellar-systems/tnt-dynamite-comparison/commit/0df1756)).
+The re-run reproduces the saved arrays and summary statistics exactly,
+to the last saved digit: findings 7–10 only add failure-handling for edge
+cases (step-attempt-budget exhaustion, an all-infinite tube-width search,
+the theta-onset translation, a zero-energy equipotential shell) that none
+of these four geometries' energy shells actually hit.
+
 The PR description still contains the old `nI1` schema, 15-test count,
 original artifact link, and blanket 3–4-significant-figure claim. Updating
 it to the current schema, public comparison, and typical-versus-worst-case
