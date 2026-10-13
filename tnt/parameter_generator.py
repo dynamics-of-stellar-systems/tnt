@@ -257,16 +257,34 @@ class PriorSampler(AbstractParameterGenerator):
     choice live on `Prior` itself, reusable by whatever generator needs
     them next -- this class only derives a PRNG key, calls `Prior.sample`,
     and converts the result into `ParameterSet`s.
+
+    `num_samples` is this sampler's own setting -- how large a batch
+    `Prior.sample` actually draws each call -- independent of
+    `max_new_mods_per_iter` (the generic, cross-generator cap on how many
+    candidates `generate_parameters` *returns*, from
+    `AbstractParameterGenerator`). They used to be conflated (the same
+    value served both jobs), which broke as soon as that value was small:
+    `Prior.sample_with_diagnostics` always computes a split R-hat, and
+    `numpyro.diagnostics.split_gelman_rubin` requires at least 4 draws to
+    do that regardless of how few candidates the caller actually wants.
+    `tnt.configuration.validation` requires `num_samples >= 100` (a batch
+    that small isn't statistically meaningful for MCMC/`Predictive`
+    sampling either way) and `num_samples >= max_new_mods_per_iter` (so
+    this never silently returns fewer candidates than requested) --
+    `generate_parameters`'s own `[:max_new_mods_per_iter]` trim still does
+    the actual capping, unchanged.
     """
 
     _type: ClassVar[str] = "PriorSampler"
     _required_generator_settings: ClassVar[frozenset[str]] = frozenset(
-        {"num_warmup", "seed"}
+        {"num_samples", "num_warmup", "seed", "target_accept_prob"}
     )
 
     prior: Prior
     seed: int
+    num_samples: int
     num_warmup: int
+    target_accept_prob: float
 
     def _propose_free_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
         # Folding in the cumulative iteration count (not conditioning on
@@ -276,7 +294,10 @@ class PriorSampler(AbstractParameterGenerator):
             jax.random.PRNGKey(self.seed), all_models.n_iterations()
         )
         samples = self.prior.sample(
-            key, num_samples=self.max_new_mods_per_iter, num_warmup=self.num_warmup
+            key,
+            num_samples=self.num_samples,
+            num_warmup=self.num_warmup,
+            target_accept_prob=self.target_accept_prob,
         )
         return _parameter_sets_from_samples(samples, self.potential_settings)
 
@@ -325,7 +346,9 @@ def build_parameter_generator(
             max_new_mods_per_iter=max_new_mods_per_iter,
             prior=prior,
             seed=generator_settings["seed"],
+            num_samples=generator_settings["num_samples"],
             num_warmup=generator_settings["num_warmup"],
+            target_accept_prob=generator_settings["target_accept_prob"],
         )
     return generator_cls(
         potential_settings=potential_settings,

@@ -543,7 +543,11 @@ class Prior:
         )
 
     def sample(
-        self, key: Array, num_samples: int, num_warmup: int | None = None
+        self,
+        key: Array,
+        num_samples: int,
+        num_warmup: int | None = None,
+        target_accept_prob: float = 0.8,
     ) -> dict[str, Array]:
         """Draw `num_samples` candidates from the composed model.
 
@@ -555,14 +559,22 @@ class Prior:
         Uses `numpyro.infer.Predictive` (unconditioned prior-predictive
         sampling) if `not self.has_factors()`; otherwise
         `numpyro.infer.MCMC(numpyro.infer.NUTS(...))` over the prior+factor
-        joint -- still never touching chi2/orbit integration. A thin wrapper
+        joint -- still never touching chi2/orbit integration. `target_accept_prob`
+        (numpyro's own default) only affects the `MCMC`/`NUTS` branch's step-size
+        adaptation; it's ignored when `Predictive` is used. A thin wrapper
         over `sample_with_diagnostics` that discards its diagnostics.
         """
-        samples, _ = self.sample_with_diagnostics(key, num_samples, num_warmup)
+        samples, _ = self.sample_with_diagnostics(
+            key, num_samples, num_warmup, target_accept_prob
+        )
         return samples
 
     def sample_with_diagnostics(
-        self, key: Array, num_samples: int, num_warmup: int | None = None
+        self,
+        key: Array,
+        num_samples: int,
+        num_warmup: int | None = None,
+        target_accept_prob: float = 0.8,
     ) -> tuple[dict[str, Array], PriorDiagnostics]:
         """Like `sample`, but also returns diagnostics (see `PriorDiagnostics`).
 
@@ -575,7 +587,21 @@ class Prior:
         R-hat thresholds can't distinguish a genuinely broken chain from a
         prior that's simply as wide as the science requires, so this is
         deliberately not an automated pass/fail gate.
+
+        Raises:
+            ValueError: If `num_samples < 4` -- both branches below compute
+                a split R-hat over the draws (`numpyro.diagnostics
+                .split_gelman_rubin`), which needs at least 4 to split a
+                chain in half and compare the halves; this turns that
+                precondition into a clear, named error here rather than a
+                bare `AssertionError` from inside numpyro with no indication
+                of which call or argument is at fault.
         """
+        if num_samples < 4:
+            raise ValueError(
+                "sample_with_diagnostics requires num_samples >= 4 to compute a "
+                f"split R-hat diagnostic; got num_samples={num_samples}."
+            )
         if not self.has_factors():
             predictive = numpyro.infer.Predictive(self._model, num_samples=num_samples)
             samples = predictive(key)
@@ -608,7 +634,7 @@ class Prior:
                 "num_warmup is required when the prior includes factor terms."
             )
         mcmc = numpyro.infer.MCMC(
-            numpyro.infer.NUTS(self._model),
+            numpyro.infer.NUTS(self._model, target_accept_prob=target_accept_prob),
             num_warmup=num_warmup,
             num_samples=num_samples,
             progress_bar=False,

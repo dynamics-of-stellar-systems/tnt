@@ -120,6 +120,18 @@ def test_sample_with_factors_requires_num_warmup() -> None:
         prior.sample(jax.random.PRNGKey(0), num_samples=10)
 
 
+def test_sample_with_diagnostics_requires_at_least_4_samples() -> None:
+    # numpyro.diagnostics.split_gelman_rubin needs >= 4 draws to split a
+    # chain in half and compare the halves -- both the Predictive and MCMC
+    # branches below compute it unconditionally, so this is checked once,
+    # up front, with a clear message naming the actual precondition rather
+    # than letting numpyro's own bare AssertionError leak through.
+    prior = Prior(_POTENTIAL_SETTINGS, {}, {})
+
+    with pytest.raises(ValueError, match="requires num_samples >= 4"):
+        prior.sample(jax.random.PRNGKey(0), num_samples=3)
+
+
 def test_sample_with_factors_uses_mcmc_and_concentrates_near_the_factor() -> None:
     prior = Prior(
         _POTENTIAL_SETTINGS, {"dh_mass_fraction": _mass_fraction_plugin}, _MGES
@@ -133,6 +145,28 @@ def test_sample_with_factors_uses_mcmc_and_concentrates_near_the_factor() -> Non
     # interior gradient, discontinuous boundary) -- this is why the canonical
     # mass-fraction example uses Normal, not Uniform, for its factor.
     assert float(jnp.mean(f)) == pytest.approx(0.5, abs=0.05)
+
+
+def test_sample_with_factors_passes_target_accept_prob_to_nuts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prior = Prior(
+        _POTENTIAL_SETTINGS, {"dh_mass_fraction": _mass_fraction_plugin}, _MGES
+    )
+    original_nuts = numpyro.infer.NUTS
+    captured: dict[str, Any] = {}
+
+    def spy_nuts(model: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return original_nuts(model, **kwargs)
+
+    monkeypatch.setattr(numpyro.infer, "NUTS", spy_nuts)
+
+    prior.sample(
+        jax.random.PRNGKey(0), num_samples=10, num_warmup=50, target_accept_prob=0.95
+    )
+
+    assert captured["target_accept_prob"] == pytest.approx(0.95)
 
 
 def test_load_prior_plugin_loads_the_named_function(tmp_path: Path) -> None:

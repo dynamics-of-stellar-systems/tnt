@@ -192,12 +192,12 @@ machinery, not something `PriorSampler` does today.
 ## Enabling `PriorSampler`
 
 `parameter_space_settings.generator_type: "PriorSampler"` selects it in
-place of the packaged default (`GridSearch`). It additionally needs its own
-`generator_settings.seed`/`num_warmup` (used only when the composed model
-has factor sites -- a plugin, or a declared `prior` on a default-prior-
-covered parameter; a pure-sample model ignores `num_warmup` and draws
-through `Predictive` instead), but every other `parameter_space_settings`
-key is the same one every generator type requires:
+place of the packaged default (`GridSearch`). Its own `generator_settings`
+-- `seed`, `num_samples`, `num_warmup`, `target_accept_prob` -- already have
+packaged defaults (`tnt/defaults/default_config.yaml`), the same way
+`GridSearch`'s own `delta_chi2_threshold` does, so switching `generator_type`
+alone is enough to run with them; declare any of the four yourself only to
+override:
 
 ```yaml
 parameter_space_settings:
@@ -205,7 +205,9 @@ parameter_space_settings:
   which_chi2: "kinchi2"
   generator_settings:
     seed: 0
+    num_samples: 1000
     num_warmup: 1000
+    target_accept_prob: 0.8
   stopping_criteria:
     max_new_mods_per_iter: 50
     n_new_iter: 10
@@ -221,14 +223,26 @@ parameter_space_settings:
       plugin: "priors/mass_fraction.py:mass_fraction"
 ```
 
-`stopping_criteria.max_new_mods_per_iter` is also the batch size
-`Prior.sample`/`sample_with_diagnostics` draws each iteration (and what the
-one-off diagnostic plot below uses for its own `num_samples`), so raising it
-draws more candidates per iteration, not more iterations. `priors` (the
-plugin registry) is optional -- `priors: {}` is a `PriorSampler` run with no
-plugins, sampling the declared/default priors alone. `potential_rescalings`
-and the rest of `stopping_criteria` behave exactly as they do for any other
-`generator_type`; `PriorSampler` doesn't change their meaning.
+`num_samples` is how large a batch `Prior.sample` actually draws each call
+-- independent of `stopping_criteria.max_new_mods_per_iter` (the generic,
+cross-generator cap on how many candidates `generate_parameters` *returns*).
+They used to be conflated; keeping them separate is what lets `num_samples`
+carry its own, statistically-motivated floor (configuration preparation
+requires `num_samples > 100` and `num_warmup > 100` -- a batch or warmup
+run that small isn't a meaningful MCMC/`Predictive` draw) independent of
+`max_new_mods_per_iter`, which a user is free to set much lower (e.g. to
+throttle how many new models one iteration evaluates). Preparation also
+requires `num_samples >= max_new_mods_per_iter`, so `PriorSampler` never
+silently returns fewer candidates than requested. `target_accept_prob`
+(numpyro's own default, `0.8`) only affects `NUTS`'s step-size adaptation,
+used when the composed model has factor sites -- a plugin, or a declared
+`prior` on a default-prior-covered parameter; a pure-sample model ignores
+`num_warmup`/`target_accept_prob` entirely and draws through `Predictive`
+instead. `priors` (the plugin registry) is optional -- `priors: {}` is a
+`PriorSampler` run with no plugins, sampling the declared/default priors
+alone. `potential_rescalings` and the rest of `stopping_criteria` behave
+exactly as they do for any other `generator_type`; `PriorSampler` doesn't
+change their meaning.
 
 ## Diagnostic plot, not a pass/fail gate
 
@@ -241,16 +255,17 @@ one), not on a defect in `tnt.priors`. No fixed divergence/ESS/R-hat
 threshold can tell those two cases apart, so TNT doesn't try: whenever a
 resolved configuration uses `generator_type: "PriorSampler"`,
 `ModelIterator.from_configuration` draws once -- at exactly the
-`stopping_criteria.max_new_mods_per_iter`/`generator_settings.num_warmup`
-the real run will use -- and saves a diagnostic figure (pairwise scatter
+`generator_settings.num_samples`/`num_warmup`/`target_accept_prob` the real
+run will use -- and saves a diagnostic figure (pairwise scatter
 colored by divergence, each parameter's marginal histogram, an
 ESS/split-R-hat table, and per-parameter trace plots) to
 `io_settings.output_directory/prior_diagnostics.png`. Nothing raises and
 nothing blocks on what it finds; review the figure yourself and decide
 whether `PriorSampler`'s output looks usable before relying on it.
 
-`Prior.sample_with_diagnostics(key, num_samples, num_warmup)` is the
-underlying call -- the same return as `sample`, plus a `PriorDiagnostics`
+`Prior.sample_with_diagnostics(key, num_samples, num_warmup,
+target_accept_prob)` is the underlying call -- the same return as `sample`,
+plus a `PriorDiagnostics`
 that's always populated. A pure `Predictive` draw is exact and independent
 by construction, so its ESS/split-R-hat there are a sanity check on that
 independence, not a convergence diagnostic; `tnt.priors_diagnostic_plot.

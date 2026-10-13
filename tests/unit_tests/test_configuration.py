@@ -936,6 +936,121 @@ def test_read_rejects_negative_generator_delta_chi2_threshold(tmp_path: Path) ->
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
+def test_read_accepts_prior_sampler_using_only_packaged_generator_settings(
+    tmp_path: Path,
+) -> None:
+    # num_samples/num_warmup/seed/target_accept_prob all come from the
+    # packaged default_config.yaml -- switching generator_type is enough,
+    # no user override required.
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_type: PriorSampler
+""",
+    )
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    generator_settings = config.data["parameter_space_settings"]["generator_settings"]
+    assert generator_settings["num_samples"] == 1000
+    assert generator_settings["num_warmup"] == 1000
+    assert generator_settings["seed"] == 0
+    assert generator_settings["target_accept_prob"] == pytest.approx(0.8)
+
+
+def test_read_rejects_prior_sampler_num_warmup_at_or_below_100(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_type: PriorSampler
+  generator_settings:
+    num_warmup: 100
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"generator_settings\.num_warmup must be greater than 100",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_prior_sampler_num_samples_at_or_below_100(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_type: PriorSampler
+  generator_settings:
+    num_samples: 100
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"generator_settings\.num_samples must be greater than 100",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_prior_sampler_target_accept_prob_out_of_range(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_type: PriorSampler
+  generator_settings:
+    target_accept_prob: 1.0
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"generator_settings\.target_accept_prob must be in \(0, 1\)",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_prior_sampler_num_samples_below_max_new_mods_per_iter(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_type: PriorSampler
+  generator_settings:
+    num_samples: 101
+  stopping_criteria:
+    max_new_mods_per_iter: 200
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"generator_settings\.num_samples \(101\) must be at least "
+            r"parameter_space_settings\.stopping_criteria\.max_new_mods_per_iter "
+            r"\(200\)"
+        ),
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
 def test_read_rejects_nonpositive_worker_count(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"

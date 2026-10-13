@@ -838,11 +838,38 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
             {"absolute", "fraction_of_sqrt_2n_observations"},
         )
     if "num_warmup" in required_generator_keys:
+        # A handful of warmup steps technically runs, but isn't a
+        # meaningful NUTS step-size adaptation -- > 100 is a floor on
+        # statistical meaningfulness, not just positivity.
         num_warmup = _integer(
             generator["num_warmup"], f"{path}.generator_settings.num_warmup"
         )
-        if num_warmup <= 0:
-            raise ValueError(f"{path}.generator_settings.num_warmup must be positive.")
+        if num_warmup <= 100:
+            raise ValueError(
+                f"{path}.generator_settings.num_warmup must be greater than 100."
+            )
+    if "num_samples" in required_generator_keys:
+        # Same floor as `num_warmup`, for the same reason -- a batch this
+        # small isn't a statistically meaningful MCMC/`Predictive` draw,
+        # independent of `numpyro.diagnostics.split_gelman_rubin`'s own
+        # (much weaker) precondition of just 4 (see `Prior
+        # .sample_with_diagnostics`).
+        num_samples = _integer(
+            generator["num_samples"], f"{path}.generator_settings.num_samples"
+        )
+        if num_samples <= 100:
+            raise ValueError(
+                f"{path}.generator_settings.num_samples must be greater than 100."
+            )
+    if "target_accept_prob" in required_generator_keys:
+        target_accept_prob = _number(
+            generator["target_accept_prob"],
+            f"{path}.generator_settings.target_accept_prob",
+        )
+        if not (0.0 < target_accept_prob < 1.0):
+            raise ValueError(
+                f"{path}.generator_settings.target_accept_prob must be in (0, 1)."
+            )
     if "seed" in required_generator_keys:
         _integer(generator["seed"], f"{path}.generator_settings.seed")
     _validate_priors(
@@ -880,6 +907,19 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
         value = _integer(stopping[key], f"{path}.stopping_criteria.{key}")
         if value <= 0:
             raise ValueError(f"{path}.stopping_criteria.{key} must be positive.")
+    if "num_samples" in required_generator_keys and (
+        generator["num_samples"] < stopping["max_new_mods_per_iter"]
+    ):
+        # Otherwise `PriorSampler` would silently return fewer candidates
+        # than `max_new_mods_per_iter` asks for: `generate_parameters`
+        # trims `Prior.sample`'s own `num_samples`-sized batch down to
+        # `max_new_mods_per_iter`, never pads it back up.
+        raise ValueError(
+            f"{path}.generator_settings.num_samples "
+            f"({generator['num_samples']}) must be at least "
+            f"{path}.stopping_criteria.max_new_mods_per_iter "
+            f"({stopping['max_new_mods_per_iter']})."
+        )
 
     _validate_potential_rescalings(
         _required_mapping(settings, "potential_rescalings", path),

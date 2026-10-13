@@ -374,7 +374,9 @@ def test_prior_sampler_writes_a_diagnostic_plot(
     config.data["parameter_space_settings"]["generator_type"] = "PriorSampler"
     config.data["parameter_space_settings"]["generator_settings"] = {
         "seed": 0,
+        "num_samples": 10,
         "num_warmup": 10,
+        "target_accept_prob": 0.8,
     }
     _fake_orbit_integration_and_weight_solving(monkeypatch)
 

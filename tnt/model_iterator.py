@@ -191,10 +191,9 @@ class ModelIterator:
                 prior,
                 output_directory / "prior_diagnostics.png",
                 jax.random.PRNGKey(generator_settings["seed"]),
-                num_samples=parameter_space_settings["stopping_criteria"][
-                    "max_new_mods_per_iter"
-                ],
+                num_samples=generator_settings["num_samples"],
                 num_warmup=generator_settings["num_warmup"],
+                target_accept_prob=generator_settings["target_accept_prob"],
             )
 
         return cls(

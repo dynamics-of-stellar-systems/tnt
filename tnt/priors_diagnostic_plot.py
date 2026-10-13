@@ -76,6 +76,7 @@ def plot_prior_diagnostics(
     key: Array,
     num_samples: int,
     num_warmup: int | None = None,
+    target_accept_prob: float = 0.8,
 ) -> None:
     """Draw once from `prior` and save a diagnostic figure to `path`.
 
@@ -90,9 +91,12 @@ def plot_prior_diagnostics(
     When `prior.has_factors()` is `False`, this is an unconditioned
     `numpyro.infer.Predictive` draw, not MCMC -- `diverging` is trivially
     all `False`, and ESS/split-R-hat are a sanity check on independence,
-    not a convergence diagnostic (see `PriorDiagnostics`).
+    not a convergence diagnostic (see `PriorDiagnostics`). `target_accept_prob`
+    is then unused -- it only affects `NUTS`'s step-size adaptation.
     """
-    samples, diagnostics = prior.sample_with_diagnostics(key, num_samples, num_warmup)
+    samples, diagnostics = prior.sample_with_diagnostics(
+        key, num_samples, num_warmup, target_accept_prob
+    )
 
     names = sorted(samples)
     values = {name: np.asarray(samples[name]) for name in names}

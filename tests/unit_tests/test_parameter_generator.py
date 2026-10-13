@@ -29,7 +29,9 @@ def test_parameter_generator_registry_contains_every_explicit_type() -> None:
 def test_parameter_generator_registry_exposes_required_settings() -> None:
     assert parameter_generator_required_settings() == {
         "GridSearch": frozenset({"delta_chi2_threshold"}),
-        "PriorSampler": frozenset({"num_warmup", "seed"}),
+        "PriorSampler": frozenset(
+            {"num_samples", "num_warmup", "seed", "target_accept_prob"}
+        ),
         "SinglePoint": frozenset(),
     }
 
@@ -120,11 +122,18 @@ def test_prior_sampler_converts_samples_into_parameter_sets() -> None:
     prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
     generator = PriorSampler(
         potential_settings=_PRIOR_SAMPLER_POTENTIAL_SETTINGS,
-        generator_settings={"seed": 0, "num_warmup": 10},
+        generator_settings={
+            "seed": 0,
+            "num_samples": 10,
+            "num_warmup": 10,
+            "target_accept_prob": 0.8,
+        },
         max_new_mods_per_iter=5,
         prior=prior,
         seed=0,
+        num_samples=10,
         num_warmup=10,
+        target_accept_prob=0.8,
     )
 
     proposed = generator.generate_parameters(AllModels())
@@ -140,11 +149,18 @@ def test_prior_sampler_caps_at_max_new_mods_per_iter() -> None:
     prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
     generator = PriorSampler(
         potential_settings=_PRIOR_SAMPLER_POTENTIAL_SETTINGS,
-        generator_settings={"seed": 0, "num_warmup": 10},
+        generator_settings={
+            "seed": 0,
+            "num_samples": 10,
+            "num_warmup": 10,
+            "target_accept_prob": 0.8,
+        },
         max_new_mods_per_iter=3,
         prior=prior,
         seed=0,
+        num_samples=10,
         num_warmup=10,
+        target_accept_prob=0.8,
     )
 
     assert len(generator.generate_parameters(AllModels())) == 3
@@ -172,11 +188,18 @@ def test_prior_sampler_draws_a_fresh_batch_each_iteration() -> None:
     prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
     generator = PriorSampler(
         potential_settings=_PRIOR_SAMPLER_POTENTIAL_SETTINGS,
-        generator_settings={"seed": 0, "num_warmup": 10},
+        generator_settings={
+            "seed": 0,
+            "num_samples": 10,
+            "num_warmup": 10,
+            "target_accept_prob": 0.8,
+        },
         max_new_mods_per_iter=4,
         prior=prior,
         seed=0,
+        num_samples=10,
         num_warmup=10,
+        target_accept_prob=0.8,
     )
 
     first_round = [
@@ -215,7 +238,12 @@ def test_build_parameter_generator_dispatches_prior_sampler() -> None:
     prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
     parameter_space_settings = {
         "generator_type": "PriorSampler",
-        "generator_settings": {"seed": 0, "num_warmup": 10},
+        "generator_settings": {
+            "seed": 0,
+            "num_samples": 10,
+            "num_warmup": 10,
+            "target_accept_prob": 0.8,
+        },
         "stopping_criteria": {"max_new_mods_per_iter": 4},
     }
 
@@ -230,7 +258,12 @@ def test_build_parameter_generator_dispatches_prior_sampler() -> None:
 def test_build_parameter_generator_requires_a_prior_for_prior_sampler() -> None:
     parameter_space_settings = {
         "generator_type": "PriorSampler",
-        "generator_settings": {"seed": 0, "num_warmup": 10},
+        "generator_settings": {
+            "seed": 0,
+            "num_samples": 10,
+            "num_warmup": 10,
+            "target_accept_prob": 0.8,
+        },
         "stopping_criteria": {"max_new_mods_per_iter": 4},
     }
 
