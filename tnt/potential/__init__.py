@@ -55,6 +55,7 @@ from tnt.potential.registry import _SUPPORTED_GALAX_TYPES as _SUPPORTED_GALAX_TY
 from tnt.potential.registry import (
     InvalidPotentialParametersError,
     NativeParameter,
+    get_default_prior,
     raw_parameter_dimensions,
 )
 from tnt.potential.triaxial_mge import (
@@ -73,6 +74,7 @@ __all__ = [
     "ResolvedPotentialComponent",
     "TriaxialLightMGEPotential",
     "TriaxialMassMGEPotential",
+    "get_default_prior",
     "raw_parameter_dimensions",
     "raw_potential_parameters",
 ]

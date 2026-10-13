@@ -17,7 +17,11 @@ component, `q_min <= q' = min(component q)`. `_qmin_to_inclination` /
 `_inclination_to_qmin` share the forward numerical candidate with
 `AbstractMGE.inclination_from_q_min` and use `q_min_from_inclination` for
 the inverse -- the oblate counterpart of
-`triaxial_mge`'s `pqu`.
+`triaxial_mge`'s `pqu`. `q_min`'s own bound is data-dependent (on this
+MGE's own anchor `q'`, not just its sibling mass parameter), so it has a
+registered default prior too (`_qmin_default_prior_sample`,
+`tnt.potential.registry.get_default_prior`), always sampled -- see
+`tnt.priors._build_model`.
 """
 
 from __future__ import annotations
@@ -27,7 +31,10 @@ from typing import Any, ClassVar, Self
 
 import equinox as eqx
 import galax.potential
+import jax
 import jax.numpy as jnp
+import numpyro
+import numpyro.distributions as dist
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, _conversion_valid
@@ -36,6 +43,7 @@ from tnt.potential.registry import (
     InvalidPotentialParametersError,
     ParameterConstraint,
     register_component,
+    register_default_prior,
     register_parameterization,
 )
 from tnt.validation import _required_string, _resolve_typed_reference
@@ -292,3 +300,49 @@ def _register_q_min(type_name: str, mass_name: str, mass_dimension: str) -> None
 
 _register_q_min("OblateLightMGEPotential", "ml", "mass_to_light")
 _register_q_min("OblateMassMGEPotential", "mge_mass_scale", "dimensionless")
+
+
+def _qmin_default_prior_sample(
+    site_prefix: str, known: dict[str, jax.Array], mge: LightMGE | MassMGE | None
+) -> dict[str, jax.Array]:
+    """`q_min`'s whole generative default prior: `q_min ~ Uniform(0, q')`.
+
+    `q'` is this MGE's own anchor axis ratio (`AbstractMGE._triaxial_anchor`
+    -- the same anchor `pqu`'s bounds use), the oblate counterpart of
+    `triaxial_mge._pqu_default_prior_sample`. Unlike `pqu`'s `q`/`u`,
+    `q_min` has no sibling parameter to also bound it: its only joint
+    constraint is `0 < q_min <= q'`, already the whole support of this
+    `Uniform`. `inclination_from_q_min`'s own round-trip check
+    (`AbstractMGE._inclination_candidate`) can still reject an in-support
+    draw that lands too close to `0` relative to `q'` -- a vanishingly
+    rare event for a draw from here, and not a second bound this prior
+    needs to anticipate: it's caught downstream the same way any other
+    invalid draw already is (`Potential.build_with_validity`'s own
+    validity factor when a plugin touches `build_potential()`, or
+    `Model.valid_potential` otherwise).
+
+    A `q_min` already in `known` (the component fixes it) is used as-is
+    instead of sampled.
+    """
+    if mge is None:  # unreachable: only the MGE composite types register this
+        raise InvalidPotentialParametersError(
+            "The 'q_min' parameterization requires an MGE component."
+        )
+    q_min = known.get("q_min")
+    if q_min is None:
+        q_obs, _ = mge._triaxial_anchor()
+        q_min = numpyro.sample(f"{site_prefix}.q_min", dist.Uniform(0.0, q_obs))
+    return {"q_min": q_min}
+
+
+def _register_qmin_default_prior(type_name: str) -> None:
+    register_default_prior(
+        type_name=type_name,
+        parameterization="q_min",
+        parameter_names=("q_min",),
+        sample=_qmin_default_prior_sample,
+    )
+
+
+_register_qmin_default_prior("OblateLightMGEPotential")
+_register_qmin_default_prior("OblateMassMGEPotential")

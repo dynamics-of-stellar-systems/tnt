@@ -1,19 +1,32 @@
 """TNT's user-extensibility mechanism: a run's complete search-space prior.
 
-Two tiers, matching numpyro's own `sample`/`factor` distinction:
+Three tiers, matching numpyro's own `sample`/`factor` distinction:
 
 - Every non-fixed potential parameter's declared `prior` (a
   `numpyro.distributions` class name + constructor args, see
   `tnt.configuration.validation._validate_prior`) becomes one
   `numpyro.sample` site.
+- A component whose resolved `(type, parameterization)` has a registered
+  default prior (`tnt.potential.registry.DefaultPriorSpec` --
+  `get_default_prior`) is always sampled from it for that spec's parameters
+  as a whole joint draw, for a validity constraint that can't be expressed
+  as independent per-parameter `prior:` entries (e.g. the `pqu`
+  parameterization's data-dependent bounds on `q` and `u`, which depend on
+  the MGE's own anchor axis ratio, not just sibling parameters). These
+  parameters no longer require a declared `prior`; if one is declared
+  anyway, it doesn't replace the default-prior sample, it adds a
+  `numpyro.factor` scoring the sampled value -- see `_build_model`. A
+  default prior is itself built only from `numpyro.sample` statements,
+  never a `factor`, so a component covered only by one (no plugins) stays
+  on the cheap `Predictive` path below.
 - Each configured prior plugin (a user's own `.py` file, resolved relative
   to `input_directory`, loaded via `load_prior_plugins`) is a plain
   function `def fn(context: PriorContext) -> None` that adds `numpyro.factor`
   terms only -- never a `sample` or `deterministic` call, so a plugin can
   never independently assign or overwrite a parameter's value; it can only
   add a soft log-density preference over values already established by
-  ordinary `sample` sites. This is what lets the two tiers compose safely
-  with no coordination between them: TNT never has to know which
+  ordinary `sample` sites. This is what lets the tiers compose safely with
+  no coordination between them: TNT never has to know which
   `(component, parameter)` a plugin targets. `PriorContext` (see its own
   docstring) is the single argument every plugin takes.
 
@@ -49,8 +62,9 @@ from jax import Array
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import LightMGE, MassMGE
-from tnt.potential import Potential
+from tnt.potential import Potential, get_default_prior
 from tnt.potential.components import ResolvedPotentialComponent
+from tnt.potential.registry import DefaultPriorSpec
 
 
 class PriorContext(eqx.Module):
@@ -312,14 +326,26 @@ def _build_model(
     build_potential: Callable[[Mapping[str, Any]], tuple[Potential, Array]] | None,
     unit_system: AbstractUnitSystem | None,
 ) -> Callable[[], dict[str, dict[str, Any]]]:
-    """Compose one numpyro model from declared parameter priors and plugins.
+    """Compose one numpyro model from declared parameter priors, default
+    priors, and plugins.
 
     Every non-fixed parameter with a declared `prior` becomes a
     `numpyro.sample` site named `"<component>.<parameter>"`; every fixed
     parameter contributes its bare declared `value` directly (not a sample
-    site -- it's the same value on every draw). Plugins run last, each
-    receiving a `PriorContext` over the assembled `candidate` (and, when
-    available, `build_potential`) and adding factor terms only.
+    site -- it's the same value on every draw). A component whose resolved
+    `(type, parameterization)` has a registered default prior (see
+    `tnt.potential.registry.DefaultPriorSpec`) always has its `sample`
+    called for that spec's parameters, as one joint draw -- no opt-in, and
+    no declared `prior` is required for them. Whichever of them the
+    component leaves fixed are passed to `sample` as already `known`, so
+    it draws only the rest (and may still use a fixed sibling's value, the
+    same as a freshly-sampled one, in its own prior). A user-declared
+    `prior` on a non-fixed covered parameter doesn't replace that sampling;
+    it becomes an additional `numpyro.factor` site scoring the
+    already-sampled value, so it never adds a second, competing way to
+    assign the parameter. Plugins run last, each receiving a `PriorContext`
+    over the assembled `candidate` (and, when available, `build_potential`)
+    and adding factor terms only.
 
     Each site's distribution is resolved and validated once here (via
     `_resolve_prior_distribution`), not rebuilt and re-validated on every
@@ -334,9 +360,30 @@ def _build_model(
     later call in the same draw -- any plugin -- reuses the cached result
     rather than rebuilding and registering a second site.
     """
+    default_prior_groups: list[
+        tuple[str, DefaultPriorSpec, LightMGE | MassMGE | None]
+    ] = []
+    covered_parameters: dict[str, set[str]] = {}
+    for component_name, component in potential_settings.items():
+        component_type = component.get("type")
+        parameterization = component.get("parameterization")
+        if not (isinstance(component_type, str) and isinstance(parameterization, str)):
+            continue
+        spec = get_default_prior(component_type, parameterization)
+        if spec is None:
+            continue
+        mge_name = component.get("mge")
+        mge = mges[mge_name] if mge_name is not None else None
+        default_prior_groups.append((component_name, spec, mge))
+        covered_parameters[component_name] = set(spec.parameter_names)
+
     sample_sites: list[tuple[str, str, numpyro.distributions.Distribution]] = []
     fixed_values: list[tuple[str, str, Any]] = []
+    default_prior_user_factors: list[
+        tuple[str, str, numpyro.distributions.Distribution]
+    ] = []
     for component_name, component in potential_settings.items():
+        component_covered = covered_parameters.get(component_name, set())
         for parameter_name, parameter in component.get("parameters", {}).items():
             if parameter.get("fixed", True):
                 fixed_values.append(
@@ -344,6 +391,14 @@ def _build_model(
                 )
                 continue
             prior = parameter.get("prior")
+            if parameter_name in component_covered:
+                if prior is not None:
+                    site = f"{component_name}.{parameter_name}"
+                    distribution = _resolve_prior_distribution(prior, site)
+                    default_prior_user_factors.append(
+                        (component_name, parameter_name, distribution)
+                    )
+                continue
             if prior is None:
                 continue
             site = f"{component_name}.{parameter_name}"
@@ -360,6 +415,19 @@ def _build_model(
             site = f"{component_name}.{parameter_name}"
             candidate[component_name][parameter_name] = numpyro.sample(
                 site, distribution
+            )
+        for component_name, spec, mge in default_prior_groups:
+            component_candidate = candidate[component_name]
+            known = {
+                name: component_candidate[name]
+                for name in spec.parameter_names
+                if name in component_candidate
+            }
+            component_candidate.update(spec.sample(component_name, known, mge))
+        for component_name, parameter_name, distribution in default_prior_user_factors:
+            site = f"{component_name}.{parameter_name}_prior"
+            numpyro.factor(
+                site, distribution.log_prob(candidate[component_name][parameter_name])
             )
 
         cached: list[tuple[Potential, Array]] = []

@@ -207,6 +207,45 @@ figure themselves and decides whether to let `PriorSampler` start
 proposing. `matplotlib` is now a regular (not optional) dependency, since
 TNT needs it for visualization regardless of this feature.
 
+**Additional response -- the showcased reproduction's own configuration is
+no longer expressible.** Separately from the diagnostic plot, `prior-concept`
+also added *default priors* for the MGE shape parameters that produced this
+finding's reproduction: `pqu`'s `p`/`q`/`u` (`TriaxialLight/MassMGEPotential`)
+and `q_min` (`OblateLight/MassMGEPotential`) are no longer sampled from a
+user-declared, independent `prior` at all -- they're always sampled from a
+built-in generative prior instead (`tnt.potential.registry.DefaultPriorSpec`,
+`tnt.priors._build_model`), which by construction keeps the vast majority of
+draws inside the valid geometry (`p ~ Uniform(0, 1)`; `q ~ Uniform(0, min(p,
+q'))`, `q'` the MGE's own anchor axis ratio -- bounding `q` by `q'` as well
+as by `p` is what rules out the specific empty-domain case an unconstrained
+`q <= p` alone does not; `u` sampled within the MGE-dependent domain
+`potential.md` already describes). Measured against the real MGE fixture:
+~95-99.95% of draws are valid by construction (float32 vs. float64), versus
+the small fraction this finding's own reproduction got from three
+independent `Uniform(0, 1)` priors on `p`, `q`, `u`.
+
+A declared `prior` on `p`/`q`/`u` is still accepted, but it no longer drives
+the sample the way it did in this finding's reproduction -- it's layered on
+as an *additional* factor scoring the value the default prior already
+sampled, not a competing sample site. So the exact configuration shape this
+finding reproduced (three independent `Uniform(0, 1)` sample sites directly
+producing the proposed `(p, q, u)`, hence the hard `-inf` cliff NUTS had to
+navigate almost everywhere) can no longer be constructed for these
+parameterizations at all, regardless of what any plugin or declared prior
+does on top.
+
+This does not replace the diagnostic-plot response above -- it's still the
+general, advisory answer for any factor-bearing model, `pqu`/`q_min` or
+otherwise, and a user can still build some other pathologically-shaped
+prior+plugin combination this finding's general concern would still apply
+to. It specifically neutralizes the one configuration this finding's own
+reproduction was built on. Renamed/updated regression:
+`test_default_prior_keeps_pqu_draws_valid_without_a_declared_prior` (was
+`test_plugin_factor_on_enclosed_mass_rejects_invalid_pqu_shape_draws`) in
+`tests/unit_tests/test_priors.py`, plus
+`test_default_prior_keeps_qmin_draws_valid_without_a_declared_prior` for the
+oblate counterpart.
+
 ### F4 — P2: the validity factor does not guard derived potential evaluation
 
 Location: `tnt/priors.py:262-269`; the documented consumer is

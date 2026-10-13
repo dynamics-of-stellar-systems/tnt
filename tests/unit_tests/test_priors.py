@@ -353,12 +353,12 @@ _POTENTIAL_PQU = {
         "mge": "stars_mge",
         "parameters": {
             "ml": {"unit": "Msun / Lsun", "fixed": True, "value": 5.0},
+            # No declared `prior` for p/q/u: their joint validity constraint
+            # is data-dependent (on this MGE's own anchor axis ratio), so
+            # `pqu`'s registered default prior always samples them instead
+            # -- see `tnt.potential.registry.get_default_prior`.
             **{
-                name: {
-                    "fixed": False,
-                    "value": value,
-                    "prior": {"distribution": "Uniform", "args": [0.0, 1.0]},
-                }
+                name: {"fixed": False, "value": value}
                 for name, value in (("p", 0.85), ("q", 0.6), ("u", 0.93))
             },
         },
@@ -383,19 +383,28 @@ def _pqu_validity_and_enclosed_mass(resolved, p, q, u, m_halo):
     return valid, enclosed
 
 
-def test_plugin_factor_on_enclosed_mass_rejects_invalid_pqu_shape_draws() -> None:
+def test_default_prior_keeps_pqu_draws_valid_without_a_declared_prior() -> None:
     mges = {"stars_mge": _TRIAXIAL_MGE}
     resolved = Potential.resolve(_POTENTIAL_PQU, mges)
 
     prior_only = Prior(_POTENTIAL_PQU, {}, mges)
+    # No plugin and no declared prior on p/q/u -- the default prior alone
+    # samples them, and it only ever uses `numpyro.sample` statements, so
+    # this stays on the Predictive path.
+    assert prior_only.has_factors() is False
     draws = prior_only.sample(jax.random.PRNGKey(1), num_samples=4000)
     valid_prior, _ = jax.vmap(
         lambda p, q, u, m: _pqu_validity_and_enclosed_mass(resolved, p, q, u, m)
     )(draws["stars.p"], draws["stars.q"], draws["stars.u"], draws["dh.m"])
-    # Independent U(0, 1) draws land in the valid region only a small
-    # fraction of the time -- most of the unit cube violates the shape
-    # convention.
-    assert float(jnp.mean(valid_prior)) < 0.2
+    # The default prior's (p, q, u) draws respect the shape convention by
+    # construction -- `q`'s own bound already rules out the one condition
+    # that makes `u`'s domain empty (q >= q', this MGE's anchor), so almost
+    # every draw is valid; only a genuine floating-point edge case (q
+    # landing within the precision margin of q') remains (at this test
+    # suite's default float32, ~1-2% of draws; at float64, ~0.05%). Unlike
+    # independent U(0, 1) draws over the same raw parameters, which would
+    # mostly miss the valid region entirely.
+    assert float(jnp.mean(valid_prior)) > 0.95
 
     prior = Prior(
         _POTENTIAL_PQU,
@@ -414,16 +423,98 @@ def test_plugin_factor_on_enclosed_mass_rejects_invalid_pqu_shape_draws() -> Non
         lambda p, q, u, m: _pqu_validity_and_enclosed_mass(resolved, p, q, u, m)
     )(samples["stars.p"], samples["stars.q"], samples["stars.u"], samples["dh.m"])
 
-    # The -inf validity factor keeps NUTS inside the valid region almost
-    # every draw, despite that region being a small, oddly-shaped slice of
-    # the (p, q, u) prior's own unit cube -- not just the trivial
-    # always-valid case every other potential in this file uses.
+    # The default prior already keeps draws valid almost always; the -inf
+    # validity factor only needs to steer NUTS away from the narrow
+    # remaining edge case (the u-domain too narrow to deproject reliably,
+    # see `AbstractMGE._triaxial_u_domain`), not a small, oddly-shaped
+    # slice of the full (p, q, u) unit cube.
     assert float(jnp.mean(valid)) > 0.95
     # The plugin's own Normal factor still pulls M(< 10 kpc) to its target
     # on top of that, exactly as it does when the shape is fixed.
     assert float(jnp.mean(enclosed)) == pytest.approx(
         _ENCLOSED_TARGET, abs=2 * _ENCLOSED_WIDTH
     )
+
+
+def test_a_declared_prior_on_a_default_prior_covered_parameter_becomes_a_factor() -> (
+    None
+):
+    # `p` is covered by `pqu`'s default prior and so no longer requires a
+    # declared `prior` (see the test above) -- but declaring one anyway
+    # doesn't replace the default-prior sample, it adds a `numpyro.factor`
+    # scoring the sampled value, same as any other soft constraint.
+    mges = {"stars_mge": _TRIAXIAL_MGE}
+    user_prior = {"distribution": "Normal", "args": [0.5, 0.1]}
+    settings_with_user_prior: dict[str, dict[str, Any]] = {
+        **_POTENTIAL_PQU,
+        "stars": {
+            **_POTENTIAL_PQU["stars"],
+            "parameters": {
+                **_POTENTIAL_PQU["stars"]["parameters"],
+                "p": {
+                    **_POTENTIAL_PQU["stars"]["parameters"]["p"],
+                    "prior": user_prior,
+                },
+            },
+        },
+    }
+
+    prior_without_user_prior = Prior(_POTENTIAL_PQU, {}, mges)
+    assert prior_without_user_prior.has_factors() is False
+
+    prior_with_user_prior = Prior(settings_with_user_prior, {}, mges)
+    assert prior_with_user_prior.has_factors() is True
+
+    params = {"stars.p": 0.4, "stars.q": 0.2, "stars.u": 0.5, "dh.m": 1.0e12}
+    log_density_without, _ = numpyro.infer.util.log_density(
+        prior_without_user_prior._model, (), {}, params
+    )
+    log_density_with, _ = numpyro.infer.util.log_density(
+        prior_with_user_prior._model, (), {}, params
+    )
+    # The only difference between the two models at this point is the added
+    # factor itself -- the default prior's own sample sites are identical
+    # and see the same substituted values in both, so the gap between the
+    # two total log densities is exactly that factor's log-probability.
+    expected_factor = dist.Normal(0.5, 0.1).log_prob(jnp.asarray(0.4))
+    assert float(log_density_with - log_density_without) == pytest.approx(
+        float(expected_factor)
+    )
+
+
+_POTENTIAL_QMIN = {
+    "stars": {
+        "type": "OblateLightMGEPotential",
+        "parameterization": "q_min",
+        "mge": "stars_mge",
+        "parameters": {
+            "ml": {"unit": "Msun / Lsun", "fixed": True, "value": 5.0},
+            # No declared `prior` for q_min: its bound is data-dependent (on
+            # this MGE's own anchor axis ratio), so `q_min`'s registered
+            # default prior always samples it instead -- the oblate
+            # counterpart of `_POTENTIAL_PQU`.
+            "q_min": {"fixed": False, "value": 0.6},
+        },
+    },
+}
+
+
+def test_default_prior_keeps_qmin_draws_valid_without_a_declared_prior() -> None:
+    mges = {"stars_mge": _TRIAXIAL_MGE}
+    prior_only = Prior(_POTENTIAL_QMIN, {}, mges)
+    assert prior_only.has_factors() is False
+
+    draws = prior_only.sample(jax.random.PRNGKey(1), num_samples=2000)
+    q_obs, _ = _TRIAXIAL_MGE._triaxial_anchor()
+    assert bool(
+        jnp.all((draws["stars.q_min"] > 0) & (draws["stars.q_min"] <= q_obs))
+    )
+    _, valid = jax.vmap(_TRIAXIAL_MGE.inclination_from_q_min_with_validity)(
+        draws["stars.q_min"]
+    )
+    # Unlike pqu's u, q_min has no further MGE-dependent narrowing beyond
+    # its one `Uniform(0, q')` bound -- almost every draw is valid.
+    assert float(jnp.mean(valid)) > 0.99
 
 
 def test_factor_if_valid_keeps_an_invalid_draws_density_exactly_minus_inf() -> None:

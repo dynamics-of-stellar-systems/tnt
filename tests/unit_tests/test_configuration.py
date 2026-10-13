@@ -1295,6 +1295,92 @@ def test_triaxial_mge_pqu_rejects_a_native_viewing_angle(tmp_path: Path) -> None
 # see test_potential.py::test_pqu_domain_invalid_value_is_rejected_at_build_time.
 
 
+def test_triaxial_mge_pqu_non_fixed_shape_parameters_need_no_declared_prior(
+    tmp_path: Path,
+) -> None:
+    # p/q/u's joint validity constraint is data-dependent (on this MGE's own
+    # anchor axis ratio), so `pqu` has a registered default prior
+    # (`tnt.potential.registry.get_default_prior`) that always samples them
+    # -- unlike every other non-fixed parameter, they need no declared
+    # `prior` of their own.
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    stars = _pqu_stars(user_data)
+    for name in ("p", "q", "u"):
+        stars["parameters"][name]["fixed"] = False
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    stars = config.data["potential"]["stars"]
+    for name in ("p", "q", "u"):
+        assert stars["parameters"][name]["fixed"] is False
+        assert "prior" not in stars["parameters"][name]
+
+
+def test_triaxial_mge_pqu_non_fixed_shape_parameter_may_still_declare_a_prior(
+    tmp_path: Path,
+) -> None:
+    # A declared `prior` on a default-prior-covered parameter isn't
+    # required, but isn't rejected either -- `tnt.priors._build_model`
+    # folds it in as an additional factor rather than treating it as the
+    # parameter's only way to vary; see
+    # test_priors.py::test_default_prior_keeps_pqu_draws_valid_without_a_declared_prior.
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    stars = _pqu_stars(user_data)
+    stars["parameters"]["p"]["fixed"] = False
+    stars["parameters"]["p"]["prior"] = {
+        "distribution": "Uniform",
+        "args": [0.0, 1.0],
+    }
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    stars = config.data["potential"]["stars"]
+    assert stars["parameters"]["p"]["prior"] == {
+        "distribution": "Uniform",
+        "args": [0.0, 1.0],
+    }
+
+
+def _qmin_stars(user_data: dict) -> dict:
+    """Retarget the default `stars` component at the `q_min` parameterization."""
+    stars = user_data["potential"]["stars"]
+    stars["type"] = "OblateLightMGEPotential"
+    stars["parameterization"] = "q_min"
+    stars["parameters"] = {
+        "ml": {"unit": "Msun / Lsun", "value": 5.0, "fixed": True},
+        "q_min": {"value": 0.6, "fixed": True},
+    }
+    return stars
+
+
+def test_oblate_mge_q_min_non_fixed_parameter_needs_no_declared_prior(
+    tmp_path: Path,
+) -> None:
+    # `q_min`'s bound is data-dependent (on this MGE's own anchor axis
+    # ratio), so it has a registered default prior too
+    # (`tnt.potential.registry.get_default_prior`) that always samples it --
+    # it needs no declared `prior` of its own, the oblate counterpart of
+    # `test_triaxial_mge_pqu_non_fixed_shape_parameters_need_no_declared_prior`.
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    stars = _qmin_stars(user_data)
+    stars["parameters"]["q_min"]["fixed"] = False
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    stars = config.data["potential"]["stars"]
+    assert stars["parameters"]["q_min"]["fixed"] is False
+    assert "prior" not in stars["parameters"]["q_min"]
+
+
 def test_potential_component_rejects_the_removed_include_key(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     _write_user_config(user_path, tmp_path / "output")

@@ -3,12 +3,57 @@
 A `prior` on a potential parameter (`{distribution: "<numpyro.distributions
 class>", args: [...]}`, sibling to `value`/`unit`/`fixed`) declares its
 search-space distribution and compiles to one `numpyro.sample` site, keyed by
-`"<component>.<parameter>"`. Every non-fixed parameter must declare one;
-configuration preparation rejects a `fixed: false` parameter with no `prior`.
+`"<component>.<parameter>"`. Every non-fixed parameter must declare one --
+configuration preparation rejects a `fixed: false` parameter with no
+`prior` -- **except** a parameter covered by a *default prior* (see below),
+which is sampled regardless of whether it declares one.
 `PriorSampler` composes every non-fixed
 parameter across the whole `potential` section, plus every
 configured `parameter_space_settings.priors` plugin, into one numpyro model
 per run (`tnt.priors.Prior`) and draws candidates from it.
+
+## Default priors
+
+Some parameters have a joint validity constraint that genuinely can't be
+expressed as an independent per-parameter `prior`, because it depends on
+the component's own MGE data, not just on sibling parameters declared in
+the same config. For these, TNT always samples a built-in *default prior*
+instead -- there's no opt-in setting, and the covered parameters don't need
+(but may still have) a declared `prior` of their own. Currently registered:
+
+- `TriaxialLightMGEPotential` / `TriaxialMassMGEPotential` with
+  `parameterization: "pqu"` -- `p`, `q`, and `u` are all covered. `p ~
+  Uniform(0, 1)`; `q ~ Uniform(0, min(p, q'))`, `q'` being this MGE's own
+  anchor axis ratio (`min` of its components' observed `q`) -- not just
+  `q <= p`, because `q`'s *intrinsic* axis ratio can never exceed its own
+  anchor Gaussian's *observed* one (projection can only make a shape look
+  rounder than it truly is, never flatter), and without that bound a
+  sampled `(p, q)` can leave no valid `u` at all, for any viewing angle;
+  `u ~ Uniform(...)` within the MGE-dependent domain `potential.md`
+  describes, margin-adjusted for numerical precision near its endpoints.
+  The mass parameter (`ml` or `mge_mass_scale`) is *not* covered -- it still
+  needs its own declared `prior` if non-fixed.
+- `OblateLightMGEPotential` / `OblateMassMGEPotential` with
+  `parameterization: "q_min"` -- `q_min ~ Uniform(0, q')`, the oblate
+  counterpart of the above (`q'` is the same anchor quantity). Again, the
+  mass parameter is not covered.
+
+A declared `prior` on a covered parameter is not rejected, and it does not
+replace the default-prior sample: it's folded in as an *additional*
+`numpyro.factor` scoring the already-sampled value, the same way a prior
+plugin's factor would. A default prior itself is always built from plain
+`numpyro.sample` statements and never adds a factor of its own, so a
+component covered only by default priors -- no plugins, no extra declared
+priors on covered parameters -- still stays on the cheap `Predictive`
+sampling path described below.
+
+Programmatically, `tnt.potential.registry.get_default_prior(type_name,
+parameterization)` returns the registered `DefaultPriorSpec` (or `None`),
+and `tnt.potential.triaxial_mge`/`tnt.potential.oblate_mge` hold the actual
+registered sampling functions, each with the full derivation in its own
+docstring.
+
+## Prior plugins
 
 A prior **plugin** is a user's own Python function -- not a class, not
 shipped by TNT itself (there are no built-in priors; even the canonical
@@ -124,14 +169,15 @@ the validity factor's rejection rather than reinforcing it. Calling
 `numpyro.factor` directly here, unconditionally, would reintroduce exactly
 the failure mode the `-inf` factor exists to avoid.
 
-A `-inf` validity factor keeps a plugin like this one honest even when the
-rest of the prior routinely proposes a physically invalid shape -- e.g. an
-independent `Uniform(0, 1)` prior on each of an MGE's `pqu`-parameterized
-`p`, `q`, `u` satisfies TNT's `0 < q <= p <= 1`, `p < u <= 1` convention only
-a small fraction of the time. NUTS still concentrates almost entirely inside
-that narrow valid region rather than needing it fixed at an already-valid
-point (see `test_plugin_factor_on_enclosed_mass_rejects_invalid_pqu_shape_draws`
-in `tests/unit_tests/test_priors.py`).
+A `-inf` validity factor keeps a plugin like this one honest even on the
+rare draw the rest of the prior can't rule out up front -- `pqu`'s default
+prior (see above) already keeps the vast majority of `(p, q, u)` draws
+valid by construction, but a residual sliver (the MGE-dependent domain
+narrowing to nothing at the active floating-point precision) still needs
+catching downstream. NUTS still concentrates almost entirely inside the
+valid region rather than needing it fixed at an already-valid point (see
+`test_default_prior_keeps_pqu_draws_valid_without_a_declared_prior` in
+`tests/unit_tests/test_priors.py`).
 
 `Prior.sample` (called by `PriorSampler`) traces the composed model once and
 picks how to draw from it automatically: `numpyro.infer.Predictive`

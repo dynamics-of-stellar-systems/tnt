@@ -16,6 +16,7 @@ from tnt.kinematics.registry import kinematics_type_names
 from tnt.mge import MAJOR_AXIS_PA_DOMAIN_DEG
 from tnt.parameter_generator import parameter_generator_required_settings
 from tnt.potential.registry import (
+    get_default_prior,
     is_registered_component_type,
     parameter_schema_is_known,
     raw_parameter_dimensions,
@@ -417,11 +418,20 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
                 component["parameterization"], f"{component_path}.parameterization"
             )
 
+        default_prior_parameter_names: frozenset[str] = frozenset()
+        if parameterization is not None:
+            default_prior = get_default_prior(component_type, parameterization)
+            if default_prior is not None:
+                default_prior_parameter_names = frozenset(
+                    default_prior.parameter_names
+                )
+
         if "parameters" in component:
             _validate_parameters(
                 _required_mapping(component, "parameters", component_path),
                 f"{component_path}.parameters",
                 require_nonempty=True,
+                default_prior_parameter_names=default_prior_parameter_names,
             )
         else:
             raise ValueError(f"{component_path} is missing required field: parameters.")
@@ -481,6 +491,7 @@ def _validate_parameters(
     path: str,
     *,
     require_nonempty: bool,
+    default_prior_parameter_names: frozenset[str] = frozenset(),
 ) -> None:
     if require_nonempty and not parameters:
         raise ValueError(f"{path} must contain at least one parameter.")
@@ -513,12 +524,15 @@ def _validate_parameters(
                 _required_mapping(parameter, "prior", parameter_path),
                 f"{parameter_path}.prior",
             )
-        elif not is_fixed:
+        elif not is_fixed and name not in default_prior_parameter_names:
             # A non-fixed parameter is one the search varies; its `prior` is
             # how it varies. Without one, `tnt.priors._build_model` silently
             # skips it -- neither a sample site nor a fixed value -- which
             # only surfaces much later as a missing-parameter error at
-            # `Potential.build`. Require the declaration up front.
+            # `Potential.build`. Require the declaration up front, unless a
+            # registered default prior (see `tnt.potential.registry
+            # .DefaultPriorSpec`) already always samples this parameter --
+            # `tnt.priors._build_model` never leaves one of those unsampled.
             raise ValueError(
                 f"{parameter_path} is not fixed and so must declare a prior."
             )
