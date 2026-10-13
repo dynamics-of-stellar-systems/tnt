@@ -802,12 +802,23 @@
   `context.build_potential()` assembles this draw's `tnt.potential.Potential`
   from `candidate` for a factor over a derived quantity (an enclosed mass, a
   circular velocity): it calls `Potential.build_with_validity`, itself
-  JAX-traceable. The first call in a draw registers that draw's validity as
-  a `numpyro.factor` site giving an invalid geometry exactly `-inf`
-  log-probability (the formal statement that point has no support, not a
-  `nan` relying on gradient propagation to get rejected) and caches the
-  result; a later call in the same draw -- the same plugin or another --
-  reuses it rather than rebuilding and registering a second site. `Prior`
+  JAX-traceable. The first call in a draw -- to `build_potential()`,
+  `build_potential_with_validity()`, or `factor_if_valid()` -- registers
+  that draw's validity as a `numpyro.factor` site giving an invalid geometry
+  exactly `-inf` log-probability (the formal statement that point has no
+  support, not a `nan` relying on gradient propagation to get rejected) and
+  caches the result; a later call in the same draw -- the same plugin or
+  another -- reuses it rather than rebuilding and registering a second
+  site. The `-inf` validity factor alone does not make a derived-quantity
+  factor safe: a plugin computing one directly from the (possibly
+  zero-placeholder) potential can produce a `NaN` on an invalid draw, and
+  `-inf + NaN` is `NaN`, not `-inf`, silently undoing the rejection. A
+  plugin registers such a factor through `context.factor_if_valid(name,
+  compute)` instead of calling `numpyro.factor` directly: it evaluates
+  `compute` only when the draw is valid, via `jax.lax.cond` (which
+  evaluates and differentiates only the taken branch) rather than
+  `jnp.where` (which would still evaluate and differentiate both, leaking
+  the `NaN` back in). `Prior`
   captures the run's `resolved` potential + cosmology + unit system to make
   this work; a `Prior` built without them (a unit test exercising only
   sample sites) leaves `build_potential()` raising. A plugin may only call

@@ -9,6 +9,7 @@ import galax.potential as gp
 import jax
 import jax.numpy as jnp
 import numpyro.distributions as dist
+import numpyro.infer.util
 import pytest
 import unxt as u
 from unxt import Quantity
@@ -241,16 +242,17 @@ _ENCLOSED_MASS_POTENTIAL = {
 
 
 def _m_within_10kpc_plugin(context: PriorContext) -> None:
-    import numpyro
-
     galax_potential = context.build_potential().to_galax(context.unit_system)
-    enclosed = gp.spherical_mass_enclosed(
-        galax_potential, _R_10_KPC, _T0
-    ).ustrip("Msun")
-    numpyro.factor(
-        "m_within_10kpc",
-        dist.Normal(_ENCLOSED_TARGET, _ENCLOSED_WIDTH).log_prob(jnp.asarray(enclosed)),
-    )
+
+    def enclosed_mass_log_prob() -> jnp.ndarray:
+        enclosed = gp.spherical_mass_enclosed(galax_potential, _R_10_KPC, _T0).ustrip(
+            "Msun"
+        )
+        return dist.Normal(_ENCLOSED_TARGET, _ENCLOSED_WIDTH).log_prob(
+            jnp.asarray(enclosed)
+        )
+
+    context.factor_if_valid("m_within_10kpc", enclosed_mass_log_prob)
 
 
 def _enclosed_mass_of(resolved, ml: jnp.ndarray, m_halo: jnp.ndarray) -> jnp.ndarray:
@@ -410,6 +412,35 @@ def test_plugin_factor_on_enclosed_mass_rejects_invalid_pqu_shape_draws() -> Non
     assert float(jnp.mean(enclosed)) == pytest.approx(
         _ENCLOSED_TARGET, abs=2 * _ENCLOSED_WIDTH
     )
+
+
+def test_factor_if_valid_keeps_an_invalid_draws_density_exactly_minus_inf() -> None:
+    # PR 61 audit F4: the -inf validity factor alone doesn't guard a
+    # plugin's own derived-quantity factor. At this exact (p, q, u, m) point
+    # (q > p, violating the shape convention), computing M(< 10 kpc)
+    # unconditionally from the invalid placeholder potential produced a NaN
+    # that silently overrode the -inf factor (-inf + NaN is NaN, not -inf).
+    # Reusing _m_within_10kpc_plugin, now implemented through
+    # context.factor_if_valid, the total log density must be exactly -inf.
+    mges = {"stars_mge": _TRIAXIAL_MGE}
+    resolved = Potential.resolve(_POTENTIAL_PQU, mges)
+    prior = Prior(
+        _POTENTIAL_PQU,
+        {"m_within_10kpc": _m_within_10kpc_plugin},
+        mges,
+        resolved_potential=resolved,
+        cosmological_parameters={"H": Quantity(70.0, "km / (s Mpc)")},
+        unit_system=_UNITS,
+    )
+    params = {"stars.p": 0.1, "stars.q": 0.9, "stars.u": 0.2, "dh.m": 1.0e12}
+
+    log_density, _ = numpyro.infer.util.log_density(prior._model, (), {}, params)
+
+    assert log_density == -jnp.inf
+    grad = jax.grad(
+        lambda p: numpyro.infer.util.log_density(prior._model, (), {}, p)[0]
+    )(params)
+    assert all(jnp.isfinite(value) for value in grad.values())
 
 
 # ---------------------------------------------------------------------------

@@ -206,6 +206,23 @@ Add a regression checking the complete invalid-point density is `-inf` and
 that invalid placeholders are not numerically evaluated. Unconditional
 geometry rejection without a plugin can remain deferred.
 
+**Response -- fixed.** `PriorContext` gained `build_potential_with_validity()`
+(the `(Potential, valid)` pair, built and cached together -- `build_potential()`
+now just returns its first element, unchanged for every existing caller) and
+`factor_if_valid(name, compute)`: evaluates `compute` only when `valid` is
+true, via `jax.lax.cond` -- which evaluates and differentiates only the
+taken branch, unlike `jnp.where`, which would still evaluate and
+differentiate both and leak the `NaN` back into the gradient even though
+its *selected* forward value looks fine. The worked `m_within_10kpc`
+example (`docs/source/priors.md`, `tests/unit_tests/test_priors.py`,
+`aidocs/prior_concept_illustration.py`) now registers its factor through
+`factor_if_valid` instead of calling `numpyro.factor` directly. New
+regression `test_factor_if_valid_keeps_an_invalid_draws_density_exactly_minus_inf`
+reproduces the audit's own method exactly (`numpyro.infer.util.log_density`
+at `p=0.1, q=0.9, u=0.2, m=1e12`): now `-inf` with a finite gradient, not
+`NaN`. This did not, however, turn out to fix F3 -- see that finding's own
+investigation note above.
+
 ### F5 — P2: historical search settings become falsely resume-critical
 
 Location: `tnt/configuration/compatibility.py:19-25`.

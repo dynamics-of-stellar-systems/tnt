@@ -80,14 +80,13 @@ _POTENTIAL = {
 
 
 def _m_within_10kpc_plugin(context: PriorContext) -> None:
-    import numpyro
-
     potential = context.build_potential().to_galax(context.unit_system)
-    enclosed = gp.spherical_mass_enclosed(potential, _R_10_KPC, _T0).ustrip("Msun")
-    numpyro.factor(
-        "m_within_10kpc",
-        dist.Normal(_TARGET, _WIDTH).log_prob(jnp.asarray(enclosed)),
-    )
+
+    def enclosed_mass_log_prob():
+        enclosed = gp.spherical_mass_enclosed(potential, _R_10_KPC, _T0).ustrip("Msun")
+        return dist.Normal(_TARGET, _WIDTH).log_prob(jnp.asarray(enclosed))
+
+    context.factor_if_valid("m_within_10kpc", enclosed_mass_log_prob)
 
 
 def _enclosed(resolved, ml: jnp.ndarray, m_halo: jnp.ndarray) -> jnp.ndarray:

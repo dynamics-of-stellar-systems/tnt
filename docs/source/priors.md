@@ -48,11 +48,12 @@ via `Potential.build_with_validity`, itself JAX-traceable;
 `context.build_potential().to_galax(context.unit_system)` then gives a
 `galax` potential to evaluate. The run's resolved potential structure and
 cosmology are captured when the `Prior` is built -- a plugin never handles
-them. The first call in a draw registers that draw's validity as a
-`numpyro.factor` site -- an invalid deprojection geometry gets exactly
-`-inf` log-probability, not a `nan` relying on gradient propagation to get
-rejected -- and caches the result, so a later call in the same draw, from
-the same plugin or another, is free.
+them. The first call in a draw -- whether to `build_potential()`,
+`build_potential_with_validity()`, or `factor_if_valid()` -- registers that
+draw's validity as a `numpyro.factor` site: an invalid deprojection
+geometry gets exactly `-inf` log-probability, not a `nan` relying on
+gradient propagation to get rejected. The result is cached, so a later
+call in the same draw, from the same plugin or another, is free.
 
 ```python
 import jax.numpy as jnp
@@ -90,7 +91,9 @@ parameterization (see [Potential](potential.md)) is unmodified; the plugin
 only adds a preference on the ratio, never assigns `M_200` directly.
 
 A plugin that needs the assembled potential -- e.g. a preference on the mass
-enclosed within 10 kpc:
+enclosed within 10 kpc -- should register its factor through
+`context.factor_if_valid(name, compute)` rather than calling
+`numpyro.factor` directly:
 
 ```python
 import galax.potential as gp
@@ -100,14 +103,26 @@ from unxt import Quantity
 
 def m_within_10kpc(context: PriorContext) -> None:
     potential = context.build_potential().to_galax(context.unit_system)
-    enclosed = gp.spherical_mass_enclosed(
-        potential, Quantity([10.0, 0.0, 0.0], "kpc"), Quantity(0.0, "Myr")
-    ).ustrip("Msun")
-    numpyro.factor(
-        "m_within_10kpc",
-        dist.Normal(4.0e10, 5.0e9).log_prob(jnp.asarray(enclosed)),
-    )
+
+    def enclosed_mass_log_prob():
+        enclosed = gp.spherical_mass_enclosed(
+            potential, Quantity([10.0, 0.0, 0.0], "kpc"), Quantity(0.0, "Myr")
+        ).ustrip("Msun")
+        return dist.Normal(4.0e10, 5.0e9).log_prob(jnp.asarray(enclosed))
+
+    context.factor_if_valid("m_within_10kpc", enclosed_mass_log_prob)
 ```
+
+`factor_if_valid` evaluates `compute` only when this draw's potential is
+valid, via `jax.lax.cond` (which evaluates, and differentiates, only the
+taken branch) rather than `jnp.where` (which would still evaluate and
+differentiate both). This matters because the `-inf` validity factor by
+itself does not make the *whole* model safe: on an invalid draw, a derived
+computation like this one can divide by a zero-placeholder parameter and
+produce a `NaN`, and `-inf + NaN` is `NaN`, not `-inf` -- silently undoing
+the validity factor's rejection rather than reinforcing it. Calling
+`numpyro.factor` directly here, unconditionally, would reintroduce exactly
+the failure mode the `-inf` factor exists to avoid.
 
 A `-inf` validity factor keeps a plugin like this one honest even when the
 rest of the prior routinely proposes a physically invalid shape -- e.g. an

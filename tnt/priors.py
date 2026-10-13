@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpyro
 import numpyro.distributions
@@ -82,12 +83,24 @@ class PriorContext(eqx.Module):
     Evaluate it with `build_potential().to_galax(context.unit_system)`. The
     run's `resolved` potential and cosmology are captured when the `Prior`
     is built -- a plugin never handles those. The first call in a draw
-    registers a `numpyro.factor` site giving an invalid geometry exactly
-    `-inf` log-probability (the formal statement that point has no support,
-    not a `nan` relying on gradient propagation to get rejected) and caches
-    the result, so every later call in the same draw -- whether from the
-    same plugin or another -- reuses it rather than rebuilding and
-    registering a second site.
+    (by `build_potential()`, `build_potential_with_validity()`, or
+    `factor_if_valid()` -- whichever runs first) registers a `numpyro.factor`
+    site giving an invalid geometry exactly `-inf` log-probability (the
+    formal statement that point has no support, not a `nan` relying on
+    gradient propagation to get rejected) and caches the potential/validity
+    pair, so every later call in the same draw -- whether from the same
+    plugin or another -- reuses it rather than rebuilding and registering a
+    second site.
+
+    A derived quantity computed *from* that potential can still be
+    individually invalid in a way the placeholder potential itself doesn't
+    capture (e.g. a derived formula dividing by a zero-placeholder
+    parameter) -- on an invalid draw this can produce a `NaN` factor that
+    poisons the model's total log density even though the `-inf` validity
+    factor is separately registered: `-inf + NaN` is `NaN`, not `-inf`, so
+    this is not automatically safe just because the validity factor exists.
+    Guard any such computation with `factor_if_valid()` instead of calling
+    `numpyro.factor()` directly.
 
     Attributes (continued):
         unit_system: The run's internal unit system, for
@@ -102,29 +115,55 @@ class PriorContext(eqx.Module):
     candidate: dict[str, dict[str, Any]]
     mges: Mapping[str, LightMGE | MassMGE]
     unit_system: AbstractUnitSystem | None = None
-    _build_potential: Callable[[], Potential] | None = eqx.field(
-        default=None, static=True
-    )
+    _build_potential_with_validity: (
+        Callable[[], tuple[Potential, Array]] | None
+    ) = eqx.field(default=None, static=True)
 
-    def build_potential(self) -> Potential:
-        """This draw's `Potential`, built via `Potential.build_with_validity`.
+    def build_potential_with_validity(self) -> tuple[Potential, Array]:
+        """This draw's `(Potential, valid)` pair, both built together via
+        `Potential.build_with_validity`.
 
-        The first call in a draw registers this draw's validity as a
+        The first call in a draw (by this method, `build_potential()`, or
+        `factor_if_valid()`) registers this draw's validity as a
         `numpyro.factor` site (see this class's own docstring) and caches
-        the result; later calls in the same draw are free.
+        the pair; later calls in the same draw, by any of the three, are
+        free.
 
         Raises:
             RuntimeError: If this `Prior` was constructed without the run's
                 resolved potential, cosmology and unit system (e.g. in a
                 unit test exercising only the sample sites).
         """
-        if self._build_potential is None:
+        if self._build_potential_with_validity is None:
             raise RuntimeError(
                 "context.build_potential() needs the run's resolved potential, "
                 "cosmological parameters and unit system; this Prior was built "
                 "without them."
             )
-        return self._build_potential()
+        return self._build_potential_with_validity()
+
+    def build_potential(self) -> Potential:
+        """This draw's `Potential` alone -- see `build_potential_with_validity`."""
+        return self.build_potential_with_validity()[0]
+
+    def factor_if_valid(self, name: str, compute: Callable[[], Array]) -> None:
+        """Register `name`'s factor as `compute()`'s log-density -- but only
+        ever evaluate `compute` when this draw's potential is valid.
+
+        Uses `jax.lax.cond`, not `jnp.where`: `lax.cond` evaluates (and
+        differentiates) only the taken branch, so a `compute` that's only
+        well-defined on a valid potential (e.g. dividing by a parameter
+        that's a zero placeholder on an invalid draw) never actually runs,
+        and so can never produce a `NaN` that silently overrides the
+        separate `-inf` validity factor (`jnp.where` would still compute
+        and differentiate both branches, leaking the `NaN` back in even
+        though its *selected* value looks fine).
+        """
+        _, valid = self.build_potential_with_validity()
+        log_prob = jax.lax.cond(
+            valid, lambda _: compute(), lambda _: jnp.asarray(0.0), None
+        )
+        numpyro.factor(name, log_prob)
 
 
 PriorPlugin = Callable[[PriorContext], None]
@@ -322,23 +361,25 @@ def _build_model(
                 site, distribution
             )
 
-        cached_potential: list[Potential] = []
+        cached: list[tuple[Potential, Array]] = []
 
-        def build_potential_once() -> Potential:
-            if not cached_potential:
+        def build_potential_with_validity_once() -> tuple[Potential, Array]:
+            if not cached:
                 potential, valid = build_potential(candidate)
                 numpyro.factor(
                     "_valid_potential_geometry", jnp.where(valid, 0.0, -jnp.inf)
                 )
-                cached_potential.append(potential)
-            return cached_potential[0]
+                cached.append((potential, valid))
+            return cached[0]
 
         context = PriorContext(
             candidate=candidate,
             mges=mges,
             unit_system=unit_system,
-            _build_potential=(
-                build_potential_once if build_potential is not None else None
+            _build_potential_with_validity=(
+                build_potential_with_validity_once
+                if build_potential is not None
+                else None
             ),
         )
         for prior_fn in prior_plugins.values():
