@@ -158,9 +158,10 @@ potential:
       ml:
         value: 5.0
         unit: "Msun / Lsun"
-      theta: {value: 1.0, unit: "rad"}
-      phi: {value: 0.5, unit: "rad"}
-      psi: {value: 0.0, unit: "rad"}
+        fixed: true
+      theta: {value: 1.0, unit: "rad", fixed: true}
+      phi: {value: 0.5, unit: "rad", fixed: true}
+      psi: {value: 0.0, unit: "rad", fixed: true}
 
 kinematic_data:
   central_spectroscopy:
@@ -215,7 +216,11 @@ Triaxial MGE types also require `theta`/`phi`/`psi`, the global viewing
 angles the named MGE is deprojected under -- or, with
 `parameterization: "pqu"`, the intrinsic axis ratios `p`/`q`/`u` instead
 (converted to viewing angles at runtime; see [Potential](potential.md)).
-Oblate axisymmetric MGE types require a single `inclination` instead. MGE
+Oblate axisymmetric MGE types require a single `inclination` instead. Every
+non-fixed parameter must also declare its own search `prior`, unless it's
+one a registered *default prior* always samples instead (`pqu`'s `p`/`q`/`u`,
+`q_min` -- see [Priors](priors.md)); the registries example above fixes
+every parameter since it isn't about search behavior. MGE
 contents and their physical units are inspected only in the later
 object-construction phase.
 Potential parameter values also retain their declared units through
@@ -420,11 +425,12 @@ identifiers owned by the preparation schema, and inconsistent tagged
 thresholds. A potential component's curated `galax` class name and optional
 parameterization are resolved later by `tnt.potential` during runtime-object
 construction. Preparation also checks non-kinematics data-only numerical
-constraints, including generic search-parameter bounds, positive worker
-counts, and orbit-grid limits. Potential-type-specific physical domains are
-checked later, when a proposed potential component is constructed. Concrete
-kinematics and population constructors
-check explicit histogram bin counts, Gauss-Hermite order and
+constraints, including that every non-fixed potential parameter declares a
+`prior` (unless a registered default prior already covers it -- see
+[Priors](priors.md)), positive worker counts, and orbit-grid limits.
+Potential-type-specific physical domains are checked later, when a proposed
+potential component is constructed. Concrete kinematics and population
+constructors check explicit histogram bin counts, Gauss-Hermite order and
 systematic-uncertainty mappings, Bayesian LOSVD policies, proper-motion
 variance scaling and warning thresholds, population value/uncertainty pairs,
 and all observational file contents. Preparation still checks that references

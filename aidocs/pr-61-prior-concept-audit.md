@@ -359,6 +359,30 @@ complete `PriorSampler` settings example, including required `seed` and
 The direct configuration-read reproduction rejects bare parameter values with
 `potential.stars.parameters.ml is not fixed and so must declare a prior.`
 
+**Response -- fixed.** `configuration.md`'s registries example (`ml`,
+`theta`, `phi`, `psi`) and all five `potential.md` MGE examples now declare
+`fixed: true` explicitly, instead of silently inheriting the packaged
+`dynamic_object_defaults.parameter.fixed: false` and failing preparation.
+The two `potential.md` examples covered by this PR's own later default-prior
+work (`stars_pqu`'s `p`/`q`/`u`, `bulge_q_min`'s `q_min` -- see the F3
+response above) are left without `fixed`/`prior` on purpose: they no longer
+need either, and a note right after that example explains why only `ml`
+needed `fixed: true` there. `configuration.md`'s stale "generic
+search-parameter bounds" sentence (the removed bound validator this finding
+also flagged) is reworded to describe the current `fixed`/`prior`/
+default-prior contract. `priors.md` gained a new "Enabling `PriorSampler`"
+section with a complete, verified `parameter_space_settings` block
+(`generator_type`, `generator_settings.seed`/`num_warmup`,
+`stopping_criteria`, `potential_rescalings`, `priors`) -- while building it,
+also caught and fixed a related inaccuracy one section down: the diagnostic
+plot's `num_samples` comes from `stopping_criteria.max_new_mods_per_iter`,
+not a nonexistent `generator_settings.num_samples` the text previously named.
+All three edited examples (the registries example, the five-component
+example, and the new `PriorSampler` block) were each verified end to end
+through the real `Configuration().read()` path, not just a Sphinx build
+(which the finding correctly noted only checks rendering). Strict Sphinx
+build (`-E -b html -W`) still passes.
+
 ## Additional review notes
 
 - The factor-only/read-only plugin contract is an instruction to plugin
