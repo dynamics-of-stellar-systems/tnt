@@ -531,3 +531,40 @@ def test_resume_allows_negative_orbit_seed(
         AllModels(),
         "kinchi2",
     )
+
+
+def test_resume_allows_a_legacy_generator_settings_archive_against_current_prior(
+    tmp_path: Path,
+) -> None:
+    # PR 61 audit F5: `generator_settings` was the pre-`prior:` per-parameter
+    # search-range declaration (`lower_bound`/`upper_bound`/`step`/
+    # `minimum_step`), removed when `prior:` was introduced -- but the
+    # historical/current comparison excluded only `prior`, not the field it
+    # replaced, so an archive from before that change was wrongly rejected
+    # as resume-incompatible purely because of the search-declaration
+    # style, not any scientific change. `q`'s `value`/`unit`/`fixed` are
+    # identical on both sides here; only how its search range was declared
+    # differs.
+    input_directory = tmp_path / "input"
+    _write_inputs(input_directory)
+    historical_config = _config(input_directory)
+    historical_config["potential"]["stars"]["parameters"]["q"] = {
+        "value": 0.8,
+        "fixed": False,
+        "latex_label": "q",
+        "generator_settings": {
+            "lower_bound": 0.5,
+            "upper_bound": 0.99,
+            "step": 0.01,
+            "minimum_step": 0.001,
+        },
+    }
+    baseline_run = _run(tmp_path, 0, historical_config)
+    current_config = _config(input_directory)  # declares `prior` for `q`
+
+    ensure_resume_compatible(
+        _critical_configuration(current_config),
+        baseline_run,
+        AllModels(),
+        "kinchi2",
+    )

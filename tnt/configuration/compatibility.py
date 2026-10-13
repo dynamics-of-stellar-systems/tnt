@@ -18,6 +18,16 @@ from tnt.validation import _required_mapping as _parse_required_mapping
 
 _NON_SCHEMA_PARAMETER_KEYS = {
     "fixed",
+    # `generator_settings` is the pre-`prior:` per-parameter search-range
+    # declaration (`lower_bound`/`upper_bound`/`step`/`minimum_step`,
+    # removed when `prior:` was introduced). Excluding only `prior` would
+    # make an archived run from before that change wrongly resume-
+    # incompatible: its `generator_settings` sub-dict would survive this
+    # projection with no counterpart in a current config's `prior:`-only
+    # parameters, showing up as a spurious schema difference. Keeping both
+    # excluded compares correctly regardless of which search-declaration
+    # style produced either side.
+    "generator_settings",
     "latex_label",
     "prior",
     "unit",

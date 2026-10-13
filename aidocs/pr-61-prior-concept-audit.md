@@ -321,6 +321,24 @@ projecting historical configurations. New user-profile preparation can still
 reject the deprecated field. Add a regression resuming from an archived
 pre-PR configuration after converting its search controls to priors.
 
+**Response -- fixed.** `_NON_SCHEMA_PARAMETER_KEYS` in
+`tnt/configuration/compatibility.py` now excludes both `generator_settings`
+and `prior`, exactly the suggested fix -- confirmed by reverting just this
+one-line change and re-running the new regression, which fails with
+precisely the reproduction this finding describes (`changed fields:
+critical_configuration.potential.stars.parameters.q.generator_settings`),
+then passes once the key is restored. New regression
+`test_resume_allows_a_legacy_generator_settings_archive_against_current_prior`
+in `tests/unit_tests/test_configuration_compatibility.py`: an archived
+baseline run whose `q` parameter still declares the pre-`prior:`
+`generator_settings` sub-dict (`lower_bound`/`upper_bound`/`step`/
+`minimum_step`), resumed against a current config declaring `prior` for the
+same parameter with identical `value`/`unit`/`fixed` -- `ensure_resume_compatible`
+no longer raises. New user-profile preparation (`tnt/configuration/validation.py`)
+is unchanged -- it already rejects `generator_settings` as an unknown
+per-parameter key for a *new* config, per the suggested fix; this response
+only touches historical-archive comparison.
+
 ### F6 — P2: existing documentation examples no longer pass preparation
 
 Locations: `docs/source/configuration.md:157-163` and
