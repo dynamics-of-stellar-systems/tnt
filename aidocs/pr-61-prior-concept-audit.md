@@ -383,6 +383,27 @@ through the real `Configuration().read()` path, not just a Sphinx build
 (which the finding correctly noted only checks rendering). Strict Sphinx
 build (`-E -b html -W`) still passes.
 
+## Follow-up work
+
+The default-prior mechanism added in response to F3 (see above) deliberately
+covers only `pqu` and `q_min` -- two further cases were scoped out during
+that work and tracked as
+[issue #82](https://github.com/dynamics-of-stellar-systems/tnt/issues/82):
+
+- Extending default priors to `pqu`'s sibling parameterizations
+  (`T_maj_min`, and the native `theta`/`phi`/`psi` case with no declared
+  `parameterization`), blocked on making the existing parameterization
+  `invert` conversions JAX-traceable -- PRs #77/#78 traced the forward
+  direction only; `triaxial_intrinsic_shape`,
+  `T_Tmaj_Tmin_from_viewing_angles`, and `q_min_from_inclination` are
+  still eager.
+- Extending default priors to curated `galax` potential types with their
+  own joint, but data-independent, ordering constraints among native
+  parameters (`LeeSutoTriaxialNFWPotential`'s `a1 >= a2 >= a3`,
+  `StoneOstriker15Potential`'s `r_h > r_c`) -- already enforced via the
+  existing `ParameterConstraint(other_parameter=..., relation=...)`
+  mechanism, but not yet sampled efficiently the way `pqu`/`q_min` are.
+
 ## Additional review notes
 
 - The factor-only/read-only plugin contract is an instruction to plugin
