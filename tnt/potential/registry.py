@@ -691,7 +691,8 @@ values passed through unchanged. `mge` is the component's resolved MGE
 (`LightMGE | MassMGE | None` -- `None` for a component with no MGE, always
 passed the same way regardless, never a second code path). Returns a plain
 `Any`, not a typed `dict[str, jax.Array]`, so this module doesn't need to
-import `jax` or `numpyro` itself (consistent with
+import `numpyro` itself for this type hint (it already imports `jax`/
+`jax.numpy` for other, pre-existing reasons; consistent with
 `tnt.configuration.validation` never importing `numpyro` either, even
 though this specific module isn't that one)."""
 

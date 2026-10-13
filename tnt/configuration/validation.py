@@ -530,9 +530,10 @@ def _validate_parameters(
             # skips it -- neither a sample site nor a fixed value -- which
             # only surfaces much later as a missing-parameter error at
             # `Potential.build`. Require the declaration up front, unless a
-            # registered default prior (see `tnt.potential.registry
-            # .DefaultPriorSpec`) already always samples this parameter --
-            # `tnt.priors._build_model` never leaves one of those unsampled.
+            # registered default prior (see
+            # `tnt.potential.registry.DefaultPriorSpec`) already always
+            # samples this parameter -- `tnt.priors._build_model` never
+            # leaves one of those unsampled.
             raise ValueError(
                 f"{parameter_path} is not fixed and so must declare a prior."
             )

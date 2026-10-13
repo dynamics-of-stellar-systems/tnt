@@ -289,14 +289,16 @@ potential:
       q_min: {value: 0.6}   # anchor component's C/A, 0 < q_min <= q'
 ```
 
-Every parameter here is `fixed: true` -- a non-fixed parameter must either
-declare its own `prior` or be one a registered *default prior* always
-samples instead (see [Priors](priors.md)), and this page isn't about search
-behavior. `p`/`q`/`u` and `q_min` are left without `fixed` (the packaged
-default, `fixed: false`) and with no `prior` regardless: `pqu` and `q_min`
-both have a registered default prior, so they're exempt from that
-requirement -- `ml`/`mge_mass_scale` are not, which is why only they need
-`fixed: true` here.
+A non-fixed parameter must either declare its own `prior` or be one a
+registered *default prior* always samples instead (see
+[Priors](priors.md)); this page isn't about search behavior, so every
+`ml`/`mge_mass_scale`/`theta`/`phi`/`psi`/`T`/`T_maj`/`T_min`/`inclination`
+above declares `fixed: true` explicitly. `p`/`q`/`u` and `q_min` are the
+exception: left without `fixed` (the packaged default, `fixed: false`) and
+with no `prior`, because `pqu` and `q_min` both have a registered default
+prior that always samples them regardless -- `ml`/`mge_mass_scale` has no
+such exemption, which is why it still needs `fixed: true` even in those two
+examples.
 
 ## What's implemented today
 

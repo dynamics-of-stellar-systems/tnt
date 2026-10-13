@@ -209,20 +209,19 @@ the parameter set its resolved `type`/`parameterization` expects -- a
 missing or unexpected name is rejected at preparation time, for curated
 `galax` types as well as TNT's own MGE composite types, and including native
 fields that have a `galax` constructor default (so the model table is
-complete and reproducible). A light-MGE
-potential requires an `ml` mass-to-light parameter. A mass-MGE potential
-must not declare `ml`, because its input MGE already represents mass.
-Triaxial MGE types also require `theta`/`phi`/`psi`, the global viewing
-angles the named MGE is deprojected under -- or, with
-`parameterization: "pqu"`, the intrinsic axis ratios `p`/`q`/`u` instead
-(converted to viewing angles at runtime; see [Potential](potential.md)).
-Oblate axisymmetric MGE types require a single `inclination` instead. Every
-non-fixed parameter must also declare its own search `prior`, unless it's
-one a registered *default prior* always samples instead (`pqu`'s `p`/`q`/`u`,
-`q_min` -- see [Priors](priors.md)); the registries example above fixes
-every parameter since it isn't about search behavior. MGE
-contents and their physical units are inspected only in the later
-object-construction phase.
+complete and reproducible). A light-MGE potential requires an `ml`
+mass-to-light parameter. A mass-MGE potential must not declare `ml`,
+because its input MGE already represents mass. Triaxial MGE types also
+require `theta`/`phi`/`psi`, the global viewing angles the named MGE is
+deprojected under -- or, with `parameterization: "pqu"`, the intrinsic axis
+ratios `p`/`q`/`u` instead (converted to viewing angles at runtime; see
+[Potential](potential.md)). Oblate axisymmetric MGE types require a single
+`inclination` instead. Every non-fixed parameter must also declare its own
+search `prior`, unless it's one a registered *default prior* always
+samples instead (`pqu`'s `p`/`q`/`u`, `q_min` -- see [Priors](priors.md));
+the registries example above fixes every parameter since it isn't about
+search behavior. MGE contents and their physical units are inspected only
+in the later object-construction phase.
 Potential parameter values also retain their declared units through
 preparation. Their scalar/finite and physical-domain constraints are checked
 when each proposed runtime potential is constructed, both before and after a
