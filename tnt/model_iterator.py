@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, NamedTuple, Self
 
 import equinox as eqx
+import jax
 import numpy as np
 from unxt import AbstractUnitSystem, Quantity
 
@@ -59,6 +60,7 @@ from tnt.potential import (
     raw_potential_parameters,
 )
 from tnt.priors import Prior, load_prior_plugins
+from tnt.priors_diagnostic_plot import plot_prior_diagnostics
 from tnt.run_config_log import (
     RunConfigLog,
     RunManifestReference,
@@ -182,6 +184,18 @@ class ModelIterator:
             cosmological_parameters=cosmological_parameters,
             unit_system=unit_system,
         )
+        if parameter_space_settings["generator_type"] == "PriorSampler":
+            generator_settings = parameter_space_settings["generator_settings"]
+            output_directory.mkdir(parents=True, exist_ok=True)
+            plot_prior_diagnostics(
+                prior,
+                output_directory / "prior_diagnostics.png",
+                jax.random.PRNGKey(generator_settings["seed"]),
+                num_samples=parameter_space_settings["stopping_criteria"][
+                    "max_new_mods_per_iter"
+                ],
+                num_warmup=generator_settings["num_warmup"],
+            )
 
         return cls(
             potential_settings=potential_settings,

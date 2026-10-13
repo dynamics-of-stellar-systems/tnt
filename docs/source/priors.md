@@ -142,3 +142,29 @@ never touch chi2 or orbit integration -- `PriorSampler` doesn't read
 chi2) needs a bridge turning that into a `numpyro.factor`, which doesn't
 exist yet; that's real, separate future work reusing the same composed-model
 machinery, not something `PriorSampler` does today.
+
+## Diagnostic plot, not a pass/fail gate
+
+A factor-bearing model's MCMC draw can have a high divergence rate or low
+effective sample size without that meaning anything is broken -- how rough
+a chain looks depends heavily on how wide the prior needs to be for the
+actual science (a young, single-age stellar population needs a narrow
+mass-to-light prior; a mixed old-and-young population needs a much wider
+one), not on a defect in `tnt.priors`. No fixed divergence/ESS/R-hat
+threshold can tell those two cases apart, so TNT doesn't try: whenever a
+resolved configuration uses `generator_type: "PriorSampler"`,
+`ModelIterator.from_configuration` draws once -- at exactly the
+`generator_settings.num_samples`/`num_warmup` the real run will use -- and
+saves a diagnostic figure (pairwise scatter colored by divergence, each
+parameter's marginal histogram, an ESS/split-R-hat table, and
+per-parameter trace plots) to
+`io_settings.output_directory/prior_diagnostics.png`. Nothing raises and
+nothing blocks on what it finds; review the figure yourself and decide
+whether `PriorSampler`'s output looks usable before relying on it.
+
+`Prior.sample_with_diagnostics(key, num_samples, num_warmup)` is the
+underlying call -- the same return as `sample`, plus a `PriorDiagnostics`
+that's always populated. A pure `Predictive` draw is exact and independent
+by construction, so its ESS/split-R-hat there are a sanity check on that
+independence, not a convergence diagnostic; `tnt.priors_diagnostic_plot.
+plot_prior_diagnostics` builds the figure from this either way.

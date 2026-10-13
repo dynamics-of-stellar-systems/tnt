@@ -834,6 +834,29 @@
   a `Model`'s real chi2) needs a further bridge -- turning chi2 into a
   `numpyro.factor` -- that doesn't exist yet; deliberately out of scope,
   real future work reusing the same composed-model machinery.
+- A factor-bearing `Prior`'s MCMC draw having a high divergence rate or low
+  effective sample size (ESS) doesn't by itself mean anything is broken --
+  empirically, how rough a chain looks is dominated by how wide the prior
+  needs to be for the actual science (e.g. a single-age stellar
+  population's mass-to-light prior can be narrow; a mixed-age population's
+  can't), not by a defect in `tnt.priors`/`Potential.build_with_validity`.
+  No fixed divergence/ESS/split-R-hat threshold can tell "the chain is
+  unreliable" apart from "the prior is legitimately this wide," so none is
+  enforced. `Prior.sample_with_diagnostics(key, num_samples, num_warmup)` --
+  same return as `sample`, plus a `PriorDiagnostics` (divergence mask, ESS,
+  split-R-hat per site, always populated -- a `Predictive` draw is i.i.d. by
+  construction, so its ESS/split-R-hat there are a sanity check on that
+  independence, not a convergence diagnostic) -- feeds
+  `tnt.priors_diagnostic_plot.plot_prior_diagnostics`, which draws once (at
+  the real run's own `num_samples`/`num_warmup`) and saves a corner plot
+  (pairwise scatter colored by divergence, marginal histograms, an
+  ESS/split-R-hat table, per-parameter trace plots) to
+  `io_settings.output_directory/prior_diagnostics.png`.
+  `ModelIterator.from_configuration` generates this automatically whenever
+  `generator_type` is `PriorSampler`. Purely advisory: nothing raises or
+  blocks, the run proceeds regardless -- a human reviews the figure and
+  decides. `matplotlib` is a regular (not optional) dependency as of this
+  feature.
 - Every registered parameterization converts both ways: a
   `register_parameterization` call takes `convert` *and* `invert` (bundled in
   its `ParameterizationSpec`), so one direction can never be registered without

@@ -171,6 +171,42 @@ an implicit fallback sampler. Strengthen the regression beyond the current
 mean/validity checks, and qualify the documentation's robustness claim until
 the sampling behavior is verified.
 
+**Investigation -- not fixed by F4, still open.** Fixed F4 first on the
+hypothesis that the `NaN`-poisoned density it produces was the proximate
+cause of this divergence rate. Re-ran this exact reproduction (same model,
+same seed) after F4's fix: **identical 985/1000 divergences, bit-for-bit**.
+NUTS evidently treats a `NaN` potential energy and a legitimate `-inf` one
+the same way for its divergence check (both non-finite), so the chain's
+actual trajectory decisions were unchanged either way. The real cause looks
+more fundamental than F4: a hard `-inf` step-function cliff at the
+valid/invalid geometry boundary is a known-bad shape for HMC/NUTS's
+leapfrog integrator regardless of what produces it -- not a `NaN`-specific
+bug. F4 was still a real, independently necessary fix (an undefined density
+is not the same bug as a well-defined but pathologically-shaped one), just
+not a fix for this finding. Still needed: diagnostics exposure + an
+explicit enforcement policy in `Prior.sample()`, and likely reconsidering
+the showcase test's prior shape -- a model with a ~98% divergence rate
+isn't something any threshold should let through.
+
+**Response -- fixed, but not with an automated threshold.** No fixed
+divergence/ESS/split-R-hat cutoff can tell a genuinely broken chain apart
+from a prior that's simply as wide as the actual science requires, so this
+isn't solved by picking a number. Instead, `Prior` gained
+`sample_with_diagnostics()` (returns the same samples as `sample()` plus
+divergence/ESS/split-R-hat for every draw, MCMC or `Predictive` alike) and
+`tnt.priors_diagnostic_plot.plot_prior_diagnostics`, which draws once -- at
+exactly the `num_samples`/`num_warmup` the real run will use -- and saves a
+diagnostic figure (pairwise scatter colored by divergence, each
+parameter's marginal histogram, an ESS/split-R-hat table, and
+per-parameter trace plots) to
+`io_settings.output_directory/prior_diagnostics.png`.
+`ModelIterator.from_configuration` generates this once whenever
+`generator_type` is `PriorSampler`. It is purely advisory: nothing raises,
+nothing blocks, the run proceeds regardless -- the user looks at the
+figure themselves and decides whether to let `PriorSampler` start
+proposing. `matplotlib` is now a regular (not optional) dependency, since
+TNT needs it for visualization regardless of this feature.
+
 ### F4 — P2: the validity factor does not guard derived potential evaluation
 
 Location: `tnt/priors.py:262-269`; the documented consumer is

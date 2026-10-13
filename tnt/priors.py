@@ -36,12 +36,13 @@ import importlib.util
 import inspect
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpyro
+import numpyro.diagnostics
 import numpyro.distributions
 import numpyro.infer
 from jax import Array
@@ -389,6 +390,29 @@ def _build_model(
     return _model
 
 
+class PriorDiagnostics(NamedTuple):
+    """Diagnostics for one `Prior.sample_with_diagnostics` draw.
+
+    Always produced, whether sampling ran `numpyro.infer.MCMC`/`NUTS`
+    (`Prior.has_factors()` is `True`) or an unconditioned
+    `numpyro.infer.Predictive` draw. A `Predictive` draw is exact and
+    independent by construction, so its `diverging` is trivially all
+    `False`, and its `ess`/`split_rhat` are computed by treating the draws
+    as a single pseudo-chain (the same `numpyro.diagnostics` functions the
+    MCMC branch uses, applied to i.i.d. samples rather than a real chain)
+    -- not a convergence check there (there's no chain to converge), just
+    confirmation that the draws behave like the independent samples they're
+    supposed to be: `ess` close to `num_samples`, `split_rhat` close to `1`.
+    """
+
+    diverging: Array
+    """Per-draw divergence flag, shape `(num_samples,)`."""
+    ess: dict[str, float]
+    """Effective sample size per `"component.parameter"` site name."""
+    split_rhat: dict[str, float]
+    """Split R-hat per `"component.parameter"` site name."""
+
+
 class Prior:
     """The complete, composed prior for one run's search space.
 
@@ -463,20 +487,79 @@ class Prior:
         Uses `numpyro.infer.Predictive` (unconditioned prior-predictive
         sampling) if `not self.has_factors()`; otherwise
         `numpyro.infer.MCMC(numpyro.infer.NUTS(...))` over the prior+factor
-        joint -- still never touching chi2/orbit integration.
+        joint -- still never touching chi2/orbit integration. A thin wrapper
+        over `sample_with_diagnostics` that discards its diagnostics.
         """
-        if self.has_factors():
-            if num_warmup is None:
-                raise ValueError(
-                    "num_warmup is required when the prior includes factor terms."
-                )
-            mcmc = numpyro.infer.MCMC(
-                numpyro.infer.NUTS(self._model),
-                num_warmup=num_warmup,
-                num_samples=num_samples,
-                progress_bar=False,
+        samples, _ = self.sample_with_diagnostics(key, num_samples, num_warmup)
+        return samples
+
+    def sample_with_diagnostics(
+        self, key: Array, num_samples: int, num_warmup: int | None = None
+    ) -> tuple[dict[str, Array], PriorDiagnostics]:
+        """Like `sample`, but also returns diagnostics (see `PriorDiagnostics`).
+
+        When `sample` would use `Predictive` instead of MCMC (`not
+        self.has_factors()`), the draws are exact and independent by
+        construction -- the diagnostics there are a sanity check on that
+        independence, not a convergence check. See
+        `tnt.priors_diagnostic_plot.plot_prior_diagnostics` for a
+        human-reviewed visualization built from this -- divergence/ESS/
+        R-hat thresholds can't distinguish a genuinely broken chain from a
+        prior that's simply as wide as the science requires, so this is
+        deliberately not an automated pass/fail gate.
+        """
+        if not self.has_factors():
+            predictive = numpyro.infer.Predictive(self._model, num_samples=num_samples)
+            samples = predictive(key)
+            # Treat the i.i.d. draws as a single pseudo-chain (shape
+            # `(1, num_samples, ...)`) so the same diagnostics functions
+            # the MCMC branch uses below apply unchanged.
+            pseudo_chain = {name: value[None, ...] for name, value in samples.items()}
+            diagnostics = PriorDiagnostics(
+                diverging=jnp.zeros(num_samples, dtype=bool),
+                ess={
+                    name: float(
+                        jnp.min(
+                            jnp.asarray(numpyro.diagnostics.effective_sample_size(value))
+                        )
+                    )
+                    for name, value in pseudo_chain.items()
+                },
+                split_rhat={
+                    name: float(
+                        jnp.max(
+                            jnp.asarray(numpyro.diagnostics.split_gelman_rubin(value))
+                        )
+                    )
+                    for name, value in pseudo_chain.items()
+                },
             )
-            mcmc.run(key)
-            return mcmc.get_samples()
-        predictive = numpyro.infer.Predictive(self._model, num_samples=num_samples)
-        return predictive(key)
+            return samples, diagnostics
+        if num_warmup is None:
+            raise ValueError(
+                "num_warmup is required when the prior includes factor terms."
+            )
+        mcmc = numpyro.infer.MCMC(
+            numpyro.infer.NUTS(self._model),
+            num_warmup=num_warmup,
+            num_samples=num_samples,
+            progress_bar=False,
+        )
+        mcmc.run(key, extra_fields=("diverging",))
+        samples_by_chain = mcmc.get_samples(group_by_chain=True)
+        diagnostics = PriorDiagnostics(
+            diverging=mcmc.get_extra_fields()["diverging"],
+            ess={
+                name: float(
+                    jnp.min(jnp.asarray(numpyro.diagnostics.effective_sample_size(value)))
+                )
+                for name, value in samples_by_chain.items()
+            },
+            split_rhat={
+                name: float(
+                    jnp.max(jnp.asarray(numpyro.diagnostics.split_gelman_rubin(value)))
+                )
+                for name, value in samples_by_chain.items()
+            },
+        )
+        return mcmc.get_samples(), diagnostics

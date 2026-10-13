@@ -3,14 +3,19 @@
 Two draws from the same run's `tnt.priors.Prior`:
 
 1.  per-parameter priors only -- `stars.ml ~ Uniform(1, 9)`,
-    `dh.m ~ LogUniform(1e10, 1e13)` -- drawn with `numpyro.infer.Predictive`;
+    `dh.m ~ LogUniform(3e10, 3e11)` -- drawn with `numpyro.infer.Predictive`;
 2.  the same, plus one prior *plugin*: a `Normal(4e10, 5e9)` `numpyro.factor`
     on the mass enclosed within 10 kpc, `M(<10kpc)`, a derived quantity of
     the whole potential that the plugin gets from
-    `context.build_potential()`. Drawn with `numpyro.infer.NUTS`.
+    `context.build_potential()`. Drawn with `numpyro.infer.NUTS`. `dh.m`'s
+    prior is kept narrow (not the much wider range a bare `NFWPotential.m`
+    prior could plausibly take) specifically so this draw samples cleanly
+    -- see `tnt.priors_diagnostic_plot.plot_prior_diagnostics`, which this
+    script also calls, for why that matters.
 
-Writes `prior_concept_illustration.json` (the raw samples) next to this file.
-Run from the repo root:  uv run python aidocs/prior_concept_illustration.py
+Writes `prior_concept_illustration.json` (the raw samples) and
+`prior_concept_illustration_diagnostics.png` next to this file. Run from the
+repo root:  uv run python aidocs/prior_concept_illustration.py
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from unxt import Quantity
 from tnt.mge import LightMGE
 from tnt.potential import Potential
 from tnt.priors import Prior, PriorContext
+from tnt.priors_diagnostic_plot import plot_prior_diagnostics
 
 _UNITS = u.unitsystem("kpc", "Myr", "Msun", "rad")
 _ANGLES = {
@@ -54,8 +60,8 @@ _POTENTIAL = {
             "m": {
                 "unit": "Msun",
                 "fixed": False,
-                "value": 1.0e12,
-                "prior": {"distribution": "LogUniform", "args": [1.0e10, 1.0e13]},
+                "value": 1.0e11,
+                "prior": {"distribution": "LogUniform", "args": [3.0e10, 3.0e11]},
             },
             "r_s": {"unit": "kpc", "fixed": True, "value": 15.0},
         },
@@ -120,7 +126,21 @@ def main() -> None:
         cosmological_parameters={"H": Quantity(70.0, "km / (s Mpc)")},
         unit_system=_UNITS,
     )
-    b = with_plugin.sample(jax.random.PRNGKey(0), num_samples=2000, num_warmup=800)
+    b, diagnostics = with_plugin.sample_with_diagnostics(
+        jax.random.PRNGKey(0), num_samples=2000, num_warmup=800
+    )
+    assert diagnostics is not None
+
+    diagnostics_path = (
+        Path(__file__).parent / "prior_concept_illustration_diagnostics.png"
+    )
+    plot_prior_diagnostics(
+        with_plugin,
+        diagnostics_path,
+        jax.random.PRNGKey(0),
+        num_samples=2000,
+        num_warmup=800,
+    )
 
     m_a = jax.vmap(lambda x, y: _enclosed(resolved, x, y))(a["stars.ml"], a["dh.m"])
     m_b = jax.vmap(lambda x, y: _enclosed(resolved, x, y))(b["stars.ml"], b["dh.m"])
@@ -152,9 +172,15 @@ def main() -> None:
         )
 
     print(f"wrote {path}")
+    print(f"wrote {diagnostics_path}")
     print(line("M(<10 kpc)  per-parameter prior ", m_a))
     print(line("M(<10 kpc)  + mass-enclosed prior", m_b))
     print(f"            factor target        : {_TARGET:.2e} +/- {_WIDTH:.0e}")
+    print(
+        f"with_plugin draw: {float(jnp.mean(diagnostics.diverging)):.1%} divergent, "
+        f"ESS={ {k: round(v) for k, v in diagnostics.ess.items()} }, "
+        f"split-Rhat={ {k: round(v, 4) for k, v in diagnostics.split_rhat.items()} }"
+    )
 
 
 if __name__ == "__main__":
