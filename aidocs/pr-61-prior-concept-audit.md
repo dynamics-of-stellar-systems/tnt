@@ -725,3 +725,205 @@ workflow this document already states.
   review and no PR status checks; no merge conflict is reported.
 
 Assisted by Codex (OpenAI).
+
+
+---
+
+## Further re-review — 2026-10-14 (fix commit `690569d`)
+
+Reviewed PR head: `690569d74ffe997db8199693e0296bb3aef31312`.
+Remote main: `4bb8711150a3a6511b8edc1d1b0d9c6fccf226f0`.
+This section follows all existing audit text and author responses; none of
+that material was rewritten. The review used a separate managed worktree,
+leaving the active `codex/mge-traceable-inverses` checkout untouched.
+
+### Judgment
+
+**Close, but address two diagnostic defects before merging.** R1 and R4
+are resolved. R2 now reports the actual batch, but its aggregation can hide
+undefined statistics behind healthy-looking extrema. R3's empty-input and
+signed-data defects are fixed, and its single-parameter summary now exists,
+but the saved figure clips and overlaps that summary. These are focused
+diagnostic corrections; the review found no new sampling-domain blocker in
+this commit. Correct the inaccurate sampling-bounds explanation noted below
+and strengthen the regression coverage while making these corrections.
+
+Candidate sampling remains the agreed scope. Issue #82's additional priors
+and inverse conversions remain separate; they are not prerequisites for
+merging this PR.
+
+### New commit and previous findings
+
+There is one new implementation commit since the previously reviewed audit
+commit `491959f`: `690569d`, covering production code, documentation, tests,
+and the author's responses. All changed files in that commit were reviewed.
+
+| Finding | Outcome at this head |
+| --- | --- |
+| R1: fixed downstream shape coordinates | Fixed for the valid fixed/free subsets tested. Both fixed `q` and fixed `u` now restrict earlier draws. |
+| R2: actual-batch diagnostics | Actual-batch reporting is fixed, with the pilot clearly labelled. The new extrema aggregation hides some non-finite site statistics; see the P2 follow-up below. |
+| R3: empty and signed plots | Fixed. Empty samples produce a placeholder; signed samples retain their histogram and trace data on linear axes. |
+| R3: one-parameter summary | Partially fixed: numerical text is generated but clipped and overlapped in the saved image. See the remaining P2 finding below. |
+| R4: global plotting backend | Fixed. Importing `ModelIterator` and rendering diagnostic figures preserve an application-selected SVG backend and its existing figure. |
+| Documentation notes | Default-prior exceptions and built-in/default versus user-plugin distinctions are documented; the PR description was refreshed. The bounds derivation still contains a local error, noted below. |
+
+### R1 verification: all fixed/free subsets
+
+Used the audit's `_POTENTIAL_PQU` and `_TRIAXIAL_MGE` fixtures, seed 1,
+1,000 draws per case, no plugins, and the actual
+`Potential.build_with_validity` path through `jax.jit(jax.vmap(...))`.
+Nominal fixed coordinates were `p=0.85`, `q=0.6`, and `u=0.93`.
+At TNT's default 64-bit precision:
+
+| Fixed fields | Valid proposals |
+| --- | --- |
+| None | 984/1,000 (98.4%) |
+| `p` | 999/1,000 (99.9%) |
+| `q` | 1,000/1,000 |
+| `u` | 1,000/1,000 |
+| `p, q` | 1,000/1,000 |
+| `p, u` | 999/1,000 (99.9%) |
+| `q, u` | 1,000/1,000 |
+| `p, q, u` | 1,000/1,000 |
+
+All 1,000 draws in each case satisfy the ideal joint-domain inequalities
+at this precision. The full builder additionally rejects numerical boundary
+cases, so these percentages are not a promise that every proposal will
+build. The former 19–39% fixed-coordinate acceptance problem is resolved.
+
+The same eight cases were also checked at 32-bit precision: fixed-coordinate
+cases were 98.4–100% valid, while the fully free case was only 80.8% valid.
+A separate comparison loaded the previous commit's sampling function and
+ran it against the same unchanged builder: previous and current samplers
+produced identical arrays at every site and both gave 808/1,000 valid
+proposals, with or without the outer JIT. This lower 32-bit validity rate
+therefore predates `690569d`; it is not a regression introduced by the R1
+fix. It is an existing numerical limitation worth separate investigation,
+and the earlier blanket description of residual failures as approximately
+1–2% at float32 should not be relied on for this fixture/build path.
+
+### R2 and R4 verification
+
+For actual batches with empty history and with two completed iterations,
+checked the returned proposals against samples drawn using the exact same
+folded key. Compared logged divergence counts, minimum effective sample
+size (ESS), and maximum split-R-hat with the diagnostics returned for that
+batch; the numbers matched. Iteration labels were 0 and 2, consistent with
+TNT's zero-based model-iteration numbering. Reporting whole-batch summaries
+before the candidate-count cap is reasonable: those diagnostics describe
+the sampling run that supplies the selected candidates.
+
+The backend probe selected SVG, created an application figure, imported
+`ModelIterator`, and rendered both ordinary and empty diagnostic figures.
+SVG remained selected throughout and the application figure remained
+registered. Using a figure-local `FigureCanvasAgg` resolves the import
+side effect.
+
+### Remaining R2 follow-up — P2: batch summaries can hide undefined statistics
+
+Location: `tnt/parameter_generator.py:316-325`, particularly
+`min(diagnostics.ess.values())` and `max(diagnostics.split_rhat.values())`.
+
+Python's ordinary `min`/`max` can skip a later `NaN` because its comparisons
+are false. A batch with a finite first site and an undefined later site can
+therefore be logged as having healthy worst statistics. The result depends
+on site order, and the logger omits the affected site's name.
+
+**Direct reproduction:** a supported pure-Predictive NFW prior with
+`m ~ LogUniform(1e10, 1e13)` Msun and `r_s ~ Delta(15.0)` kpc, both declared
+non-fixed, seed 0 folded with iteration 0, and 1,000 draws:
+
+- Returned ESS: `halo.m = 1018.8949471025809`, `halo.r_s = NaN`.
+- Returned split-R-hat: `halo.m = 0.9991406888220605`, `halo.r_s = NaN`.
+- `r_s` has one unique sampled value, as its point distribution intends.
+- The actual generator logs: `0/1000 divergent draws, min ESS 1019,
+  max split-R-hat 0.999.` No undefined statistic or affected site is reported.
+
+An intentionally constant prior is legitimate; its undefined diagnostics
+should be labelled explicitly. The same aggregation is used for MCMC
+batches, where a constant/stuck site can be important sampling information.
+
+**Required change:** explicitly identify and report non-finite ESS/R-hat
+values and their site names. Finite extrema can still be useful alongside
+that information, but should not imply that all sites have usable
+statistics. Add a regression with mixed finite/non-finite sites in both
+orders. This remains advisory; no automated rejection threshold is needed.
+
+### Remaining R3 follow-up — P2: the one-parameter summary is clipped
+
+Location: `tnt/priors_diagnostic_plot.py:367-403`, especially the new
+`fig.text(..., top, ..., va="bottom")` placement at lines 375–384.
+
+Reproduced with a complete valid `LongMuraliBarPotential`, fixed mass and
+lengths, and `alpha ~ Uniform(-1, 1)` radians. Seed 0, 1,000 draws:
+
+- The histogram now accounts for all **1,000** draws, and the trace includes
+  all **513 negative** draws. Both axes correctly use linear scales.
+- The saved image is **1,287 × 390 pixels**. The four-line numerical summary
+  occupies a bounding box beginning at `y=327.60` with height `93.19`, so its
+  top reaches `y=420.79`: approximately **31 pixels outside the image**.
+- The summary overlaps the figure title; the title also overlaps the legend.
+  The parameter label is clipped and the remaining summary is difficult to
+  read. The PNG is successfully written, so the new existence-only test
+  passes despite the unusable layout.
+
+**Required change:** reserve enough dedicated space for the title, legend,
+and numerical summary, especially for one-row plots. Increase figure height
+and/or place the summary in its own panel rather than stacking it into the
+existing 16% top margin. Verify the saved figure, including longer component
+and parameter names, and add a regression that checks summary visibility
+and separation. Merely finding the summary text in a `Figure` or checking
+that a PNG exists does not verify that users can read it.
+
+### Documentation correction and regression coverage
+
+- **P3, inaccurate bound explanation:**
+  `tnt/potential/triaxial_mge.py:345-348` and the author's R1 response above
+  call `u * q'` an upper bound for `p`. The correct bounds when `u` is fixed
+  are `p_lower = max(q_if_known_or_zero, u * q')` and `p_upper = u`, before
+  the existing numerical widening. The production code implements those
+  bounds correctly. Correct the explanation; describe the unconditional
+  `Uniform(0, 1)` formula in `docs/source/priors.md` as the all-free case.
+- The new commit adds a logging regression and six plotting regressions,
+  but no automated fixed/free-subset sampling regression or backend-
+  preservation regression. Its PR description claims every fix has a
+  regression test; that overstates the checked-in coverage. Preserve the
+  manual reproductions as meaningful regressions for R1 and R4, and make
+  the plotting tests check represented data and readable summaries. This
+  coverage recommendation is distinct from the reproduced layout defect.
+
+### Validation and merge integration
+
+- Rebuilt a separately named Colima Linux `x86_64` image from the frozen
+  lockfile: Python 3.12.13, JAX 0.10.2, NumPyro 0.21.0, Matplotlib 3.11.2.
+  The other chat's image and checkout were preserved. Scientific processes
+  ran sequentially after its test container finished.
+- **238 focused tests passed** in ten modules, each in a separate Python
+  process: priors (24), parameter generator (11), configuration (89), resume
+  compatibility (30), diagnostic plotting (8), model-search integration (9),
+  model iterator (34), shared traceable conversions (17), parameterized MGE
+  construction (15), and packaged defaults (1).
+- Ruff passed. Strict Sphinx (`-E -b html -W`) passed.
+- Direct probes covered all eight shape subsets at both precisions,
+  actual-batch samples/logged numbers, backend preservation, empty figures,
+  signed histogram/trace contents, saved-figure layout, and non-finite
+  summary aggregation. The numerical and layout findings above reproduce
+  despite the passing checked-in tests.
+- Test warnings were the existing TensorFlow Probability deprecated-JAX-API
+  warning; no selected test failed.
+- The full repository suite, Python 3.13, and a merged-with-main execution
+  were not rerun. The author's full-suite claim is additional evidence,
+  rather than an independently repeated result of this review.
+- The PR head was unchanged on recheck. GitHub reports no merge conflict,
+  the existing requested-changes review, and no PR status checks.
+- Whitespace and append-only preservation were checked on the final audit
+  edit. Only this audit file was changed by the review.
+
+After the remaining diagnostic corrections, repeat the affected checks and
+validate the combination with current `main` before merging. Main's
+orbit-start-space change remains outside this review's isolated PR-head
+execution; GitHub reports no merge conflict, but mergeability alone does
+not verify the combined runtime. Keep the temporary audit until the review
+is resolved, then remove it before merging per the project workflow.
+
+Assisted by Codex (OpenAI).
