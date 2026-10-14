@@ -162,12 +162,23 @@ Shape bounds compare unit-free ratios: `0.6` and `60 percent` have the same
 domain, while gradients and reported raw parameters preserve the declared
 coordinate scale and units.
 
-The oblate inverse `q_min_from_inclination_with_validity` returns a unit-free
-JAX scalar and a scalar validity flag. It shares the ordinary inverse's
-geometry and cancellation checks, independently of template normalization.
-Invalid results are zero placeholders; static unit, type, and shape errors
-still raise. The ordinary `q_min_from_inclination` returns a Python float
-and raises `MGEDeprojectionError` for invalid numerical geometry.
+The inverse methods `q_min_from_inclination_with_validity`,
+`triaxial_intrinsic_shape_with_validity`, and
+`T_Tmaj_Tmin_from_viewing_angles_with_validity` return unit-free JAX scalars
+(a tuple for triaxial shape) and a scalar validity flag. They share numerical
+predicates with the ordinary inverse methods, independently of template
+normalization. Invalid results are zero placeholders with zero derivatives,
+including in mixed batches; static unit, type, and shape errors still raise.
+The ordinary inverse methods return Python floats and raise
+`MGEDeprojectionError` for invalid numerical geometry.
+
+Triaxial inverse validity checks only the flattest Gaussian's geometry and
+covariance-inversion accuracy, with its own `PA_twist` included. Other
+Gaussians can still fail deprojection at those global angles: a true inverse
+flag does not replace full-MGE construction validation. `T_maj_min` recovery
+also rejects its coordinate singularities (`q=1`, `p=1`, or `p=q` at the
+working precision). No angle folding or endpoint correction is applied by
+the inverse; it reports the shape actually represented by the supplied angles.
 
 Migration: replace `build_potential(...)` or `Potential.build(...)` with
 `potential, valid = Potential.build_with_validity(...)` and check `valid`

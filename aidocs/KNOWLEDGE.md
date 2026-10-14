@@ -338,11 +338,17 @@
   inverse reporting restores the declared shape-coordinate units. In
   `ParameterConstraint`, `unit=""` means a unit-free comparison and only
   `unit=None` selects the proposed value's own unit.
-  The oblate inverse `q_min_from_inclination_with_validity` returns a
-  unit-free JAX scalar and validity flag from the same geometry predicates
-  as the eager inverse. It is independent of template normalization. Invalid
-  results have zero values and derivatives, including in mixed batches;
-  static unit/type/shape errors still raise.
+  The inverse `q_min_from_inclination_with_validity`,
+  `triaxial_intrinsic_shape_with_validity`, and
+  `T_Tmaj_Tmin_from_viewing_angles_with_validity` methods return unit-free
+  JAX scalars and one validity flag. Their eager counterparts share the
+  numerical predicates and return Python floats, raising on invalid geometry.
+  Inverse geometry is independent of template normalization. Triaxial inverse
+  validity certifies only the flattest Gaussian (including its twist and
+  covariance accuracy), not deprojection of every Gaussian; full construction
+  owns that check. T-coordinate recovery additionally rejects singular
+  coordinate denominators. Invalid results have zero values and derivatives,
+  including in mixed batches; static unit/type/shape errors still raise.
   `Potential.build_with_validity` is the only potential construction interface;
   `build_potential`, `Potential.build`, `Potential.from_settings`, component
   `build`, and the four MGE `_build` factories have been removed.

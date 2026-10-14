@@ -96,3 +96,148 @@ def test_oblate_inverse_uses_geometry_independently_of_normalization():
 def test_oblate_inverse_static_errors_raise(angle):
     with pytest.raises(ValueError):
         jax.jit(lambda a: _mge().q_min_from_inclination_with_validity(a))(angle)
+
+
+def _shape_from_covariance(angles, observed, twist, scheme):
+    """Independent inversion of projected covariance, in NumPy float64."""
+    theta, phi, psi = np.asarray(angles, dtype=float)
+    psi += twist
+    x = np.array([np.sin(phi), -np.cos(phi), 0])
+    y = np.array(
+        [np.cos(theta) * np.cos(phi), np.cos(theta) * np.sin(phi), -np.sin(theta)]
+    )
+    matrix = np.stack([x * x, y * y, x * y])
+    cs, sn = np.cos(psi), np.sin(psi)
+    sky = np.array(
+        [
+            sn**2 + observed**2 * cs**2,
+            cs**2 + observed**2 * sn**2,
+            (observed**2 - 1) * sn * cs,
+        ]
+    )
+    variances = np.linalg.solve(matrix, sky)
+    p, q = np.sqrt(variances[1:] / variances[0])
+    u = 1 / np.sqrt(variances[0])
+    if scheme == "pqu":
+        return np.array([p, q, u])
+    return np.array(
+        [
+            (1 - p**2) / (1 - q**2),
+            (1 - u**2) / (1 - p**2),
+            (u**2 * observed**2 - q**2) / (p**2 - q**2),
+        ]
+    )
+
+
+def _triaxial_inverse(mge, scheme, values, unit="rad"):
+    angles = tuple(Quantity(value, unit) for value in values)
+    convert = (
+        mge.triaxial_intrinsic_shape_with_validity
+        if scheme == "pqu"
+        else mge.T_Tmaj_Tmin_from_viewing_angles_with_validity
+    )
+    result, valid = convert(*angles)
+    return jnp.stack(result), valid
+
+
+@pytest.mark.parametrize("x64", [False, True])
+@pytest.mark.parametrize("scheme", ["pqu", "T_maj_min"])
+@pytest.mark.parametrize("unit", ["rad", "deg"])
+def test_triaxial_inverse_matches_covariance_and_finite_difference(x64, scheme, unit):
+    with jax.enable_x64(x64):
+        mge = eqx.tree_at(
+            lambda m: m.PA_twist, _mge(), Quantity(jnp.array([0.0, 0.3]), "rad")
+        )
+        angles = mge.triaxial_viewing_angles(0.85, 0.6, 0.93)
+        values = jnp.array([angle.ustrip(unit) for angle in angles])
+        inverse = lambda v: _triaxial_inverse(mge, scheme, v, unit)
+        result, valid = jax.jit(inverse)(values)
+        assert bool(valid) and valid.shape == ()
+        radians_per_unit = np.pi / 180 if unit == "deg" else 1.0
+        observed = float(mge.q.ustrip("")[1])
+        twist = float(mge.PA_twist.ustrip("rad")[1])
+        reference = lambda v: _shape_from_covariance(
+            np.asarray(v, dtype=float) * radians_per_unit, observed, twist, scheme
+        )
+        np.testing.assert_allclose(result, reference(values), rtol=3e-5, atol=2e-6)
+        step = 1e-5 / radians_per_unit
+        expected = np.column_stack(
+            [
+                (
+                    reference(np.asarray(values) + np.eye(3)[i] * step)
+                    - reference(np.asarray(values) - np.eye(3)[i] * step)
+                )
+                / (2 * step)
+                for i in range(3)
+            ]
+        )
+        for differentiate in (jax.jacfwd, jax.jacrev):
+            gradient = jax.jit(differentiate(lambda v: inverse(v)[0]))(values)
+            np.testing.assert_allclose(gradient, expected, rtol=3e-4, atol=2e-5)
+        eager = (
+            mge.triaxial_intrinsic_shape
+            if scheme == "pqu"
+            else mge.T_Tmaj_Tmin_from_viewing_angles
+        )
+        np.testing.assert_allclose(
+            eager(*(Quantity(v, unit) for v in values)), result, rtol=3e-5
+        )
+
+
+@pytest.mark.parametrize("x64", [False, True])
+@pytest.mark.parametrize("scheme", ["pqu", "T_maj_min"])
+def test_triaxial_inverse_rejections_batch_with_zero_gradients(x64, scheme):
+    with jax.enable_x64(x64):
+        mge = _mge()
+        angles = jnp.array(
+            [a.ustrip("rad") for a in mge.triaxial_viewing_angles(0.85, 0.6, 0.93)]
+        )
+        proposals = jnp.stack(
+            [
+                angles,
+                angles.at[0].set(0),
+                angles.at[1].set(0),
+                angles.at[0].set(jnp.nan),
+                angles.at[1].set(jnp.inf),
+                jnp.array([0.3, 0.96, 0.1]),
+                angles,
+            ]
+        )
+        inverse = lambda v: _triaxial_inverse(mge, scheme, v)
+        result, valid = jax.jit(jax.vmap(inverse))(proposals)
+        np.testing.assert_array_equal(
+            valid, [True, False, False, False, False, False, True]
+        )
+        np.testing.assert_array_equal(result[1:-1], np.zeros((5, 3)))
+        for differentiate in (jax.jacfwd, jax.jacrev):
+            gradients = jax.jit(jax.vmap(differentiate(lambda v: inverse(v)[0])))(
+                proposals
+            )
+            np.testing.assert_array_equal(gradients[1:-1], np.zeros((5, 3, 3)))
+            assert np.isfinite(gradients).all()
+        eager = (
+            mge.triaxial_intrinsic_shape
+            if scheme == "pqu"
+            else mge.T_Tmaj_Tmin_from_viewing_angles
+        )
+        for proposal in proposals[1:-1]:
+            with pytest.raises(MGEDeprojectionError, match="anchor geometry"):
+                eager(*(Quantity(value, "rad") for value in proposal))
+
+
+@pytest.mark.parametrize("x64", [False, True])
+def test_circular_anchor_has_shape_but_singular_T_coordinates(x64):
+    with jax.enable_x64(x64):
+        mge = eqx.tree_at(lambda m: m.q, _mge(), Quantity(jnp.ones(2), ""))
+        angles = jnp.array([1.0, 1.0, 0.0])
+        shape, valid = _triaxial_inverse(mge, "pqu", angles)
+        assert bool(valid)
+        np.testing.assert_array_equal(shape, [1, 1, 1])
+        inverse = lambda v: _triaxial_inverse(mge, "T_maj_min", v)
+        result, valid = jax.jit(inverse)(angles)
+        assert not bool(valid)
+        np.testing.assert_array_equal(result, np.zeros(3))
+        gradient = jax.jit(jax.jacrev(lambda v: inverse(v)[0]))(angles)
+        np.testing.assert_array_equal(gradient, np.zeros((3, 3)))
+        with pytest.raises(MGEDeprojectionError, match="coordinate singularity"):
+            mge.T_Tmaj_Tmin_from_viewing_angles(*(Quantity(v, "rad") for v in angles))
