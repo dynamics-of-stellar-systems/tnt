@@ -176,6 +176,12 @@ def raw_potential_parameters(
     since `AbstractPotentialComponent.parameters` is deliberately
     parameterization-independent.
 
+    Registered MGE inverses support JAX tracing and preserve declared units.
+    Invalid eager MGE reporting raises; invalid traced shape coordinates are
+    nonfinite. This dictionary interface does not validate the whole potential;
+    use it only after successful construction. For an explicit inverse validity
+    flag, use the standalone MGE inverse ``with_validity`` methods.
+
     Args:
         potential_settings: A resolved configuration's `potential` section
             (e.g. `ModelIterator.potential_settings`) -- each component's

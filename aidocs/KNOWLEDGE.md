@@ -349,6 +349,12 @@
   owns that check. T-coordinate recovery additionally rejects singular
   coordinate denominators. Invalid results have zero values and derivatives,
   including in mixed batches; static unit/type/shape errors still raise.
+  Registered MGE `invert` converters and `raw_potential_parameters` are also
+  traceable and preserve declared units after mass rescaling. Their dictionary
+  return contract has no flag: invalid eager MGE reporting raises, and invalid
+  traced shape coordinates are nonfinite rather than zero placeholders. Use
+  reporting only on a successfully constructed potential; use standalone
+  inverse `with_validity` methods for arbitrary angle proposals.
   `Potential.build_with_validity` is the only potential construction interface;
   `build_potential`, `Potential.build`, `Potential.from_settings`, component
   `build`, and the four MGE `_build` factories have been removed.

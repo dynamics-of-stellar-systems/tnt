@@ -12,7 +12,7 @@ with the intrinsic axis ratios `p = B/A`, `q = C/A` and the compression `u`
 of the triaxial-Schwarzschild / DYNAMITE-successor literature (van den Bosch
 et al. 2008, MNRAS 385, 647). `_pqu_to_tpp` shares its forward numerical
 candidate with `AbstractMGE.triaxial_viewing_angles`; `_tpp_to_pqu` uses
-`triaxial_intrinsic_shape` for the inverse. The conversion is anchored at
+`triaxial_intrinsic_shape_with_validity` for the inverse. The conversion is anchored at
 `q' = min(component q)`.
 
 `parameterization: "T_maj_min"` is a second option, over the same
@@ -21,7 +21,7 @@ for more uniform shape/viewing-geometry sampling (Quenneville, Liepold & Ma
 2022, ApJ 926:30, sec. 3). `_tmajmin_to_tpp` / `_tpp_to_tmajmin` are the
 matching adapters, sharing the forward numerical candidate with
 `AbstractMGE.viewing_angles_from_T_Tmaj_Tmin` and using
-`T_Tmaj_Tmin_from_viewing_angles` for the inverse. Both directions convert
+`T_Tmaj_Tmin_from_viewing_angles_with_validity` for the inverse. Both directions convert
 through `(p, q, u)` and share its viewing-geometry rules.
 """
 
@@ -40,6 +40,7 @@ from tnt.mge import (
     LightMGE,
     MassMGE,
     _conversion_valid,
+    _inverse_reporting_values,
 )
 from tnt.potential.components import AbstractPotentialComponent
 from tnt.potential.registry import (
@@ -279,18 +280,19 @@ def _tpp_to_pqu(
 ) -> dict[str, Quantity]:
     """Report native `(theta, phi, psi)` back as `(p, q, u)` for `AllModels`.
 
-    `AbstractMGE.triaxial_intrinsic_shape` -- the anchor-component slice of
-    `deproject_triaxial`, the numerical inverse of `triaxial_viewing_angles`
-    (a boundary `u` comes back as the nudged value; see that method).
+    Uses the shared traceable inverse of `triaxial_viewing_angles` (a boundary
+    `u` comes back as the nudged value). Invalid eager reporting raises;
+    invalid traced shapes are nonfinite.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register `pqu`
         raise InvalidPotentialParametersError(
             "The 'pqu' parameterization requires an MGE component."
         )
-    p, q, u = mge.triaxial_intrinsic_shape(
+    shape, valid = mge.triaxial_intrinsic_shape_with_validity(
         native["theta"], native["phi"], native["psi"]
     )
+    p, q, u = _inverse_reporting_values(shape, valid)
     mass = _mass_parameter_name(native)
     mass_value = native[mass]
     if mass in declared_units:
@@ -383,18 +385,19 @@ def _tpp_to_tmajmin(
     """Report native ``(theta, phi, psi)`` back as ``(T, T_maj, T_min)`` for
     `AllModels`.
 
-    `AbstractMGE.T_Tmaj_Tmin_from_viewing_angles` -- the numerical inverse of
-    `viewing_angles_from_T_Tmaj_Tmin` (a boundary value comes back nudged,
-    same as `pqu`'s `(p, q, u)`; see `triaxial_viewing_angles`).
+    Uses the shared traceable inverse of `viewing_angles_from_T_Tmaj_Tmin`
+    (a boundary value comes back nudged, as for `pqu`). Invalid eager reporting
+    raises; invalid traced shapes are nonfinite.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register this
         raise InvalidPotentialParametersError(
             "The 'T_maj_min' parameterization requires an MGE component."
         )
-    T, T_maj, T_min = mge.T_Tmaj_Tmin_from_viewing_angles(
+    shape, valid = mge.T_Tmaj_Tmin_from_viewing_angles_with_validity(
         native["theta"], native["phi"], native["psi"]
     )
+    T, T_maj, T_min = _inverse_reporting_values(shape, valid)
     mass = _mass_parameter_name(native)
     mass_value = native[mass]
     if mass in declared_units:

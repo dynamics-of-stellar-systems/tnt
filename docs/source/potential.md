@@ -180,6 +180,14 @@ also rejects its coordinate singularities (`q=1`, `p=1`, or `p=q` at the
 working precision). No angle folding or endpoint correction is applied by
 the inverse; it reports the shape actually represented by the supplied angles.
 
+Registered MGE `invert` converters and `raw_potential_parameters` also support
+JAX tracing, including after potential mass rescaling. Recovered values retain
+the units declared in configuration. These reporting interfaces return
+dictionaries without validity flags: invalid ordinary MGE reporting raises,
+while invalid traced shape coordinates are nonfinite. Use reporting only on a
+successfully constructed potential. For conversion of arbitrary proposed angles,
+use the standalone inverse `with_validity` methods and check their flag.
+
 Migration: replace `build_potential(...)` or `Potential.build(...)` with
 `potential, valid = Potential.build_with_validity(...)` and check `valid`
 before using the result. `Potential.from_settings(...)` is removed; call

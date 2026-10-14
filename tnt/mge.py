@@ -331,6 +331,19 @@ def _check_conversion(checks: dict[str, jax.Array]) -> None:
             raise MGEDeprojectionError(message)
 
 
+def _inverse_reporting_values(result: Any, valid: jax.Array) -> Any:
+    """Preserve eager reporting errors; mark invalid traced shapes as nonfinite.
+
+    Registered inverses return dictionaries without a validity flag, so they
+    must not expose the validity API's zero placeholders as recovered shapes.
+    Callers needing explicit rejection use the standalone with_validity APIs.
+    """
+    if not isinstance(valid, jax.core.Tracer):
+        _check_conversion({"Cannot report an invalid inverse MGE shape.": valid})
+        return result
+    return jax.tree.map(lambda value: jnp.where(valid, value, jnp.nan), result)
+
+
 def _p_q_u_candidate(
     T: jax.Array, T_maj: jax.Array, T_min: jax.Array, q_obs: jax.Array
 ) -> tuple[tuple[jax.Array, ...], dict[str, jax.Array]]:
