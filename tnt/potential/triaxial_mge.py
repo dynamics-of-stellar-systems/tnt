@@ -213,8 +213,9 @@ def _galax_potential_from_deprojected(
 # flattest Gaussian <-> global viewing angles `(theta, phi, psi)`, matching
 # DYNAMITE `triax_pqu2tpp` (van den Bosch et al. 2008, MNRAS 385, 647). Both
 # directions -- including the anchor-twist bookkeeping -- live on
-# `AbstractMGE` (`triaxial_viewing_angles` / `triaxial_intrinsic_shape`);
-# these converters are just the parameterization-registry adapters.
+# `AbstractMGE` (`triaxial_viewing_angles` / `triaxial_intrinsic_shape` and
+# their `with_validity` counterparts); the registry adapters use their shared
+# numerical candidates and the inverse validity interface.
 
 _PQU_SHAPE_CONSTRAINTS: dict[str, ParameterConstraint] = {
     "p": ParameterConstraint(
@@ -334,9 +335,9 @@ _register_pqu("TriaxialMassMGEPotential", "mge_mass_scale", "dimensionless")
 # viewing geometry (Quenneville, Liepold & Ma 2022, ApJ 926:30, sec. 3), not
 # a different deprojection -- same anchor, same underlying geometry. Both
 # directions live on `AbstractMGE` (`viewing_angles_from_T_Tmaj_Tmin` /
-# `T_Tmaj_Tmin_from_viewing_angles`), which delegate to `triaxial_viewing_angles`
-# / `triaxial_intrinsic_shape` for everything beyond the `(T, T_maj, T_min)`
-# <-> `(p, q, u)` algebra itself.
+# `T_Tmaj_Tmin_from_viewing_angles` and their `with_validity` counterparts).
+# Beyond the `(T, T_maj, T_min)` <-> `(p, q, u)` algebra, they share the same
+# viewing-angle and inverse-anchor candidates as the `pqu` methods.
 
 _TMAJMIN_SHAPE_CONSTRAINTS: dict[str, ParameterConstraint] = {
     name: ParameterConstraint(minimum=0.0, maximum=1.0, unit="")

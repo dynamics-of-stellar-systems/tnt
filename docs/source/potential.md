@@ -416,8 +416,8 @@ potential:
   domain (`~1.4e-3` at float32, negligible at float64), so a declared `u = 1`
   is honoured to that margin and `AllModels` reports the recovered value.
   Both directions are `AbstractMGE` methods (`triaxial_viewing_angles` and its
-  inverse `triaxial_intrinsic_shape`, the anchor slice of
-  `deproject_triaxial`), so a `(p, q, u)` config and its equivalent
+  inverse `triaxial_intrinsic_shape`, which checks the anchor's geometry
+  independently of full-MGE construction), so a `(p, q, u)` config and its equivalent
   `(theta, phi, psi)` config build an identical potential and `AllModels`
   reports either faithfully. `pqu` is registered only for
   `TriaxialLightMGEPotential` and `TriaxialMassMGEPotential`.

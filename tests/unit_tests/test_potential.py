@@ -3057,7 +3057,7 @@ def test_pqu_domain_invalid_value_is_rejected_at_build_time() -> None:
 
 
 # (T, T_maj, T_min) equivalent to _PQU, against _triaxial_light_mge()'s q' = 0.76
-# (tnt.mge._T_Tmaj_Tmin_from_p_q_u(0.85, 0.60, 0.93, 0.76)):
+# (T=(1-p^2)/(1-q^2), T_maj=(1-u^2)/(1-p^2), T_min=((uq')^2-q^2)/(p^2-q^2)):
 _TMAJMIN = {
     "T": Quantity(0.4335937500000001, ""),
     "T_maj": Quantity(0.4868468468468463, ""),

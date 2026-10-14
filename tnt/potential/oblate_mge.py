@@ -214,8 +214,9 @@ def _galax_potential_from_oblate_deprojected(
 # The `q_min` parameterization: the anchor Gaussian's intrinsic axial ratio
 # <-> the single global inclination, the oblate counterpart of
 # `triaxial_mge`'s `pqu`. Both directions live on `AbstractMGE`
-# (`inclination_from_q_min` / `q_min_from_inclination`); these converters are
-# just the parameterization-registry adapters.
+# (`inclination_from_q_min` / `q_min_from_inclination` and their
+# `with_validity` counterparts); these converters adapt the shared candidates
+# and inverse validity interface to the parameterization registry.
 
 _QMIN_CONSTRAINT = ParameterConstraint(
     minimum=0.0, minimum_inclusive=False, maximum=1.0, unit=""
