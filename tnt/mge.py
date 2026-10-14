@@ -721,6 +721,12 @@ class AbstractMGE(eqx.Module):
             if not isinstance(angle, Quantity) or angle.ndim != 0:
                 raise ValueError("MGE viewing angles must be scalar Quantities.")
             validate_dimension(angle.unit, "angle", "MGE viewing angle")
+            dtype = angle.dtype
+            if not (
+                jnp.issubdtype(dtype, jnp.integer)
+                or jnp.issubdtype(dtype, jnp.floating)
+            ):
+                raise TypeError("MGE viewing angles must be real scalar Quantities.")
         n = self.I.shape
         if len(n) != 1 or n[0] == 0:
             raise ValueError("MGE columns must be nonempty one-dimensional arrays.")

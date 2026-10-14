@@ -355,6 +355,13 @@
   traced shape coordinates are nonfinite rather than zero placeholders. Use
   reporting only on a successfully constructed potential; use standalone
   inverse `with_validity` methods for arbitrary angle proposals.
+  Viewing angles must be real scalar Quantities (integer or floating-point
+  values); boolean and complex values are rejected as static type errors.
+  Inverse regression coverage includes traced anchor selection/ties, independent
+  covariance values and derivatives, interior forward/inverse identity
+  derivatives, equivalent angle units, scaled reporting units, mixed rejected
+  batches, and both precision modes. The forward endpoint policies remain:
+  inverse compression reports the actually constructed, margin-adjusted value.
   `Potential.build_with_validity` is the only potential construction interface;
   `build_potential`, `Potential.build`, `Potential.from_settings`, component
   `build`, and the four MGE `_build` factories have been removed.

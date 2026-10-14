@@ -188,6 +188,22 @@ while invalid traced shape coordinates are nonfinite. Use reporting only on a
 successfully constructed potential. For conversion of arbitrary proposed angles,
 use the standalone inverse `with_validity` methods and check their flag.
 
+For example, one complete triaxial-angle proposal can be recovered in a
+compiled function without converting traced values to Python scalars:
+
+```python
+recover = jax.jit(lambda angles: mge.triaxial_intrinsic_shape_with_validity(*angles))
+(p, q, u), valid = recover((theta, phi, psi))  # scalar angle Quantities
+```
+
+Inside another compiled calculation, use JAX control flow to condition use of
+the recovered shape on `valid`. Angle inputs must be real scalar Quantities;
+boolean and complex-valued angles are static setup errors. Away from the
+forward conversion's precision margins, converting shape coordinates to angles
+and back has identity derivatives within numerical tolerance. That identity
+does not apply to clamped compression endpoints or the singular edge-on
+inclination derivative.
+
 Migration: replace `build_potential(...)` or `Potential.build(...)` with
 `potential, valid = Potential.build_with_validity(...)` and check `valid`
 before using the result. `Potential.from_settings(...)` is removed; call
