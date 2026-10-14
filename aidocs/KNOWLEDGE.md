@@ -338,6 +338,30 @@
   inverse reporting restores the declared shape-coordinate units. In
   `ParameterConstraint`, `unit=""` means a unit-free comparison and only
   `unit=None` selects the proposed value's own unit.
+  The inverse `q_min_from_inclination_with_validity`,
+  `triaxial_intrinsic_shape_with_validity`, and
+  `T_Tmaj_Tmin_from_viewing_angles_with_validity` methods return unit-free
+  JAX scalars and one validity flag. Their eager counterparts share the
+  numerical predicates and return Python floats, raising on invalid geometry.
+  Inverse geometry is independent of template normalization. Triaxial inverse
+  validity certifies only the flattest Gaussian (including its twist and
+  covariance accuracy), not deprojection of every Gaussian; full construction
+  owns that check. T-coordinate recovery additionally rejects singular
+  coordinate denominators. Invalid results have zero values and derivatives,
+  including in mixed batches; static unit/type/shape errors still raise.
+  Registered MGE `invert` converters and `raw_potential_parameters` are also
+  traceable and preserve declared units after mass rescaling. Their dictionary
+  return contract has no flag: invalid eager MGE reporting raises, and invalid
+  traced shape coordinates are nonfinite rather than zero placeholders. Use
+  reporting only on a successfully constructed potential; use standalone
+  inverse `with_validity` methods for arbitrary angle proposals.
+  Viewing angles must be real scalar Quantities (integer or floating-point
+  values); boolean and complex values are rejected as static type errors.
+  Inverse regression coverage includes traced anchor selection/ties, independent
+  covariance values and derivatives, interior forward/inverse identity
+  derivatives, equivalent angle units, scaled reporting units, mixed rejected
+  batches, and both precision modes. The forward endpoint policies remain:
+  inverse compression reports the actually constructed, margin-adjusted value.
   `Potential.build_with_validity` is the only potential construction interface;
   `build_potential`, `Potential.build`, `Potential.from_settings`, component
   `build`, and the four MGE `_build` factories have been removed.
@@ -648,13 +672,13 @@
   compression <-> `(theta, phi, psi)` viewing angles, van den Bosch et al.
   2008 MNRAS 385, 647 (= DYNAMITE `triax_pqu2tpp`). Both directions live on
   `AbstractMGE`: `triaxial_viewing_angles(p, q, u) -> (theta, phi, psi)` and
-  its inverse `triaxial_intrinsic_shape(theta, phi, psi) -> (p, q, u)` (the
-  anchor slice of `deproject_triaxial`). Anchor `q' = min` component `q`; the
-  anchor Gaussian's `PA_twist` is folded out of `psi` by
+  its inverse `triaxial_intrinsic_shape(theta, phi, psi) -> (p, q, u)`
+  (geometry of the same anchor Gaussian used by full deprojection). Anchor
+  `q' = min` component `q`; the anchor Gaussian's `PA_twist` is folded out of `psi` by
   `triaxial_viewing_angles` and back in by `triaxial_intrinsic_shape`, so
   `(p, q, u)` keep their meaning for a twisted MGE. Ties for min `q'` break by
   component order. `_pqu_to_tpp` / `_tpp_to_pqu` in `tnt.potential.triaxial_mge`
-  share traceable numerical candidates with the standalone scientific methods.
+  use the shared forward candidate and inverse `with_validity` API.
   Failed forward conversions produce nonfinite angles for the shared builder
   to reject with `valid=False`; standalone methods retain diagnostic exceptions.
   A `pqu` config and its equivalent
@@ -675,13 +699,17 @@
   [0,1]^3` (Quenneville, Liepold & Ma 2022, ApJ 926:30, sec. 3 eqs. 3-4, 7),
   chosen for more uniform shape/viewing-geometry sampling, not a different
   deprojection. The `(T,T_maj,T_min) <-> (p,q,u)` algebra (given the anchor's
-  `q'`) is `tnt.mge._p_q_u_from_T_Tmaj_Tmin` / `_T_Tmaj_Tmin_from_p_q_u`,
-  each guarding its own denominator (`eps`-scaled) before dividing;
+  `q'`) is `tnt.mge._p_q_u_candidate` / `_T_from_pqu_candidate`,
+  returning JAX values with numerical predicates. Forward algebra checks
+  coordinate bounds, denominator precision, and a positive minor axis;
+  reverse algebra checks denominator precision and finite results. Callers
+  validate physical geometry separately.
   `AbstractMGE.viewing_angles_from_T_Tmaj_Tmin` /
-  `T_Tmaj_Tmin_from_viewing_angles` compose that with `triaxial_viewing_angles`
-  / `triaxial_intrinsic_shape`, inheriting all of `pqu`'s domain/margin/
-  singularity handling for the `(theta, phi, psi)` side. `_tmajmin_to_tpp` /
-  `_tpp_to_tmajmin` in `tnt.potential.triaxial_mge` are the registry adapters,
+  `T_Tmaj_Tmin_from_viewing_angles` compose that algebra with the same
+  `_viewing_angles_candidate` / `_intrinsic_shape_candidate` used by `pqu`.
+  The forward candidate owns its domain, precision margins, and singularity
+  handling; the inverse candidate validates only anchor geometry and accuracy.
+  `_tmajmin_to_tpp` / `_tpp_to_tmajmin` in `tnt.potential.triaxial_mge` are the registry adapters,
   mirroring `_pqu_to_tpp` / `_tpp_to_pqu`. `T`, `T_maj`, `T_min` are each a
   closed `[0,1]` `ParameterConstraint`; no pairwise relation is needed at
   schema level (unlike `pqu`'s `q <= p`).

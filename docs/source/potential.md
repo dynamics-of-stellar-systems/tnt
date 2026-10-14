@@ -162,6 +162,48 @@ Shape bounds compare unit-free ratios: `0.6` and `60 percent` have the same
 domain, while gradients and reported raw parameters preserve the declared
 coordinate scale and units.
 
+The inverse methods `q_min_from_inclination_with_validity`,
+`triaxial_intrinsic_shape_with_validity`, and
+`T_Tmaj_Tmin_from_viewing_angles_with_validity` return unit-free JAX scalars
+(a tuple for triaxial shape) and a scalar validity flag. They share numerical
+predicates with the ordinary inverse methods, independently of template
+normalization. Invalid results are zero placeholders with zero derivatives,
+including in mixed batches; static unit, type, and shape errors still raise.
+The ordinary inverse methods return Python floats and raise
+`MGEDeprojectionError` for invalid numerical geometry.
+
+Triaxial inverse validity checks only the flattest Gaussian's geometry and
+covariance-inversion accuracy, with its own `PA_twist` included. Other
+Gaussians can still fail deprojection at those global angles: a true inverse
+flag does not replace full-MGE construction validation. `T_maj_min` recovery
+also rejects its coordinate singularities (`q=1`, `p=1`, or `p=q` at the
+working precision). No angle folding or endpoint correction is applied by
+the inverse; it reports the shape actually represented by the supplied angles.
+
+Registered MGE `invert` converters and `raw_potential_parameters` also support
+JAX tracing, including after potential mass rescaling. Recovered values retain
+the units declared in configuration. These reporting interfaces return
+dictionaries without validity flags: invalid ordinary MGE reporting raises,
+while invalid traced shape coordinates are nonfinite. Use reporting only on a
+successfully constructed potential. For conversion of arbitrary proposed angles,
+use the standalone inverse `with_validity` methods and check their flag.
+
+For example, one complete triaxial-angle proposal can be recovered in a
+compiled function without converting traced values to Python scalars:
+
+```python
+recover = jax.jit(lambda angles: mge.triaxial_intrinsic_shape_with_validity(*angles))
+(p, q, u), valid = recover((theta, phi, psi))  # scalar angle Quantities
+```
+
+Inside another compiled calculation, use JAX control flow to condition use of
+the recovered shape on `valid`. Angle inputs must be real scalar Quantities;
+boolean and complex-valued angles are static setup errors. Away from the
+forward conversion's precision margins, converting shape coordinates to angles
+and back has identity derivatives within numerical tolerance. That identity
+does not apply to clamped compression endpoints or the singular edge-on
+inclination derivative.
+
 Migration: replace `build_potential(...)` or `Potential.build(...)` with
 `potential, valid = Potential.build_with_validity(...)` and check `valid`
 before using the result. `Potential.from_settings(...)` is removed; call
@@ -374,8 +416,8 @@ potential:
   domain (`~1.4e-3` at float32, negligible at float64), so a declared `u = 1`
   is honoured to that margin and `AllModels` reports the recovered value.
   Both directions are `AbstractMGE` methods (`triaxial_viewing_angles` and its
-  inverse `triaxial_intrinsic_shape`, the anchor slice of
-  `deproject_triaxial`), so a `(p, q, u)` config and its equivalent
+  inverse `triaxial_intrinsic_shape`, which checks the anchor's geometry
+  independently of full-MGE construction), so a `(p, q, u)` config and its equivalent
   `(theta, phi, psi)` config build an identical potential and `AllModels`
   reports either faithfully. `pqu` is registered only for
   `TriaxialLightMGEPotential` and `TriaxialMassMGEPotential`.

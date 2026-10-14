@@ -15,7 +15,7 @@ Both types also accept `parameterization: "q_min"`, replacing `inclination`
 with the intrinsic axial ratio of the flattest observed (anchor) Gaussian
 component, `q_min <= q' = min(component q)`. `_qmin_to_inclination` /
 `_inclination_to_qmin` share the forward numerical candidate with
-`AbstractMGE.inclination_from_q_min` and use `q_min_from_inclination` for
+`AbstractMGE.inclination_from_q_min` and use `q_min_from_inclination_with_validity` for
 the inverse -- the oblate counterpart of
 `triaxial_mge`'s `pqu`.
 """
@@ -30,7 +30,13 @@ import galax.potential
 import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
-from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, _conversion_valid
+from tnt.mge import (
+    Deprojected3DMGE,
+    LightMGE,
+    MassMGE,
+    _conversion_valid,
+    _inverse_reporting_values,
+)
 from tnt.potential.components import AbstractPotentialComponent
 from tnt.potential.registry import (
     InvalidPotentialParametersError,
@@ -208,8 +214,9 @@ def _galax_potential_from_oblate_deprojected(
 # The `q_min` parameterization: the anchor Gaussian's intrinsic axial ratio
 # <-> the single global inclination, the oblate counterpart of
 # `triaxial_mge`'s `pqu`. Both directions live on `AbstractMGE`
-# (`inclination_from_q_min` / `q_min_from_inclination`); these converters are
-# just the parameterization-registry adapters.
+# (`inclination_from_q_min` / `q_min_from_inclination` and their
+# `with_validity` counterparts); these converters adapt the shared candidates
+# and inverse validity interface to the parameterization registry.
 
 _QMIN_CONSTRAINT = ParameterConstraint(
     minimum=0.0, minimum_inclusive=False, maximum=1.0, unit=""
@@ -257,15 +264,16 @@ def _inclination_to_qmin(
 ) -> dict[str, Quantity]:
     """Report native ``inclination`` back as ``q_min`` for `AllModels`.
 
-    `AbstractMGE.q_min_from_inclination` -- the numerical inverse of
-    `inclination_from_q_min`.
+    Uses the shared traceable inverse of `inclination_from_q_min`. Invalid
+    eager reporting raises; invalid traced shapes are nonfinite.
     """
     del cosmological_parameters
     if mge is None:  # unreachable: only the MGE composite types register this
         raise InvalidPotentialParametersError(
             "The 'q_min' parameterization requires an MGE component."
         )
-    q_min = mge.q_min_from_inclination(native["inclination"])
+    q_min, valid = mge.q_min_from_inclination_with_validity(native["inclination"])
+    q_min = _inverse_reporting_values(q_min, valid)
     mass = _mass_parameter_name(native)
     mass_value = native[mass]
     if mass in declared_units:
