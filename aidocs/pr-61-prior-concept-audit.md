@@ -462,3 +462,191 @@ Following the project's review workflow, remove this temporary audit document
 once its findings have been addressed, before merging.
 
 Assisted by Codex (OpenAI).
+
+---
+
+## Re-review — 2026-10-14
+
+Reviewed PR head: `5ec8b09d6db3e8991c7549ff1b97ac4267253534`.
+Current main: `4bb8711150a3a6511b8edc1d1b0d9c6fccf226f0`.
+The material above, including the author's responses, is preserved unchanged.
+
+### Judgment
+
+**Not ready to merge yet.** Most original fixes are implemented correctly.
+The remaining concerns are the default prior's handling of fixed shape
+coordinates, reporting diagnostics for actual search batches, and edge cases
+and import side effects in the new plotting module. These arise in the new
+default-prior/diagnostic work; they are not requests to implement the separate
+features tracked in issue #82.
+
+Candidate sampling remains the agreed scope. No fit-score or posterior
+integration change is required. An advisory diagnostic policy is reasonable
+for this exploratory generator; an arbitrary universal rejection threshold
+is not required by this re-review. The advisory information must nevertheless
+describe the samples actually used, and plotting must represent them correctly.
+
+### Original findings and individual commits
+
+| Finding/change | Re-review outcome |
+| --- | --- |
+| F1: repeated batches; `153d269`, then `01f0f7a` | Fixed. The final code folds in cumulative iteration history. The initial deferral was superseded by the implementation and regression. |
+| F2: distribution validation; `1b63cda` | Fixed for the reproduced malformed distributions. Construction validates distribution classes/arguments and explicitly checks bound ordering. |
+| F4: invalid derived factors; `34299b8` | Fixed through the supported `factor_if_valid` interface. The invalid-density regression passes. |
+| F3: diagnostics; `2d8b209` | Partially addressed. Diagnostics are exposed, but the generator still discards them and the automatic figure describes a separate pilot draw. See R2. |
+| F3: generative defaults; `b16238a` | A substantial improvement for fully free shapes. Partial fixing leaves large structurally invalid regions. See R1. |
+| F5: historical resume; `dea5de3` | Fixed. Both historical and current search declarations are excluded; the new archive-compatibility regression passes. |
+| F6: examples; `bb7c95c`, `2403e1c` | The original fixed/prior omissions were corrected; the preparation changes and strict documentation build pass. Additional wording issues are noted below. |
+| Sampling batch size; `6190375` | The separation from the model-count cap is sound. Configuration validates the new settings and small output caps work in the generator tests. |
+| Follow-up scope; `5ec8b09` | Issue #82 explicitly tracks other coordinate systems/native joint constraints. Those extensions can remain separate. |
+
+### R1 — P1: default PQU sampling does not respect fixed downstream coordinates
+
+Location: `tnt/potential/triaxial_mge.py:376-387`.
+
+The sampler draws `p` before considering a fixed `q` or `u`. With `q=0.6`
+fixed, it still draws `p ~ Uniform(0, 1)`, so about 60% of proposals violate
+`q < p` before deprojection. A fixed `u` likewise does not restrict `p` or
+the sampled `q`. Passing a fixed value through unchanged is insufficient to
+sample the remaining coordinates within their joint domain.
+
+Using the PR's `_POTENTIAL_PQU` and `_TRIAXIAL_MGE` fixtures, seed 1, 1,000
+draws, no plugins, and the actual `Potential.build_with_validity` path:
+
+| Fixed shape fields | Fraction of valid proposals |
+| --- | --- |
+| None | 98.4% |
+| `q=0.6` | 39.0% |
+| `u=0.93` | 19.2% |
+| `q=0.6, u=0.93` | 20.9% |
+| `p=0.85` | 99.9% |
+
+These are supported fixed-field declarations, with valid nominal coordinates.
+The missing domain restrictions are structural, not the documented residual
+floating-point margin case. With a potential-building plugin, the hard
+rejection boundaries that the new prior was intended to avoid return; without
+one, most such draws become invalid models. The iterator stops a fresh search
+after an all-failed first round, so wasting most of a small proposal batch can
+also terminate useful exploration.
+
+**Required change:** condition the remaining coordinates' sampling bounds on
+all fixed members of the group, or explicitly reject unsupported fixed/free
+combinations with a named setup error. Add coverage for the supported subsets,
+especially fixed `q`, fixed `u`, and fixed `q/u` together. Preserve fixed
+values; do not silently substitute a different shape.
+
+### R2 — P2: actual search batches still lose their diagnostics
+
+Locations: `tnt/model_iterator.py:187-197`,
+`tnt/parameter_generator.py:293-302`, and `tnt/priors.py:564-571`.
+
+The constructor generates `prior_diagnostics.png` with `PRNGKey(seed)`, while
+the generator uses `fold_in(PRNGKey(seed), all_models.n_iterations())` and
+calls `Prior.sample`, which discards the returned diagnostics. Even the first
+batch therefore differs from the plotted draw; later iterations/resumes have
+no retained or reported batch diagnostics. Matching warmup/sample counts and
+target acceptance settings does not make these the same sampling run.
+
+**Reproduction:** for `Uniform(1, 9)` and seed 0, the pilot's first value is
+`6.36954389455336`, while the first search batch starts with
+`3.813330758938811`. For the updated PQU/enclosed-mass fixture with 1,000
+warmup steps and 1,000 samples, the pilot reported **51 divergences**, while
+the actual first-batch key reported **24**. The first batch's diagnostics are
+then thrown away by the normal generator path. These counts are diagnostic
+observations, not counts of invalid final models or proof of a specific bias.
+
+The new default substantially improves the old 985/1,000 benchmark, but a
+separate pilot cannot establish the quality of every later chain. The plot
+also skips its entire ESS/split-R-hat/divergence-summary table when there is
+only one free parameter (`table_rows = n // 2`), a common supported case.
+
+**Required change:** retain and report diagnostics from each actual sampling
+batch, associated with its iteration/run. Rendering can consume those samples
+and diagnostics rather than draw another batch. A pilot may remain an
+additional, clearly labelled check. Include numerical summaries for
+one-parameter models. This can stay advisory; no automatic cutoff or user
+approval gate is required.
+
+### R3 — P2: plotting fails or misrepresents supported parameter configurations
+
+Locations: `tnt/priors_diagnostic_plot.py:36-41, 107-122, 166-174`.
+
+Two directly reproduced cases:
+
+- **All parameters fixed:** the realistic integration configuration passes
+  `Configuration.read` with `generator_type: PriorSampler` and every
+  parameter fixed, then `ModelIterator.from_configuration` raises
+  `ValueError: Number of rows must be a positive integer, not 0` in the
+  automatic plot. `Prior` itself correctly returns no stochastic sites;
+  plotting assumes at least one.
+- **Signed values:** a valid bar-orientation prior,
+  `LongMuraliBarPotential.alpha ~ Uniform(-1, 1)` radians, is selected for
+  logarithmic plotting because `_use_log_scale` checks only its positive
+  subset. The histogram then computes `log10` of its negative minimum,
+  emits a runtime warning, and uses NaN bin edges. Inspection of the generated
+  figure showed **zero histogram counts for 1,000 draws**, and its
+  logarithmic trace axis excludes the **513 negative draws**. The function
+  returns successfully, so the advisory picture silently loses valid data.
+
+**Required change:** handle zero stochastic parameters explicitly, or reject
+that unsupported sampler setup during validation with a clear message. Only
+select a logarithmic axis when the complete data to be displayed are strictly
+positive and finite; render signed ranges without losing values. Add tests
+for empty, one-parameter, and signed-value plots that check the represented
+data, not only that a PNG exists.
+
+### R4 — P2: importing ModelIterator changes the application's plotting backend
+
+Location: `tnt/priors_diagnostic_plot.py:13-17`, imported unconditionally by
+`tnt.model_iterator`.
+
+`matplotlib.use("Agg")` runs at module import, even when the caller does not
+select `PriorSampler` or request a diagnostic figure. In an isolated
+reproduction, selecting the SVG backend and creating a figure, then importing
+`tnt.model_iterator`, changed the global backend from **SVG to Agg**. The
+existing figure remained present in this Matplotlib version; this audit does
+not claim it was deleted. The application nevertheless loses its chosen
+backend for subsequent plotting, including interactive workflows.
+
+**Required change:** use a figure-local canvas for file rendering, or leave
+backend selection to the application/standalone entry point. Importing TNT's
+model iterator should not change unrelated plotting configuration. Add a
+regression with a preselected backend.
+
+### Documentation and integration notes
+
+- Keep the advisory policy, but correct the claim that a wide scientific prior
+  makes divergences/low effective sample size innocuous. These can indicate
+  sampling trouble even when the model/prior is scientifically appropriate;
+  they do not, by themselves, identify whether the cause is code or geometry.
+- `KNOWLEDGE.md` still says every non-fixed parameter must declare a prior,
+  without the new default-prior exception. The plugin section also says there
+  are no built-in priors, although the default priors are now built in;
+  distinguish default priors from user-authored factor plugins.
+- Refresh the PR description: it still discusses the old NaN behavior,
+  independent PQU sampling, and default priors as entirely deferred.
+- The PR is behind current main only by the orbit-start-space merge (#80).
+  GitHub reports no merge conflict. Merging main cannot fix R1-R4; the combined
+  state should be checked when the code fixes are ready.
+- Per the existing workflow, remove the temporary audit document after the
+  review findings are resolved, before merging.
+
+### Re-review validation
+
+- Rebuilt the frozen Linux `x86_64` development image, including Matplotlib.
+  Python 3.12.13, JAX 0.10.2, NumPyro 0.21.0, Matplotlib 3.11.2.
+- **231 tests passed** across 10 focused modules: priors, parameter generator,
+  configuration, configuration compatibility, diagnostic plotting,
+  model-search integration, model iterator, shared shape conversions,
+  parameterized MGE construction, and packaged defaults. Modules ran in
+  separate processes, sequentially, within the documented Colima memory limit.
+- Ruff and the strict Sphinx build passed; whitespace check passed.
+- The additional probes above reproduced R1-R4. The actual first-batch probe
+  explicitly confirmed JAX x64 was enabled.
+- The full repository suite and Python 3.13 were not rerun. The commit message
+  reporting one pre-existing failure does not identify it; its origin was not
+  established by this focused run. None of the selected modules failed.
+- PR head was unchanged on recheck. GitHub reports the old requested-changes
+  review and no PR status checks; no merge conflict is reported.
+
+Assisted by Codex (OpenAI).
