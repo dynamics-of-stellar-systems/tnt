@@ -32,7 +32,10 @@ from typing import Any, ClassVar, Self
 
 import equinox as eqx
 import galax.potential
+import jax
 import jax.numpy as jnp
+import numpyro
+import numpyro.distributions as dist
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import (
@@ -48,6 +51,7 @@ from tnt.potential.registry import (
     InvalidPotentialParametersError,
     ParameterConstraint,
     register_component,
+    register_default_prior,
     register_parameterization,
 )
 from tnt.validation import _required_string, _resolve_typed_reference
@@ -327,6 +331,100 @@ def _register_pqu(type_name: str, mass_name: str, mass_dimension: str) -> None:
 
 _register_pqu("TriaxialLightMGEPotential", "ml", "mass_to_light")
 _register_pqu("TriaxialMassMGEPotential", "mge_mass_scale", "dimensionless")
+
+
+def _pqu_default_prior_sample(
+    site_prefix: str, known: dict[str, jax.Array], mge: LightMGE | MassMGE | None
+) -> dict[str, jax.Array]:
+    """`pqu`'s whole generative default prior, as one joint draw.
+
+    The joint domain (ignoring precision margins) is `0 < q < p <= 1` and
+    `max(q/q', p) < u <= min(p/q', 1)`, `q'` this MGE's own anchor axis
+    ratio (`AbstractMGE._triaxial_anchor`). Sampled in `p`, `q`, `u` order,
+    each one conditioned on *every* already-`known` sibling -- fixed or
+    not, and regardless of which side of it in this order -- not just the
+    ones sampled earlier in this call:
+
+    - `p`'s lower bound is `q` if `q` is already known (`0` otherwise),
+      additionally raised to `u * q'` if `u` is already known too; its
+      upper bound is `u` if `u` is already known (`1` otherwise) -- all of
+      which follow directly from the joint domain above (`p > q`;
+      `u <= p/q'` i.e. `p >= u * q'`; `p < u` from the `max(...) < u` side).
+    - `q`'s upper bound is `min(p, u * q')` if `u` is already known, else
+      `min(p, q')` -- the latter is `pqu`'s own existence condition for
+      *some* `u` to exist at all (bounding `q` by `q'` as well as by `p`
+      is what keeps `u`'s domain reachable in the all-free case; working
+      through the joint domain's four terms, every one but `q < q'`
+      reduces to something already true by construction here -- `q < p`,
+      `p < 1`, `q' < 1`); the former is the same condition once `u` is
+      already fixed, with `q' ` replaced by the now-tighter `u * q'`.
+    - `u`'s distribution is unchanged: `Uniform(u_lo, safe_hi)` from
+      `AbstractMGE._triaxial_u_domain(p, q)`, which already only ever
+      reads the final, fully-resolved `p`/`q` -- fixed or freshly
+      sampled above, it was never order-sensitive to begin with.
+
+    A degenerate fixed combination (e.g. a fixed `q` and `u` whose own
+    `q/q' < u` already fails) can still make `p`'s own bounds invert; that
+    draw is invalid regardless of what `p` turns out to be, so -- the same
+    policy `u`'s own fallback already uses -- the upper bound is only
+    widened enough to keep `Uniform` constructible, not corrected into a
+    valid one. The one case this can't absorb, `u_lo >= u_hi` once `p`/`q`
+    are resolved -- the domain too narrow to deproject reliably at this
+    precision for this `(p, q)` and the MGE's own anchor (now only ever a
+    genuine floating-point edge case, not the structural `q >= q'` case
+    `q`'s own bound already rules out when `u` isn't fixed) -- isn't
+    guarded here with a factor of its own either: that's caught downstream
+    the same way any other invalid draw already is
+    (`Potential.build_with_validity`'s own validity factor when a plugin
+    touches `build_potential()`, or `Model.valid_potential` otherwise) --
+    not a new gap, and keeping this prior pure `numpyro.sample` statements
+    (no factor of its own) is what keeps the `Predictive` (no-factors)
+    path usable for a component using only this default prior.
+    """
+    if mge is None:  # unreachable: only the MGE composite types register `pqu`
+        raise InvalidPotentialParametersError(
+            "The 'pqu' parameterization requires an MGE component."
+        )
+    q_obs, _ = mge._triaxial_anchor()
+    eps = jnp.finfo(jnp.result_type(q_obs, float)).eps
+    margin = 4 * jnp.sqrt(eps)
+
+    p = known.get("p")
+    if p is None:
+        p_lower = known.get("q", 0.0)
+        if "u" in known:
+            p_lower = jnp.maximum(p_lower, known["u"] * q_obs)
+            p_upper = known["u"]
+        else:
+            p_upper = 1.0
+        p_upper = jnp.maximum(p_upper, p_lower + margin)
+        p = numpyro.sample(f"{site_prefix}.p", dist.Uniform(p_lower, p_upper))
+
+    q = known.get("q")
+    if q is None:
+        q_cap = known["u"] * q_obs if "u" in known else q_obs
+        q_upper = jnp.maximum(jnp.minimum(p, q_cap), margin)
+        q = numpyro.sample(f"{site_prefix}.q", dist.Uniform(0.0, q_upper))
+
+    u = known.get("u")
+    if u is None:
+        _lo, _hi, u_lo, u_hi, u_margin = mge._triaxial_u_domain(p, q)
+        safe_hi = jnp.maximum(u_hi, u_lo + u_margin)
+        u = numpyro.sample(f"{site_prefix}.u", dist.Uniform(u_lo, safe_hi))
+    return {"p": p, "q": q, "u": u}
+
+
+def _register_pqu_default_prior(type_name: str) -> None:
+    register_default_prior(
+        type_name=type_name,
+        parameterization="pqu",
+        parameter_names=("p", "q", "u"),
+        sample=_pqu_default_prior_sample,
+    )
+
+
+_register_pqu_default_prior("TriaxialLightMGEPotential")
+_register_pqu_default_prior("TriaxialMassMGEPotential")
 
 
 # ==========================================================================

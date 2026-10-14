@@ -213,10 +213,10 @@ def test_model_iterator_runs_against_the_resolved_example_configuration(
 
     # SinglePoint proposes ml as a Quantity in its declared unit.
     # ModelIterator passes proposed values separately, so resolved config keeps
-    # fixed/generator_settings unmodified (see tnt.potential's module docstring).
+    # fixed/prior unmodified (see tnt.potential's module docstring).
     stars_ml_settings = resolved["potential"]["stars"]["parameters"]["ml"]
     assert stars_ml_settings["fixed"] is False
-    assert stars_ml_settings["generator_settings"]["upper_bound"] == pytest.approx(9.0)
+    assert stars_ml_settings["prior"]["args"][1] == pytest.approx(9.0)
     stars_ml_value = captured_parameter_values[0]["stars"]["ml"]
     assert stars_ml_value.ustrip("Msun / Lsun") == pytest.approx(5.0)
 
@@ -363,6 +363,29 @@ def test_model_iterator_rejects_stage_by_stage_before_runtime_construction(
 
     output = Path(config.data["io_settings"]["output_directory"])
     assert not (output / "config_repository").exists()
+
+
+def test_prior_sampler_writes_a_diagnostic_plot(
+    example_configuration_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
+    config.data["parameter_space_settings"]["generator_type"] = "PriorSampler"
+    config.data["parameter_space_settings"]["generator_settings"] = {
+        "seed": 0,
+        "num_samples": 10,
+        "num_warmup": 10,
+        "target_accept_prob": 0.8,
+    }
+    _fake_orbit_integration_and_weight_solving(monkeypatch)
+
+    ModelIterator.from_configuration(config)
+
+    output = Path(config.data["io_settings"]["output_directory"])
+    diagnostics_path = output / "prior_diagnostics.png"
+    assert diagnostics_path.exists()
+    assert diagnostics_path.stat().st_size > 0
 
 
 def test_from_configuration_rejects_an_unread_configuration() -> None:

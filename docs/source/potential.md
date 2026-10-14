@@ -287,10 +287,10 @@ potential:
     type: "TriaxialLightMGEPotential"
     mge: "mge_lum"
     parameters:
-      ml: {value: 5.0, unit: "Msun / Lsun"}   # a mass type uses mge_mass_scale instead
-      theta: {value: 1.0, unit: "rad"}
-      phi: {value: 0.5, unit: "rad"}
-      psi: {value: 0.0, unit: "rad"}
+      ml: {value: 5.0, unit: "Msun / Lsun", fixed: true}   # a mass type uses mge_mass_scale instead
+      theta: {value: 1.0, unit: "rad", fixed: true}
+      phi: {value: 0.5, unit: "rad", fixed: true}
+      psi: {value: 0.0, unit: "rad", fixed: true}
 
   # or, with the intrinsic-shape parameterization:
   stars_pqu:
@@ -298,7 +298,7 @@ potential:
     parameterization: "pqu"
     mge: "mge_lum"
     parameters:
-      ml: {value: 5.0, unit: "Msun / Lsun"}
+      ml: {value: 5.0, unit: "Msun / Lsun", fixed: true}
       p: {value: 0.85}   # B/A,   0 < q < p <= 1
       q: {value: 0.60}   # C/A
       u: {value: 0.93}   # compression, max(q/q', p) < u <= min(p/q', 1)
@@ -309,17 +309,17 @@ potential:
     parameterization: "T_maj_min"
     mge: "mge_lum"
     parameters:
-      ml: {value: 5.0, unit: "Msun / Lsun"}
-      T: {value: 0.43}       # in [0, 1]
-      T_maj: {value: 0.49}   # in [0, 1]
-      T_min: {value: 0.39}   # in [0, 1]
+      ml: {value: 5.0, unit: "Msun / Lsun", fixed: true}
+      T: {value: 0.43, fixed: true}       # in [0, 1]
+      T_maj: {value: 0.49, fixed: true}   # in [0, 1]
+      T_min: {value: 0.39, fixed: true}   # in [0, 1]
 
   bulge:
     type: "OblateLightMGEPotential"
     mge: "mge_bulge"
     parameters:
-      ml: {value: 3.0, unit: "Msun / Lsun"}
-      inclination: {value: 90.0, unit: "deg"}   # edge-on; must be in (0, 90] deg
+      ml: {value: 3.0, unit: "Msun / Lsun", fixed: true}
+      inclination: {value: 90.0, unit: "deg", fixed: true}   # edge-on; must be in (0, 90] deg
 
   # or, with the intrinsic-shape parameterization:
   bulge_q_min:
@@ -327,9 +327,20 @@ potential:
     parameterization: "q_min"
     mge: "mge_bulge"
     parameters:
-      ml: {value: 3.0, unit: "Msun / Lsun"}
+      ml: {value: 3.0, unit: "Msun / Lsun", fixed: true}
       q_min: {value: 0.6}   # anchor component's C/A, 0 < q_min <= q'
 ```
+
+A non-fixed parameter must either declare its own `prior` or be one a
+registered *default prior* always samples instead (see
+[Priors](priors.md)); this page isn't about search behavior, so every
+`ml`/`mge_mass_scale`/`theta`/`phi`/`psi`/`T`/`T_maj`/`T_min`/`inclination`
+above declares `fixed: true` explicitly. `p`/`q`/`u` and `q_min` are the
+exception: left without `fixed` (the packaged default, `fixed: false`) and
+with no `prior`, because `pqu` and `q_min` both have a registered default
+prior that always samples them regardless -- `ml`/`mge_mass_scale` has no
+such exemption, which is why it still needs `fixed: true` even in those two
+examples.
 
 ## What's implemented today
 

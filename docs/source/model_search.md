@@ -166,9 +166,11 @@ execution, presentation, or post-processing without changing existing model
 meaning:
 
 - worker and processing-order settings;
-- stopping criteria, generator settings, and potential-rescaling ranges;
-- values, declared units, ranges, fixed flags, and labels of existing
-  potential parameters;
+- stopping criteria, generator settings, potential-rescaling ranges, and
+  `parameter_space_settings.priors` (prior plugins -- these govern how a run
+  searches, not what the model is);
+- values, declared units, declared `prior`s, fixed flags, and labels of
+  existing potential parameters;
 - display units, logging, and analysis settings; and
 - input/output directory paths, provided the configured scientific file
   references themselves do not change.
@@ -224,21 +226,28 @@ between runs remains incompatible under the current contract.
 A `ParameterSet` is one proposed point in parameter space: a mapping from
 potential-component name to a mapping of parameter name to value (e.g.
 `{"bh": {"m": 5.0, "a": 0.001}, "stars": {"ml": 5.2, ...}}`). Every
-`AbstractParameterGenerator` implements one method,
-`generate_parameters(all_models)`, returning the next round of `ParameterSet`s
-to evaluate given every model evaluated so far. Which implementation runs is
-chosen by `parameter_space_settings.generator_type`. Concrete generators
-explicitly register their `_type`; an undecorated subclass is not a
+`AbstractParameterGenerator` implements `_propose_free_parameters(all_models)`;
+the base class's concrete `generate_parameters(all_models)` calls it and caps
+the result at `stopping_criteria.max_new_mods_per_iter`, uniformly across every
+generator regardless of how many candidates its own proposal logic happens to
+produce. Which implementation runs is chosen by
+`parameter_space_settings.generator_type`. Concrete generators explicitly
+register their `_type`; an undecorated subclass is not a
 configuration-selectable generator:
 
 - `GridSearchParameterGenerator` ("GridSearch") is the registered scaffold for
-  proposing parameters on a grid from each parameter's `generator_settings`;
-  its proposal algorithm is not implemented yet.
+  proposing parameters on a grid from each parameter's declared `prior`; its
+  proposal algorithm is not implemented yet.
 - `SinglePointParameterGenerator` ("SinglePoint") always proposes the same
   single point, taken directly from each parameter's configured `value`. It
-  ignores `all_models` entirely, so it's meant for evaluating one nominal
-  potential rather than searching -- pair it with
-  `stopping_criteria.n_new_iter: 1` to stop after that one round.
+  ignores `all_models` entirely and never consults `parameter_space_settings.priors`,
+  so it's meant for evaluating one nominal potential rather than searching --
+  pair it with `stopping_criteria.n_new_iter: 1` to stop after that one round.
+- `PriorSampler` proposes parameters by sampling from a `tnt.priors.Prior` --
+  see [Priors](priors.md). Reads only `all_models.n_iterations()`, folded
+  into its PRNG key so repeated calls draw fresh batches instead of
+  repeating one -- never the fitted chi2/scores `all_models` also holds,
+  so this is not score-conditioned proposing.
 
 ## Model
 

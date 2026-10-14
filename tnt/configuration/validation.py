@@ -16,6 +16,7 @@ from tnt.kinematics.registry import kinematics_type_names
 from tnt.mge import MAJOR_AXIS_PA_DOMAIN_DEG
 from tnt.parameter_generator import parameter_generator_required_settings
 from tnt.potential.registry import (
+    get_default_prior,
     is_registered_component_type,
     parameter_schema_is_known,
     raw_parameter_dimensions,
@@ -418,11 +419,20 @@ def _validate_potential(potential: ConfigDict, mge_names: set[str]) -> None:
                 component["parameterization"], f"{component_path}.parameterization"
             )
 
+        default_prior_parameter_names: frozenset[str] = frozenset()
+        if parameterization is not None:
+            default_prior = get_default_prior(component_type, parameterization)
+            if default_prior is not None:
+                default_prior_parameter_names = frozenset(
+                    default_prior.parameter_names
+                )
+
         if "parameters" in component:
             _validate_parameters(
                 _required_mapping(component, "parameters", component_path),
                 f"{component_path}.parameters",
                 require_nonempty=True,
+                default_prior_parameter_names=default_prior_parameter_names,
             )
         else:
             raise ValueError(f"{component_path} is missing required field: parameters.")
@@ -482,6 +492,7 @@ def _validate_parameters(
     path: str,
     *,
     require_nonempty: bool,
+    default_prior_parameter_names: frozenset[str] = frozenset(),
 ) -> None:
     if require_nonempty and not parameters:
         raise ValueError(f"{path} must contain at least one parameter.")
@@ -493,8 +504,8 @@ def _validate_parameters(
             parameter,
             {
                 "fixed",
-                "generator_settings",
                 "latex_label",
+                "prior",
                 "unit",
                 "value",
             },
@@ -505,37 +516,71 @@ def _validate_parameters(
             {"fixed", "value"},
             parameter_path,
         )
-        _boolean(parameter["fixed"], f"{parameter_path}.fixed")
-        value = _number(parameter["value"], f"{parameter_path}.value")
+        is_fixed = _boolean(parameter["fixed"], f"{parameter_path}.fixed")
+        _number(parameter["value"], f"{parameter_path}.value")
         if "latex_label" in parameter:
             _string(parameter["latex_label"], f"{parameter_path}.latex_label")
-        if "generator_settings" in parameter:
-            _validate_parameter_generator_settings(
-                _required_mapping(parameter, "generator_settings", parameter_path),
-                f"{parameter_path}.generator_settings",
-                value,
+        if "prior" in parameter:
+            _validate_prior(
+                _required_mapping(parameter, "prior", parameter_path),
+                f"{parameter_path}.prior",
+            )
+        elif not is_fixed and name not in default_prior_parameter_names:
+            # A non-fixed parameter is one the search varies; its `prior` is
+            # how it varies. Without one, `tnt.priors._build_model` silently
+            # skips it -- neither a sample site nor a fixed value -- which
+            # only surfaces much later as a missing-parameter error at
+            # `Potential.build`. Require the declaration up front, unless a
+            # registered default prior (see
+            # `tnt.potential.registry.DefaultPriorSpec`) already always
+            # samples this parameter -- `tnt.priors._build_model` never
+            # leaves one of those unsampled.
+            raise ValueError(
+                f"{parameter_path} is not fixed and so must declare a prior."
             )
 
 
-def _validate_parameter_generator_settings(
-    settings: ConfigDict,
-    path: str,
-    value: float,
-) -> None:
-    keys = {"lower_bound", "minimum_step", "step", "upper_bound"}
-    _reject_unknown_keys(settings, keys, path)
-    _require_keys(settings, keys, path)
-    lower = _number(settings["lower_bound"], f"{path}.lower_bound")
-    upper = _number(settings["upper_bound"], f"{path}.upper_bound")
-    if lower > upper:
-        raise ValueError(f"{path}.lower_bound must not exceed upper_bound.")
-    if not lower <= value <= upper:
-        raise ValueError(
-            f"The parameter value at {path.rsplit('.', 1)[0]}.value must lie "
-            "within its bounds."
-        )
-    _positive_number(settings["step"], f"{path}.step")
-    _nonnegative_number(settings["minimum_step"], f"{path}.minimum_step")
+def _validate_prior(prior: ConfigDict, path: str) -> None:
+    """Validate one parameter's declared search-space prior.
+
+    Structural only: `distribution` names a `numpyro.distributions` class
+    and `args` are its constructor arguments, but this module deliberately
+    never imports `numpyro` (see module docstring) -- resolving whether
+    `distribution` is real is deferred to `tnt.priors`, which actually
+    builds the numpyro model.
+    """
+    keys = {"args", "distribution"}
+    _reject_unknown_keys(prior, keys, path)
+    _require_keys(prior, keys, path)
+    _string(prior["distribution"], f"{path}.distribution")
+    args = prior["args"]
+    if not isinstance(args, list) or not args:
+        raise TypeError(f"{path}.args must be a non-empty list of numbers.")
+    for index, arg in enumerate(args):
+        _number(arg, f"{path}.args[{index}]")
+
+
+def _validate_priors(priors: ConfigDict, path: str) -> None:
+    """Validate declared prior plugins: structure only, not their code.
+
+    Each entry names a `.py` file (resolved relative to `input_directory`
+    at runtime, not here -- see module docstring) and a function within it,
+    as `<path>:<function_name>`. Whether that file/function actually exists,
+    and whatever it does with `numpyro`, is the plugin author's
+    responsibility (see `tnt.priors`).
+    """
+    for name, prior_value in priors.items():
+        name = _dynamic_name(name, path)
+        prior_path = f"{path}.{name}"
+        prior = _mapping(prior_value, prior_path)
+        _reject_unknown_keys(prior, {"plugin"}, prior_path)
+        _require_keys(prior, {"plugin"}, prior_path)
+        plugin = _string(prior["plugin"], f"{prior_path}.plugin")
+        parts = plugin.split(":")
+        if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+            raise ValueError(
+                f"{prior_path}.plugin must have the form '<path>:<function_name>'."
+            )
 
 
 def _validate_kinematics(
@@ -768,6 +813,7 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
         "generator_settings",
         "generator_type",
         "potential_rescalings",
+        "priors",
         "stopping_criteria",
         "which_chi2",
     }
@@ -800,15 +846,64 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
             f"{path}.generator_settings.delta_chi2_threshold",
             {"absolute", "fraction_of_sqrt_2n_observations"},
         )
+    if "num_warmup" in required_generator_keys:
+        # A handful of warmup steps technically runs, but isn't a
+        # meaningful NUTS step-size adaptation -- > 100 is a floor on
+        # statistical meaningfulness, not just positivity.
+        num_warmup = _integer(
+            generator["num_warmup"], f"{path}.generator_settings.num_warmup"
+        )
+        if num_warmup <= 100:
+            raise ValueError(
+                f"{path}.generator_settings.num_warmup must be greater than 100."
+            )
+    if "num_samples" in required_generator_keys:
+        # Same floor as `num_warmup`, for the same reason -- a batch this
+        # small isn't a statistically meaningful MCMC/`Predictive` draw,
+        # independent of `numpyro.diagnostics.split_gelman_rubin`'s own
+        # (much weaker) precondition of just 4 (see `Prior
+        # .sample_with_diagnostics`).
+        num_samples = _integer(
+            generator["num_samples"], f"{path}.generator_settings.num_samples"
+        )
+        if num_samples <= 100:
+            raise ValueError(
+                f"{path}.generator_settings.num_samples must be greater than 100."
+            )
+    if "target_accept_prob" in required_generator_keys:
+        target_accept_prob = _number(
+            generator["target_accept_prob"],
+            f"{path}.generator_settings.target_accept_prob",
+        )
+        if not (0.0 < target_accept_prob < 1.0):
+            raise ValueError(
+                f"{path}.generator_settings.target_accept_prob must be in (0, 1)."
+            )
+    if "seed" in required_generator_keys:
+        _integer(generator["seed"], f"{path}.generator_settings.seed")
+    _validate_priors(
+        _required_mapping(settings, "priors", path),
+        f"{path}.priors",
+    )
     stopping = _required_mapping(settings, "stopping_criteria", path)
     _reject_unknown_keys(
         stopping,
-        {"minimum_delta_chi2", "n_new_iter", "target_model_count"},
+        {
+            "max_new_mods_per_iter",
+            "minimum_delta_chi2",
+            "n_new_iter",
+            "target_model_count",
+        },
         f"{path}.stopping_criteria",
     )
     _require_keys(
         stopping,
-        {"minimum_delta_chi2", "n_new_iter", "target_model_count"},
+        {
+            "max_new_mods_per_iter",
+            "minimum_delta_chi2",
+            "n_new_iter",
+            "target_model_count",
+        },
         f"{path}.stopping_criteria",
     )
     _validate_tagged_threshold(
@@ -817,10 +912,23 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
         {"absolute", "relative"},
         with_enabled=True,
     )
-    for key in ("n_new_iter", "target_model_count"):
+    for key in ("max_new_mods_per_iter", "n_new_iter", "target_model_count"):
         value = _integer(stopping[key], f"{path}.stopping_criteria.{key}")
         if value <= 0:
             raise ValueError(f"{path}.stopping_criteria.{key} must be positive.")
+    if "num_samples" in required_generator_keys and (
+        generator["num_samples"] < stopping["max_new_mods_per_iter"]
+    ):
+        # Otherwise `PriorSampler` would silently return fewer candidates
+        # than `max_new_mods_per_iter` asks for: `generate_parameters`
+        # trims `Prior.sample`'s own `num_samples`-sized batch down to
+        # `max_new_mods_per_iter`, never pads it back up.
+        raise ValueError(
+            f"{path}.generator_settings.num_samples "
+            f"({generator['num_samples']}) must be at least "
+            f"{path}.stopping_criteria.max_new_mods_per_iter "
+            f"({stopping['max_new_mods_per_iter']})."
+        )
 
     _validate_potential_rescalings(
         _required_mapping(settings, "potential_rescalings", path),

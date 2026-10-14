@@ -12,6 +12,8 @@ standing in for `Potential`/`OrbitLibrary`/`AbstractWeightSolver`, with
 from __future__ import annotations
 
 import logging
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -27,6 +29,29 @@ from tnt.run_config_log import (
     RunConfigLog,
     RunManifestReference,
 )
+
+
+def test_importing_model_iterator_preserves_a_preselected_matplotlib_backend() -> None:
+    # Re-review R4: tnt.model_iterator unconditionally imports
+    # tnt.priors_diagnostic_plot, which used to call matplotlib.use("Agg")
+    # at module scope -- clobbering an application's own already-selected
+    # backend even when that run never touches PriorSampler. A fresh
+    # subprocess isolates the global matplotlib backend state from every
+    # other test in this file/session.
+    script = (
+        "import matplotlib\n"
+        "matplotlib.use('svg')\n"
+        "import tnt.model_iterator\n"
+        "assert matplotlib.get_backend().lower() == 'svg', matplotlib.get_backend()\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 # ---------------------------------------------------------------------------
 # Fakes standing in for Potential / OrbitLibrary / AbstractWeightSolver.

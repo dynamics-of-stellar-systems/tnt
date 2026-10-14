@@ -368,8 +368,9 @@
   `ModelIterator._evaluate()` checks the scalar flag before any use of the
   potential, logs a generic numerical-validation rejection with raw parameters,
   and records an invalid model. Static setup errors propagate. Construction
-  supports `vmap`; iterator batching and prior integration remain deferred.
-  The iterator still returns a variable-length `list[Model]`; orbit integration
+  supports `vmap`; iterator batching remains deferred (prior integration is
+  done -- see `tnt.priors`/`PriorSampler` below). The iterator still returns
+  a variable-length `list[Model]`; orbit integration
   and weight solving remain scaffolding.
 - Issue #72 fixes the execution target as one proposal evaluated inside a JAX
   trace. `ParameterConstraint.valid()` now exposes JAX scalar predicates for
@@ -390,7 +391,8 @@
   dtypes for zero placeholders used by invalid converted components; these
   are not usable physical models. Converters must themselves support JAX
   tracing, and their output names/types/dimensions/scalar shapes remain hard
-  contract checks. Iterator batching and prior integration are deferred.
+  contract checks. Iterator batching is deferred (prior integration is
+  done -- see `tnt.priors`/`PriorSampler` below).
 - Eager constraint diagnostics and traced validity evaluate the same JAX
   predicates at the proposed value's active precision; converting eager values
   to Python floats would change half-open bound decisions in float32. For
@@ -507,9 +509,28 @@
 - The user profile must define the physical system, dynamically named
   potential components and parameters, input directory, and output directory.
 - TNT user profiles generally use snake-case type identifiers and field names.
-  The established `MGEs` registry name is a current schema exception. Parameter
-  search bounds belong under `generator_settings` as `lower_bound`,
-  `upper_bound`, `step`, and `minimum_step`; display labels use `latex_label`.
+  The established `MGEs` registry name is a current schema exception. A
+  parameter's search-space declaration belongs under `prior` as
+  `{distribution: "<numpyro.distributions class>", args: [...]}` (replaced
+  `generator_settings`'s `lower_bound`/`upper_bound`/`step`/`minimum_step` --
+  `step`/`minimum_step` had no consumer and were dropped rather than carried
+  forward, matching how `logarithmic` was removed for the same reason, see
+  below); display labels use `latex_label`. A `prior` is required whenever
+  `fixed` is false: `_validate_parameters` (`tnt.configuration.validation`)
+  raises if a `fixed: false` parameter has no `prior`, since
+  `tnt.priors._build_model` would otherwise silently skip it (neither a
+  sample site nor a fixed value), surfacing only as a missing-parameter
+  error at `Potential.build_with_validity` -- **except** a parameter
+  covered by a registered *default prior* (`tnt.potential.registry
+  .DefaultPriorSpec`/`get_default_prior`, keyed by `(type_name,
+  parameterization)`): `pqu`'s `p`/`q`/`u` (`TriaxialLight/MassMGEPotential`)
+  and `q_min` (`OblateLight/MassMGEPotential`) are always sampled from one
+  instead, and need no declared `prior` of their own (a declared one is
+  still accepted -- folded in as an additional `numpyro.factor`, not a
+  replacement; see `docs/source/priors.md`). The packaged
+  `dynamic_object_defaults.parameter.fixed` default stays `false`, so a
+  user profile declares `fixed: true` or a `prior` on every parameter not
+  covered by a default prior.
 - Scientific inputs use independent named registries: `MGEs` maps names to
   `{file, major_axis_pa}` entries; `spatial_binnings` maps names to inline
   rectangular aperture geometry (`min_x`, `min_y`, `x_extent`, `y_extent`, and
@@ -856,12 +877,101 @@
   component's resolved state. TNT does not support an NFW
   `(c, f) -> (m, r_s)` "concentration + mass fraction" parameterization
   (`f = M_200 / M*_TOT`, `M*_TOT` derived from the stellar MGE component)
-  because `Potential.resolve` resolves each component independently and
-  `Potential.build_with_validity` converts it using only its own inputs,
-  so no component-local converter can see another component's
-  resolved mass. That kind of cross-component
-  relationship belongs to the parameter generator/search space rather than
-  potential construction; it must not be shoehorned into `parameterization`.
+  was removed for exactly this reason: `Potential.resolve` resolves each
+  component independently and `Potential.build_with_validity` converts it
+  using only its own inputs, so no component-local converter can see
+  another component's resolved mass. That kind of cross-component
+  relationship is now `tnt.priors`: consumed by the parameter generator
+  (`PriorSampler`) rather than potential construction, never by
+  `parameterization`. TNT ships no built-in *plugins* (prior plugins are
+  always user-authored, including the mass-fraction one -- only the
+  mechanism and a documented worked example ship, see
+  `docs/source/priors.md`), but it does ship built-in *default priors*
+  for specific `(type, parameterization)` pairs whose own joint validity
+  constraint is MGE-data-dependent and can't be expressed as independent
+  per-parameter `prior:` entries -- `pqu`'s `p`/`q`/`u` and `q_min`, see
+  above and `tnt.potential.registry.DefaultPriorSpec`. A plugin is a plain
+  Python function loaded from its own `.py` file (file-path-only, resolved
+  relative to `io_settings.input_directory`, not an installed package) with a
+  fixed signature: `def fn(context: tnt.priors.PriorContext) -> None`,
+  callable with one positional argument (a trailing default parameter or
+  `*args` is tolerated but never populated; `load_prior_plugin` rejects any
+  other arity).
+  `PriorContext` is an `eqx.Module` -- the single, extensible object holding
+  the run state a plugin may read (`context.candidate`, `context.mges`,
+  `context.unit_system` today); adding a field there stays backward-compatible
+  because a plugin only ever names that one argument. It is built once per
+  draw inside the numpyro model, after every `sample` site, and consumed
+  immediately -- never a traced/`jit` argument, so its size costs nothing.
+  `context.build_potential()` assembles this draw's `tnt.potential.Potential`
+  from `candidate` for a factor over a derived quantity (an enclosed mass, a
+  circular velocity): it calls `Potential.build_with_validity`, itself
+  JAX-traceable. The first call in a draw -- to `build_potential()`,
+  `build_potential_with_validity()`, or `factor_if_valid()` -- registers
+  that draw's validity as a `numpyro.factor` site giving an invalid geometry
+  exactly `-inf` log-probability (the formal statement that point has no
+  support, not a `nan` relying on gradient propagation to get rejected) and
+  caches the result; a later call in the same draw -- the same plugin or
+  another -- reuses it rather than rebuilding and registering a second
+  site. The `-inf` validity factor alone does not make a derived-quantity
+  factor safe: a plugin computing one directly from the (possibly
+  zero-placeholder) potential can produce a `NaN` on an invalid draw, and
+  `-inf + NaN` is `NaN`, not `-inf`, silently undoing the rejection. A
+  plugin registers such a factor through `context.factor_if_valid(name,
+  compute)` instead of calling `numpyro.factor` directly: it evaluates
+  `compute` only when the draw is valid, via `jax.lax.cond` (which
+  evaluates and differentiates only the taken branch) rather than
+  `jnp.where` (which would still evaluate and differentiate both, leaking
+  the `NaN` back in). `Prior`
+  captures the run's `resolved` potential + cosmology + unit system to make
+  this work; a `Prior` built without them (a unit test exercising only
+  sample sites) leaves `build_potential()` raising. A plugin may only call
+  `numpyro.factor` -- never `sample`/`deterministic` -- so it can add a soft
+  preference over already-established values but can never independently
+  assign or overwrite a parameter, ruling out any collision with that
+  parameter's own ordinary `prior` by construction, not validation. `Prior.sample` auto-selects `numpyro.infer.Predictive` (no
+  factor sites) or `numpyro.infer.MCMC`/`NUTS` (any factor sites present) --
+  a hard `Uniform.log_prob` factor does not work well with NUTS (flat
+  interior gradient, discontinuous boundary; verified empirically, not just
+  reasoned about) -- use a smooth distribution (`Normal`, `TruncatedNormal`,
+  ...) for factor terms instead. Genuine posterior sampling (conditioning on
+  a `Model`'s real chi2) needs a further bridge -- turning chi2 into a
+  `numpyro.factor` -- that doesn't exist yet; deliberately out of scope,
+  real future work reusing the same composed-model machinery.
+- A factor-bearing `Prior`'s MCMC draw having a high divergence rate or low
+  effective sample size (ESS) doesn't *automatically* mean something is
+  broken -- how rough a chain looks depends partly on how wide the prior
+  needs to be for the actual science (e.g. a single-age stellar
+  population's mass-to-light prior can be narrow; a mixed-age population's
+  can't). But it doesn't automatically mean nothing is broken either: the
+  same numbers can just as well flag real sampling trouble (a
+  poorly-adapted step size, a pathological posterior shape) even when the
+  prior itself is exactly as wide as the science requires -- divergence/
+  ESS/split-R-hat alone can't tell those apart, and no fixed threshold on
+  them can either, so none is enforced.
+  `Prior.sample_with_diagnostics(key, num_samples, num_warmup,
+  target_accept_prob)` -- same return as `sample`, plus a `PriorDiagnostics`
+  (divergence mask, ESS, split-R-hat per site, always populated -- a
+  `Predictive` draw is i.i.d. by construction, so its ESS/split-R-hat there
+  are a sanity check on that independence, not a convergence diagnostic) --
+  feeds two separate things, at two different times: a one-off **pilot**
+  figure (`tnt.priors_diagnostic_plot.plot_prior_diagnostics`, a corner plot
+  -- pairwise scatter colored by divergence, marginal histograms, an
+  ESS/split-R-hat table, per-parameter trace plots -- to
+  `io_settings.output_directory/prior_diagnostics.png`, generated once by
+  `ModelIterator.from_configuration` whenever `generator_type` is
+  `PriorSampler`, at the real run's own `num_samples`/`num_warmup`/
+  `target_accept_prob` but its *own independent key* -- `jax.random.fold_in`
+  guarantees this never equals any real iteration's actual key, not even
+  the first), and **per-batch logging** (`PriorSampler
+  ._propose_free_parameters` logs its own real batch's divergence count and
+  worst ESS/split-R-hat, at `INFO`, tagged with its iteration, every time it
+  actually proposes). Both purely advisory: nothing raises or blocks, the
+  run proceeds regardless -- a human reviews the figure/logs and decides.
+  `matplotlib` is a regular (not optional) dependency as of this feature,
+  and `tnt.priors_diagnostic_plot` builds its own `Figure`/`FigureCanvasAgg`
+  directly rather than touching `matplotlib.pyplot`'s or `matplotlib.use`'s
+  global state, since `tnt.model_iterator` imports it unconditionally.
 - Every registered parameterization converts both ways: a
   `register_parameterization` call takes `convert` *and* `invert` (bundled in
   its `ParameterizationSpec`), so one direction can never be registered without

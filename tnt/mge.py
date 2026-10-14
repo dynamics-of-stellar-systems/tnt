@@ -1049,17 +1049,43 @@ class AbstractMGE(eqx.Module):
             self._viewing_angles_candidate, _shape_numbers(p, q, u)
         )
 
+    def _triaxial_u_domain(
+        self, p: jax.Array, q: jax.Array
+    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
+        """``(lo, hi, u_lo, u_hi, margin)`` for ``u`` given ``(p, q)`` and this
+        MGE's own anchor ``q'``.
+
+        ``lo``/``hi`` are the true geometric domain (``max(q/q', p)``/
+        ``min(p/q', 1)``); ``u_lo``/``u_hi`` shrink that inward by the
+        margin `_viewing_angles_candidate` needs to keep its weight
+        formulas away from their pole at either endpoint -- the weights'
+        shared denominators (``1 - u**2``, etc.) vanish exactly at the true
+        boundary, a real singularity of the formula itself, not just a
+        precision artifact; staying ``margin`` away also keeps the
+        ``1 - u**2``-style subtractions from losing more than half their
+        digits to cancellation as ``u`` approaches it. ``u_lo >= u_hi``
+        means no point in ``(lo, hi]`` is safely evaluable at the working
+        float precision, regardless of which ``u`` is chosen. Shared by
+        both the real conversion path and any generative sampling of ``u``
+        (e.g. a default prior); ``margin`` is returned too, as a
+        precision-appropriate fallback width for that case.
+        """
+        q_obs, _ = self._triaxial_anchor()
+        eps = jnp.finfo(jnp.result_type(p, q, float)).eps
+        lo = jnp.maximum(q / q_obs, p)
+        hi = jnp.minimum(p / q_obs, 1)
+        margin = 4 * jnp.sqrt(eps)
+        u_lo = lo + jnp.maximum(lo, 1) * margin
+        u_hi = hi * (1 - margin)
+        return lo, hi, u_lo, u_hi, margin
+
     def _viewing_angles_candidate(
         self, p: jax.Array, q: jax.Array, u: jax.Array
     ) -> tuple[tuple[Quantity, ...], dict[str, jax.Array]]:
         """Shared pqu geometry with precision-scaled endpoint handling."""
         q_obs, anchor_twist = self._triaxial_anchor()
         eps = jnp.finfo(jnp.result_type(p, q, u, float)).eps
-        lo = jnp.maximum(q / q_obs, p)
-        hi = jnp.minimum(p / q_obs, 1)
-        margin = 4 * jnp.sqrt(eps)
-        u_lo = lo + jnp.maximum(lo, 1) * margin
-        u_hi = hi * (1 - margin)
+        lo, hi, u_lo, u_hi, _margin = self._triaxial_u_domain(p, q)
         u_calc = jnp.clip(u, u_lo, u_hi)
         p2, q2, u2, o2 = p**2, q**2, u_calc**2, q_obs**2
         d_theta = (1 - q2) * (p2 - q2)

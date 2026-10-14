@@ -25,7 +25,7 @@ from __future__ import annotations
 import math
 import operator
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -673,3 +673,95 @@ def parameter_schema_is_known(kind: str, parameterization: str | None) -> bool:
     if parameterization is not None:
         return (kind, parameterization) in _PARAMETERIZATION_REGISTRY
     return is_registered_component_type(kind) or kind in _SUPPORTED_GALAX_TYPES
+
+
+DefaultPriorSampler = Callable[..., Any]
+"""`(site_prefix, known, mge) -> {name: value}` for every one of
+`DefaultPriorSpec.parameter_names`.
+
+The whole group's joint generative prior, in one call, not a per-parameter
+distribution: `known` carries whichever of `parameter_names` this draw's
+component already has a value for (the user fixed it, see
+`tnt.priors._build_model`), as `{name: value}`. For any name still missing
+from `known`, the function draws it itself -- `numpyro.sample(f"{
+site_prefix}.{name}", ...)`, using a prior that may depend on an earlier
+name's value in `known` or already sampled earlier in this same call -- and
+returns the complete `{name: value}` for the whole group either way, fixed
+values passed through unchanged. `mge` is the component's resolved MGE
+(`LightMGE | MassMGE | None` -- `None` for a component with no MGE, always
+passed the same way regardless, never a second code path). Returns a plain
+`Any`, not a typed `dict[str, jax.Array]`, so this module doesn't need to
+import `numpyro` itself for this type hint (it already imports `jax`/
+`jax.numpy` for other, pre-existing reasons; consistent with
+`tnt.configuration.validation` never importing `numpyro` either, even
+though this specific module isn't that one)."""
+
+
+class DefaultPriorSpec(NamedTuple):
+    """A `(type_name, parameterization)`'s generative default prior.
+
+    Registered only for a parameterization whose own declared raw
+    parameters have a joint validity constraint that can't be expressed as
+    independent per-parameter marginal `prior:` distributions (e.g.
+    `pqu`'s data-dependent bounds on `q` and `u`, which depend on the MGE's
+    own anchor axis ratio, not just sibling parameters) -- see
+    `tnt.priors._build_model`'s own use of this registry for how a
+    covered parameter's declared `prior:` (now optional) is folded in as
+    an additional factor instead of replacing this sampling.
+    """
+
+    parameter_names: tuple[str, ...]
+    """This parameterization's raw parameter names covered by the default
+    prior. `sample`'s own body is what actually orders them (a later one's
+    prior may depend on an earlier one's value); this tuple is only used to
+    tell which of a component's declared parameters this covers."""
+    sample: DefaultPriorSampler
+    """This group's whole joint generative prior -- see `DefaultPriorSampler`."""
+
+
+_DEFAULT_PRIOR_REGISTRY: dict[tuple[str, str], DefaultPriorSpec] = {}
+
+
+def register_default_prior(
+    *,
+    type_name: str,
+    parameterization: str,
+    parameter_names: tuple[str, ...],
+    sample: DefaultPriorSampler,
+) -> None:
+    """Register a generative default prior for `(type_name, parameterization)`.
+
+    `type_name` must already have `parameterization` registered via
+    `register_parameterization` -- a default prior supplements an existing
+    parameterization's raw schema, it doesn't define one.
+
+    Raises:
+        ValueError: If `(type_name, parameterization)` has no registered
+            `ParameterizationSpec`, if `(type_name, parameterization)`
+            already has a registered default prior, or if `parameter_names`
+            is not a subset of that parameterization's own raw parameters.
+    """
+    key = (type_name, parameterization)
+    if key not in _PARAMETERIZATION_REGISTRY:
+        raise ValueError(
+            f"Cannot register a default prior for {key!r}: no parameterization "
+            "is registered there yet."
+        )
+    raw_names = set(_PARAMETERIZATION_REGISTRY[key].raw_dimensions)
+    unknown = set(parameter_names) - raw_names
+    if unknown:
+        names = ", ".join(sorted(unknown))
+        raise ValueError(
+            f"Cannot register a default prior for {key!r}: {names} are not "
+            f"raw parameters of this parameterization."
+        )
+    if key in _DEFAULT_PRIOR_REGISTRY:
+        raise ValueError(f"Duplicate default prior for {key!r}.")
+    _DEFAULT_PRIOR_REGISTRY[key] = DefaultPriorSpec(parameter_names, sample)
+
+
+def get_default_prior(type_name: str, parameterization: str) -> DefaultPriorSpec | None:
+    """The registered `DefaultPriorSpec` for `(type_name, parameterization)`,
+    or `None`.
+    """
+    return _DEFAULT_PRIOR_REGISTRY.get((type_name, parameterization))

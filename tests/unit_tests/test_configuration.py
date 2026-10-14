@@ -11,6 +11,7 @@ from tnt.configuration import (
     Configuration,
     configuration_session,
 )
+from tnt.configuration import validation as configuration_validation
 from tnt.configuration.validation import validate_configuration_quantities
 
 
@@ -161,15 +162,19 @@ potential:
     parameters:
       theta:
         unit: "rad"
+        fixed: true
         value: 1.0
       phi:
         unit: "rad"
+        fixed: true
         value: 0.5
       psi:
         unit: "rad"
+        fixed: true
         value: 0.0
       ml:
         unit: "Msun / Lsun"
+        prior: {{distribution: "Uniform", args: [1.0, 9.0]}}
         value: 5.0
 kinematic_data:
   observed:
@@ -245,8 +250,10 @@ def test_read_resolves_defaults_without_allocating_a_run(tmp_path: Path) -> None
     assert written["io_settings"]["output_directory"] == "output"
     assert config.data["io_settings"]["input_directory"] == str(tmp_path / "input")
     assert config.data["io_settings"]["output_directory"] == str(output_directory)
-    parameter = written["potential"]["stars"]["parameters"]["theta"]
-    assert parameter["fixed"] is False
+    # `ml` sets no `fixed`, so the packaged dynamic_object_defaults.parameter
+    # default (false) is applied; `theta` overrides it to true.
+    assert written["potential"]["stars"]["parameters"]["ml"]["fixed"] is False
+    assert written["potential"]["stars"]["parameters"]["theta"]["fixed"] is True
     kinematics = written["kinematic_data"]["observed"]
     assert kinematics["binning"] == "observed"
     assert kinematics["mge"] == "light"
@@ -826,6 +833,120 @@ def test_read_rejects_nonpositive_n_new_iter(tmp_path: Path) -> None:
         Configuration().read(user_path, workspace_root=tmp_path)
 
 
+def test_read_rejects_nonpositive_max_new_mods_per_iter(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  stopping_criteria:
+    max_new_mods_per_iter: 0
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"stopping_criteria\.max_new_mods_per_iter must be positive",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_validate_prior_accepts_a_well_formed_declaration() -> None:
+    # A parameter's `prior` field is validated structurally by
+    # `_validate_prior`, called from `_validate_parameters` -- exercised
+    # directly here since the packaged fixture's `potential.stars.parameters`
+    # already declares `ml` and can't be re-declared a second time in one
+    # YAML document (see `_write_user_config`).
+    configuration_validation._validate_prior(
+        {"distribution": "Uniform", "args": [1.0, 9.0]},
+        "potential.stars.parameters.ml.prior",
+    )
+
+
+def test_validate_prior_rejects_missing_args() -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"prior is missing required field\(s\): args",
+    ):
+        configuration_validation._validate_prior(
+            {"distribution": "Uniform"}, "potential.stars.parameters.ml.prior"
+        )
+
+
+def test_read_rejects_a_non_fixed_parameter_without_a_prior(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(user_path, output_directory)
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    # `theta` is fixed in the base fixture; drop that so it inherits the
+    # packaged `fixed: false` default with no `prior` alongside it.
+    del user_data["potential"]["stars"]["parameters"]["theta"]["fixed"]
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match=r"potential\.stars\.parameters\.theta is not fixed and so must "
+        r"declare a prior",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_accepts_a_non_fixed_parameter_that_declares_a_prior(
+    tmp_path: Path,
+) -> None:
+    # The base fixture's `ml` sets no `fixed` (inherits false) but declares a
+    # Uniform prior; preparation resolves it without complaint.
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    ml = config.data["potential"]["stars"]["parameters"]["ml"]
+    assert ml["fixed"] is False
+    assert ml["prior"] == {"distribution": "Uniform", "args": [1.0, 9.0]}
+
+
+def test_read_rejects_malformed_prior_plugin_reference(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  priors:
+    dh_mass_fraction:
+      plugin: "priors/mass_fraction.py"
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"priors\.dh_mass_fraction\.plugin must have the form",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_accepts_declared_prior_plugin(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  priors:
+    dh_mass_fraction:
+      plugin: "priors/mass_fraction.py:mass_fraction"
+""",
+    )
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    assert config.data["parameter_space_settings"]["priors"] == {
+        "dh_mass_fraction": {"plugin": "priors/mass_fraction.py:mass_fraction"}
+    }
+
+
 def test_read_rejects_negative_minimum_delta_chi2(tmp_path: Path) -> None:
     user_path = tmp_path / "user.yaml"
     output_directory = tmp_path / "output"
@@ -862,6 +983,121 @@ def test_read_rejects_negative_generator_delta_chi2_threshold(tmp_path: Path) ->
     with pytest.raises(
         ValueError,
         match=r"delta_chi2_threshold\.value must not be negative",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_accepts_prior_sampler_using_only_packaged_generator_settings(
+    tmp_path: Path,
+) -> None:
+    # num_samples/num_warmup/seed/target_accept_prob all come from the
+    # packaged default_config.yaml -- switching generator_type is enough,
+    # no user override required.
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_type: PriorSampler
+""",
+    )
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    generator_settings = config.data["parameter_space_settings"]["generator_settings"]
+    assert generator_settings["num_samples"] == 1000
+    assert generator_settings["num_warmup"] == 1000
+    assert generator_settings["seed"] == 0
+    assert generator_settings["target_accept_prob"] == pytest.approx(0.8)
+
+
+def test_read_rejects_prior_sampler_num_warmup_at_or_below_100(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_type: PriorSampler
+  generator_settings:
+    num_warmup: 100
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"generator_settings\.num_warmup must be greater than 100",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_prior_sampler_num_samples_at_or_below_100(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_type: PriorSampler
+  generator_settings:
+    num_samples: 100
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"generator_settings\.num_samples must be greater than 100",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_prior_sampler_target_accept_prob_out_of_range(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_type: PriorSampler
+  generator_settings:
+    target_accept_prob: 1.0
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"generator_settings\.target_accept_prob must be in \(0, 1\)",
+    ):
+        Configuration().read(user_path, workspace_root=tmp_path)
+
+
+def test_read_rejects_prior_sampler_num_samples_below_max_new_mods_per_iter(
+    tmp_path: Path,
+) -> None:
+    user_path = tmp_path / "user.yaml"
+    output_directory = tmp_path / "output"
+    _write_user_config(
+        user_path,
+        output_directory,
+        body="""parameter_space_settings:
+  generator_type: PriorSampler
+  generator_settings:
+    num_samples: 101
+  stopping_criteria:
+    max_new_mods_per_iter: 200
+""",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"generator_settings\.num_samples \(101\) must be at least "
+            r"parameter_space_settings\.stopping_criteria\.max_new_mods_per_iter "
+            r"\(200\)"
+        ),
     ):
         Configuration().read(user_path, workspace_root=tmp_path)
 
@@ -1148,6 +1384,7 @@ def test_mass_mge_potential_rejects_ml_parameter(tmp_path: Path) -> None:
     user_data["potential"]["stars"]["parameters"]["mge_mass_scale"] = {
         "value": 1.0,
         "unit": "",
+        "fixed": True,
     }
     user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
 
@@ -1163,10 +1400,10 @@ def _pqu_stars(user_data: dict) -> dict:
     stars = user_data["potential"]["stars"]
     stars["parameterization"] = "pqu"
     stars["parameters"] = {
-        "ml": {"unit": "Msun / Lsun", "value": 5.0},
-        "p": {"value": 0.85},
-        "q": {"value": 0.6},
-        "u": {"value": 0.93},
+        "ml": {"unit": "Msun / Lsun", "value": 5.0, "fixed": True},
+        "p": {"value": 0.85, "fixed": True},
+        "q": {"value": 0.6, "fixed": True},
+        "u": {"value": 0.93, "fixed": True},
     }
     return stars
 
@@ -1202,7 +1439,11 @@ def test_triaxial_mge_pqu_rejects_a_native_viewing_angle(tmp_path: Path) -> None
     user_path = tmp_path / "user.yaml"
     _write_user_config(user_path, tmp_path / "output")
     user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
-    _pqu_stars(user_data)["parameters"]["theta"] = {"unit": "rad", "value": 1.0}
+    _pqu_stars(user_data)["parameters"]["theta"] = {
+        "unit": "rad",
+        "value": 1.0,
+        "fixed": True,
+    }
     user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
 
     with pytest.raises(
@@ -1218,6 +1459,92 @@ def test_triaxial_mge_pqu_rejects_a_native_viewing_angle(tmp_path: Path) -> None
 # NB: an out-of-domain static value (e.g. q > p) is not rejected at config-prep
 # -- ParameterConstraints are enforced at build_with_validity via its flag,
 # see test_potential.py::test_pqu_domain_invalid_value_is_rejected_at_build_time.
+
+
+def test_triaxial_mge_pqu_non_fixed_shape_parameters_need_no_declared_prior(
+    tmp_path: Path,
+) -> None:
+    # p/q/u's joint validity constraint is data-dependent (on this MGE's own
+    # anchor axis ratio), so `pqu` has a registered default prior
+    # (`tnt.potential.registry.get_default_prior`) that always samples them
+    # -- unlike every other non-fixed parameter, they need no declared
+    # `prior` of their own.
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    stars = _pqu_stars(user_data)
+    for name in ("p", "q", "u"):
+        stars["parameters"][name]["fixed"] = False
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    stars = config.data["potential"]["stars"]
+    for name in ("p", "q", "u"):
+        assert stars["parameters"][name]["fixed"] is False
+        assert "prior" not in stars["parameters"][name]
+
+
+def test_triaxial_mge_pqu_non_fixed_shape_parameter_may_still_declare_a_prior(
+    tmp_path: Path,
+) -> None:
+    # A declared `prior` on a default-prior-covered parameter isn't
+    # required, but isn't rejected either -- `tnt.priors._build_model`
+    # folds it in as an additional factor rather than treating it as the
+    # parameter's only way to vary; see
+    # test_priors.py::test_default_prior_keeps_pqu_draws_valid_without_a_declared_prior.
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    stars = _pqu_stars(user_data)
+    stars["parameters"]["p"]["fixed"] = False
+    stars["parameters"]["p"]["prior"] = {
+        "distribution": "Uniform",
+        "args": [0.0, 1.0],
+    }
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    stars = config.data["potential"]["stars"]
+    assert stars["parameters"]["p"]["prior"] == {
+        "distribution": "Uniform",
+        "args": [0.0, 1.0],
+    }
+
+
+def _qmin_stars(user_data: dict) -> dict:
+    """Retarget the default `stars` component at the `q_min` parameterization."""
+    stars = user_data["potential"]["stars"]
+    stars["type"] = "OblateLightMGEPotential"
+    stars["parameterization"] = "q_min"
+    stars["parameters"] = {
+        "ml": {"unit": "Msun / Lsun", "value": 5.0, "fixed": True},
+        "q_min": {"value": 0.6, "fixed": True},
+    }
+    return stars
+
+
+def test_oblate_mge_q_min_non_fixed_parameter_needs_no_declared_prior(
+    tmp_path: Path,
+) -> None:
+    # `q_min`'s bound is data-dependent (on this MGE's own anchor axis
+    # ratio), so it has a registered default prior too
+    # (`tnt.potential.registry.get_default_prior`) that always samples it --
+    # it needs no declared `prior` of its own, the oblate counterpart of
+    # `test_triaxial_mge_pqu_non_fixed_shape_parameters_need_no_declared_prior`.
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(user_path, tmp_path / "output")
+    user_data = yaml.safe_load(user_path.read_text(encoding="utf-8"))
+    stars = _qmin_stars(user_data)
+    stars["parameters"]["q_min"]["fixed"] = False
+    user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
+
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+
+    stars = config.data["potential"]["stars"]
+    assert stars["parameters"]["q_min"]["fixed"] is False
+    assert "prior" not in stars["parameters"]["q_min"]
 
 
 def test_potential_component_rejects_the_removed_include_key(tmp_path: Path) -> None:
@@ -1300,7 +1627,7 @@ def test_oblate_mge_potential_resolves_with_inclination(tmp_path: Path) -> None:
     parameters = _oblate_stars(user_data)["parameters"]
     for angle in ("theta", "phi", "psi"):
         del parameters[angle]
-    parameters["inclination"] = {"unit": "deg", "value": 90.0}
+    parameters["inclination"] = {"unit": "deg", "value": 90.0, "fixed": True}
     user_path.write_text(yaml.safe_dump(user_data, sort_keys=False), encoding="utf-8")
 
     config = Configuration().read(user_path, workspace_root=tmp_path)
@@ -1316,6 +1643,10 @@ def _native_stars(user_data: dict, type_name: str, parameters: dict) -> dict:
     stars["type"] = type_name
     stars.pop("mge", None)
     stars.pop("parameterization", None)
+    for parameter in parameters.values():
+        # These schema tests evaluate one nominal point; a non-fixed
+        # parameter would need a `prior` (see _validate_parameters).
+        parameter.setdefault("fixed", True)
     stars["parameters"] = parameters
     return stars
 

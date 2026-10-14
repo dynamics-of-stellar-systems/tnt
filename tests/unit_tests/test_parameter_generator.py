@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
+from unxt import Quantity
 
 from tnt.all_models import AllModels
+from tnt.model import Model
 from tnt.parameter_generator import (
+    PriorSampler,
     SinglePointParameterGenerator,
+    _format_batch_diagnostics_summary,
     build_parameter_generator,
     parameter_generator_required_settings,
     parameter_generator_type_names,
 )
+from tnt.potential import Potential
+from tnt.priors import Prior, PriorDiagnostics
 
 
 def test_parameter_generator_registry_contains_every_explicit_type() -> None:
     assert parameter_generator_type_names() == {
         "GridSearch",
+        "PriorSampler",
         "SinglePoint",
     }
 
@@ -23,6 +32,9 @@ def test_parameter_generator_registry_contains_every_explicit_type() -> None:
 def test_parameter_generator_registry_exposes_required_settings() -> None:
     assert parameter_generator_required_settings() == {
         "GridSearch": frozenset({"delta_chi2_threshold"}),
+        "PriorSampler": frozenset(
+            {"num_samples", "num_warmup", "seed", "target_accept_prob"}
+        ),
         "SinglePoint": frozenset(),
     }
 
@@ -32,6 +44,7 @@ def test_build_parameter_generator_dispatches_through_the_registry() -> None:
         {
             "generator_type": "SinglePoint",
             "generator_settings": {},
+            "stopping_criteria": {"max_new_mods_per_iter": 1},
         },
         {},
     )
@@ -44,7 +57,7 @@ def test_build_parameter_generator_rejects_an_unregistered_type() -> None:
         ValueError,
         match=(
             "Unknown parameter_space_settings.generator_type: 'Unknown'; "
-            "expected one of: GridSearch, SinglePoint"
+            "expected one of: GridSearch, PriorSampler, SinglePoint"
         ),
     ):
         build_parameter_generator(
@@ -78,7 +91,9 @@ def test_single_point_generator_proposes_quantities_in_their_declared_unit() -> 
         },
     }
     generator = SinglePointParameterGenerator(
-        potential_settings=potential_settings, generator_settings={}
+        potential_settings=potential_settings,
+        generator_settings={},
+        max_new_mods_per_iter=10,
     )
 
     (proposed,) = generator.generate_parameters(AllModels())
@@ -87,3 +102,308 @@ def test_single_point_generator_proposes_quantities_in_their_declared_unit() -> 
     assert proposed["bh"]["r_s"].ustrip("pc") == pytest.approx(1.0)
     assert proposed["dh"]["c"].ustrip("") == pytest.approx(8.0)
     assert proposed["dh"]["M_200"].ustrip("Msun") == pytest.approx(1.0e12)
+
+
+_PRIOR_SAMPLER_POTENTIAL_SETTINGS = {
+    "dh": {
+        "type": "NFWPotential",
+        "parameterization": "concentration_m200",
+        "include": True,
+        "parameters": {
+            "c": {"fixed": True, "value": 8.0},
+            "M_200": {
+                "unit": "Msun",
+                "fixed": False,
+                "prior": {"distribution": "LogUniform", "args": [1.0e10, 1.0e14]},
+            },
+        },
+    },
+}
+
+
+def test_prior_sampler_converts_samples_into_parameter_sets() -> None:
+    prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
+    generator = PriorSampler(
+        potential_settings=_PRIOR_SAMPLER_POTENTIAL_SETTINGS,
+        generator_settings={
+            "seed": 0,
+            "num_samples": 10,
+            "num_warmup": 10,
+            "target_accept_prob": 0.8,
+        },
+        max_new_mods_per_iter=5,
+        prior=prior,
+        seed=0,
+        num_samples=10,
+        num_warmup=10,
+        target_accept_prob=0.8,
+    )
+
+    proposed = generator.generate_parameters(AllModels())
+
+    assert len(proposed) == 5
+    for candidate in proposed:
+        assert candidate["dh"]["c"].ustrip("") == pytest.approx(8.0)
+        m200 = candidate["dh"]["M_200"].ustrip("Msun")
+        assert 1.0e10 <= m200 <= 1.0e14
+
+
+def test_prior_sampler_logs_its_own_batch_diagnostics(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Re-review R2: `Prior.sample` discarded its own diagnostics, so the
+    # batch PriorSampler actually proposes from had no retained or
+    # reported diagnostics at all -- only a separate, independently-keyed
+    # pilot draw did (and never actually matched any real iteration's key,
+    # not even the first; see PriorSampler's own docstring).
+    prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
+    generator = PriorSampler(
+        potential_settings=_PRIOR_SAMPLER_POTENTIAL_SETTINGS,
+        generator_settings={
+            "seed": 0,
+            "num_samples": 10,
+            "num_warmup": 10,
+            "target_accept_prob": 0.8,
+        },
+        max_new_mods_per_iter=5,
+        prior=prior,
+        seed=0,
+        num_samples=10,
+        num_warmup=10,
+        target_accept_prob=0.8,
+    )
+
+    with caplog.at_level("INFO", logger="tnt.parameter_generator"):
+        generator.generate_parameters(AllModels())
+
+    assert len(caplog.records) == 1
+    message = caplog.records[0].getMessage()
+    assert "iteration 0" in message
+    assert "divergent draws" in message
+    assert "ESS" in message
+    assert "split-R-hat" in message
+
+
+def test_prior_sampler_logs_a_constant_sites_non_finite_diagnostics(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Re-review R2 follow-up: a non-fixed parameter declaring a genuinely
+    # constant prior (e.g. Delta(...)) gives that site a real NaN ESS/
+    # split-R-hat -- plain min()/max() over the per-site dicts can hide
+    # that NaN behind another site's healthy number depending on dict
+    # iteration order, reporting a batch as fully healthy when one site's
+    # diagnostics are actually undefined.
+    settings = {
+        "dh": {
+            "type": "NFWPotential",
+            "parameters": {
+                "m": {
+                    "unit": "Msun",
+                    "fixed": False,
+                    "prior": {"distribution": "LogUniform", "args": [1.0e10, 1.0e13]},
+                },
+                "r_s": {
+                    "unit": "kpc",
+                    "fixed": False,
+                    "prior": {"distribution": "Delta", "args": [15.0]},
+                },
+            },
+        },
+    }
+    prior = Prior(settings, {}, {})
+    generator = PriorSampler(
+        potential_settings=settings,
+        generator_settings={
+            "seed": 0,
+            "num_samples": 1000,
+            "num_warmup": 1000,
+            "target_accept_prob": 0.8,
+        },
+        max_new_mods_per_iter=5,
+        prior=prior,
+        seed=0,
+        num_samples=1000,
+        num_warmup=1000,
+        target_accept_prob=0.8,
+    )
+
+    with caplog.at_level("INFO", logger="tnt.parameter_generator"):
+        generator.generate_parameters(AllModels())
+
+    message = caplog.records[0].getMessage()
+    assert "dh.r_s" in message
+    assert "non-finite" in message
+    # dh.m's own finite ESS/split-R-hat is still reported, not swallowed.
+    assert "min ESS" in message
+    assert "max split-R-hat" in message
+
+
+def test_format_batch_diagnostics_summary_all_finite() -> None:
+    diagnostics = PriorDiagnostics(
+        diverging=None, ess={"a": 500.0, "b": 200.0}, split_rhat={"a": 1.0, "b": 1.01}
+    )
+    summary = _format_batch_diagnostics_summary(diagnostics)
+    assert summary == "min ESS 200, max split-R-hat 1.010"
+
+
+def test_format_batch_diagnostics_summary_names_non_finite_site_either_order() -> None:
+    first_nan = PriorDiagnostics(
+        diverging=None,
+        ess={"a": math.nan, "b": 500.0},
+        split_rhat={"a": math.nan, "b": 1.0},
+    )
+    last_nan = PriorDiagnostics(
+        diverging=None,
+        ess={"a": 500.0, "b": math.nan},
+        split_rhat={"a": 1.0, "b": math.nan},
+    )
+    for diagnostics, non_finite_name in ((first_nan, "a"), (last_nan, "b")):
+        summary = _format_batch_diagnostics_summary(diagnostics)
+        assert "min ESS 500" in summary
+        assert f"non-finite ESS/split-R-hat at 1 site(s): {non_finite_name}" in summary
+
+
+def test_format_batch_diagnostics_summary_all_non_finite() -> None:
+    diagnostics = PriorDiagnostics(
+        diverging=None, ess={"a": math.nan}, split_rhat={"a": math.nan}
+    )
+    summary = _format_batch_diagnostics_summary(diagnostics)
+    assert summary == (
+        "no site has a finite ESS/split-R-hat; "
+        "non-finite ESS/split-R-hat at 1 site(s): a"
+    )
+
+
+def test_format_batch_diagnostics_summary_no_parameters() -> None:
+    diagnostics = PriorDiagnostics(diverging=None, ess={}, split_rhat={})
+    assert _format_batch_diagnostics_summary(diagnostics) == (
+        "no non-fixed parameters to sample"
+    )
+
+
+def test_prior_sampler_caps_at_max_new_mods_per_iter() -> None:
+    prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
+    generator = PriorSampler(
+        potential_settings=_PRIOR_SAMPLER_POTENTIAL_SETTINGS,
+        generator_settings={
+            "seed": 0,
+            "num_samples": 10,
+            "num_warmup": 10,
+            "target_accept_prob": 0.8,
+        },
+        max_new_mods_per_iter=3,
+        prior=prior,
+        seed=0,
+        num_samples=10,
+        num_warmup=10,
+        target_accept_prob=0.8,
+    )
+
+    assert len(generator.generate_parameters(AllModels())) == 3
+
+
+def _completed_iteration_model(iteration: int) -> Model:
+    return Model(
+        potential=Potential(components={}),
+        valid_potential=True,
+        raw_parameters={"dh": {"c": Quantity(8.0, "")}},
+        orblib_done=False,
+        weights_done=False,
+        weights=None,
+        chi2=None,
+        iteration=iteration,
+    )
+
+
+def test_prior_sampler_draws_a_fresh_batch_each_iteration() -> None:
+    # PR 61 audit F1: PriorSampler used to reconstruct jax.random.PRNGKey(seed)
+    # on every call, ignoring all_models entirely, so every iteration (and
+    # every resume) repeated the exact first batch. Folding
+    # all_models.n_iterations() into the key fixes this without making
+    # PriorSampler score-conditioned -- it still never reads chi2.
+    prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
+    generator = PriorSampler(
+        potential_settings=_PRIOR_SAMPLER_POTENTIAL_SETTINGS,
+        generator_settings={
+            "seed": 0,
+            "num_samples": 10,
+            "num_warmup": 10,
+            "target_accept_prob": 0.8,
+        },
+        max_new_mods_per_iter=4,
+        prior=prior,
+        seed=0,
+        num_samples=10,
+        num_warmup=10,
+        target_accept_prob=0.8,
+    )
+
+    first_round = [
+        c["dh"]["M_200"].ustrip("Msun")
+        for c in generator.generate_parameters(AllModels())
+    ]
+
+    one_iteration_done = AllModels().append(_completed_iteration_model(0))
+    assert one_iteration_done.n_iterations() == 1
+    second_round = [
+        c["dh"]["M_200"].ustrip("Msun")
+        for c in generator.generate_parameters(one_iteration_done)
+    ]
+
+    assert first_round != second_round
+
+    # Reproducible: resuming from the same recorded history (same
+    # n_iterations()) proposes the identical next batch, not a new one.
+    resumed_second_round = [
+        c["dh"]["M_200"].ustrip("Msun")
+        for c in generator.generate_parameters(one_iteration_done)
+    ]
+    assert second_round == resumed_second_round
+
+    # And matches an uninterrupted run that reached the same point directly.
+    two_iterations_done = one_iteration_done.append(_completed_iteration_model(1))
+    assert two_iterations_done.n_iterations() == 2
+    third_round = [
+        c["dh"]["M_200"].ustrip("Msun")
+        for c in generator.generate_parameters(two_iterations_done)
+    ]
+    assert third_round != second_round
+
+
+def test_build_parameter_generator_dispatches_prior_sampler() -> None:
+    prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
+    parameter_space_settings = {
+        "generator_type": "PriorSampler",
+        "generator_settings": {
+            "seed": 0,
+            "num_samples": 10,
+            "num_warmup": 10,
+            "target_accept_prob": 0.8,
+        },
+        "stopping_criteria": {"max_new_mods_per_iter": 4},
+    }
+
+    generator = build_parameter_generator(
+        parameter_space_settings, _PRIOR_SAMPLER_POTENTIAL_SETTINGS, prior=prior
+    )
+
+    assert isinstance(generator, PriorSampler)
+    assert len(generator.generate_parameters(AllModels())) == 4
+
+
+def test_build_parameter_generator_requires_a_prior_for_prior_sampler() -> None:
+    parameter_space_settings = {
+        "generator_type": "PriorSampler",
+        "generator_settings": {
+            "seed": 0,
+            "num_samples": 10,
+            "num_warmup": 10,
+            "target_accept_prob": 0.8,
+        },
+        "stopping_criteria": {"max_new_mods_per_iter": 4},
+    }
+
+    with pytest.raises(ValueError, match="requires a built Prior"):
+        build_parameter_generator(
+            parameter_space_settings, _PRIOR_SAMPLER_POTENTIAL_SETTINGS
+        )

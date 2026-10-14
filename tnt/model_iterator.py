@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, NamedTuple, Self
 
 import equinox as eqx
+import jax
 import numpy as np
 from unxt import AbstractUnitSystem, Quantity
 
@@ -58,6 +59,8 @@ from tnt.potential import (
     ResolvedPotentialComponent,
     raw_potential_parameters,
 )
+from tnt.priors import Prior, load_prior_plugins
+from tnt.priors_diagnostic_plot import plot_prior_diagnostics
 from tnt.run_config_log import (
     RunConfigLog,
     RunManifestReference,
@@ -170,6 +173,32 @@ class ModelIterator:
         cosmological_parameters = resolve_cosmological_parameters(
             config["cosmological_parameters"]
         )
+        prior_plugins = load_prior_plugins(
+            parameter_space_settings["priors"], input_directory
+        )
+        prior = Prior(
+            potential_settings,
+            prior_plugins,
+            mges,
+            resolved_potential=resolved_potential,
+            cosmological_parameters=cosmological_parameters,
+            unit_system=unit_system,
+        )
+        if parameter_space_settings["generator_type"] == "PriorSampler":
+            # A pilot pre-flight check, independent of every real search
+            # batch's own key -- see `plot_prior_diagnostics`'s own
+            # docstring. Each real batch logs its own diagnostics instead,
+            # from `PriorSampler._propose_free_parameters`.
+            generator_settings = parameter_space_settings["generator_settings"]
+            output_directory.mkdir(parents=True, exist_ok=True)
+            plot_prior_diagnostics(
+                prior,
+                output_directory / "prior_diagnostics.png",
+                jax.random.PRNGKey(generator_settings["seed"]),
+                num_samples=generator_settings["num_samples"],
+                num_warmup=generator_settings["num_warmup"],
+                target_accept_prob=generator_settings["target_accept_prob"],
+            )
 
         return cls(
             potential_settings=potential_settings,
@@ -180,7 +209,7 @@ class ModelIterator:
             population_data=population_data,
             weight_solver=build_weight_solver(config["weight_solver_settings"]),
             parameter_generator=build_parameter_generator(
-                parameter_space_settings, potential_settings
+                parameter_space_settings, potential_settings, prior=prior
             ),
             orbit_library_settings=config["orbit_library_settings"],
             orbit_sampler=build_orbit_sampler(config["orbit_library_settings"]),

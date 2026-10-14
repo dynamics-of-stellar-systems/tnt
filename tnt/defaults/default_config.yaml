@@ -150,6 +150,10 @@ weight_solver_settings:
 parameter_space_settings:
   generator_type: "GridSearch"
   which_chi2: "kinchi2"
+  # Cross-component/custom priors, each a plugin function ("<path>:<function_name>",
+  # resolved relative to io_settings.input_directory) contributing numpyro
+  # factor terms -- see tnt.priors. Empty by default.
+  priors: {}
   potential_rescalings:
     # Scale the fully assembled potential independently of its ordinary
     # component parameters. Disabled settings remain present and validated.
@@ -164,6 +168,16 @@ parameter_space_settings:
     delta_chi2_threshold:
       mode: "fraction_of_sqrt_2n_observations"
       value: 0.1
+    # Only read by generator_type: "PriorSampler" (tolerated, unused
+    # otherwise -- recursive default-merging can't remove a mapping key, so
+    # these are present regardless of generator_type, same as
+    # delta_chi2_threshold above). seed has no auto-generation convention
+    # (unlike orbit_library_settings.random_seed) -- always this literal
+    # value unless overridden.
+    seed: 0
+    num_samples: 1000
+    num_warmup: 1000
+    target_accept_prob: 0.8
   stopping_criteria:
     # Modes: "absolute" or "relative".
     # Set enabled false to leave another criterion or the parameter generator
@@ -179,6 +193,9 @@ parameter_space_settings:
     target_model_count: 3
     # Maximum number of additional iterations performed by the current run.
     n_new_iter: 10
+    # Caps how many ParameterSets any generator_type proposes per call to
+    # generate_parameters -- shared/generic, not any one generator's own setting.
+    max_new_mods_per_iter: 10
 
 analysis_settings:
   orbit_decomposition:

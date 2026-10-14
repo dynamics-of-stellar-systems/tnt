@@ -158,9 +158,10 @@ potential:
       ml:
         value: 5.0
         unit: "Msun / Lsun"
-      theta: {value: 1.0, unit: "rad"}
-      phi: {value: 0.5, unit: "rad"}
-      psi: {value: 0.0, unit: "rad"}
+        fixed: true
+      theta: {value: 1.0, unit: "rad", fixed: true}
+      phi: {value: 0.5, unit: "rad", fixed: true}
+      psi: {value: 0.0, unit: "rad", fixed: true}
 
 kinematic_data:
   central_spectroscopy:
@@ -208,16 +209,19 @@ the parameter set its resolved `type`/`parameterization` expects -- a
 missing or unexpected name is rejected at preparation time, for curated
 `galax` types as well as TNT's own MGE composite types, and including native
 fields that have a `galax` constructor default (so the model table is
-complete and reproducible). A light-MGE
-potential requires an `ml` mass-to-light parameter. A mass-MGE potential
-must not declare `ml`, because its input MGE already represents mass.
-Triaxial MGE types also require `theta`/`phi`/`psi`, the global viewing
-angles the named MGE is deprojected under -- or, with
-`parameterization: "pqu"`, the intrinsic axis ratios `p`/`q`/`u` instead
-(converted to viewing angles at runtime; see [Potential](potential.md)).
-Oblate axisymmetric MGE types require a single `inclination` instead. MGE
-contents and their physical units are inspected only in the later
-object-construction phase.
+complete and reproducible). A light-MGE potential requires an `ml`
+mass-to-light parameter. A mass-MGE potential must not declare `ml`,
+because its input MGE already represents mass. Triaxial MGE types also
+require `theta`/`phi`/`psi`, the global viewing angles the named MGE is
+deprojected under -- or, with `parameterization: "pqu"`, the intrinsic axis
+ratios `p`/`q`/`u` instead (converted to viewing angles at runtime; see
+[Potential](potential.md)). Oblate axisymmetric MGE types require a single
+`inclination` instead. Every non-fixed parameter must also declare its own
+search `prior`, unless it's one a registered *default prior* always
+samples instead (`pqu`'s `p`/`q`/`u`, `q_min` -- see [Priors](priors.md));
+the registries example above fixes every parameter since it isn't about
+search behavior. MGE contents and their physical units are inspected only
+in the later object-construction phase.
 Potential parameter values also retain their declared units through
 preparation. Their scalar/finite and physical-domain constraints are checked
 when each proposed runtime potential is constructed, both before and after a
@@ -420,11 +424,12 @@ identifiers owned by the preparation schema, and inconsistent tagged
 thresholds. A potential component's curated `galax` class name and optional
 parameterization are resolved later by `tnt.potential` during runtime-object
 construction. Preparation also checks non-kinematics data-only numerical
-constraints, including generic search-parameter bounds, positive worker
-counts, and orbit-grid limits. Potential-type-specific physical domains are
-checked later, when a proposed potential component is constructed. Concrete
-kinematics and population constructors
-check explicit histogram bin counts, Gauss-Hermite order and
+constraints, including that every non-fixed potential parameter declares a
+`prior` (unless a registered default prior already covers it -- see
+[Priors](priors.md)), positive worker counts, and orbit-grid limits.
+Potential-type-specific physical domains are checked later, when a proposed
+potential component is constructed. Concrete kinematics and population
+constructors check explicit histogram bin counts, Gauss-Hermite order and
 systematic-uncertainty mappings, Bayesian LOSVD policies, proper-motion
 variance scaling and warning thresholds, population value/uncertainty pairs,
 and all observational file contents. Preparation still checks that references
@@ -476,6 +481,33 @@ resolved file or run manifest is written during preparation.
 Preparation does not instantiate system components, inspect observational data
 or MGE files, or verify optional runtime dependencies. Those checks belong to
 the later execution phase. Unsupported fields are reported as errors.
+
+## Priors
+
+A potential parameter's `prior` field (`{distribution: "<numpyro.distributions
+class>", args: [...]}`, sibling to `value`/`unit`/`fixed`) declares its
+search-space distribution. It is required for every non-fixed parameter -- a
+parameter with `fixed: false` is one the search varies, and its `prior` is
+how. `parameter_space_settings.priors` names any
+cross-component/custom prior plugins -- Python functions in their own `.py`
+file, resolved relative to `io_settings.input_directory`:
+
+```yaml
+parameter_space_settings:
+  priors:
+    dh_mass_fraction:
+      plugin: "priors/mass_fraction.py:mass_fraction"
+```
+
+Preparation validates this structurally only -- that `plugin` has the shape
+`<path>:<function_name>`, that every non-fixed parameter declares a `prior`,
+and that a declared `prior` has a `distribution`
+string and numeric `args`. It does not check that `distribution` names a
+real `numpyro.distributions` class, or load and inspect the plugin file
+itself; both are the plugin author's responsibility. Neither a parameter's
+`prior` nor `parameter_space_settings.priors` is resume-critical -- see
+[Priors](priors.md) for the full `PriorSampler`/`Prior` model and the
+`sample`/`factor` plugin contract.
 
 ## Paths and side effects
 
