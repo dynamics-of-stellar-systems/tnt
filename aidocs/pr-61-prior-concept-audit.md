@@ -986,3 +986,137 @@ not verify the combined runtime. Keep the temporary audit until the review
 is resolved, then remove it before merging per the project workflow.
 
 Assisted by Codex (OpenAI).
+
+
+---
+
+## Final re-review — 2026-10-14 (fix commit `c3dbfd8`)
+
+Reviewed PR head: `c3dbfd8b4dec86a503345913b9086f484357ab1f`.
+Current main: `e405382d6e4bbb31ab250da91003445f61d5b2fc`.
+Proposed merge tree: `9d41ca305ef481edbf0894595abed507107ed483`.
+All existing audit text and author responses are preserved above this section.
+
+### Judgment
+
+**Ready to merge from the code-review perspective.** Prash has resolved the
+remaining R2 and R3 diagnostic findings, corrected the sampling-bound
+explanation, and added the requested regression coverage. The targeted
+PR-head checks and the proposed merge with current main passed. No further
+production-code correction is required by this audit.
+
+This judgment covers the agreed candidate-sampling scope. Fit scoring and
+posterior integration remain separate. Issue #82's additional default priors
+remain follow-up work; its inverse-conversion prerequisite has now landed
+in main through PR #84 and is included in the merge validation below.
+
+### Response and new commit
+
+Prash's latest PR comment says the branch is ready for another review. The
+substantive response is recorded alongside the R2/R3 findings and coverage
+notes in this document, and implemented by the single new commit `c3dbfd8`
+since the published audit commit `18599c4`. Reviewed all nine changed files,
+including the production changes, tests, documentation, and author responses.
+
+| Previous finding | Final outcome |
+| --- | --- |
+| R2: hidden non-finite batch diagnostics | Resolved. The formatter identifies affected sites explicitly, reports finite-site extrema separately, and handles an entirely undefined or empty batch. |
+| R3: clipped/overlapping one-parameter summary | Resolved for the reported case and a longer component name. Summary, title, and legend are fully inside the saved canvas and do not overlap. |
+| P3: incorrect fixed-`u` bounds explanation | Resolved. The docstring correctly identifies `u*q'` as part of `p`'s lower bound and `u` as its upper bound; the human documentation labels the unconditional formulas as the all-free case. |
+| R1/R4 regression coverage | Added: seven fixed/free-subset cases and a fresh-process backend-preservation test. The earlier production fixes remain in place. |
+
+### Independent verification of the fixes
+
+**R2:** Repeated the actual `LogUniform` mass plus `Delta(15.0)` radius
+reproduction with seed 0 folded into iteration 0 and 1,000 samples. The log
+now reads:
+
+```text
+PriorSampler batch for iteration 0: 0/1000 divergent draws, min ESS 1019,
+max split-R-hat 0.999; non-finite ESS/split-R-hat at 1 site(s): halo.r_s.
+```
+
+The five returned proposals retained the declared point-distribution radius.
+Also checked mixed finite/NaN/infinite statistics, including only one
+undefined statistic at a site, with both dictionary orders. The affected
+site was always named and the finite site's summary remained available.
+The new checked-in tests cover ordinary, mixed, all-undefined, and empty
+summaries plus the actual generator/point-prior reproduction. Reporting
+remains advisory, as agreed.
+
+**R3:** Rendered the complete signed bar-orientation prior through the public
+file-writing function, with both `bar` and
+`stellar_bar_orientation_component` as component names. The saved
+one-parameter canvas is now approximately **1,794 × 624 pixels**; its
+numerical summary ends at `y=477.94`, inside that canvas. Measured all three
+summary/title/legend bounding boxes and checked pairwise separation.
+Visually inspected the saved image. The histogram still contains all
+**1,000** draws, including all **513 negative** values in the trace, on
+linear axes. The empty-parameter placeholder still renders. A two-parameter
+image has identical pixels to the pre-fix rendering for the same inputs and
+key. The application-selected SVG backend and existing figure were preserved.
+
+The new geometry regression checks visibility and separation rather than
+PNG existence alone. Separating figure construction from file writing
+supports that direct check while retaining the public plotting API.
+
+**Coverage/documentation:** Ran the seven new sampling-subset cases and the
+subprocess backend test. Checked the corrected bounds derivation against the
+unchanged sampling implementation. The documentation now distinguishes the
+all-free formulas from conditional sampling with fixed siblings. Checked the
+unit boundary alongside main's inverse tests: their percent-unit quantities
+exercise the lower-level potential API; configuration explicitly rejects a
+`unit` field on dimensionless shape parameters. They therefore do not change
+the plain-ratio contract of configuration-driven default priors.
+
+### Merge validation with current main
+
+The PR is behind main's orbit-start-space work (#80) and the now-merged MGE
+inverse conversions (#84). Git's `merge-tree --write-tree` produced the
+conflict-free tree identified above. Exported that exact tree into a fresh
+temporary directory inside the existing Linux review container and verified
+that Python imported TNT from the exported directory, rather than the
+PR-head checkout or installed source copy. Ran scientific modules in
+separate Python processes, sequentially, within the documented VM limit.
+Neither working branch was merged or modified for this integration check.
+
+- PR head: **33 targeted tests passed** (16 parameter-generator tests, nine
+  plotting tests, seven fixed/free-subset cases, and the isolated backend
+  test). The direct diagnostic/rendering probes above passed.
+- Proposed merge: **317 selected tests passed** across 12 modules: priors
+  (31), parameter generator (16), configuration (93), resume compatibility
+  (30), plotting (9), model-search integration (9), model iterator (35),
+  shared shape conversions (17), parameterized MGE construction (15),
+  standalone inverse conversions (46), inverse reporting (15), and packaged
+  defaults (1).
+- Ruff and strict Sphinx (`-E -b html -W`) passed on both the PR head and the
+  proposed merged source.
+- Reused the review's frozen Linux `x86_64` dependency image; no dependency
+  or container-definition change occurred in `c3dbfd8`. Python 3.12.13,
+  JAX 0.10.2, NumPyro 0.21.0, Matplotlib 3.11.2.
+- Warnings included the existing TensorFlow Probability deprecated-JAX-API
+  warning. No selected test failed.
+- The full repository suite and Python 3.13 were not independently rerun.
+  The author's full-suite result remains an additional reported result,
+  rather than this review's own full-suite measurement.
+- PR head and remote main were unchanged on recheck. The final audit edit
+  passed the whitespace check and exact append-only preservation check.
+
+### Remaining non-blocking notes and merge steps
+
+- The existing reduced-precision/boundary limitations recorded in the earlier
+  audit remain separate from these diagnostic fixes. Passing construction
+  validity and diagnostic checks does not certify an end-to-end physical fit.
+- With the longer component name, the duplicated vertical trace-axis label
+  can still extend below the canvas. The complete name is readable in the
+  numerical summary and histogram title; the values and diagnostic text are
+  intact. Dynamic axis-label wrapping is optional plotting polish and does
+  not reopen the resolved summary/title/legend finding.
+- GitHub's previous requested-changes review is still present, so technical
+  readiness does not yet remove the review/branch-protection block. There are
+  no PR status checks reported. Update the review approval at the merge step.
+- Keep this audit for the present review record, then remove it before merging
+  according to the project workflow. Refresh the PR's review-history summary
+  if needed. These are merge/documentation mechanics, not further code fixes.
+
+Assisted by Codex (OpenAI).
