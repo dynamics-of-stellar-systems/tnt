@@ -121,6 +121,26 @@ def plot_prior_diagnostics(
     not a convergence diagnostic (see `PriorDiagnostics`). `target_accept_prob`
     is then unused -- it only affects `NUTS`'s step-size adaptation.
     """
+    fig = _build_diagnostics_figure(
+        prior, key, num_samples, num_warmup, target_accept_prob
+    )
+    fig.savefig(path, dpi=150)
+
+
+def _build_diagnostics_figure(
+    prior: Prior,
+    key: Array,
+    num_samples: int,
+    num_warmup: int | None,
+    target_accept_prob: float,
+) -> Figure:
+    """The actual figure-building logic behind `plot_prior_diagnostics`.
+
+    Split out so a test can inspect the built `Figure` directly (e.g. via
+    `get_window_extent` on its text artists, to check a layout fix actually
+    keeps text on-canvas and non-overlapping) without round-tripping
+    through a saved file.
+    """
     samples, diagnostics = prior.sample_with_diagnostics(
         key, num_samples, num_warmup, target_accept_prob
     )
@@ -132,9 +152,9 @@ def plot_prior_diagnostics(
         # prior's own `known`-resolved siblings) -- a supported,
         # degenerate `PriorSampler` setup with nothing left to sample, not
         # an error. `fig.add_gridspec(0, ...)` rejects zero rows, so there
-        # is no corner plot to build; save a minimal figure saying so
-        # instead, keeping this function's "saves a figure to path"
-        # contract even here.
+        # is no corner plot to build; return a minimal figure saying so
+        # instead, keeping this function's "produces a figure" contract
+        # even here.
         fig = Figure(figsize=(4.0, 2.0), dpi=150)
         FigureCanvasAgg(fig)
         ax = fig.add_subplot()
@@ -148,8 +168,7 @@ def plot_prior_diagnostics(
             fontsize=_LABEL_FONTSIZE,
             wrap=True,
         )
-        fig.savefig(path, dpi=150)
-        return
+        return fig
 
     values = {name: np.asarray(samples[name]) for name in names}
     log_scale = {name: _use_log_scale(values[name]) for name in names}
@@ -158,22 +177,47 @@ def plot_prior_diagnostics(
     # A narrow spacer column (index `n`) separates the corner grid from the
     # trace column (index `n + 1`) by more than the usual `_PANEL_GAP`.
     spacer_ratio = 0.3
-    fig_width = _PANEL_SIZE * (n + spacer_ratio + _TRACE_WIDTH_RATIO)
+    grid_width = _PANEL_SIZE * (n + spacer_ratio + _TRACE_WIDTH_RATIO)
+    # A single parameter has no off-diagonal table block (see `table_rows`
+    # below) to hold its ESS/split-R-hat/divergence summary, so that text
+    # has to live in the header instead -- reserve genuinely extra height
+    # for it there (not just the sliver the title alone needs), or it
+    # overflows the canvas and collides with the title. The narrower
+    # one-panel canvas also leaves the centered title too little clearance
+    # from the fixed-position legend at its default size, so reserve extra
+    # width too -- as blank left margin, not by stretching the one panel
+    # wider than `_PANEL_SIZE`. (Re-review R3 follow-up: reproduced both
+    # the summary clipping and this title/legend collision in the saved
+    # figure before this.)
+    grid_height = _PANEL_SIZE * n
+    summary_height = _PANEL_SIZE * 0.6 if n == 1 else 0.0
+    legend_clearance = _PANEL_SIZE * 1.3 if n == 1 else 0.0
+    fig_height = grid_height + summary_height
+    fig_width = grid_width + legend_clearance
     fig = Figure(
-        figsize=(fig_width, _PANEL_SIZE * n),
+        figsize=(fig_width, fig_height),
         # Match `savefig`'s dpi: the table's column widths are measured via
         # a draw at the figure's dpi, and font hinting rounds glyph widths
         # differently at different dpis.
         dpi=150,
     )
     FigureCanvasAgg(fig)
-    top, bottom = 0.84, 0.10
+    # `top`/`bottom`/`left`/`right` are fractions of `grid_height`/
+    # `grid_width` -- rescale to the same fractions of the (possibly
+    # taller/wider) full figure, so the grid itself keeps the same
+    # absolute size and position relative to the figure's *right* edge,
+    # with only a reserved header above it and a blank margin to its left
+    # (where the legend already sits) growing.
+    top = 0.84 * grid_height / fig_height
+    bottom = 0.10 * grid_height / fig_height
+    left = (legend_clearance + 0.07 * grid_width) / fig_width
+    right = (legend_clearance + 0.98 * grid_width) / fig_width
     gs = fig.add_gridspec(
         n,
         n + 2,
         width_ratios=[1.0] * n + [spacer_ratio, _TRACE_WIDTH_RATIO],
-        left=0.07,
-        right=0.98,
+        left=left,
+        right=right,
         bottom=bottom,
         top=top,
         wspace=_PANEL_GAP,
@@ -367,19 +411,22 @@ def plot_prior_diagnostics(
     elif n == 1:
         # No axis-aligned off-diagonal block exists for a single parameter
         # (`table_rows == n // 2 == 0`) to put the usual table in -- a
-        # plain text summary centered over the trace column instead of no
+        # plain text summary centered over the trace column, in the extra
+        # header space `summary_height` reserved above the grid (between
+        # it and the title) specifically for this case, instead of no
         # numerical summary at all.
         name = names[0]
         divergence_fraction = n_divergent / num_samples
         trace_position = trace_axes[0].get_position()
+        header_top = 1.0 - 0.3 * (1.0 - top)  # leaves room below the title
         fig.text(
             trace_position.x0 + trace_position.width / 2,
-            top,
+            (top + header_top) / 2,
             f"{name}\nESS: {diagnostics.ess[name]:.0f}\n"
             f"split-R̂: {diagnostics.split_rhat[name]:.3f}\n"
             f"divergent: {n_divergent}/{num_samples} ({divergence_fraction:.1%})",
             ha="center",
-            va="bottom",
+            va="center",
             fontsize=_LABEL_FONTSIZE,
         )
 
@@ -400,4 +447,4 @@ def plot_prior_diagnostics(
         fontsize=_TITLE_FONTSIZE,
     )
 
-    fig.savefig(path, dpi=150)
+    return fig

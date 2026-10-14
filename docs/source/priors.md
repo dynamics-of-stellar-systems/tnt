@@ -22,16 +22,21 @@ instead -- there's no opt-in setting, and the covered parameters don't need
 (but may still have) a declared `prior` of their own. Currently registered:
 
 - `TriaxialLightMGEPotential` / `TriaxialMassMGEPotential` with
-  `parameterization: "pqu"` -- `p`, `q`, and `u` are all covered. `p ~
-  Uniform(0, 1)`; `q ~ Uniform(0, min(p, q'))`, `q'` being this MGE's own
-  anchor axis ratio (`min` of its components' observed `q`) -- not just
-  `q <= p`, because `q`'s *intrinsic* axis ratio can never exceed its own
-  anchor Gaussian's *observed* one (projection can only make a shape look
-  rounder than it truly is, never flatter), and without that bound a
-  sampled `(p, q)` can leave no valid `u` at all, for any viewing angle;
-  `u ~ Uniform(...)` within the MGE-dependent domain `potential.md`
-  describes, margin-adjusted for numerical precision near its endpoints.
-  The mass parameter (`ml` or `mge_mass_scale`) is *not* covered -- it still
+  `parameterization: "pqu"` -- `p`, `q`, and `u` are all covered. With none
+  of the three fixed: `p ~ Uniform(0, 1)`; `q ~ Uniform(0, min(p, q'))`,
+  `q'` being this MGE's own anchor axis ratio (`min` of its components'
+  observed `q`) -- not just `q <= p`, because `q`'s *intrinsic* axis ratio
+  can never exceed its own anchor Gaussian's *observed* one (projection
+  can only make a shape look rounder than it truly is, never flatter), and
+  without that bound a sampled `(p, q)` can leave no valid `u` at all, for
+  any viewing angle; `u ~ Uniform(...)` within the MGE-dependent domain
+  `potential.md` describes, margin-adjusted for numerical precision near
+  its endpoints. Fixing any one of `p`/`q`/`u` tightens the other(s)'
+  bounds the same way -- e.g. fixing `q` bounds a sampled `p` below by
+  that same `q`, not just the reverse -- rather than leaving them to
+  sample as if nothing were fixed (see `_pqu_default_prior_sample`'s own
+  docstring for the exact bound in every fixed/free combination). The
+  mass parameter (`ml` or `mge_mass_scale`) is *not* covered -- it still
   needs its own declared `prior` if non-fixed.
 - `OblateLightMGEPotential` / `OblateMassMGEPotential` with
   `parameterization: "q_min"` -- `q_min ~ Uniform(0, q')`, the oblate

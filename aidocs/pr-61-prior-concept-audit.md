@@ -849,6 +849,27 @@ that information, but should not imply that all sites have usable
 statistics. Add a regression with mixed finite/non-finite sites in both
 orders. This remains advisory; no automated rejection threshold is needed.
 
+**Response -- fixed.** Reproduced this finding's own `Delta(15.0)` case
+first: `dh.r_s` genuinely has `ess=nan`, `split_rhat=nan`, and the previous
+logging (`min(diagnostics.ess.values())`, `max(diagnostics.split_rhat
+.values())`) reported `min ESS 1019, max split-R-hat 0.999` with no
+indication `dh.r_s` was undefined -- confirmed Python's own `min`/`max`
+semantics are responsible (`min([1.0, nan]) == 1.0`, `min([nan, 1.0]) ==
+nan`; order-dependent either way). `PriorSampler._propose_free_parameters`
+now calls a new `_format_batch_diagnostics_summary` helper that separates
+finite from non-finite sites per name (checking both `ess` and
+`split_rhat` together), reports the worst *finite* extremum only over the
+finite subset, and names every non-finite site explicitly (`"non-finite
+ESS/split-R-hat at 1 site(s): dh.r_s"`), falling back to "no site has a
+finite ESS/split-R-hat" if none are finite, and "no non-fixed parameters
+to sample" if the batch has none at all. New regressions: four direct
+`_format_batch_diagnostics_summary` unit tests (all finite; a non-finite
+site named regardless of dict order, both orders; all non-finite; zero
+parameters) plus an end-to-end `PriorSampler` test reproducing this
+finding's own `Delta(15.0)` case and asserting the logged message both
+names `dh.r_s` and still reports `dh.m`'s own finite numbers, in
+`tests/unit_tests/test_parameter_generator.py`.
+
 ### Remaining R3 follow-up — P2: the one-parameter summary is clipped
 
 Location: `tnt/priors_diagnostic_plot.py:367-403`, especially the new
@@ -875,6 +896,26 @@ and parameter names, and add a regression that checks summary visibility
 and separation. Merely finding the summary text in a `Figure` or checking
 that a PNG exists does not verify that users can read it.
 
+**Response -- fixed.** Rendered this finding's own `LongMuraliBarPotential`
+reproduction first and visually confirmed both the clipping and both
+overlaps. Reserved genuine extra height (for the summary, between the grid
+and the title) and extra width (as blank left margin, so the centered
+title has room before the fixed-position legend -- the narrower one-panel
+canvas was what left too little clearance there) for the `n == 1` case
+specifically, computed so the actual grid/trace panels keep exactly their
+usual `_PANEL_SIZE`; `n >= 2` figures are unaffected (checked bit-for-bit
+identical to the pre-fix render). Split `plot_prior_diagnostics` into a
+thin file-saving wrapper and a new `_build_diagnostics_figure` that returns
+the `Figure` itself, specifically so a test can inspect real drawn text
+geometry via matplotlib's own `get_window_extent` rather than only
+checking a saved PNG exists -- exactly this finding's own closing point.
+New regression `test_one_parameter_summary_is_fully_visible_and_does_not_overlap`
+asserts the summary/title/legend bounding boxes all stay within
+`fig.bbox` and none overlap each other; confirmed it fails against the
+pre-fix layout (reproduced by zeroing the new reserved-space terms) with
+the exact three symptoms this finding described (clipped, summary/title
+overlap, title/legend overlap) before confirming it passes against the fix.
+
 ### Documentation correction and regression coverage
 
 - **P3, inaccurate bound explanation:**
@@ -891,6 +932,24 @@ that a PNG exists does not verify that users can read it.
   manual reproductions as meaningful regressions for R1 and R4, and make
   the plotting tests check represented data and readable summaries. This
   coverage recommendation is distinct from the reproduced layout defect.
+
+**Response -- addressed.** `_pqu_default_prior_sample`'s own docstring
+corrected: `p`'s upper bound is `u` (not `u * q'`) when `u` is known;
+`u * q'` is folded into `p`'s *lower* bound alongside `q`, exactly as the
+production code already did. `docs/source/priors.md`'s "Default priors"
+section now states its `Uniform(0, 1)`/`Uniform(0, min(p, q'))` formulas
+are the all-free case specifically, and says fixing any one of `p`/`q`/`u`
+tightens the others' bounds the same way, pointing to the sampler's own
+docstring for the exact bound in every combination. Added the missing
+automated regression coverage this note asked for:
+`test_default_prior_respects_every_fixed_free_pqu_subset` (parametrized
+over all seven non-trivial fixed/free subsets from R1's own reproduction
+table) in `tests/unit_tests/test_priors.py`;
+`test_importing_model_iterator_preserves_a_preselected_matplotlib_backend`
+(a subprocess test, isolating the global matplotlib backend state) in
+`tests/unit_tests/test_model_iterator.py`; and
+`test_priors_diagnostic_plot.py`'s new summary-geometry test described
+under R3 above.
 
 ### Validation and merge integration
 

@@ -8,6 +8,7 @@ raises `NotImplementedError` -- except `SinglePointParameterGenerator` and
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
@@ -17,7 +18,7 @@ from unxt import Quantity
 
 from tnt.all_models import AllModels
 from tnt.potential import raw_parameter_dimensions
-from tnt.priors import Prior
+from tnt.priors import Prior, PriorDiagnostics
 from tnt.registry import register_typed_class
 from tnt.validation import _mapping, _number, _required
 
@@ -247,6 +248,50 @@ def _parameter_sets_from_samples(
     return parameter_sets
 
 
+def _format_batch_diagnostics_summary(diagnostics: PriorDiagnostics) -> str:
+    """Summarize one batch's ESS/split-R-hat, naming any non-finite site.
+
+    Plain `min`/`max` over `diagnostics.ess`/`.split_rhat` silently hide a
+    `NaN` site behind a healthy-looking extremum whenever a finite value
+    happens to come first in iteration order (`min([1.0, nan]) == 1.0`, not
+    `nan`) -- and an intentionally constant/point-mass `prior` (e.g. a
+    non-fixed parameter declared `Delta(...)`) genuinely produces `NaN` ESS
+    and split-R-hat, not a bug. Reporting the worst *finite* value without
+    checking for this would describe a batch with an undefined statistic as
+    if every site were healthy.
+    """
+    names = sorted(diagnostics.ess)
+    non_finite = [
+        name
+        for name in names
+        if not (
+            math.isfinite(diagnostics.ess[name])
+            and math.isfinite(diagnostics.split_rhat[name])
+        )
+    ]
+    finite_ess = [diagnostics.ess[name] for name in names if name not in non_finite]
+    finite_rhat = [
+        diagnostics.split_rhat[name] for name in names if name not in non_finite
+    ]
+    if not names:
+        # No non-fixed, prior-bearing parameter at all -- a supported,
+        # degenerate setup (see `tnt.priors_diagnostic_plot
+        # .plot_prior_diagnostics`'s own zero-parameter handling).
+        return "no non-fixed parameters to sample"
+    if finite_ess:
+        summary = (
+            f"min ESS {min(finite_ess):.0f}, max split-R-hat {max(finite_rhat):.3f}"
+        )
+    else:
+        summary = "no site has a finite ESS/split-R-hat"
+    if non_finite:
+        summary += (
+            f"; non-finite ESS/split-R-hat at {len(non_finite)} site(s): "
+            f"{', '.join(non_finite)}"
+        )
+    return summary
+
+
 @register_parameter_generator
 class PriorSampler(AbstractParameterGenerator):
     """Proposes parameters by sampling from a `tnt.priors.Prior`.
@@ -277,9 +322,13 @@ class PriorSampler(AbstractParameterGenerator):
     `generate_parameters`'s own `[:max_new_mods_per_iter]` trim still does
     the actual capping, unchanged.
 
-    Each call logs its own batch's divergence count and worst ESS/split-
-    R-hat across every parameter, at `INFO` level, tagged with the
-    iteration it was drawn for -- this is the actual batch
+    Each call logs its own batch's divergence count and worst *finite*
+    ESS/split-R-hat across every parameter, at `INFO` level, tagged with the
+    iteration it was drawn for (see `_format_batch_diagnostics_summary` for
+    why "worst finite" and not a plain `min`/`max` -- a site with a
+    genuinely non-finite statistic, e.g. an intentionally constant
+    `Delta(...)` prior, is named explicitly rather than silently hidden
+    behind another site's healthy number). This is the actual batch
     `generate_parameters` goes on to propose from, not
     `ModelIterator.from_configuration`'s separate, independently-keyed
     pilot figure (`tnt.priors_diagnostic_plot.plot_prior_diagnostics`),
@@ -313,25 +362,13 @@ class PriorSampler(AbstractParameterGenerator):
             num_warmup=self.num_warmup,
             target_accept_prob=self.target_accept_prob,
         )
-        if diagnostics.ess:
-            _LOGGER.info(
-                "PriorSampler batch for iteration %d: %d/%d divergent draws, "
-                "min ESS %.0f, max split-R-hat %.3f.",
-                iteration,
-                int(diagnostics.diverging.sum()),
-                self.num_samples,
-                min(diagnostics.ess.values()),
-                max(diagnostics.split_rhat.values()),
-            )
-        else:
-            # No non-fixed, prior-bearing parameter at all -- a supported,
-            # degenerate setup (see `tnt.priors_diagnostic_plot
-            # .plot_prior_diagnostics`'s own zero-parameter handling).
-            _LOGGER.info(
-                "PriorSampler batch for iteration %d: no non-fixed parameters "
-                "to sample.",
-                iteration,
-            )
+        _LOGGER.info(
+            "PriorSampler batch for iteration %d: %d/%d divergent draws, %s.",
+            iteration,
+            int(diagnostics.diverging.sum()),
+            self.num_samples,
+            _format_batch_diagnostics_summary(diagnostics),
+        )
         return _parameter_sets_from_samples(samples, self.potential_settings)
 
 

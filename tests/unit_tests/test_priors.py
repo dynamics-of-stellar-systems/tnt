@@ -417,6 +417,52 @@ def _pqu_validity_and_enclosed_mass(resolved, p, q, u, m_halo):
     return valid, enclosed
 
 
+@pytest.mark.parametrize(
+    "fixed_names",
+    [(), ("p",), ("q",), ("u",), ("p", "q"), ("p", "u"), ("q", "u")],
+    ids=lambda names: "+".join(names) or "none",
+)
+def test_default_prior_respects_every_fixed_free_pqu_subset(
+    fixed_names: tuple[str, ...],
+) -> None:
+    # Re-review R1: a fixed q or u used to be ignored by a still-free p's
+    # own Uniform(0, 1) sample, reproducing 19-39% validity instead of the
+    # all-free case's ~98%. Covers every subset the re-review's own
+    # reproduction table checked (the all-fixed case is excluded -- nothing
+    # left to sample).
+    mges = {"stars_mge": _TRIAXIAL_MGE}
+    nominal = {"p": 0.85, "q": 0.6, "u": 0.93}
+    settings = {
+        **_POTENTIAL_PQU,
+        "stars": {
+            **_POTENTIAL_PQU["stars"],
+            "parameters": {
+                **_POTENTIAL_PQU["stars"]["parameters"],
+                **{
+                    name: {"fixed": True, "value": nominal[name]}
+                    for name in fixed_names
+                },
+            },
+        },
+    }
+    resolved = Potential.resolve(settings, mges)
+    prior = Prior(settings, {}, mges)
+
+    draws = prior.sample(jax.random.PRNGKey(1), num_samples=1000)
+    shape = {
+        name: (
+            draws[f"stars.{name}"]
+            if name not in fixed_names
+            else jnp.full(1000, nominal[name])
+        )
+        for name in ("p", "q", "u")
+    }
+    valid, _ = jax.vmap(
+        lambda p, q, u, m: _pqu_validity_and_enclosed_mass(resolved, p, q, u, m)
+    )(shape["p"], shape["q"], shape["u"], draws["dh.m"])
+    assert float(jnp.mean(valid)) > 0.9
+
+
 def test_default_prior_keeps_pqu_draws_valid_without_a_declared_prior() -> None:
     mges = {"stars_mge": _TRIAXIAL_MGE}
     resolved = Potential.resolve(_POTENTIAL_PQU, mges)

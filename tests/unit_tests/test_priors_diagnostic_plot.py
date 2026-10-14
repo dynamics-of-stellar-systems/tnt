@@ -13,7 +13,11 @@ from unxt import Quantity
 
 from tnt.mge import LightMGE
 from tnt.priors import Prior
-from tnt.priors_diagnostic_plot import _use_log_scale, plot_prior_diagnostics
+from tnt.priors_diagnostic_plot import (
+    _build_diagnostics_figure,
+    _use_log_scale,
+    plot_prior_diagnostics,
+)
 
 _POTENTIAL_SETTINGS = {
     "dh": {
@@ -158,3 +162,49 @@ def test_plot_prior_diagnostics_includes_a_summary_for_one_free_parameter(
 
     assert path.exists()
     assert path.stat().st_size > 0
+
+
+def test_one_parameter_summary_is_fully_visible_and_does_not_overlap() -> None:
+    # Re-review R3 follow-up: the one-parameter summary text previously
+    # overflowed the canvas (clipped at the top) and collided with the
+    # figure title, which itself collided with the legend -- reproduced
+    # directly (and visually confirmed in the saved PNG) before this fix.
+    # Checking only that a PNG exists and has nonzero size (the preceding
+    # test, and the original regression this finding was raised against)
+    # does not catch either problem -- inspect the actual drawn text
+    # geometry via matplotlib's own `get_window_extent` instead.
+    settings = {
+        "bar": {
+            "type": "LongMuraliBarPotential",
+            "parameters": {
+                "m_tot": {"unit": "Msun", "fixed": True, "value": 1.0e10},
+                "a": {"unit": "kpc", "fixed": True, "value": 5.0},
+                "b": {"unit": "kpc", "fixed": True, "value": 1.0},
+                "c": {"unit": "kpc", "fixed": True, "value": 0.5},
+                "alpha": {
+                    "unit": "rad",
+                    "fixed": False,
+                    "prior": {"distribution": "Uniform", "args": [-1.0, 1.0]},
+                },
+            },
+        },
+    }
+    prior = Prior(settings, {}, {})
+
+    fig = _build_diagnostics_figure(prior, jax.random.PRNGKey(0), 1000, None, 0.8)
+    fig.canvas.draw()
+
+    summary = next(t for t in fig.texts if "ESS" in t.get_text())
+    boxes = {
+        "summary": summary.get_window_extent(),
+        "title": fig._suptitle.get_window_extent(),
+        "legend": fig.legends[0].get_window_extent(),
+    }
+
+    for label, bbox in boxes.items():
+        assert fig.bbox.contains(bbox.x0, bbox.y0), f"{label} clipped (lower-left)"
+        assert fig.bbox.contains(bbox.x1, bbox.y1), f"{label} clipped (upper-right)"
+
+    assert not boxes["summary"].overlaps(boxes["title"])
+    assert not boxes["title"].overlaps(boxes["legend"])
+    assert not boxes["summary"].overlaps(boxes["legend"])

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 from unxt import Quantity
 
@@ -10,12 +12,13 @@ from tnt.model import Model
 from tnt.parameter_generator import (
     PriorSampler,
     SinglePointParameterGenerator,
+    _format_batch_diagnostics_summary,
     build_parameter_generator,
     parameter_generator_required_settings,
     parameter_generator_type_names,
 )
 from tnt.potential import Potential
-from tnt.priors import Prior
+from tnt.priors import Prior, PriorDiagnostics
 
 
 def test_parameter_generator_registry_contains_every_explicit_type() -> None:
@@ -179,6 +182,103 @@ def test_prior_sampler_logs_its_own_batch_diagnostics(
     assert "divergent draws" in message
     assert "ESS" in message
     assert "split-R-hat" in message
+
+
+def test_prior_sampler_logs_a_constant_sites_non_finite_diagnostics(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Re-review R2 follow-up: a non-fixed parameter declaring a genuinely
+    # constant prior (e.g. Delta(...)) gives that site a real NaN ESS/
+    # split-R-hat -- plain min()/max() over the per-site dicts can hide
+    # that NaN behind another site's healthy number depending on dict
+    # iteration order, reporting a batch as fully healthy when one site's
+    # diagnostics are actually undefined.
+    settings = {
+        "dh": {
+            "type": "NFWPotential",
+            "parameters": {
+                "m": {
+                    "unit": "Msun",
+                    "fixed": False,
+                    "prior": {"distribution": "LogUniform", "args": [1.0e10, 1.0e13]},
+                },
+                "r_s": {
+                    "unit": "kpc",
+                    "fixed": False,
+                    "prior": {"distribution": "Delta", "args": [15.0]},
+                },
+            },
+        },
+    }
+    prior = Prior(settings, {}, {})
+    generator = PriorSampler(
+        potential_settings=settings,
+        generator_settings={
+            "seed": 0,
+            "num_samples": 1000,
+            "num_warmup": 1000,
+            "target_accept_prob": 0.8,
+        },
+        max_new_mods_per_iter=5,
+        prior=prior,
+        seed=0,
+        num_samples=1000,
+        num_warmup=1000,
+        target_accept_prob=0.8,
+    )
+
+    with caplog.at_level("INFO", logger="tnt.parameter_generator"):
+        generator.generate_parameters(AllModels())
+
+    message = caplog.records[0].getMessage()
+    assert "dh.r_s" in message
+    assert "non-finite" in message
+    # dh.m's own finite ESS/split-R-hat is still reported, not swallowed.
+    assert "min ESS" in message
+    assert "max split-R-hat" in message
+
+
+def test_format_batch_diagnostics_summary_all_finite() -> None:
+    diagnostics = PriorDiagnostics(
+        diverging=None, ess={"a": 500.0, "b": 200.0}, split_rhat={"a": 1.0, "b": 1.01}
+    )
+    summary = _format_batch_diagnostics_summary(diagnostics)
+    assert summary == "min ESS 200, max split-R-hat 1.010"
+
+
+def test_format_batch_diagnostics_summary_names_non_finite_site_either_order() -> None:
+    first_nan = PriorDiagnostics(
+        diverging=None,
+        ess={"a": math.nan, "b": 500.0},
+        split_rhat={"a": math.nan, "b": 1.0},
+    )
+    last_nan = PriorDiagnostics(
+        diverging=None,
+        ess={"a": 500.0, "b": math.nan},
+        split_rhat={"a": 1.0, "b": math.nan},
+    )
+    for diagnostics, non_finite_name in ((first_nan, "a"), (last_nan, "b")):
+        summary = _format_batch_diagnostics_summary(diagnostics)
+        assert "min ESS 500" in summary
+        assert f"non-finite ESS/split-R-hat at 1 site(s): {non_finite_name}" in summary
+
+
+def test_format_batch_diagnostics_summary_all_non_finite() -> None:
+    diagnostics = PriorDiagnostics(
+        diverging=None, ess={"a": math.nan}, split_rhat={"a": math.nan}
+    )
+    summary = _format_batch_diagnostics_summary(diagnostics)
+    assert summary == (
+        "no site has a finite ESS/split-R-hat; "
+        "non-finite ESS/split-R-hat at 1 site(s): a"
+    )
+
+
+def test_format_batch_diagnostics_summary_no_parameters() -> None:
+    diagnostics = PriorDiagnostics(diverging=None, ess={}, split_rhat={})
+    assert _format_batch_diagnostics_summary(diagnostics) == (
+        "no non-fixed parameters to sample"
+    )
 
 
 def test_prior_sampler_caps_at_max_new_mods_per_iter() -> None:

@@ -342,9 +342,10 @@ def _pqu_default_prior_sample(
     not, and regardless of which side of it in this order -- not just the
     ones sampled earlier in this call:
 
-    - `p`'s lower bound is `q` if `q` is already known (`0` otherwise);
-      its upper bound is `u * q'` if `u` is already known (`1` otherwise)
-      -- both follow directly from the joint domain above (`p > q`;
+    - `p`'s lower bound is `q` if `q` is already known (`0` otherwise),
+      additionally raised to `u * q'` if `u` is already known too; its
+      upper bound is `u` if `u` is already known (`1` otherwise) -- all of
+      which follow directly from the joint domain above (`p > q`;
       `u <= p/q'` i.e. `p >= u * q'`; `p < u` from the `max(...) < u` side).
     - `q`'s upper bound is `min(p, u * q')` if `u` is already known, else
       `min(p, q')` -- the latter is `pqu`'s own existence condition for
