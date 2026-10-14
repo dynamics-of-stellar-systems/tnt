@@ -7,6 +7,7 @@ raises `NotImplementedError` -- except `SinglePointParameterGenerator` and
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
@@ -19,6 +20,8 @@ from tnt.potential import raw_parameter_dimensions
 from tnt.priors import Prior
 from tnt.registry import register_typed_class
 from tnt.validation import _mapping, _number, _required
+
+_LOGGER = logging.getLogger(__name__)
 
 ParameterSet = dict[str, dict[str, Quantity]]
 """One proposed point in parameter space: component name -> {parameter name: value}.
@@ -273,6 +276,18 @@ class PriorSampler(AbstractParameterGenerator):
     this never silently returns fewer candidates than requested) --
     `generate_parameters`'s own `[:max_new_mods_per_iter]` trim still does
     the actual capping, unchanged.
+
+    Each call logs its own batch's divergence count and worst ESS/split-
+    R-hat across every parameter, at `INFO` level, tagged with the
+    iteration it was drawn for -- this is the actual batch
+    `generate_parameters` goes on to propose from, not
+    `ModelIterator.from_configuration`'s separate, independently-keyed
+    pilot figure (`tnt.priors_diagnostic_plot.plot_prior_diagnostics`),
+    which `jax.random.fold_in` guarantees never matches any real
+    iteration's own key, not even the first (`fold_in(key, 0) != key`).
+    That pilot draw remains a useful pre-flight sanity check on the
+    composed model as a whole; it just isn't a substitute for seeing what
+    each real batch's own diagnostics look like.
     """
 
     _type: ClassVar[str] = "PriorSampler"
@@ -290,15 +305,33 @@ class PriorSampler(AbstractParameterGenerator):
         # Folding in the cumulative iteration count (not conditioning on
         # fitted scores) is enough to stop a repeated call -- another
         # iteration, or a resumed run -- from redrawing an identical batch.
-        key = jax.random.fold_in(
-            jax.random.PRNGKey(self.seed), all_models.n_iterations()
-        )
-        samples = self.prior.sample(
+        iteration = all_models.n_iterations()
+        key = jax.random.fold_in(jax.random.PRNGKey(self.seed), iteration)
+        samples, diagnostics = self.prior.sample_with_diagnostics(
             key,
             num_samples=self.num_samples,
             num_warmup=self.num_warmup,
             target_accept_prob=self.target_accept_prob,
         )
+        if diagnostics.ess:
+            _LOGGER.info(
+                "PriorSampler batch for iteration %d: %d/%d divergent draws, "
+                "min ESS %.0f, max split-R-hat %.3f.",
+                iteration,
+                int(diagnostics.diverging.sum()),
+                self.num_samples,
+                min(diagnostics.ess.values()),
+                max(diagnostics.split_rhat.values()),
+            )
+        else:
+            # No non-fixed, prior-bearing parameter at all -- a supported,
+            # degenerate setup (see `tnt.priors_diagnostic_plot
+            # .plot_prior_diagnostics`'s own zero-parameter handling).
+            _LOGGER.info(
+                "PriorSampler batch for iteration %d: no non-fixed parameters "
+                "to sample.",
+                iteration,
+            )
         return _parameter_sets_from_samples(samples, self.potential_settings)
 
 

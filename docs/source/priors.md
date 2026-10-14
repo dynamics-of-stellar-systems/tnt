@@ -244,29 +244,49 @@ alone. `potential_rescalings` and the rest of `stopping_criteria` behave
 exactly as they do for any other `generator_type`; `PriorSampler` doesn't
 change their meaning.
 
-## Diagnostic plot, not a pass/fail gate
+## Diagnostic plot and per-batch logging, not a pass/fail gate
 
-A factor-bearing model's MCMC draw can have a high divergence rate or low
-effective sample size without that meaning anything is broken -- how rough
-a chain looks depends heavily on how wide the prior needs to be for the
-actual science (a young, single-age stellar population needs a narrow
+A factor-bearing model's MCMC draw having a high divergence rate or low
+effective sample size doesn't automatically mean something is broken -- how
+rough a chain looks depends partly on how wide the prior needs to be for
+the actual science (a young, single-age stellar population needs a narrow
 mass-to-light prior; a mixed old-and-young population needs a much wider
-one), not on a defect in `tnt.priors`. No fixed divergence/ESS/R-hat
-threshold can tell those two cases apart, so TNT doesn't try: whenever a
-resolved configuration uses `generator_type: "PriorSampler"`,
-`ModelIterator.from_configuration` draws once -- at exactly the
-`generator_settings.num_samples`/`num_warmup`/`target_accept_prob` the real
-run will use -- and saves a diagnostic figure (pairwise scatter
-colored by divergence, each parameter's marginal histogram, an
-ESS/split-R-hat table, and per-parameter trace plots) to
-`io_settings.output_directory/prior_diagnostics.png`. Nothing raises and
-nothing blocks on what it finds; review the figure yourself and decide
-whether `PriorSampler`'s output looks usable before relying on it.
+one). But it doesn't automatically mean nothing is broken either: the same
+numbers can just as well flag real sampling trouble -- a poorly-adapted
+step size, a pathological posterior shape -- even when the prior itself is
+exactly as wide as the science requires. Divergence/ESS/R-hat alone can't
+distinguish "this prior is wide" from "this chain has a real problem," and
+no fixed threshold on them can either, so TNT doesn't try to automate that
+call.
+
+Two separate things report these diagnostics, at two different times:
+
+- A one-off **pilot** figure. Whenever a resolved configuration uses
+  `generator_type: "PriorSampler"`, `ModelIterator.from_configuration`
+  draws once -- at the same `generator_settings.num_samples`/`num_warmup`/
+  `target_accept_prob` the real run will use, but with its own,
+  independent key (`PRNGKey(seed)`, not `PriorSampler`'s own
+  `fold_in(PRNGKey(seed), n_iterations())`) -- and saves a diagnostic
+  figure (pairwise scatter colored by divergence, each parameter's
+  marginal histogram, an ESS/split-R-hat table, and per-parameter trace
+  plots) to `io_settings.output_directory/prior_diagnostics.png`. A useful
+  pre-flight sanity check on the composed model as a whole, but -- because
+  of that independent key -- never literally the same draw as any real
+  iteration's own batch, not even the first.
+- **Per-batch logging.** Every real batch `PriorSampler` actually proposes
+  from logs its own divergence count and worst ESS/split-R-hat across
+  every parameter, at `INFO` level, tagged with the iteration it was drawn
+  for.
+
+Neither raises or blocks on what it finds; review the figure and the
+logged summaries yourself and decide whether `PriorSampler`'s output looks
+usable before relying on it.
 
 `Prior.sample_with_diagnostics(key, num_samples, num_warmup,
-target_accept_prob)` is the underlying call -- the same return as `sample`,
-plus a `PriorDiagnostics`
-that's always populated. A pure `Predictive` draw is exact and independent
-by construction, so its ESS/split-R-hat there are a sanity check on that
-independence, not a convergence diagnostic; `tnt.priors_diagnostic_plot.
-plot_prior_diagnostics` builds the figure from this either way.
+target_accept_prob)` is the underlying call behind both -- the same return
+as `sample`, plus a `PriorDiagnostics` that's always populated. A pure
+`Predictive` draw is exact and independent by construction, so its
+ESS/split-R-hat there are a sanity check on that independence, not a
+convergence diagnostic; `tnt.priors_diagnostic_plot.plot_prior_diagnostics`
+builds the pilot figure from this, and `PriorSampler` logs from it
+directly, either way.

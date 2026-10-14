@@ -535,6 +535,25 @@ combinations with a named setup error. Add coverage for the supported subsets,
 especially fixed `q`, fixed `u`, and fixed `q/u` together. Preserve fixed
 values; do not silently substitute a different shape.
 
+**Response -- fixed, generally.** Confirmed this finding's own reproduction
+first (39.0% for fixed `q=0.6`, bit-for-bit), then rewrote
+`_pqu_default_prior_sample` so `p`'s and `q`'s own sampling bounds are
+derived from *every* already-`known` sibling, not just the ones earlier in
+sampling order: `p`'s lower bound is `q` if `q` is known, its upper bound
+is `u * q'` if `u` is known; `q`'s upper bound is `min(p, u * q')` if `u`
+is known, else `min(p, q')` as before. `u`'s own distribution was already
+order-independent (it only ever reads the final, resolved `p`/`q`) and is
+unchanged. Re-ran this finding's own reproduction table against the fix:
+every case (`q` fixed, `u` fixed, `q`+`u` fixed, `p` fixed, none fixed) is
+now ~98-100% valid, matching or exceeding the all-free baseline rather
+than 19-39%. Handles every fixed/free subset generally (derived from the
+joint domain's own inequalities), not just the four reproduced ones, since
+a degenerate fixed combination (one whose own fixed `q`/`u` already fail
+`q/q' < u`) still only widens the resulting bound enough to keep `Uniform`
+constructible -- the draw stays invalid either way, caught downstream the
+same as any other invalid draw, consistent with the rest of this prior's
+existing policy.
+
 ### R2 — P2: actual search batches still lose their diagnostics
 
 Locations: `tnt/model_iterator.py:187-197`,
@@ -567,6 +586,24 @@ additional, clearly labelled check. Include numerical summaries for
 one-parameter models. This can stay advisory; no automatic cutoff or user
 approval gate is required.
 
+**Response -- fixed, keeping the pilot but making both halves honest.**
+Confirmed `jax.random.fold_in(key, 0) != key` directly (different arrays),
+so the pilot never matches even the first real batch, exactly as this
+finding describes. `PriorSampler._propose_free_parameters` now calls
+`Prior.sample_with_diagnostics` (not `sample`) and logs, at `INFO`, its own
+batch's divergence count and worst ESS/split-R-hat, tagged with the
+iteration it was drawn for -- the diagnostics `generate_parameters` goes on
+to propose from, not a separate draw. The pilot figure stays (per this
+finding's own "may remain an additional, clearly labelled check"), but its
+docstring, in-figure title ("Prior Sampling Pilot Diagnostics (independent
+of real search batches)"), and the `model_iterator.py`/`priors.md` text
+around it now say plainly that it uses an independent key and is never the
+same draw as any real iteration's own batch. The one-parameter table gap is
+fixed under R3 below (same `table_rows == 0` root cause, same file).
+Regression: `test_prior_sampler_logs_its_own_batch_diagnostics` in
+`tests/unit_tests/test_parameter_generator.py` (asserts the logged message
+names the iteration and includes divergence/ESS/split-R-hat).
+
 ### R3 — P2: plotting fails or misrepresents supported parameter configurations
 
 Locations: `tnt/priors_diagnostic_plot.py:36-41, 107-122, 166-174`.
@@ -595,6 +632,22 @@ positive and finite; render signed ranges without losing values. Add tests
 for empty, one-parameter, and signed-value plots that check the represented
 data, not only that a PNG exists.
 
+**Response -- fixed.** Reproduced both cases first: the exact
+`ValueError: Number of rows must be a positive integer, not 0`, and
+`_use_log_scale` returning `True` then `0/1000` histogram counts for a
+`Uniform(-1, 1)` sample via `np.log10` of a negative minimum. Zero free
+parameters now saves a minimal placeholder figure ("No non-fixed
+parameters to sample.") instead of building a zero-row `gridspec`.
+`_use_log_scale` now requires the *whole* array positive and finite, not
+just its positive subset, before choosing a log axis. One free parameter
+now gets a plain-text ESS/split-R-hat/divergence summary (positioned over
+the trace column) instead of the table being silently skipped -- same
+`table_rows = n // 2 == 0` root cause R2 also flagged. New regressions in
+`tests/unit_tests/test_priors_diagnostic_plot.py`: four direct
+`_use_log_scale` cases (signed-with-wide-positive-subset, wide positive,
+narrow positive, non-finite), plus end-to-end zero-parameter and
+one-parameter `plot_prior_diagnostics` calls.
+
 ### R4 — P2: importing ModelIterator changes the application's plotting backend
 
 Location: `tnt/priors_diagnostic_plot.py:13-17`, imported unconditionally by
@@ -613,6 +666,16 @@ backend selection to the application/standalone entry point. Importing TNT's
 model iterator should not change unrelated plotting configuration. Add a
 regression with a preselected backend.
 
+**Response -- fixed.** Reproduced the exact SVG-to-Agg clobber first.
+`tnt/priors_diagnostic_plot.py` no longer calls `matplotlib.use(...)` or
+imports `matplotlib.pyplot` at all; every figure is built directly as
+`matplotlib.figure.Figure(...)` with an explicit
+`matplotlib.backends.backend_agg.FigureCanvasAgg(fig)` attached to that one
+figure, never touching the global current-backend/current-figure-manager
+state `pyplot` and `matplotlib.use` share. Re-ran this finding's own
+reproduction after the fix: selecting `svg`, then importing
+`tnt.model_iterator`, now leaves the backend as `svg`.
+
 ### Documentation and integration notes
 
 - Keep the advisory policy, but correct the claim that a wide scientific prior
@@ -630,6 +693,18 @@ regression with a preselected backend.
   state should be checked when the code fixes are ready.
 - Per the existing workflow, remove the temporary audit document after the
   review findings are resolved, before merging.
+
+**Response to the first three notes -- addressed.** `docs/source/priors.md`'s
+and `aidocs/KNOWLEDGE.md`'s "not meaning anything is broken" wording now
+states both directions (can also mean something *is* broken) rather than
+only the innocuous one. `KNOWLEDGE.md` now documents the default-prior
+exception to "every non-fixed parameter needs a `prior`," and distinguishes
+built-in *default priors* (`pqu`/`q_min`) from still-user-authored-only
+*prior plugins* (TNT ships no built-in plugin). The PR description was
+refreshed to describe the branch's actual current state rather than the
+pre-fix/deferred one. The remaining two notes (merging `main`, removing
+this document) are left for the merge step itself, per the existing
+workflow this document already states.
 
 ### Re-review validation
 

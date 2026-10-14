@@ -185,6 +185,10 @@ class ModelIterator:
             unit_system=unit_system,
         )
         if parameter_space_settings["generator_type"] == "PriorSampler":
+            # A pilot pre-flight check, independent of every real search
+            # batch's own key -- see `plot_prior_diagnostics`'s own
+            # docstring. Each real batch logs its own diagnostics instead,
+            # from `PriorSampler._propose_free_parameters`.
             generator_settings = parameter_space_settings["generator_settings"]
             output_directory.mkdir(parents=True, exist_ok=True)
             plot_prior_diagnostics(

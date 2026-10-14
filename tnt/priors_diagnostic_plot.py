@@ -4,19 +4,27 @@ Not an automated pass/fail gate -- a threshold can't tell a genuinely
 broken chain from a prior that's simply as wide as the science requires.
 Draws once with the real run's `num_samples`/`num_warmup` and saves a
 figure to review before committing to the full search.
+
+Builds its own `matplotlib.figure.Figure` with an explicit `FigureCanvasAgg`
+attached directly to it, rather than `matplotlib.pyplot`'s `figure()`/
+`subplots()`/`close()` (backed by its global current-figure-manager state)
+or `matplotlib.use("Agg")` (backed by the library's global current-backend
+state). Importing this module -- which `tnt.model_iterator` does
+unconditionally, whether or not a run ever uses `PriorSampler` -- must not
+silently change which backend an importing application's own, unrelated
+plotting ends up using.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
 import numpy as np
 from jax import Array
+from matplotlib.axes import Axes
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 
 from tnt.priors import Prior
 
@@ -34,11 +42,21 @@ _TABLE_FONTSIZE_MAX = _LABEL_FONTSIZE * 1.8
 
 
 def _use_log_scale(values: np.ndarray) -> bool:
-    """True if positive and spanning orders of magnitude (reads better logged)."""
-    positive = values[values > 0]
-    if len(positive) < 2:
+    """True if every value is positive, finite, and spans orders of magnitude.
+
+    Checking only the positive subset (rather than every value) let a
+    signed parameter -- e.g. a bar orientation angle, `Uniform(-1, 1)`
+    radians -- get log-scaled whenever its positive half alone happened to
+    span two-plus orders of magnitude: `np.log10` of the (negative)
+    overall minimum is then `NaN`, so every histogram/axis bin edge built
+    from it is `NaN` too, silently dropping every draw from the rendered
+    figure rather than raising. Requiring the *whole* array positive and
+    finite first means a log axis is never chosen for data it can't
+    actually represent.
+    """
+    if len(values) < 2 or not np.all(np.isfinite(values)) or np.any(values <= 0):
         return False
-    return bool(np.max(positive) / np.min(positive) >= 100)
+    return bool(np.max(values) / np.min(values) >= 100)
 
 
 def _ess_color(ess: float) -> str:
@@ -78,7 +96,16 @@ def plot_prior_diagnostics(
     num_warmup: int | None = None,
     target_accept_prob: float = 0.8,
 ) -> None:
-    """Draw once from `prior` and save a diagnostic figure to `path`.
+    """Draw a pilot batch from `prior` and save a diagnostic figure to `path`.
+
+    This is a pilot: `key` is independent of whatever key the real search
+    actually draws its own batches with (`PriorSampler` folds in each
+    iteration's cumulative count, `jax.random.fold_in(PRNGKey(seed),
+    n_iterations())`, which `fold_in`'s own definition guarantees never
+    equals `PRNGKey(seed)` -- not even for iteration `0`). A useful
+    pre-flight sanity check on the composed model as a whole, but not a
+    stand-in for any specific real batch's own diagnostics -- those are
+    logged by `PriorSampler` itself, per iteration, at `INFO` level.
 
     A corner plot over every non-fixed, prior-bearing parameter: scatter
     panels (divergent draws in red) below the diagonal, marginal
@@ -99,23 +126,47 @@ def plot_prior_diagnostics(
     )
 
     names = sorted(samples)
+    n = len(names)
+    if n == 0:
+        # Every potential parameter is fixed (or covered by a default
+        # prior's own `known`-resolved siblings) -- a supported,
+        # degenerate `PriorSampler` setup with nothing left to sample, not
+        # an error. `fig.add_gridspec(0, ...)` rejects zero rows, so there
+        # is no corner plot to build; save a minimal figure saying so
+        # instead, keeping this function's "saves a figure to path"
+        # contract even here.
+        fig = Figure(figsize=(4.0, 2.0), dpi=150)
+        FigureCanvasAgg(fig)
+        ax = fig.add_subplot()
+        ax.axis("off")
+        ax.text(
+            0.5,
+            0.5,
+            "No non-fixed parameters to sample.",
+            ha="center",
+            va="center",
+            fontsize=_LABEL_FONTSIZE,
+            wrap=True,
+        )
+        fig.savefig(path, dpi=150)
+        return
+
     values = {name: np.asarray(samples[name]) for name in names}
     log_scale = {name: _use_log_scale(values[name]) for name in names}
     diverging = np.asarray(diagnostics.diverging)
     n_divergent = int(np.sum(diverging))
-
-    n = len(names)
     # A narrow spacer column (index `n`) separates the corner grid from the
     # trace column (index `n + 1`) by more than the usual `_PANEL_GAP`.
     spacer_ratio = 0.3
     fig_width = _PANEL_SIZE * (n + spacer_ratio + _TRACE_WIDTH_RATIO)
-    fig = plt.figure(
+    fig = Figure(
         figsize=(fig_width, _PANEL_SIZE * n),
         # Match `savefig`'s dpi: the table's column widths are measured via
         # a draw at the figure's dpi, and font hinting rounds glyph widths
         # differently at different dpis.
         dpi=150,
     )
+    FigureCanvasAgg(fig)
     top, bottom = 0.84, 0.10
     gs = fig.add_gridspec(
         n,
@@ -142,8 +193,8 @@ def plot_prior_diagnostics(
     # Shared axes (same x-range per column, same y-range per scatter row),
     # so only the edge panel needs its tick *labels* (every panel keeps its
     # own tick marks, just not the numbers).
-    col_anchor: dict[int, plt.Axes] = {}
-    row_anchor: dict[int, plt.Axes] = {}
+    col_anchor: dict[int, Axes] = {}
+    row_anchor: dict[int, Axes] = {}
 
     for i in range(n):
         for j in range(n):
@@ -193,7 +244,7 @@ def plot_prior_diagnostics(
 
     # Per-parameter trace plot, one per row, in the extra right-hand
     # column -- shared x-axis, tick labels only on the bottom-most panel.
-    trace_axes: list[plt.Axes] = []
+    trace_axes: list[Axes] = []
     for i, row_name in enumerate(names):
         ax = fig.add_subplot(
             gs[i, trace_col], sharex=trace_axes[0] if trace_axes else None
@@ -313,9 +364,28 @@ def plot_prior_diagnostics(
             for cell in cells:
                 cell.set_width(required_width / total_required)
 
+    elif n == 1:
+        # No axis-aligned off-diagonal block exists for a single parameter
+        # (`table_rows == n // 2 == 0`) to put the usual table in -- a
+        # plain text summary centered over the trace column instead of no
+        # numerical summary at all.
+        name = names[0]
+        divergence_fraction = n_divergent / num_samples
+        trace_position = trace_axes[0].get_position()
+        fig.text(
+            trace_position.x0 + trace_position.width / 2,
+            top,
+            f"{name}\nESS: {diagnostics.ess[name]:.0f}\n"
+            f"split-R̂: {diagnostics.split_rhat[name]:.3f}\n"
+            f"divergent: {n_divergent}/{num_samples} ({divergence_fraction:.1%})",
+            ha="center",
+            va="bottom",
+            fontsize=_LABEL_FONTSIZE,
+        )
+
     legend_handles = [
-        plt.Line2D([], [], marker="o", linestyle="", color="C0", label="non-divergent"),
-        plt.Line2D([], [], marker="o", linestyle="", color="red", label="divergent"),
+        Line2D([], [], marker="o", linestyle="", color="C0", label="non-divergent"),
+        Line2D([], [], marker="o", linestyle="", color="red", label="divergent"),
     ]
     fig.legend(
         handles=legend_handles,
@@ -325,7 +395,9 @@ def plot_prior_diagnostics(
         frameon=False,
     )
 
-    fig.suptitle("Diagnostic Plot for Prior Sampling", fontsize=_TITLE_FONTSIZE)
+    fig.suptitle(
+        "Prior Sampling Pilot Diagnostics (independent of real search batches)",
+        fontsize=_TITLE_FONTSIZE,
+    )
 
     fig.savefig(path, dpi=150)
-    plt.close(fig)

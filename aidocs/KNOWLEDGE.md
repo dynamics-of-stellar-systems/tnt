@@ -432,9 +432,17 @@
   raises if a `fixed: false` parameter has no `prior`, since
   `tnt.priors._build_model` would otherwise silently skip it (neither a
   sample site nor a fixed value), surfacing only as a missing-parameter
-  error at `Potential.build_with_validity`. The packaged
-  `dynamic_object_defaults.parameter.fixed` default stays `false`, so a user
-  profile declares `fixed: true` or a `prior` on every parameter.
+  error at `Potential.build_with_validity` -- **except** a parameter
+  covered by a registered *default prior* (`tnt.potential.registry
+  .DefaultPriorSpec`/`get_default_prior`, keyed by `(type_name,
+  parameterization)`): `pqu`'s `p`/`q`/`u` (`TriaxialLight/MassMGEPotential`)
+  and `q_min` (`OblateLight/MassMGEPotential`) are always sampled from one
+  instead, and need no declared `prior` of their own (a declared one is
+  still accepted -- folded in as an additional `numpyro.factor`, not a
+  replacement; see `docs/source/priors.md`). The packaged
+  `dynamic_object_defaults.parameter.fixed` default stays `false`, so a
+  user profile declares `fixed: true` or a `prior` on every parameter not
+  covered by a default prior.
 - Scientific inputs use independent named registries: `MGEs` maps names to
   `{file, major_axis_pa}` entries; `spatial_binnings` maps names to inline
   rectangular aperture geometry (`min_x`, `min_y`, `x_extent`, `y_extent`, and
@@ -783,10 +791,14 @@
   another component's resolved mass. That kind of cross-component
   relationship is now `tnt.priors`: consumed by the parameter generator
   (`PriorSampler`) rather than potential construction, never by
-  `parameterization`. TNT ships no built-in priors, including a
-  mass-fraction one -- only the mechanism (`tnt.priors.Prior`, the
-  `sample`/`factor` plugin contract) and a documented worked example (see
-  `docs/source/priors.md`). A plugin is a plain
+  `parameterization`. TNT ships no built-in *plugins* (prior plugins are
+  always user-authored, including the mass-fraction one -- only the
+  mechanism and a documented worked example ship, see
+  `docs/source/priors.md`), but it does ship built-in *default priors*
+  for specific `(type, parameterization)` pairs whose own joint validity
+  constraint is MGE-data-dependent and can't be expressed as independent
+  per-parameter `prior:` entries -- `pqu`'s `p`/`q`/`u` and `q_min`, see
+  above and `tnt.potential.registry.DefaultPriorSpec`. A plugin is a plain
   Python function loaded from its own `.py` file (file-path-only, resolved
   relative to `io_settings.input_directory`, not an installed package) with a
   fixed signature: `def fn(context: tnt.priors.PriorContext) -> None`,
@@ -835,28 +847,39 @@
   `numpyro.factor` -- that doesn't exist yet; deliberately out of scope,
   real future work reusing the same composed-model machinery.
 - A factor-bearing `Prior`'s MCMC draw having a high divergence rate or low
-  effective sample size (ESS) doesn't by itself mean anything is broken --
-  empirically, how rough a chain looks is dominated by how wide the prior
+  effective sample size (ESS) doesn't *automatically* mean something is
+  broken -- how rough a chain looks depends partly on how wide the prior
   needs to be for the actual science (e.g. a single-age stellar
   population's mass-to-light prior can be narrow; a mixed-age population's
-  can't), not by a defect in `tnt.priors`/`Potential.build_with_validity`.
-  No fixed divergence/ESS/split-R-hat threshold can tell "the chain is
-  unreliable" apart from "the prior is legitimately this wide," so none is
-  enforced. `Prior.sample_with_diagnostics(key, num_samples, num_warmup)` --
-  same return as `sample`, plus a `PriorDiagnostics` (divergence mask, ESS,
-  split-R-hat per site, always populated -- a `Predictive` draw is i.i.d. by
-  construction, so its ESS/split-R-hat there are a sanity check on that
-  independence, not a convergence diagnostic) -- feeds
-  `tnt.priors_diagnostic_plot.plot_prior_diagnostics`, which draws once (at
-  the real run's own `num_samples`/`num_warmup`) and saves a corner plot
-  (pairwise scatter colored by divergence, marginal histograms, an
-  ESS/split-R-hat table, per-parameter trace plots) to
-  `io_settings.output_directory/prior_diagnostics.png`.
-  `ModelIterator.from_configuration` generates this automatically whenever
-  `generator_type` is `PriorSampler`. Purely advisory: nothing raises or
-  blocks, the run proceeds regardless -- a human reviews the figure and
-  decides. `matplotlib` is a regular (not optional) dependency as of this
-  feature.
+  can't). But it doesn't automatically mean nothing is broken either: the
+  same numbers can just as well flag real sampling trouble (a
+  poorly-adapted step size, a pathological posterior shape) even when the
+  prior itself is exactly as wide as the science requires -- divergence/
+  ESS/split-R-hat alone can't tell those apart, and no fixed threshold on
+  them can either, so none is enforced.
+  `Prior.sample_with_diagnostics(key, num_samples, num_warmup,
+  target_accept_prob)` -- same return as `sample`, plus a `PriorDiagnostics`
+  (divergence mask, ESS, split-R-hat per site, always populated -- a
+  `Predictive` draw is i.i.d. by construction, so its ESS/split-R-hat there
+  are a sanity check on that independence, not a convergence diagnostic) --
+  feeds two separate things, at two different times: a one-off **pilot**
+  figure (`tnt.priors_diagnostic_plot.plot_prior_diagnostics`, a corner plot
+  -- pairwise scatter colored by divergence, marginal histograms, an
+  ESS/split-R-hat table, per-parameter trace plots -- to
+  `io_settings.output_directory/prior_diagnostics.png`, generated once by
+  `ModelIterator.from_configuration` whenever `generator_type` is
+  `PriorSampler`, at the real run's own `num_samples`/`num_warmup`/
+  `target_accept_prob` but its *own independent key* -- `jax.random.fold_in`
+  guarantees this never equals any real iteration's actual key, not even
+  the first), and **per-batch logging** (`PriorSampler
+  ._propose_free_parameters` logs its own real batch's divergence count and
+  worst ESS/split-R-hat, at `INFO`, tagged with its iteration, every time it
+  actually proposes). Both purely advisory: nothing raises or blocks, the
+  run proceeds regardless -- a human reviews the figure/logs and decides.
+  `matplotlib` is a regular (not optional) dependency as of this feature,
+  and `tnt.priors_diagnostic_plot` builds its own `Figure`/`FigureCanvasAgg`
+  directly rather than touching `matplotlib.pyplot`'s or `matplotlib.use`'s
+  global state, since `tnt.model_iterator` imports it unconditionally.
 - Every registered parameterization converts both ways: a
   `register_parameterization` call takes `convert` *and* `invert` (bundled in
   its `ParameterizationSpec`), so one direction can never be registered without

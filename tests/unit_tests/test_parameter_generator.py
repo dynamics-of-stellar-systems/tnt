@@ -145,6 +145,42 @@ def test_prior_sampler_converts_samples_into_parameter_sets() -> None:
         assert 1.0e10 <= m200 <= 1.0e14
 
 
+def test_prior_sampler_logs_its_own_batch_diagnostics(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Re-review R2: `Prior.sample` discarded its own diagnostics, so the
+    # batch PriorSampler actually proposes from had no retained or
+    # reported diagnostics at all -- only a separate, independently-keyed
+    # pilot draw did (and never actually matched any real iteration's key,
+    # not even the first; see PriorSampler's own docstring).
+    prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
+    generator = PriorSampler(
+        potential_settings=_PRIOR_SAMPLER_POTENTIAL_SETTINGS,
+        generator_settings={
+            "seed": 0,
+            "num_samples": 10,
+            "num_warmup": 10,
+            "target_accept_prob": 0.8,
+        },
+        max_new_mods_per_iter=5,
+        prior=prior,
+        seed=0,
+        num_samples=10,
+        num_warmup=10,
+        target_accept_prob=0.8,
+    )
+
+    with caplog.at_level("INFO", logger="tnt.parameter_generator"):
+        generator.generate_parameters(AllModels())
+
+    assert len(caplog.records) == 1
+    message = caplog.records[0].getMessage()
+    assert "iteration 0" in message
+    assert "divergent draws" in message
+    assert "ESS" in message
+    assert "split-R-hat" in message
+
+
 def test_prior_sampler_caps_at_max_new_mods_per_iter() -> None:
     prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
     generator = PriorSampler(

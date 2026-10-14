@@ -6,13 +6,14 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import numpyro
 import numpyro.distributions as dist
 from unxt import Quantity
 
 from tnt.mge import LightMGE
 from tnt.priors import Prior
-from tnt.priors_diagnostic_plot import plot_prior_diagnostics
+from tnt.priors_diagnostic_plot import _use_log_scale, plot_prior_diagnostics
 
 _POTENTIAL_SETTINGS = {
     "dh": {
@@ -79,6 +80,81 @@ def test_plot_prior_diagnostics_writes_a_figure_with_factors(tmp_path: Path) -> 
     plot_prior_diagnostics(
         prior, path, jax.random.PRNGKey(0), num_samples=50, num_warmup=50
     )
+
+    assert path.exists()
+    assert path.stat().st_size > 0
+
+
+def test_use_log_scale_rejects_signed_data_even_with_a_wide_positive_subset() -> None:
+    # Re-review R3: checking only the positive subset let a signed
+    # parameter (e.g. a bar orientation angle, Uniform(-1, 1) radians) get
+    # log-scaled whenever that subset alone spanned >= 2 orders of
+    # magnitude -- np.log10 of the (negative) true minimum is then NaN,
+    # silently dropping every value from the rendered figure.
+    values = np.concatenate([np.array([-0.9, -0.5]), np.linspace(0.001, 1.0, 50)])
+    assert not _use_log_scale(values)
+
+
+def test_use_log_scale_accepts_a_wide_strictly_positive_range() -> None:
+    values = np.array([1.0e-3, 1.0, 1.0e2])
+    assert _use_log_scale(values)
+
+
+def test_use_log_scale_rejects_a_narrow_positive_range() -> None:
+    values = np.array([1.0, 2.0, 5.0])
+    assert not _use_log_scale(values)
+
+
+def test_use_log_scale_rejects_nonfinite_values() -> None:
+    values = np.array([1.0e-3, 1.0, 1.0e2, np.nan])
+    assert not _use_log_scale(values)
+
+
+def test_plot_prior_diagnostics_handles_zero_free_parameters(tmp_path: Path) -> None:
+    # Re-review R3: every parameter fixed is a supported, degenerate
+    # PriorSampler setup -- `Prior` correctly returns no stochastic sites,
+    # but the plot used to assume at least one and crash building a
+    # zero-row gridspec.
+    settings = {
+        "dh": {
+            "type": "NFWPotential",
+            "parameters": {
+                "m": {"unit": "Msun", "fixed": True, "value": 1.0e12},
+            },
+        },
+    }
+    prior = Prior(settings, {}, {})
+    path = tmp_path / "prior_diagnostics.png"
+
+    plot_prior_diagnostics(prior, path, jax.random.PRNGKey(0), num_samples=50)
+
+    assert path.exists()
+    assert path.stat().st_size > 0
+
+
+def test_plot_prior_diagnostics_includes_a_summary_for_one_free_parameter(
+    tmp_path: Path,
+) -> None:
+    # Re-review R2/R3: a single free parameter has no off-diagonal grid
+    # block (table_rows = n // 2 == 0) for the usual ESS/split-R-hat table,
+    # so it was skipped entirely rather than shown some other way.
+    settings = {
+        "dh": {
+            "type": "NFWPotential",
+            "parameters": {
+                "m": {
+                    "unit": "Msun",
+                    "fixed": False,
+                    "prior": {"distribution": "LogUniform", "args": [1.0e10, 1.0e13]},
+                },
+                "r_s": {"unit": "kpc", "fixed": True, "value": 15.0},
+            },
+        },
+    }
+    prior = Prior(settings, {}, {})
+    path = tmp_path / "prior_diagnostics.png"
+
+    plot_prior_diagnostics(prior, path, jax.random.PRNGKey(0), num_samples=50)
 
     assert path.exists()
     assert path.stat().st_size > 0

@@ -335,55 +335,77 @@ def _pqu_default_prior_sample(
 ) -> dict[str, jax.Array]:
     """`pqu`'s whole generative default prior, as one joint draw.
 
-    `p ~ Uniform(0, 1)`; `q ~ Uniform(0, min(p, q'))`, `q'` this MGE's own
-    anchor axis ratio (`AbstractMGE._triaxial_anchor`) -- together these
-    give `0 < q <= p <= 1` by construction (no rejection needed for that
-    part), *and* keep `q` itself inside the one condition that actually
-    governs whether any `u` exists at all for this `(p, q)`: working
-    through when `_triaxial_u_domain`'s `lo = max(q/q', p)` and
-    `hi = min(p/q', 1)` satisfy `lo < hi`, every term but `q < q'` reduces
-    to something already true by construction (`q <= p`, `p < 1`,
-    `q' < 1`) -- so bounding `q` by `q'` as well as by `p` is what actually
-    keeps `u`'s domain reachable, not just `u`'s own distribution.
-    `u ~ Uniform(u_lo, safe_hi)`, where `u_lo`/`safe_hi` come from
-    `AbstractMGE._triaxial_u_domain(p, q)` -- the same margin-respecting
-    bounds `_viewing_angles_candidate` itself clips `u` into, so every `u`
-    this samples is already inside the safely-evaluable region by
-    construction, not just checked afterward.
+    The joint domain (ignoring precision margins) is `0 < q < p <= 1` and
+    `max(q/q', p) < u <= min(p/q', 1)`, `q'` this MGE's own anchor axis
+    ratio (`AbstractMGE._triaxial_anchor`). Sampled in `p`, `q`, `u` order,
+    each one conditioned on *every* already-`known` sibling -- fixed or
+    not, and regardless of which side of it in this order -- not just the
+    ones sampled earlier in this call:
 
-    The one case this can't absorb -- `u_lo >= u_hi`, the domain too
-    narrow to deproject reliably at this precision for this `(p, q)` and
-    the MGE's own anchor (now only ever a genuine floating-point edge
-    case, `q` landing within the margin of `q'` itself, not the `q >= q'`
-    structural case `q`'s own bound already rules out) -- isn't guarded
-    here with a factor of its own: `safe_hi` just widens enough to keep
-    `Uniform` constructible, and the draw is invalid either way. That's
-    caught downstream the same way any other invalid draw already is
+    - `p`'s lower bound is `q` if `q` is already known (`0` otherwise);
+      its upper bound is `u * q'` if `u` is already known (`1` otherwise)
+      -- both follow directly from the joint domain above (`p > q`;
+      `u <= p/q'` i.e. `p >= u * q'`; `p < u` from the `max(...) < u` side).
+    - `q`'s upper bound is `min(p, u * q')` if `u` is already known, else
+      `min(p, q')` -- the latter is `pqu`'s own existence condition for
+      *some* `u` to exist at all (bounding `q` by `q'` as well as by `p`
+      is what keeps `u`'s domain reachable in the all-free case; working
+      through the joint domain's four terms, every one but `q < q'`
+      reduces to something already true by construction here -- `q < p`,
+      `p < 1`, `q' < 1`); the former is the same condition once `u` is
+      already fixed, with `q' ` replaced by the now-tighter `u * q'`.
+    - `u`'s distribution is unchanged: `Uniform(u_lo, safe_hi)` from
+      `AbstractMGE._triaxial_u_domain(p, q)`, which already only ever
+      reads the final, fully-resolved `p`/`q` -- fixed or freshly
+      sampled above, it was never order-sensitive to begin with.
+
+    A degenerate fixed combination (e.g. a fixed `q` and `u` whose own
+    `q/q' < u` already fails) can still make `p`'s own bounds invert; that
+    draw is invalid regardless of what `p` turns out to be, so -- the same
+    policy `u`'s own fallback already uses -- the upper bound is only
+    widened enough to keep `Uniform` constructible, not corrected into a
+    valid one. The one case this can't absorb, `u_lo >= u_hi` once `p`/`q`
+    are resolved -- the domain too narrow to deproject reliably at this
+    precision for this `(p, q)` and the MGE's own anchor (now only ever a
+    genuine floating-point edge case, not the structural `q >= q'` case
+    `q`'s own bound already rules out when `u` isn't fixed) -- isn't
+    guarded here with a factor of its own either: that's caught downstream
+    the same way any other invalid draw already is
     (`Potential.build_with_validity`'s own validity factor when a plugin
     touches `build_potential()`, or `Model.valid_potential` otherwise) --
     not a new gap, and keeping this prior pure `numpyro.sample` statements
     (no factor of its own) is what keeps the `Predictive` (no-factors)
     path usable for a component using only this default prior.
-
-    Any of `p`/`q`/`u` already in `known` (the component fixes it) is used
-    as-is instead of sampled -- e.g. a fixed `p` still bounds a sampled
-    `q` the same way a freshly-drawn one would.
     """
     if mge is None:  # unreachable: only the MGE composite types register `pqu`
         raise InvalidPotentialParametersError(
             "The 'pqu' parameterization requires an MGE component."
         )
+    q_obs, _ = mge._triaxial_anchor()
+    eps = jnp.finfo(jnp.result_type(q_obs, float)).eps
+    margin = 4 * jnp.sqrt(eps)
+
     p = known.get("p")
     if p is None:
-        p = numpyro.sample(f"{site_prefix}.p", dist.Uniform(0.0, 1.0))
+        p_lower = known.get("q", 0.0)
+        if "u" in known:
+            p_lower = jnp.maximum(p_lower, known["u"] * q_obs)
+            p_upper = known["u"]
+        else:
+            p_upper = 1.0
+        p_upper = jnp.maximum(p_upper, p_lower + margin)
+        p = numpyro.sample(f"{site_prefix}.p", dist.Uniform(p_lower, p_upper))
+
     q = known.get("q")
     if q is None:
-        q_obs, _ = mge._triaxial_anchor()
-        q = numpyro.sample(f"{site_prefix}.q", dist.Uniform(0.0, jnp.minimum(p, q_obs)))
+        q_cap = known["u"] * q_obs if "u" in known else q_obs
+        q_upper = jnp.maximum(jnp.minimum(p, q_cap), margin)
+        q = numpyro.sample(f"{site_prefix}.q", dist.Uniform(0.0, q_upper))
+
     u = known.get("u")
     if u is None:
-        _lo, _hi, u_lo, u_hi, margin = mge._triaxial_u_domain(p, q)
-        safe_hi = jnp.maximum(u_hi, u_lo + margin)
+        _lo, _hi, u_lo, u_hi, u_margin = mge._triaxial_u_domain(p, q)
+        safe_hi = jnp.maximum(u_hi, u_lo + u_margin)
         u = numpyro.sample(f"{site_prefix}.u", dist.Uniform(u_lo, safe_hi))
     return {"p": p, "q": q, "u": u}
 
