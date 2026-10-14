@@ -162,6 +162,13 @@ Shape bounds compare unit-free ratios: `0.6` and `60 percent` have the same
 domain, while gradients and reported raw parameters preserve the declared
 coordinate scale and units.
 
+The oblate inverse `q_min_from_inclination_with_validity` returns a unit-free
+JAX scalar and a scalar validity flag. It shares the ordinary inverse's
+geometry and cancellation checks, independently of template normalization.
+Invalid results are zero placeholders; static unit, type, and shape errors
+still raise. The ordinary `q_min_from_inclination` returns a Python float
+and raises `MGEDeprojectionError` for invalid numerical geometry.
+
 Migration: replace `build_potential(...)` or `Potential.build(...)` with
 `potential, valid = Potential.build_with_validity(...)` and check `valid`
 before using the result. `Potential.from_settings(...)` is removed; call

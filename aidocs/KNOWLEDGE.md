@@ -338,6 +338,11 @@
   inverse reporting restores the declared shape-coordinate units. In
   `ParameterConstraint`, `unit=""` means a unit-free comparison and only
   `unit=None` selects the proposed value's own unit.
+  The oblate inverse `q_min_from_inclination_with_validity` returns a
+  unit-free JAX scalar and validity flag from the same geometry predicates
+  as the eager inverse. It is independent of template normalization. Invalid
+  results have zero values and derivatives, including in mixed batches;
+  static unit/type/shape errors still raise.
   `Potential.build_with_validity` is the only potential construction interface;
   `build_potential`, `Potential.build`, `Potential.from_settings`, component
   `build`, and the four MGE `_build` factories have been removed.

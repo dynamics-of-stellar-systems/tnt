@@ -308,7 +308,7 @@ def _shape_numbers(*values: float | jax.Array) -> tuple[jax.Array, ...]:
 
 def _guard_shape_conversion(
     candidate: Callable[..., tuple[Any, dict[str, jax.Array]]],
-    arguments: tuple[jax.Array, ...],
+    arguments: tuple[Any, ...],
 ) -> tuple[Any, jax.Array]:
     """Adapt shared diagnostic predicates to the construction validity guard."""
 
@@ -759,13 +759,19 @@ class AbstractMGE(eqx.Module):
     def _oblate_geometry(self, inclination: Quantity) -> tuple[jax.Array, jax.Array]:
         """Shared oblate geometry, independent of template normalization."""
         angle = inclination.ustrip("rad")
+        angle = jnp.where(jnp.isfinite(angle), angle, 1.0)
         cos_i, sin_i = jnp.cos(angle), jnp.sin(angle)
         observed = self.q.ustrip("")
         numerator = observed**2 - cos_i**2
         circular = observed == 1
         # The exact spherical solution avoids cancellation and roundoff above
         # q=1. Safe operands also prevent a masked 0/0 from poisoning AD.
-        q = jnp.sqrt(jnp.where(circular, 1, numerator)) / jnp.where(circular, 1, sin_i)
+        # Batched conditionals can evaluate rejected lanes too. Keep their
+        # sqrt/division derivatives defined; the original predicates reject them.
+        positive = jnp.isfinite(numerator) & (numerator > 0)
+        q = jnp.sqrt(jnp.where(circular | ~positive, 1, numerator)) / jnp.where(
+            circular | (sin_i == 0), 1, sin_i
+        )
         eps = jnp.finfo(q.dtype).eps
         valid = (
             _conversion_valid(self._oblate_domain_checks(inclination))
@@ -852,13 +858,30 @@ class AbstractMGE(eqx.Module):
         deprojection. Construction validates the normalized proposal's mass.
         """
         self._check_deprojection_structure(inclination)
+        result, checks = self._q_min_candidate(inclination)
+        _check_conversion(checks)
+        return float(result)
+
+    def q_min_from_inclination_with_validity(
+        self, inclination: Quantity
+    ) -> tuple[jax.Array, jax.Array]:
+        """Recover the anchor ratio inside a trace, with scalar validity.
+
+        Shares eager geometry checks, independently of normalization. Invalid
+        results are zero placeholders; static unit/type/shape mistakes raise.
+        """
+        self._check_deprojection_structure(inclination)
+        return _guard_shape_conversion(self._q_min_candidate, (inclination,))
+
+    def _q_min_candidate(
+        self, inclination: Quantity
+    ) -> tuple[jax.Array, dict[str, jax.Array]]:
+        """Shared oblate inverse and its geometry/precision predicate."""
         intrinsic, valid = self._oblate_geometry(inclination)
-        if not bool(valid):
-            raise MGEDeprojectionError(
-                "No reliable oblate geometry at this inclination and precision."
-            )
-        anchor = int(jnp.argmin(self.q.ustrip("")))
-        return float(intrinsic[anchor])
+        anchor = jnp.argmin(self.q.ustrip(""))
+        return intrinsic[anchor], {
+            "No reliable oblate geometry at this inclination and precision.": valid
+        }
 
     def deproject_triaxial(
         self, theta: Quantity, phi: Quantity, psi: Quantity
