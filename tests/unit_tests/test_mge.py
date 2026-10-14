@@ -801,7 +801,11 @@ def test_T_Tmaj_Tmin_and_viewing_angles_are_inverses():
     mge = _triaxial_anchor_mge()
     coordinates, valid = _T_from_pqu_candidate(0.85, 0.60, 0.93, q_obs=0.76)
     assert bool(valid)
-    T, T_maj, T_min = coordinates
+    # `pytest.approx` mishandles a tuple mixing Python floats with raw 0-d
+    # JAX arrays (each individual pair compares fine; the tuple as a whole
+    # doesn't) -- cast before comparing, not because these are floats
+    # downstream (`_T_from_pqu_candidate` is the shared, uncast candidate).
+    T, T_maj, T_min = (float(value) for value in coordinates)
 
     theta, phi, psi = mge.viewing_angles_from_T_Tmaj_Tmin(T, T_maj, T_min)
     T_r, T_maj_r, T_min_r = mge.T_Tmaj_Tmin_from_viewing_angles(theta, phi, psi)
