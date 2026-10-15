@@ -53,9 +53,11 @@
   scientific objects, load scientific input data, or begin scientific
   execution.
 - `tnt/orbit_library/` keeps the abstract `AbstractOrbitSampler`/
-  `AbstractOrbitDithering` contracts, `OrbitLibrary`, and the
+  `AbstractOrbitDithering` contracts and the
   `build_orbit_sampler`/`build_orbit_dithering`/`generate_ics` entry points
-  in `base.py`; equipotential-search and launch-point numerics shared across
+  in `base.py`; retained/transient data contracts in `data.py`; single-orbit
+  Dopri8 integration in `integration.py`; equipotential-search and launch-point
+  numerics shared across
   samplers in `common.py`; and one concrete `AbstractOrbitSampler` per
   sibling module (`stationary_grid.py`, `xz_grid_from_origin.py`,
   `xz_grid_from_boundary.py`). `AbstractOrbitSampler.generate_ics` takes an
@@ -64,6 +66,16 @@
   is needed, to build that `galax` potential once.
 
 ## Orbit start-space sampling
+
+- `build_orbit_sampler` and `build_orbit_dithering` now construct runtime
+  objects from the existing configuration schema. Only `n_dither=1` is
+  implemented; larger cubic dithering is rejected at construction.
+  `XZGridFromBoundaryOrbitSampler.generate_initial_conditions` retains each
+  shell's DYNAMITE refined clock, including an inner search on inward-
+  propagated irregular shells. The array-only `generate_ics` retains its
+  existing sampling-only behavior. Stationary/origin typed launch generation
+  requires explicit reference clocks on the same energy grid; no independent
+  launch-radius fallback is used.
 
 - The orbit-integration work starts with a storage-contract change:
   `tnt.orbit_library.data.OrbitLibrary` holds named per-bundle contributions,

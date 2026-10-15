@@ -1,8 +1,8 @@
 """Shared orbit-sampler/dithering contracts and their builders.
 
-`build_orbit_sampler`/`build_orbit_dithering` remain unimplemented, and
-`AbstractOrbitDithering`'s own concrete scheme isn't consumed by
-`generate_ics` yet. Concrete samplers live one per sibling module
+Builders consume the validated configuration schema. Only one member per
+bundle is supported; larger cubic dithering is explicitly rejected.
+Concrete samplers live one per sibling module
 (`tnt.orbit_library.stationary_grid`, `.xz_grid_from_origin`,
 `.xz_grid_from_boundary`), the same split `tnt.potential` uses for its own
 composite types.
@@ -16,9 +16,12 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import equinox as eqx
 import galax.potential as gp
 import jax.numpy as jnp
-from unxt import AbstractUnitSystem
+from unxt import AbstractUnitSystem, Quantity
 
+from tnt.orbit_library.data import OrbitInitialConditions
+from tnt.orbit_library.integration import require_static_potential
 from tnt.units import reference_unit
+from tnt.validation import _integer
 
 if TYPE_CHECKING:
     from tnt.potential import Potential
@@ -29,9 +32,8 @@ class AbstractOrbitSampler(eqx.Module):
 
     `_type` matches `orbit_library_settings.orbit_sampler.type`. Concrete
     subclasses hold their own resolved settings as fields (e.g.
-    `StationaryGridOrbitSampler.nE`). Samplers are currently constructed
-    directly; `build_orbit_sampler` is the planned configuration builder
-    and remains unimplemented. Calls use the stored fields rather than
+    `StationaryGridOrbitSampler.nE`). `build_orbit_sampler` constructs a
+    sampler from resolved configuration. Calls use stored fields rather than
     re-reading `orbit_library_settings`.
 
     `_add_reverse_copies` is fixed by which orbit family this sampler
@@ -89,14 +91,49 @@ class AbstractOrbitSampler(eqx.Module):
         """
         raise NotImplementedError
 
+    def generate_initial_conditions(
+        self, potential: gp.AbstractPotential, *, reference_periods: Quantity
+    ) -> OrbitInitialConditions:
+        """Generate launches with explicit, shared energy-shell clocks.
+
+        Stationary/origin samplers require supplied clocks, normally the
+        boundary sampler's DYNAMITE periods on the same energy grid. No
+        independent launch-radius period or silent fallback is introduced.
+        """
+        require_static_potential(potential)
+        return self._with_reference_periods(
+            potential, self.generate_ics(potential), reference_periods
+        )
+
+    def _with_reference_periods(
+        self, potential: gp.AbstractPotential, ics: jnp.ndarray,
+        reference_periods: Quantity,
+    ) -> OrbitInitialConditions:
+        periods = reference_periods.ustrip(potential.units["time"])
+        if periods.shape != (self.nE,):
+            raise ValueError(
+                "Supply one reference period per energy shell, shape (nE,)."
+            )
+        if not bool(jnp.all(jnp.isfinite(periods) & (periods > 0))):
+            raise ValueError("Reference periods must be finite and positive.")
+        periods = jnp.repeat(periods, self.nI2 * self.nI3)[:, None]
+        return OrbitInitialConditions(
+            positions=Quantity(ics[:, None, :3], potential.units["length"]),
+            velocities=Quantity(
+                ics[:, None, 3:], potential.units["length"] / potential.units["time"]
+            ),
+            reference_periods=Quantity(periods, potential.units["time"]),
+            bundle_ids=jnp.arange(self.n_bundles()),
+        )
+
 
 class AbstractOrbitDithering(eqx.Module):
     """How each orbit bundle's closely-spaced individual orbits are generated.
 
     `_type` matches `orbit_library_settings.dithering.type`. Concrete
     subclasses hold their own resolved settings as fields (e.g.
-    `CubicOrbitDithering.n_dither`). The planned `build_orbit_dithering`
-    configuration builder remains unimplemented.
+    `CubicOrbitDithering.n_dither`). The configuration builder currently
+    permits exactly one member per bundle.
     """
 
     _type: ClassVar[str]
@@ -107,13 +144,19 @@ class AbstractOrbitDithering(eqx.Module):
 
 
 class CubicOrbitDithering(AbstractOrbitDithering):
-    """Scaffold for cubic dithering with `n_dither^3` orbits per bundle."""
+    """One member per bundle; larger cubic dithering is deferred."""
 
     _type: ClassVar[str] = "Cubic"
     n_dither: int
 
+    def __check_init__(self) -> None:
+        if _integer(self.n_dither, "n_dither") < 1:
+            raise ValueError("n_dither must be positive.")
+        if self.n_dither != 1:
+            raise NotImplementedError("Only n_dither=1 is implemented.")
+
     def n_orbits_per_bundle(self) -> int:
-        raise NotImplementedError
+        return 1
 
 
 def build_orbit_sampler(
@@ -122,7 +165,26 @@ def build_orbit_sampler(
     """Build the `AbstractOrbitSampler` named by
     `orbit_library_settings.orbit_sampler`.
     """
-    raise NotImplementedError
+    # Concrete modules import this base: resolve their constructors lazily.
+    from tnt.configuration.validation import _validate_orbit_sampler
+    from tnt.orbit_library.stationary_grid import StationaryGridOrbitSampler
+    from tnt.orbit_library.xz_grid_from_boundary import XZGridFromBoundaryOrbitSampler
+    from tnt.orbit_library.xz_grid_from_origin import XZGridFromOriginOrbitSampler
+    from tnt.units import declared_quantity
+
+    settings = orbit_library_settings["orbit_sampler"]
+    _validate_orbit_sampler(settings, "orbit_library_settings.orbit_sampler")
+    sampler_types = {
+        cls._type: cls for cls in (
+            StationaryGridOrbitSampler, XZGridFromOriginOrbitSampler,
+            XZGridFromBoundaryOrbitSampler,
+        )
+    }
+    return sampler_types[settings["type"]](
+        rmin=declared_quantity(settings["rmin"], "length", "orbit_sampler.rmin"),
+        rmax=declared_quantity(settings["rmax"], "length", "orbit_sampler.rmax"),
+        nE=settings["nE"], nI2=settings["nI2"], nI3=settings["nI3"],
+    )
 
 
 def build_orbit_dithering(
@@ -131,7 +193,11 @@ def build_orbit_dithering(
     """Build the `AbstractOrbitDithering` named by
     `orbit_library_settings.dithering`.
     """
-    raise NotImplementedError
+    from tnt.configuration.validation import _validate_dithering
+
+    settings = orbit_library_settings["dithering"]
+    _validate_dithering(settings, "orbit_library_settings.dithering")
+    return CubicOrbitDithering(n_dither=settings["n_dither"])
 
 
 def generate_ics(

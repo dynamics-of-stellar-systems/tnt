@@ -25,6 +25,17 @@ The reference convention is DYNAMITE's refined tube-boundary clock per energy
 shell, shared across stationary and tube populations. A reference period is
 not a measured recurrence period for a general triaxial orbit.
 
+`XZGridFromBoundaryOrbitSampler.generate_initial_conditions(potential)`
+returns those clocks alongside the launches. On inward-propagated irregular
+shells it still performs the inner search needed for each shell's clock;
+outer boundary searches remain skipped. The older `generate_ics` array-only
+API retains its sampling behavior and does not request those extra clocks.
+
+The stationary and origin samplers' `generate_initial_conditions` require an
+explicit unitful `reference_periods` vector of shape `(nE,)`, on the same energy
+grid. For example, take every `nI2*nI3`-th period from the boundary population's
+per-bundle clocks. They never silently substitute their launch-radius periods.
+
 Sampling follows DYNAMITE: for `N` samples and duration `D`, sample spacing is
 `D/(N+4)` and the first sample is at `(1+u)` spacings, with `u` drawn from the
 explicit JAX key. Adaptive solver steps are not retained as histogram samples.
@@ -180,8 +191,9 @@ Any future histogram rebinning approximation needs its own explicit contract.
   and `n_bundles` both work, producing bundle-centre initial conditions from
   an already-built `galax` potential. Configuration validation
   (`_validate_orbit_sampler`) checks this same schema.
-- **Not implemented**: `build_orbit_sampler`/`build_orbit_dithering` (no
-  configuration-to-sampler wiring yet); `AbstractOrbitDithering`'s own
-  per-bundle dithering (declared, not consumed by any sampler); the
+- **Builders**: `build_orbit_sampler` consumes the same validated configuration
+  schema. `build_orbit_dithering` constructs `CubicOrbitDithering` only for
+  `n_dither=1`; larger values raise `NotImplementedError` at construction.
+- **Not implemented**: per-bundle dithering beyond one; the
   counter-rotating mirror's actual construction; library assembly and
   `Potential.generate_orbit_library`.
