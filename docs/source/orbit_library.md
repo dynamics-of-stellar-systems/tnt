@@ -7,7 +7,7 @@ names one of three registered samplers (`tnt.orbit_library`).
 
 This part of TNT is under active development. Orbit *sampling* (this page)
 is implemented; orbit *integration* and weighting
-(`Potential.generate_orbit_library`, `OrbitLibrary` itself) are not -- see
+(`Potential.generate_orbit_library`) are not -- see
 [What's implemented today](#whats-implemented-today).
 
 ## Orbit samplers
@@ -116,6 +116,27 @@ assembly itself isn't.
 
 ## What's implemented today
 
+The retained `OrbitLibrary` contract now contains named per-bundle
+contribution arrays, stable zero-based bundle IDs, unitful reference periods,
+and integration diagnostics. Raw trajectories are separate `OrbitTrajectory`
+objects, with explicit times, positions, velocities, and units. Initial
+conditions use `OrbitInitialConditions` and retain a size-one member axis;
+only one orbit per bundle is supported in this first integration milestone.
+These types establish the storage boundary; integration and contribution
+production are implemented in subsequent steps.
+
+Production execution will reduce a bounded number of temporary trajectories,
+optionally save selected trajectories to separate files, and release the raw
+samples. Aggregated contributions remain independent per fitted bundle.
+An aperture histogram must retain its fraction of the total sampled time,
+including time outside the aperture, rather than being normalized to one.
+Concrete projection formulas remain owned by the kinematics classes.
+
+Already-binned velocity contributions cannot be generically mass-rescaled.
+`OrbitLibrary.rescaled` explicitly raises: contributions at different mass
+scales must be calculated while the temporary trajectories remain available.
+Any future histogram rebinning approximation needs its own explicit contract.
+
 - **`StationaryGrid`, `XZGridFromOrigin`, `XZGridFromBoundary`**: `generate_ics`
   and `n_bundles` both work, producing bundle-centre initial conditions from
   an already-built `galax` potential. Configuration validation
@@ -123,5 +144,5 @@ assembly itself isn't.
 - **Not implemented**: `build_orbit_sampler`/`build_orbit_dithering` (no
   configuration-to-sampler wiring yet); `AbstractOrbitDithering`'s own
   per-bundle dithering (declared, not consumed by any sampler); the
-  counter-rotating mirror's actual construction; `OrbitLibrary` itself and
+  counter-rotating mirror's actual construction; library assembly and
   `Potential.generate_orbit_library`.

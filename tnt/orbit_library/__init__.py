@@ -2,8 +2,9 @@
 
 Split across submodules by concern: `base` (the abstract
 `AbstractOrbitSampler`/`AbstractOrbitDithering` contracts, the dithering
-scheme(s), `OrbitLibrary` itself, and the `build_orbit_sampler`/
-`build_orbit_dithering`/`generate_ics` entry points), `common` (equipotential
+scheme(s), and the `build_orbit_sampler`/`build_orbit_dithering`/`generate_ics`
+entry points), `data` (retained contributions and transient trajectories),
+`common` (equipotential
 search and launch-point numerics shared across samplers), and one sibling
 module per concrete `AbstractOrbitSampler` (`stationary_grid`,
 `xz_grid_from_origin`, `xz_grid_from_boundary`).
@@ -15,10 +16,15 @@ from tnt.orbit_library.base import (
     AbstractOrbitDithering,
     AbstractOrbitSampler,
     CubicOrbitDithering,
-    OrbitLibrary,
     build_orbit_dithering,
     build_orbit_sampler,
     generate_ics,
+)
+from tnt.orbit_library.data import (
+    OrbitInitialConditions,
+    OrbitIntegrationDiagnostics,
+    OrbitLibrary,
+    OrbitTrajectory,
 )
 from tnt.orbit_library.stationary_grid import StationaryGridOrbitSampler
 from tnt.orbit_library.xz_grid_from_boundary import XZGridFromBoundaryOrbitSampler
@@ -28,7 +34,10 @@ __all__ = [
     "AbstractOrbitDithering",
     "AbstractOrbitSampler",
     "CubicOrbitDithering",
+    "OrbitInitialConditions",
+    "OrbitIntegrationDiagnostics",
     "OrbitLibrary",
+    "OrbitTrajectory",
     "StationaryGridOrbitSampler",
     "XZGridFromBoundaryOrbitSampler",
     "XZGridFromOriginOrbitSampler",

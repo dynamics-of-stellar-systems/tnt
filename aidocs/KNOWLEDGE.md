@@ -65,6 +65,16 @@
 
 ## Orbit start-space sampling
 
+- The orbit-integration work starts with a storage-contract change:
+  `tnt.orbit_library.data.OrbitLibrary` holds named per-bundle contributions,
+  bundle IDs, reference periods, and diagnostics, not raw trajectory arrays.
+  `OrbitInitialConditions` and `OrbitTrajectory` hold unitful launch/sample
+  coordinates separately. Only a size-one member axis is currently supported.
+  Aggregated velocity bins cannot be generically mass-rescaled;
+  `OrbitLibrary.rescaled` raises and requests contribution calculation at
+  each mass scale before temporary samples are discarded. Concrete
+  observational projection and weighting remain unimplemented.
+
 - Three implemented samplers, each producing one start-space population,
   composable rather than bundled into one combined sampler:
   `StationaryGridOrbitSampler` (box orbits only, `nE * nI2 * nI3` bundles,

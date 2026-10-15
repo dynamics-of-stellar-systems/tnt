@@ -1,4 +1,4 @@
-"""Shared orbit-sampler/dithering contracts, `OrbitLibrary`, and their builders.
+"""Shared orbit-sampler/dithering contracts and their builders.
 
 `build_orbit_sampler`/`build_orbit_dithering` remain unimplemented, and
 `AbstractOrbitDithering`'s own concrete scheme isn't consumed by
@@ -11,12 +11,12 @@ composite types.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import equinox as eqx
 import galax.potential as gp
 import jax.numpy as jnp
-from unxt import AbstractUnitSystem, Quantity
+from unxt import AbstractUnitSystem
 
 from tnt.units import reference_unit
 
@@ -151,31 +151,3 @@ def generate_ics(
     itself only ever takes the already-built `galax` potential.
     """
     return orbit_sampler.generate_ics(potential.to_galax(unit_system))
-
-
-class OrbitLibrary(eqx.Module):
-    """Orbits integrated in one `Potential`, plus their orbital periods.
-
-    `orbits` has shape `(n_bundles, n_orbits_per_bundle, n_stored_timesteps,
-    6)`: `n_bundles` (from `AbstractOrbitSampler.n_bundles`) orbit bundles,
-    each with `n_orbits_per_bundle` (from
-    `AbstractOrbitDithering.n_orbits_per_bundle`) closely-dithered orbits,
-    each stored at `orbit_library_settings.n_stored_timesteps` points along
-    its trajectory, each point a phase-space vector `(x, y, z, vx, vy, vz)`.
-
-    Deliberately has no `project`/binning-aware method -- projecting orbits
-    onto a `ProjectedBinning` is `AbstractKinematics.design_matrix`'s
-    responsibility (`tnt.kinematics`), so it isn't duplicated here.
-    """
-
-    orbits: jnp.ndarray
-    orbital_periods: Quantity
-
-    def rescaled(self, mass_scale: float) -> Self:
-        """Rescale this library to a new mass without re-integrating.
-
-        Valid only alongside `Potential.rescale(mass_scale)` on the same
-        potential: the shape of every orbit is unchanged, but its energy,
-        velocity, and time scaling depend on the potential's overall mass.
-        """
-        raise NotImplementedError
