@@ -5,10 +5,49 @@ get integrated and weighted against kinematic data as part of
 [model search](model_search.md). `orbit_library_settings.orbit_sampler.type`
 names one of three registered samplers (`tnt.orbit_library`).
 
-This part of TNT is under active development. Orbit *sampling* (this page)
-is implemented; orbit *integration* and weighting
-(`Potential.generate_orbit_library`) are not -- see
+This part of TNT is under active development. Orbit sampling and standalone
+single-orbit integration are implemented. Production library assembly and
+weighting (`Potential.generate_orbit_library`) remain unfinished -- see
 [What's implemented today](#whats-implemented-today).
+
+## Single-orbit integration
+
+`integrate_orbit(potential, position, velocity, reference_period, key, settings)`
+integrates an already-built Galax potential with Diffrax `Dopri8` and returns
+a separate `OrbitTrajectory`. `OrbitIntegrationSettings` defaults to 200
+reference periods, 50,000 samples, normalized accuracy `1e-5`, and a maximum
+of one million adaptive steps. These numerical defaults need calibration on
+realistic galaxy models; they are not a certified energy-error target.
+
+The solve covers `orbital_periods * reference_period`. The caller supplies
+the clock explicitly; it is not estimated from an individual launch radius.
+The reference convention is DYNAMITE's refined tube-boundary clock per energy
+shell, shared across stationary and tube populations. A reference period is
+not a measured recurrence period for a general triaxial orbit.
+
+Sampling follows DYNAMITE: for `N` samples and duration `D`, sample spacing is
+`D/(N+4)` and the first sample is at `(1+u)` spacings, with `u` drawn from the
+explicit JAX key. Adaptive solver steps are not retained as histogram samples.
+The exact integration endpoint is evaluated separately for diagnostics.
+`Dopri8` is an 8/7 method, not DYNAMITE's DOP853; convergence rather than
+identical adaptive steps is the comparison target.
+
+The solve normalizes positions and velocities using a launch length scale
+and its reference-period velocity scale. Tolerances therefore do not depend
+on whether equivalent coordinates are expressed in pc/yr or kpc/Myr.
+Diagnostics report solver success, adaptive step counts, and maximum/final
+energy drift divided by the squared characteristic speed. This avoids
+division by the initial energy, which can be zero by convention. Maximum
+drift includes the saved samples and endpoint, not all internal solver stages.
+An unsuccessful trajectory must not be reduced or saved as a valid orbit.
+No automatic retry or substitute orbit is used.
+
+Only TNT's curated static Galax potentials (including the Gaussian components
+used by TNT MGEs) and composites of them are supported. Nonconstant parameter
+objects, rotating Monari bars, arbitrary custom and transformed potentials
+raise explicitly. The numerical kernel supports JIT and differentiation
+through initial conditions; sampling preparation remains eager, and hard
+histogram bins do not gain useful coordinate derivatives merely by using JAX.
 
 ## Orbit samplers
 
@@ -122,8 +161,8 @@ and integration diagnostics. Raw trajectories are separate `OrbitTrajectory`
 objects, with explicit times, positions, velocities, and units. Initial
 conditions use `OrbitInitialConditions` and retain a size-one member axis;
 only one orbit per bundle is supported in this first integration milestone.
-These types establish the storage boundary; integration and contribution
-production are implemented in subsequent steps.
+These types establish the storage boundary; contribution production and
+library assembly are implemented in subsequent steps.
 
 Production execution will reduce a bounded number of temporary trajectories,
 optionally save selected trajectories to separate files, and release the raw

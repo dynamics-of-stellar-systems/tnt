@@ -74,6 +74,17 @@
   `OrbitLibrary.rescaled` raises and requests contribution calculation at
   each mass scale before temporary samples are discarded. Concrete
   observational projection and weighting remain unimplemented.
+- `orbit_library.integration.integrate_orbit` is the standalone JIT-compatible
+  Dopri8 kernel for explicit unitful launch coordinates and reference clocks.
+  Its static settings default to 200 reference periods and 50,000 uniformly
+  spaced samples with DYNAMITE's random sampling offset (`D/(N+4)` spacing).
+  Relative and absolute tolerances apply to normalized phase coordinates.
+  Diagnostics include sampled/endpoint energy drift scaled by characteristic
+  speed squared (not initial energy), and solver step counts/success. Solver
+  failures return an unsuccessful diagnostic; callers must reject the data.
+  Time-dependent parameters, rotating Monari bars, custom/transformed force
+  models are rejected. Only the single-orbit kernel is implemented at this
+  step; production library assembly and scientific projections are separate.
 
 - Three implemented samplers, each producing one start-space population,
   composable rather than bundled into one combined sampler:

@@ -26,6 +26,11 @@ from tnt.orbit_library.data import (
     OrbitLibrary,
     OrbitTrajectory,
 )
+from tnt.orbit_library.integration import (
+    OrbitIntegrationError,
+    OrbitIntegrationSettings,
+    integrate_orbit,
+)
 from tnt.orbit_library.stationary_grid import StationaryGridOrbitSampler
 from tnt.orbit_library.xz_grid_from_boundary import XZGridFromBoundaryOrbitSampler
 from tnt.orbit_library.xz_grid_from_origin import XZGridFromOriginOrbitSampler
@@ -36,6 +41,8 @@ __all__ = [
     "CubicOrbitDithering",
     "OrbitInitialConditions",
     "OrbitIntegrationDiagnostics",
+    "OrbitIntegrationError",
+    "OrbitIntegrationSettings",
     "OrbitLibrary",
     "OrbitTrajectory",
     "StationaryGridOrbitSampler",
@@ -44,4 +51,5 @@ __all__ = [
     "build_orbit_dithering",
     "build_orbit_sampler",
     "generate_ics",
+    "integrate_orbit",
 ]
