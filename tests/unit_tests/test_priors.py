@@ -333,8 +333,10 @@ def test_plugin_factor_on_enclosed_mass_concentrates_the_prior() -> None:
     )
     assert prior.has_factors() is True
 
+    # Match the worked illustration's sampling budget. A short chain can
+    # miss the strict split-R-hat threshold despite having no divergences.
     samples, diagnostics = prior.sample_with_diagnostics(
-        jax.random.PRNGKey(0), num_samples=200, num_warmup=600
+        jax.random.PRNGKey(0), num_samples=2000, num_warmup=800
     )
     assert set(samples) == {"dh.m", "stars.ml"}
     enclosed = jax.vmap(lambda a, b: _enclosed_mass_of(resolved, a, b))(
@@ -352,9 +354,11 @@ def test_plugin_factor_on_enclosed_mass_concentrates_the_prior() -> None:
     # narrow (3e10-3e11, not the much wider 1e10-1e13 every other test in
     # this file uses) for exactly this reason.
     assert diagnostics is not None
-    assert float(jnp.mean(diagnostics.diverging)) == 0.0
-    assert all(ess > 50 for ess in diagnostics.ess.values())
-    assert all(rhat < 1.01 for rhat in diagnostics.split_rhat.values())
+    assert float(jnp.mean(diagnostics.diverging)) == 0.0, diagnostics.diverging
+    assert all(ess > 50 for ess in diagnostics.ess.values()), diagnostics.ess
+    assert all(
+        rhat < 1.01 for rhat in diagnostics.split_rhat.values()
+    ), diagnostics.split_rhat
     # A narrower std ratio than before (dh.m's own prior is also narrower
     # now, for clean sampling -- see above -- so there's less unconstrained
     # spread to shrink from), but still a real, substantial narrowing.
