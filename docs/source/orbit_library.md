@@ -76,6 +76,13 @@ not calibrate the default production accuracy or replace a comparison of
 long-time orbit statistics against DYNAMITE's compiled integrator. The
 existing DYNAMITE comparison below covers start-space sampling only.
 
+The next recommended milestone is a controlled integration comparison with
+DYNAMITE: use identical launches and physical durations, check force-model
+differences separately, and measure convergence of long-time spatial and
+velocity distributions. Production projections, counter-rotating populations,
+and model-search wiring follow that baseline. A presentation site is deferred
+until comparison results are available.
+
 ## Library assembly and optional trajectories
 
 `build_orbit_library` takes an already-built Galax potential, typed initial

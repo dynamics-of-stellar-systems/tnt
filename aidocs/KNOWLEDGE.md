@@ -68,6 +68,12 @@
 
 ## Orbit start-space sampling
 
+- The ordered integration follow-ups and comparison protocol are maintained
+  in [Orbit integration follow-ups](ORBIT_INTEGRATION_FOLLOW_UPS.md).
+  The recommended next milestone is a controlled DYNAMITE integrator
+  comparison before production projections/model-search wiring. The user
+  chose to build a presentation site after comparison results are available.
+
 - `build_orbit_sampler` and `build_orbit_dithering` now construct runtime
   objects from the existing configuration schema. Only `n_dither=1` is
   implemented; larger cubic dithering is rejected at construction.
