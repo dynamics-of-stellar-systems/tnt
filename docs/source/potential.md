@@ -253,6 +253,15 @@ Very thin Gaussians can have inaccurate potential values and gradients even
 when native deprojection and construction are reliable; quadrature accuracy
 is a separate numerical concern.
 
+The controlled orbit-integration benchmark also finds that large
+radius-to-Gaussian-width ratios can under-resolve the fixed order-50
+quadrature. With DYNAMITE's constants and resolved component parameters
+matched, increasing the order to 200/400 reduces the largest relative
+acceleration discrepancy over 120 probes from about `3.65e-3` to `5.84e-8`.
+These higher-order variants are comparison controls; TNT has not yet adopted
+a production quadrature policy. A tighter orbit-solver tolerance alone cannot
+remove a force-evaluation discrepancy.
+
 ### MGE composite types
 
 All four build a potential from a named Multi-Gaussian Expansion (MGE) --

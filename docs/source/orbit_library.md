@@ -73,15 +73,31 @@ potential parameter, equivalent units, zero-energy launches, and explicit
 solver failures. An integration test also reduces a nested triaxial Gaussian
 plus central-mass potential into normalized radial fractions. These checks do
 not calibrate the default production accuracy or replace a comparison of
-long-time orbit statistics against DYNAMITE's compiled integrator. The
-existing DYNAMITE comparison below covers start-space sampling only.
+long-time orbit statistics against DYNAMITE's compiled integrator.
 
-The next recommended milestone is a controlled integration comparison with
-DYNAMITE: use identical launches and physical durations, check force-model
-differences separately, and measure convergence of long-time spatial and
-velocity distributions. Production projections, counter-rotating populations,
-and model-search wiring follow that baseline. A presentation site is deferred
-until comparison results are available.
+A separate controlled integration benchmark now covers 70 paired runs over
+twelve shared launches and 120 force probes, including tolerance sweeps,
+200/400-period runs, matched native parameters, and Gaussian quadrature
+controls. It supports explicit `OrbitIntegrationSettings(accuracy=1e-8)` for
+further development; the code default remains `1e-5`. The largest normalized
+energy drift across the twelve 200-period launches decreases from `2.04e-2`
+at `1e-5` to `1.52e-5` at `1e-8`. This is not a universal accuracy guarantee.
+
+The benchmark identifies separate force-quadrature and finite-time statistical
+issues, particularly at large radius-to-Gaussian-width ratios and on sensitive
+outer box orbits. Its raw diagnostic spatial histograms precede production
+symmetry operations. Resolve a production force-accuracy policy and appropriate
+convergence diagnostics before treating observational contributions as
+validated. Production projections, counter-rotating populations, and model
+wiring remain separate follow-ups. The earlier start-space comparison below
+validates sampling and should not be confused with this integration benchmark.
+
+The measured results are available in the owner-private
+[integration comparison presentation](https://tnt-orbit-integration-validation.funbass128.chatgpt.site),
+with downloadable scientific figures, a numerical summary, and reproduction
+details. Sign in with the owning account to view it. The comparison source
+lives in the separate `tnt-dynamite-comparison` repository's
+`orbit-integration/` directory, on `codex/orbit-integration-comparison`.
 
 ## Library assembly and optional trajectories
 

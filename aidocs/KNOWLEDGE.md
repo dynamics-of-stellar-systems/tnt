@@ -70,9 +70,13 @@
 
 - The ordered integration follow-ups and comparison protocol are maintained
   in [Orbit integration follow-ups](ORBIT_INTEGRATION_FOLLOW_UPS.md).
-  The recommended next milestone is a controlled DYNAMITE integrator
-  comparison before production projections/model-search wiring. The user
-  chose to build a presentation site after comparison results are available.
+  A controlled DYNAMITE integrator comparison now covers 70 paired runs and
+  120 force probes in the separate comparison repository, branch
+  `codex/orbit-integration-comparison` (`orbit-integration/REPORT.md`). It
+  supports explicit working accuracy `1e-8` (code default remains `1e-5`).
+  Gaussian force accuracy and orbit time/sampling convergence remain the
+  immediate numerical follow-ups before production projections/model wiring.
+  A presentation site and standalone scientific figures present the results.
 
 - `build_orbit_sampler` and `build_orbit_dithering` now construct runtime
   objects from the existing configuration schema. Only `n_dither=1` is
@@ -381,6 +385,12 @@
   reference by about 0.7%, and its q derivative by about 95%, even with a
   well-resolved float64 deprojection. Potential-quadrature accuracy needs
   separate work; do not treat a true construction flag as that guarantee.
+  The 2026-10-15 integrator benchmark also finds a large-radius issue: with
+  DYNAMITE constants and resolved parameters matched, order 50 gives up to
+  `3.65e-3` relative acceleration difference, while orders 200/400 reduce it
+  to about `5.84e-8` over 120 probes. This is diagnostic evidence, not a
+  production policy; test both radius-to-width ratio and flattening when
+  addressing the quadrature follow-up.
   MGE `q_min`, `pqu`, and `T_maj_min` conversions are traceable. The standalone
   scientific methods and registry adapters share numerical candidates and
   predicates, including anchor twists, endpoint margins and round-trip checks.

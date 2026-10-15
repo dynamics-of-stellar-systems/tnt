@@ -14,45 +14,48 @@ Updated: 2026-10-15.
 - Retain per-bundle contributions and diagnostics. Save selected trajectories
   separately, referenced by stable bundle/member IDs. Compute contributions
   for each requested common mass scale while temporary samples are available.
-- Programmatic integration and reduction are implemented on
+- Programmatic integration and reduction were implemented on
   `codex/orbit-integration`, through commit `a685064`. Analytic tests and a
-  triaxial-potential reduction test pass. Production accuracy defaults have
-  not been calibrated against DYNAMITE. The earlier DYNAMITE comparison
-  validates start-space sampling only.
-- The user chose to wait for comparison results before building a presentation
-  site. No site creation or publication is part of this documentation step.
+  triaxial-potential reduction test pass. A subsequent controlled integrator
+  comparison now covers 70 paired runs and 120 force probes. It supports an
+  explicit working accuracy of `1e-8`, while the code default remains `1e-5`.
+  Universal production accuracy and distribution equivalence are not certified.
+- The user authorized the comparison, long-time statistics, and presentation
+  site, with incremental commits, before continuing the scientific features.
+  Comparison code and results are on `codex/orbit-integration-comparison` in
+  the separate comparison repository. See its `orbit-integration/REPORT.md`.
 
-## Recommended next milestone: integrator comparison
+## Completed benchmark and remaining calibration
 
-This is the recommended work order, not a claim that the comparison has run.
-Keep its reference-code harness, resolved inputs, results, and reproduction
+The benchmark below has run. Keep its reference-code harness, resolved inputs,
+results, and reproduction
 instructions in the existing separate
 `dynamics-of-stellar-systems/tnt-dynamite-comparison` repository. Do not make
 DYNAMITE a TNT runtime or unit-test dependency.
 
-- [ ] Pin the TNT and DYNAMITE revisions, numerical-library versions, float64
+- [x] Pin the TNT and DYNAMITE revisions, numerical-library versions, float64
   initialization, potential parameters and constants, units, initial
   conditions, reference periods, physical duration, and sampling settings.
   Use identical exported launch coordinates in both integrations rather than
   independently generating two nearly identical start spaces.
-- [ ] Compare accelerations first at representative points, especially near
+- [x] Compare accelerations first at representative points, especially near
   the centre. DYNAMITE's interpolated force evaluation and TNT's Galax force
   evaluation can differ independently of their integrators. Document those
   differences; do not attribute every trajectory discrepancy to Dopri8.
-- [ ] Start with a small set of regular spherical/axisymmetric orbits, then
+- [x] Start with a small set of regular spherical/axisymmetric orbits, then
   triaxial box/tube starts and eccentric, central-mass-dominated orbits.
   Include inner and outer shells and difficult cases rather than only median
   examples. Compare short-time phase coordinates where meaningful.
-- [ ] Match physical durations using the agreed clocks. For sample-by-sample
+- [x] Match physical durations using the agreed clocks. For sample-by-sample
   comparisons, explicitly align output times or use a controlled diagnostic
   sampling schedule. Matching random seeds across Fortran and JAX does not
   imply matching sampling offsets.
-- [ ] Compare 200-period statistics: intrinsic spatial occupancy, velocity
+- [x] Compare 200-period statistics: intrinsic spatial occupancy, velocity
   moments, and simple common velocity histograms. These comparison reducers
   can be small diagnostic tools; a complete observational projection layer
   is not a prerequisite. Long-time pointwise agreement is not an appropriate
   pass criterion for chaotic orbits.
-- [ ] Vary solver tolerance, output sample count, and integration duration
+- [x] Vary solver tolerance, output sample count, and integration duration
   independently. Test both implementations against tighter reference runs;
   the same numerical tolerance value need not mean the same achieved error.
   Distinguish integration error from finite-time/sampling variation.
@@ -61,6 +64,9 @@ DYNAMITE a TNT runtime or unit-test dependency.
   and memory. Separate JAX compilation time from repeated execution time.
   Exclude or clearly flag any DYNAMITE result that substitutes another orbit
   after a failure; it is not a valid reference for the requested launch.
+  Energy, solver attempts/counts, and timing are recorded; peak-memory
+  profiling remains deferred. Fortran native CPU and containerized JAX wall
+  timings are not a fair speed ranking.
 - [ ] Agree measurable acceptance thresholds from convergence results and
   the intended observable accuracy. Record outliers and limitations as well
   as typical agreement. Calibrate TNT's defaults and any energy acceptance
@@ -69,6 +75,31 @@ DYNAMITE a TNT runtime or unit-test dependency.
 Exit condition: a reproducible small benchmark identifies the sources of
 disagreement and supports explicit production settings, or exposes specific
 numerical issues to resolve before building more functionality.
+
+This condition is met by identifying the following numerical follow-ups:
+
+- [ ] **Gaussian force accuracy:** define and validate a production policy for
+  large radius-to-width ratios and extreme flattening. In the matched native
+  parameter audit, fixed quadrature order 50 differs from DYNAMITE direct
+  acceleration by up to `3.65e-3`; orders 200/400 reduce the largest measured
+  difference to about `5.84e-8`. The order-200 variant is a comparison control,
+  not an implemented TNT production policy or a universal recommendation.
+- [ ] **Working accuracy and acceptance:** use explicit
+  `OrbitIntegrationSettings(accuracy=1e-8)` for subsequent development. The
+  largest normalized energy drift over the twelve 200-period launches falls
+  from `2.04e-2` at `1e-5` to `1.52e-5` at `1e-8`. Set any production default
+  or energy-rejection policy explicitly after wider validation.
+- [ ] **Time and sampling convergence:** diagnose sensitive orbits using the
+  intended retained quantities. Some raw spatial split-half differences are
+  large in both codes; outer-box discrepancies do not uniformly disappear
+  at 400 periods. Spatial histograms in this benchmark precede symmetry
+  operations and counter-rotating populations; do not treat them as final
+  symmetrized library error estimates. Formal chaos diagnosis was not done.
+
+The comparison checkout for this chat is
+`/Users/maindl/.codex/visualizations/2026/10/15/01a13ee6-91e7-7b92-b380-3b5de052396c/tnt-dynamite-comparison`.
+Its reproduction scripts, report, full-precision summary, compact NPZ traces,
+and standalone scientific figures are separate from TNT's runtime/tests.
 
 ## Subsequent implementation milestones
 
@@ -108,15 +139,22 @@ numerical issues to resolve before building more functionality.
   supported separable Hamiltonians and long-time statistics. Add user-facing
   solver selection only when accuracy/cost evidence justifies it.
 
-## Presentation site after the first comparison
+## Presentation site
 
-- [ ] Build a scientific results site from versioned, offline-generated data
+Published owner-private presentation:
+<https://tnt-orbit-integration-validation.funbass128.chatgpt.site>.
+Sign in with the owning account to view it. The site includes interactive
+orbit/run/projection selection, energy/convergence plots, distribution
+diagnostics, section-based presentation navigation, the report, JSON data,
+and five standalone scientific figures bundled as a PDF.
+
+- [x] Build a scientific results site from versioned, offline-generated data
   and figures. Keep numerical execution in the reproducible comparison
   workflow; the site presents its results.
-- [ ] Show the comparison setup and provenance, representative orbit views,
+- [x] Show the comparison setup and provenance, representative orbit views,
   energy-drift and convergence plots, occupancy/velocity-statistic
   differences, failures/outliers, and performance with compilation separated.
-- [ ] Clearly distinguish implemented features, measured results, open
+- [x] Clearly distinguish implemented features, measured results, open
   questions, and planned follow-ups. Include reproduction links and explain
   why long-time chaotic trajectories can separate while their useful
   distributions agree. Do not present planned checks as completed validation.
