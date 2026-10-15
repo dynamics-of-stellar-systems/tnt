@@ -7,12 +7,22 @@ Only one member per bundle is supported in the first integration milestone.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Self
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from unxt import Quantity
+
+
+@dataclass(frozen=True)
+class TrajectoryReference:
+    """A separately stored base-mass trajectory, identified by bundle/member."""
+
+    bundle_id: int
+    member_index: int
+    path: str
 
 
 class OrbitIntegrationDiagnostics(eqx.Module):
@@ -114,6 +124,11 @@ class OrbitLibrary(eqx.Module):
     bundle_ids: jax.Array
     reference_periods: Quantity
     diagnostics: OrbitIntegrationDiagnostics
+
+    # Files contain base-mass trajectories; this scale specifies their
+    # velocity/time conversion when inspected alongside this library.
+    trajectories: tuple[TrajectoryReference, ...] = eqx.field(static=True, default=())
+    potential_mass_scale: float = eqx.field(static=True, default=1.0)
 
     def __check_init__(self) -> None:
         self.reference_periods.ustrip("Myr")

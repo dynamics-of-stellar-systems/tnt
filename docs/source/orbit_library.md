@@ -5,9 +5,10 @@ get integrated and weighted against kinematic data as part of
 [model search](model_search.md). `orbit_library_settings.orbit_sampler.type`
 names one of three registered samplers (`tnt.orbit_library`).
 
-This part of TNT is under active development. Orbit sampling and standalone
-single-orbit integration are implemented. Production library assembly and
-weighting (`Potential.generate_orbit_library`) remain unfinished -- see
+This part of TNT is under active development. Orbit sampling, standalone
+single-orbit integration, and bounded-memory assembly with explicit reducers
+are implemented. Automatic observational projection and model-search wiring
+(`Potential.generate_orbit_library`) and weighting remain unfinished -- see
 [What's implemented today](#whats-implemented-today).
 
 ## Single-orbit integration
@@ -59,6 +60,83 @@ objects, rotating Monari bars, arbitrary custom and transformed potentials
 raise explicitly. The numerical kernel supports JIT and differentiation
 through initial conditions; sampling preparation remains eager, and hard
 histogram bins do not gain useful coordinate derivatives merely by using JAX.
+
+## Library assembly and optional trajectories
+
+`build_orbit_library` takes an already-built Galax potential, typed initial
+conditions, named reducer functions, an explicit JAX key, and integration
+settings. It integrates one orbit at a time. A reducer consumes a temporary
+`OrbitTrajectory` and returns one orbit's contribution array, without a bundle
+axis. The builder stacks those results into `OrbitLibrary.contributions` and
+retains diagnostics and reference periods. It does not retain raw trajectories.
+Reducers own their bin definitions and units and must return finite,
+consistently shaped arrays. At least one reducer is required; there is no
+placeholder observational result if concrete projection is unavailable.
+
+For example, given a Galax `potential` and an `XZGridFromBoundaryOrbitSampler`
+named `sampler`, this produces an illustrative spatial fraction per bundle:
+
+```python
+from pathlib import Path
+
+import jax
+import jax.numpy as jnp
+from tnt.orbit_library import OrbitIntegrationSettings, build_orbit_library
+
+starts = sampler.generate_initial_conditions(potential)
+
+def positive_x_fraction(trajectory):
+    return jnp.mean(trajectory.positions.ustrip("kpc")[:, 0] > 0)
+
+libraries = build_orbit_library(
+    potential,
+    starts,
+    {"positive_x_fraction": positive_x_fraction},
+    jax.random.key(42),
+    OrbitIntegrationSettings(orbital_periods=200),
+    mass_scales=(1.0, 2.0),
+    trajectory_directory=Path("orbit-trajectories"),
+    save_bundle_ids=(0,),
+)
+library = libraries[1.0]
+```
+
+The illustrative fraction is not a replacement for a scientific kinematics
+projection. Concrete kinematics classes still own viewing geometry, spatial
+apertures, instrument blurring, and velocity-distribution transformations.
+Their `design_matrix` boundary will consume retained contributions rather than
+requiring all raw trajectories at once. These scientific implementations,
+their connection to `ModelIterator`, and NNLS weight solving remain deferred.
+
+The return value maps each requested positive mass scale to its library.
+For scale `s`, the same temporary positions, velocities multiplied by
+`sqrt(s)`, and times divided by `sqrt(s)` are passed to each reducer. No
+integration is repeated, and no already-binned velocity counts are rescaled.
+This requires the same spatial shape with every component's mass scaled
+together. The diagnostics' dimensionless energy errors remain invariant.
+
+Only requested bundle IDs are written to separate
+`bundle-<id>-member-0.npz` files. `OrbitLibrary.trajectories` contains small
+`TrajectoryReference` records with absolute paths, not coordinate arrays.
+Files always contain the base-mass trajectory; `potential_mass_scale` on each
+library states the velocity/time conversion needed to compare them with its
+contributions. Existing files are rejected before integration and exclusively
+created during writing. The builder does not load them for weight solving.
+
+The NPZ record contains times, positions, velocities, the original launch
+coordinates, and a JSON `metadata` scalar. Metadata records the intrinsic
+Cartesian frame, units, reference period, bundle/member IDs, Dopri8 settings,
+the exact Galax potential's components/constant parameters/constants, a
+potential fingerprint, diagnostics, and the per-orbit random key. Load with
+`numpy.load(path, allow_pickle=False)` and decode the metadata with `json.loads`.
+This is diagnostic output, not a resumable model-search checkpoint format.
+
+Bundle IDs are zero-based and stable. Folding the supplied key with each ID
+preserves that orbit's sampling when a subset is integrated. No files are
+written by default. Solver failure or nonfinite reducer output raises
+`OrbitIntegrationError`; no substitute contribution is returned. A later
+failure can leave previously completed selected trajectory files on disk;
+they remain individually identified diagnostic artifacts.
 
 ## Orbit samplers
 
@@ -160,9 +238,10 @@ is free to construct once integrated: negating every stored velocity
 component at a fixed recorded position gives another exact solution of the
 same equations of motion, with no re-integration needed. This is *not*
 generally true for a time-dependent potential (e.g. a rotating bar/pattern
-speed, not yet supported here) -- the construction and its application to
-an integrated `OrbitLibrary` aren't implemented yet, since `OrbitLibrary`
-assembly itself isn't.
+speed, not yet supported here). Construction and reduction of the reverse
+population remain unimplemented; the current builder returns only the
+supplied population, and must not be treated as a complete rotation-capable
+Schwarzschild library without this follow-up.
 
 ## What's implemented today
 
@@ -172,11 +251,11 @@ and integration diagnostics. Raw trajectories are separate `OrbitTrajectory`
 objects, with explicit times, positions, velocities, and units. Initial
 conditions use `OrbitInitialConditions` and retain a size-one member axis;
 only one orbit per bundle is supported in this first integration milestone.
-These types establish the storage boundary; contribution production and
-library assembly are implemented in subsequent steps.
+The builder produces contributions through explicit reducer functions;
+concrete observational projection implementations remain separate follow-up.
 
-Production execution will reduce a bounded number of temporary trajectories,
-optionally save selected trajectories to separate files, and release the raw
+Library execution reduces one temporary trajectory at a time,
+optionally saves selected trajectories to separate files, and releases the raw
 samples. Aggregated contributions remain independent per fitted bundle.
 An aperture histogram must retain its fraction of the total sampled time,
 including time outside the aperture, rather than being normalized to one.
@@ -195,5 +274,6 @@ Any future histogram rebinning approximation needs its own explicit contract.
   schema. `build_orbit_dithering` constructs `CubicOrbitDithering` only for
   `n_dither=1`; larger values raise `NotImplementedError` at construction.
 - **Not implemented**: per-bundle dithering beyond one; the
-  counter-rotating mirror's actual construction; library assembly and
+  counter-rotating mirror's actual construction; automatic observational
+  projection, model-search integration, and
   `Potential.generate_orbit_library`.

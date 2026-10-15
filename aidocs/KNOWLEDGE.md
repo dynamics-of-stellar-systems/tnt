@@ -56,7 +56,8 @@
   `AbstractOrbitDithering` contracts and the
   `build_orbit_sampler`/`build_orbit_dithering`/`generate_ics` entry points
   in `base.py`; retained/transient data contracts in `data.py`; single-orbit
-  Dopri8 integration in `integration.py`; equipotential-search and launch-point
+  Dopri8 integration in `integration.py`; bounded-memory reduction and optional
+  trajectory output in `library.py`; equipotential-search and launch-point
   numerics shared across
   samplers in `common.py`; and one concrete `AbstractOrbitSampler` per
   sibling module (`stationary_grid.py`, `xz_grid_from_origin.py`,
@@ -95,8 +96,21 @@
   speed squared (not initial energy), and solver step counts/success. Solver
   failures return an unsuccessful diagnostic; callers must reject the data.
   Time-dependent parameters, rotating Monari bars, custom/transformed force
-  models are rejected. Only the single-orbit kernel is implemented at this
-  step; production library assembly and scientific projections are separate.
+  models are rejected. Scientific projections remain a separate concern.
+- `build_orbit_library` is the eager, programmatic execution entry point:
+  it reduces one temporary trajectory at a time through explicit named JAX
+  reducers and returns a mass-scale-to-`OrbitLibrary` mapping. Each requested
+  scale is reduced from scaled samples before those samples are released;
+  no velocity-count rebinning approximation or second integration is used.
+  Stable bundle IDs determine per-orbit keys via `fold_in`, also for subsets.
+  Selected base-mass trajectories can be saved separately as NPZ files with
+  JSON metadata (units, actual potential/parameters/constants, fingerprint,
+  initial state, reference clock, key, integration settings/diagnostics).
+  Libraries hold only `TrajectoryReference` records and their own
+  `potential_mass_scale`. Existing files are not overwritten. Failed orbits
+  and nonfinite contributions raise `OrbitIntegrationError`. This does not
+  implement reverse populations, scientific kinematics reducers, automatic
+  `Potential.generate_orbit_library`/`ModelIterator` wiring, or weight solving.
 
 - Three implemented samplers, each producing one start-space population,
   composable rather than bundled into one combined sampler:
