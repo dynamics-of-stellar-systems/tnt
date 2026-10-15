@@ -97,6 +97,10 @@
   failures return an unsuccessful diagnostic; callers must reject the data.
   Time-dependent parameters, rotating Monari bars, custom/transformed force
   models are rejected. Scientific projections remain a separate concern.
+  Establish the float64 policy before importing Galax (normally by importing
+  TNT first): Galax can create float32 constants at import, and later enabling
+  x64 does not promote them. This can cause apparent integration phase errors
+  when an analytic reference multiplies constants at different precision.
 - `build_orbit_library` is the eager, programmatic execution entry point:
   it reduces one temporary trajectory at a time through explicit named JAX
   reducers and returns a mass-scale-to-`OrbitLibrary` mapping. Each requested

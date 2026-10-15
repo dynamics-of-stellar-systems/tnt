@@ -19,6 +19,7 @@ import galax.potential as gp
 import jax
 import jax.numpy as jnp
 import numpy as np
+from unxt import Quantity
 
 from tnt.orbit_library.data import (
     OrbitInitialConditions,
@@ -203,15 +204,20 @@ def _reduce(
 
 
 def _potential_metadata(potential: gp.AbstractPotential) -> dict[str, Any]:
+    units = {
+        name: str(potential.units[name])
+        for name in ("length", "time", "mass", "angle")
+    }
     if isinstance(potential, Mapping):
         return {
             "type": type(potential).__name__,
+            "units": units,
             "components": {
                 name: _potential_metadata(p) for name, p in potential.items()
             },
         }
 
-    def quantity_data(quantity):
+    def quantity_data(quantity: Quantity) -> dict[str, Any]:
         return {
             "value": np.asarray(quantity.value).tolist(),
             "unit": str(quantity.unit),
@@ -226,10 +232,7 @@ def _potential_metadata(potential: gp.AbstractPotential) -> dict[str, Any]:
         "constants": {
             name: quantity_data(q) for name, q in potential.constants.items()
         },
-        "units": {
-            name: str(potential.units[name])
-            for name in ("length", "time", "mass", "angle")
-        },
+        "units": units,
     }
 
 

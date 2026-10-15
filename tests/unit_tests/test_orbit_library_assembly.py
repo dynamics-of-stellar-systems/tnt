@@ -2,8 +2,11 @@
 
 import json
 
-import galax.potential as gp
 import jax
+
+jax.config.update("jax_enable_x64", True)
+
+import galax.potential as gp
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -100,6 +103,7 @@ def test_library_retains_bundle_contributions_and_saves_selected_raw_data(tmp_pa
         assert metadata["bundle_id"] == 30
         assert metadata["solver"] == "diffrax.Dopri8"
         assert metadata["potential_mass_scale"] == 1.0
+        assert metadata["potential"]["units"]["length"] == "kpc"
         assert metadata["potential"]["components"]["stars"]["type"] == (
             "HarmonicOscillatorPotential"
         )

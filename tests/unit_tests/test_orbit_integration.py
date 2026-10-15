@@ -1,8 +1,11 @@
 """Numerical regression checks independent of DYNAMITE's implementation."""
 
+import jax
+
+jax.config.update("jax_enable_x64", True)
+
 import equinox as eqx
 import galax.potential as gp
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -131,6 +134,64 @@ def test_kernel_differentiates_through_initial_conditions():
     np.testing.assert_allclose(derivative, value / 1.4, rtol=1e-7, atol=1e-9)
 
 
+def test_kernel_differentiates_through_potential_parameters():
+    settings = OrbitIntegrationSettings(
+        orbital_periods=0.3, n_stored_timesteps=12, accuracy=1e-10
+    )
+
+    def final_x(omega):
+        potential = gp.HarmonicOscillatorPotential(
+            omega=Quantity(omega, "1/Myr"), units=UNITS
+        )
+        orbit = integrate_orbit(
+            potential, Quantity([1.0, 0.0, 0.0], "kpc"),
+            Quantity([0.0, 0.0, 0.0], "kpc/Myr"), Quantity(2 * jnp.pi, "Myr"),
+            KEY, settings,
+        )
+        return orbit.positions.ustrip("kpc")[-1, 0]
+
+    omega = jnp.asarray(1.3)
+    value, derivative = eqx.filter_value_and_grad(final_x)(omega)
+    last_time = (0.3 * 2 * jnp.pi / 16) * (
+        12 + jax.random.uniform(KEY, dtype=jnp.float64)
+    )
+    np.testing.assert_allclose(value, jnp.cos(omega * last_time), atol=1e-8)
+    np.testing.assert_allclose(
+        derivative, -last_time * jnp.sin(omega * last_time), rtol=1e-7, atol=1e-8
+    )
+
+
+def test_eccentric_kepler_orbit_matches_the_analytic_ellipse():
+    potential = gp.KeplerPotential(m_tot=Quantity(1e10, "Msun"), units=UNITS)
+    mu = float(potential.constants["G"].ustrip("kpc3/(Myr2 Msun)")) * 1e10
+    eccentricity = 0.7
+    period = 2 * np.pi / np.sqrt(mu)  # semi-major axis = 1 kpc
+    speed = np.sqrt(mu * (1 + eccentricity) / (1 - eccentricity))
+    orbit = integrate_orbit(
+        potential, Quantity([1 - eccentricity, 0.0, 0.0], "kpc"),
+        Quantity([0.0, speed, 0.0], "kpc/Myr"), Quantity(period, "Myr"), KEY,
+        OrbitIntegrationSettings(
+            orbital_periods=20, n_stored_timesteps=600, accuracy=1e-11
+        ),
+    )
+    mean_anomaly = np.mod(2 * np.pi * orbit.times.ustrip("Myr") / period, 2 * np.pi)
+    eccentric_anomaly = np.array(mean_anomaly)
+    for _ in range(20):
+        eccentric_anomaly -= (
+            eccentric_anomaly - eccentricity * np.sin(eccentric_anomaly) - mean_anomaly
+        ) / (1 - eccentricity * np.cos(eccentric_anomaly))
+    expected = np.stack([
+        np.cos(eccentric_anomaly) - eccentricity,
+        np.sqrt(1 - eccentricity**2) * np.sin(eccentric_anomaly),
+        np.zeros_like(eccentric_anomaly),
+    ], axis=-1)
+    assert bool(orbit.diagnostics.successful)
+    np.testing.assert_allclose(
+        orbit.positions.ustrip("kpc"), expected, rtol=0, atol=1e-5
+    )
+    assert float(orbit.diagnostics.max_energy_error) < 1e-7
+
+
 def test_time_dependent_parameters_are_rejected():
     potential = gp.HarmonicOscillatorPotential(
         omega=LinearParameter(
@@ -139,6 +200,17 @@ def test_time_dependent_parameters_are_rejected():
         ), units=UNITS,
     )
     with pytest.raises(NotImplementedError, match="Time-dependent"):
+        integrate_orbit(
+            potential, Quantity([1.0, 0.0, 0.0], "kpc"),
+            Quantity([0.0, 0.0, 0.0], "kpc/Myr"), Quantity(6.0, "Myr"), KEY,
+        )
+
+
+def test_rotating_bar_is_rejected_even_with_constant_parameter_objects():
+    potential = gp.MonariEtAl2016BarPotential(
+        R0=Quantity(8.0, "kpc"), v0=Quantity(220.0, "km/s"), units=UNITS
+    )
+    with pytest.raises(NotImplementedError, match="Rotating bar"):
         integrate_orbit(
             potential, Quantity([1.0, 0.0, 0.0], "kpc"),
             Quantity([0.0, 0.0, 0.0], "kpc/Myr"), Quantity(6.0, "Myr"), KEY,

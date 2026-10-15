@@ -55,11 +55,26 @@ An unsuccessful trajectory must not be reduced or saved as a valid orbit.
 No automatic retry or substitute orbit is used.
 
 Only TNT's curated static Galax potentials (including the Gaussian components
-used by TNT MGEs) and composites of them are supported. Nonconstant parameter
+used by TNT MGEs) and native `CompositePotential` compositions are supported.
+Nonconstant parameter
 objects, rotating Monari bars, arbitrary custom and transformed potentials
 raise explicitly. The numerical kernel supports JIT and differentiation
 through initial conditions; sampling preparation remains eager, and hard
 histogram bins do not gain useful coordinate derivatives merely by using JAX.
+
+Establish float64 precision before importing Galax, normally by importing TNT
+first. Galax can create constant arrays during import; enabling JAX float64
+later does not promote existing float32 constants. The scientific tests set
+the precision before importing Galax, as in the existing sampler test suite.
+
+Numerical regression tests cover 200-period harmonic motion, an eccentric
+Kepler ellipse over 20 periods, gradients through initial conditions and a
+potential parameter, equivalent units, zero-energy launches, and explicit
+solver failures. An integration test also reduces a nested triaxial Gaussian
+plus central-mass potential into normalized radial fractions. These checks do
+not calibrate the default production accuracy or replace a comparison of
+long-time orbit statistics against DYNAMITE's compiled integrator. The
+existing DYNAMITE comparison below covers start-space sampling only.
 
 ## Library assembly and optional trajectories
 

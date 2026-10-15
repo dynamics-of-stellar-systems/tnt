@@ -60,7 +60,13 @@ def require_static_potential(potential: gp.AbstractPotential) -> None:
     # Import at call time: the potential package itself imports orbit data.
     from tnt.potential.registry import parameter_schema_is_known
 
+    if not isinstance(potential, gp.AbstractPotential):
+        raise TypeError("Integration requires a Galax potential.")
     if isinstance(potential, Mapping):
+        if type(potential) is not gp.CompositePotential:
+            raise NotImplementedError(
+                "Only native CompositePotential compositions are validated."
+            )
         if not potential:
             raise ValueError("Cannot integrate an empty composite potential.")
         for component in potential.values():
