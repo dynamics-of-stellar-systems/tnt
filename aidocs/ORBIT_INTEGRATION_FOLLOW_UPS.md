@@ -1,6 +1,6 @@
 # Orbit integration follow-ups
 
-Updated: 2026-10-15.
+Updated: 2026-10-16.
 
 ## Agreed scope and present state
 
@@ -17,8 +17,9 @@ Updated: 2026-10-15.
 - Programmatic integration and reduction were implemented on
   `codex/orbit-integration`, through commit `a685064`. Analytic tests and a
   triaxial-potential reduction test pass. A subsequent controlled integrator
-  comparison now covers 70 paired runs and 120 force probes. It supports an
-  explicit working accuracy of `1e-8`, while the code default remains `1e-5`.
+  comparison now covers 70 paired runs and 120 force probes. The user chose
+  `1e-9` as the configurable YAML and Python integration default on 2026-10-16,
+  following the benchmark's initial explicit working recommendation of `1e-8`.
   Universal production accuracy and distribution equivalence are not certified.
 - The user authorized the comparison, long-time statistics, and presentation
   site, with incremental commits, before continuing the scientific features.
@@ -84,11 +85,21 @@ This condition is met by identifying the following numerical follow-ups:
   acceleration by up to `3.65e-3`; orders 200/400 reduce the largest measured
   difference to about `5.84e-8`. The order-200 variant is a comparison control,
   not an implemented TNT production policy or a universal recommendation.
-- [ ] **Working accuracy and acceptance:** use explicit
-  `OrbitIntegrationSettings(accuracy=1e-8)` for subsequent development. The
-  largest normalized energy drift over the twelve 200-period launches falls
-  from `2.04e-2` at `1e-5` to `1.52e-5` at `1e-8`. Set any production default
-  or energy-rejection policy explicitly after wider validation.
+- [x] **Working default accuracy:** set both packaged configuration and
+  `OrbitIntegrationSettings` defaults to `1e-9`, retaining explicit overrides.
+  The largest normalized energy drift over twelve 200-period launches falls
+  from `1.52e-5` at `1e-8` to `6.76e-7` at `1e-9`, for about 27% more total
+  adaptive steps. This choice is based on the benchmark, while
+  [Diffrax's guidance](https://docs.kidger.site/diffrax/usage/how-to-choose-a-solver/#stiff-problems)
+  supports using float64 for tolerances around `1e-8` or tighter. The archived
+  report/site retain their original `1e-8` working recommendation.
+- [ ] **Acceptance and float32 policy:** validate broader production cases
+  before establishing energy-rejection thresholds. Float32 currently requires
+  users to choose a looser orbit tolerance explicitly; there is no automatic
+  adjustment or precision/tolerance compatibility guard. Initial-condition
+  searches also use independent fixed tolerances, so review and validate the
+  full workflow before claiming float32 orbit-library support. Keep any future
+  compatibility enforcement explicit rather than silently changing accuracy.
 - [ ] **Time and sampling convergence:** diagnose sensitive orbits using the
   intended retained quantities. Some raw spatial split-half differences are
   large in both codes; outer-box discrepancies do not uniformly disappear

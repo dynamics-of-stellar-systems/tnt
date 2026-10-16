@@ -73,7 +73,19 @@
   A controlled DYNAMITE integrator comparison now covers 70 paired runs and
   120 force probes in the separate comparison repository, branch
   `codex/orbit-integration-comparison` (`orbit-integration/REPORT.md`). It
-  supports explicit working accuracy `1e-8` (code default remains `1e-5`).
+  originally supported explicit working accuracy `1e-8`. On 2026-10-16 the
+  user chose `1e-9` for both the packaged configuration and Python integration
+  defaults. Across the twelve 200-period launches, worst normalized energy
+  drift falls from `1.52e-5` at `1e-8` to `6.76e-7` at `1e-9`, for about
+  27% more total adaptive steps (about 15% more measured warm wall time,
+  without repeated timing trials). Historical benchmark artifacts retain
+  their original recommendation. Diffrax recommends float64 around `1e-8`
+  or tighter; see the linked guidance in `docs/source/orbit_library.md`.
+  Configuration-to-integration wiring remains unfinished; programmatic calls
+  use `OrbitIntegrationSettings`. Float32 does not automatically relax the
+  tolerance, and no compatibility guard is implemented. Loosening orbit
+  accuracy alone does not validate float32: initial-condition searches also
+  have independent fixed tolerances requiring review.
   Gaussian force accuracy and orbit time/sampling convergence remain the
   immediate numerical follow-ups before production projections/model wiring.
   A presentation site and standalone scientific figures present the results.

@@ -38,7 +38,7 @@ class OrbitIntegrationSettings(eqx.Module):
 
     orbital_periods: float = eqx.field(static=True, default=200.0)
     n_stored_timesteps: int = eqx.field(static=True, default=50_000)
-    accuracy: float = eqx.field(static=True, default=1e-5)
+    accuracy: float = eqx.field(static=True, default=1e-9)
     max_steps: int = eqx.field(static=True, default=1_000_000)
 
     def __check_init__(self) -> None:

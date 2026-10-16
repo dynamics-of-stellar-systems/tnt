@@ -16,9 +16,16 @@ are implemented. Automatic observational projection and model-search wiring
 `integrate_orbit(potential, position, velocity, reference_period, key, settings)`
 integrates an already-built Galax potential with Diffrax `Dopri8` and returns
 a separate `OrbitTrajectory`. `OrbitIntegrationSettings` defaults to 200
-reference periods, 50,000 samples, normalized accuracy `1e-5`, and a maximum
-of one million adaptive steps. These numerical defaults need calibration on
-realistic galaxy models; they are not a certified energy-error target.
+reference periods, 50,000 samples, normalized accuracy `1e-9`, and a maximum
+of one million adaptive steps. The packaged configuration uses the same
+`orbit_library_settings.accuracy` default. Explicit user values remain valid
+overrides. Automatic configuration-to-integration wiring is still unfinished;
+direct Python calls use `OrbitIntegrationSettings`. These
+defaults are working development settings, not a certified energy-error target.
+
+Accuracy is resume-critical. When resuming a model set whose configuration
+inherited the former `1e-5` default, explicitly retain that value; changing
+the resolved accuracy requires a separate model set.
 
 The solve covers `orbital_periods * reference_period`. The caller supplies
 the clock explicitly; it is not estimated from an individual launch radius.
@@ -67,6 +74,19 @@ first. Galax can create constant arrays during import; enabling JAX float64
 later does not promote existing float32 constants. The scientific tests set
 the precision before importing Galax, as in the existing sampler test suite.
 
+The default `accuracy=1e-9` is intended for float64 calculations.
+[Diffrax's solver guidance](https://docs.kidger.site/diffrax/usage/how-to-choose-a-solver/#stiff-problems)
+recommends 64-bit precision for tolerances around `1e-8` or tighter; using
+float32 can cause excessive solver steps and non-finite gradients. This
+guidance supports the precision requirement, not a specific `1e-9` tolerance.
+TNT's choice of `1e-9` comes from the benchmark below. Selecting float32 does
+not automatically relax the tolerance, and no precision/tolerance compatibility
+guard is implemented. Float32 users must explicitly choose and validate a
+looser integration tolerance; the full sampling/integration workflow has not
+been validated in that mode. Initial-condition searches also have independent,
+fixed tolerances, so changing orbit accuracy alone is insufficient to establish
+float32 support. See [JAX numerical precision](configuration.md#jax-numerical-precision).
+
 Numerical regression tests cover 200-period harmonic motion, an eccentric
 Kepler ellipse over 20 periods, gradients through initial conditions and a
 potential parameter, equivalent units, zero-energy launches, and explicit
@@ -78,10 +98,16 @@ long-time orbit statistics against DYNAMITE's compiled integrator.
 A separate controlled integration benchmark now covers 70 paired runs over
 twelve shared launches and 120 force probes, including tolerance sweeps,
 200/400-period runs, matched native parameters, and Gaussian quadrature
-controls. It supports explicit `OrbitIntegrationSettings(accuracy=1e-8)` for
-further development; the code default remains `1e-5`. The largest normalized
+controls. The benchmark originally recommended explicit
+`OrbitIntegrationSettings(accuracy=1e-8)` while the code default was `1e-5`.
+The working default was subsequently changed to `1e-9`: the largest normalized
 energy drift across the twelve 200-period launches decreases from `2.04e-2`
-at `1e-5` to `1.52e-5` at `1e-8`. This is not a universal accuracy guarantee.
+at `1e-5`, to `1.52e-5` at `1e-8`, to `6.76e-7` at `1e-9`. Moving from
+`1e-8` to `1e-9` uses about 27% more adaptive steps in total and about 15%
+more total measured warm wall time; the timing observations are not a repeated
+performance study. This is not a universal accuracy guarantee or evidence
+that every spatial/velocity difference from DYNAMITE decreases. The archived
+benchmark report and presentation retain their original recommendation.
 
 The benchmark identifies separate force-quadrature and finite-time statistical
 issues, particularly at large radius-to-Gaussian-width ratios and on sensitive
