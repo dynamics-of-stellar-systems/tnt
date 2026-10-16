@@ -101,10 +101,10 @@ class Potential(eqx.Module):
             orbit_library_settings: A resolved configuration's
                 `orbit_library_settings` section.
             orbit_sampler: Determines the number of orbit bundles
-                (`OrbitLibrary.orbits`' leading axis), e.g. from
+                (the leading axis of library contribution arrays), e.g. from
                 `tnt.orbit_library.build_orbit_sampler`.
             orbit_dithering: Determines the number of dithered orbits per
-                bundle (`OrbitLibrary.orbits`' second axis), e.g. from
+                bundle (currently exactly one), e.g. from
                 `tnt.orbit_library.build_orbit_dithering`.
         """
         raise NotImplementedError

@@ -53,9 +53,12 @@
   scientific objects, load scientific input data, or begin scientific
   execution.
 - `tnt/orbit_library/` keeps the abstract `AbstractOrbitSampler`/
-  `AbstractOrbitDithering` contracts, `OrbitLibrary`, and the
+  `AbstractOrbitDithering` contracts and the
   `build_orbit_sampler`/`build_orbit_dithering`/`generate_ics` entry points
-  in `base.py`; equipotential-search and launch-point numerics shared across
+  in `base.py`; retained/transient data contracts in `data.py`; single-orbit
+  Dopri8 integration in `integration.py`; bounded-memory reduction and optional
+  trajectory output in `library.py`; equipotential-search and launch-point
+  numerics shared across
   samplers in `common.py`; and one concrete `AbstractOrbitSampler` per
   sibling module (`stationary_grid.py`, `xz_grid_from_origin.py`,
   `xz_grid_from_boundary.py`). `AbstractOrbitSampler.generate_ics` takes an
@@ -64,6 +67,76 @@
   is needed, to build that `galax` potential once.
 
 ## Orbit start-space sampling
+
+- The ordered integration follow-ups and comparison protocol are maintained
+  in [Orbit integration follow-ups](ORBIT_INTEGRATION_FOLLOW_UPS.md).
+  A controlled DYNAMITE integrator comparison now covers 70 paired runs and
+  120 force probes in the separate comparison repository, branch
+  `codex/orbit-integration-comparison` (`orbit-integration/REPORT.md`). It
+  originally supported explicit working accuracy `1e-8`. On 2026-10-16 the
+  user chose `1e-9` for both the packaged configuration and Python integration
+  defaults. Across the twelve 200-period launches, worst normalized energy
+  drift falls from `1.52e-5` at `1e-8` to `6.76e-7` at `1e-9`, for about
+  27% more total adaptive steps (about 15% more measured warm wall time,
+  without repeated timing trials). Historical benchmark artifacts retain
+  their original recommendation. Diffrax recommends float64 around `1e-8`
+  or tighter; see the linked guidance in `docs/source/orbit_library.md`.
+  Configuration-to-integration wiring remains unfinished; programmatic calls
+  use `OrbitIntegrationSettings`. Float32 does not automatically relax the
+  tolerance, and no compatibility guard is implemented. Loosening orbit
+  accuracy alone does not validate float32: initial-condition searches also
+  have independent fixed tolerances requiring review.
+  Gaussian force accuracy and orbit time/sampling convergence remain the
+  immediate numerical follow-ups before production projections/model wiring.
+  A presentation site and standalone scientific figures present the results.
+
+- `build_orbit_sampler` and `build_orbit_dithering` now construct runtime
+  objects from the existing configuration schema. Only `n_dither=1` is
+  implemented; larger cubic dithering is rejected at construction.
+  `XZGridFromBoundaryOrbitSampler.generate_initial_conditions` retains each
+  shell's DYNAMITE refined clock, including an inner search on inward-
+  propagated irregular shells. The array-only `generate_ics` retains its
+  existing sampling-only behavior. Stationary/origin typed launch generation
+  requires explicit reference clocks on the same energy grid; no independent
+  launch-radius fallback is used.
+
+- The orbit-integration work starts with a storage-contract change:
+  `tnt.orbit_library.data.OrbitLibrary` holds named per-bundle contributions,
+  bundle IDs, reference periods, and diagnostics, not raw trajectory arrays.
+  `OrbitInitialConditions` and `OrbitTrajectory` hold unitful launch/sample
+  coordinates separately. Only a size-one member axis is currently supported.
+  Aggregated velocity bins cannot be generically mass-rescaled;
+  `OrbitLibrary.rescaled` raises and requests contribution calculation at
+  each mass scale before temporary samples are discarded. Concrete
+  observational projection and weighting remain unimplemented.
+- `orbit_library.integration.integrate_orbit` is the standalone JIT-compatible
+  Dopri8 kernel for explicit unitful launch coordinates and reference clocks.
+  Its static settings default to 200 reference periods and 50,000 uniformly
+  spaced samples with DYNAMITE's random sampling offset (`D/(N+4)` spacing).
+  Relative and absolute tolerances apply to normalized phase coordinates.
+  Diagnostics include sampled/endpoint energy drift scaled by characteristic
+  speed squared (not initial energy), and solver step counts/success. Solver
+  failures return an unsuccessful diagnostic; callers must reject the data.
+  Time-dependent parameters, rotating Monari bars, custom/transformed force
+  models are rejected. Scientific projections remain a separate concern.
+  Establish the float64 policy before importing Galax (normally by importing
+  TNT first): Galax can create float32 constants at import, and later enabling
+  x64 does not promote them. This can cause apparent integration phase errors
+  when an analytic reference multiplies constants at different precision.
+- `build_orbit_library` is the eager, programmatic execution entry point:
+  it reduces one temporary trajectory at a time through explicit named JAX
+  reducers and returns a mass-scale-to-`OrbitLibrary` mapping. Each requested
+  scale is reduced from scaled samples before those samples are released;
+  no velocity-count rebinning approximation or second integration is used.
+  Stable bundle IDs determine per-orbit keys via `fold_in`, also for subsets.
+  Selected base-mass trajectories can be saved separately as NPZ files with
+  JSON metadata (units, actual potential/parameters/constants, fingerprint,
+  initial state, reference clock, key, integration settings/diagnostics).
+  Libraries hold only `TrajectoryReference` records and their own
+  `potential_mass_scale`. Existing files are not overwritten. Failed orbits
+  and nonfinite contributions raise `OrbitIntegrationError`. This does not
+  implement reverse populations, scientific kinematics reducers, automatic
+  `Potential.generate_orbit_library`/`ModelIterator` wiring, or weight solving.
 
 - Three implemented samplers, each producing one start-space population,
   composable rather than bundled into one combined sampler:
@@ -324,6 +397,12 @@
   reference by about 0.7%, and its q derivative by about 95%, even with a
   well-resolved float64 deprojection. Potential-quadrature accuracy needs
   separate work; do not treat a true construction flag as that guarantee.
+  The 2026-10-15 integrator benchmark also finds a large-radius issue: with
+  DYNAMITE constants and resolved parameters matched, order 50 gives up to
+  `3.65e-3` relative acceleration difference, while orders 200/400 reduce it
+  to about `5.84e-8` over 120 probes. This is diagnostic evidence, not a
+  production policy; test both radius-to-width ratio and flattening when
+  addressing the quadrature follow-up.
   MGE `q_min`, `pqu`, and `T_maj_min` conversions are traceable. The standalone
   scientific methods and registry adapters share numerical candidates and
   predicates, including anchor twists, endpoint margins and round-trip checks.

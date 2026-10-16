@@ -130,7 +130,9 @@ orbit_library_settings:
   orbital_periods: 200
   n_stored_timesteps: 50000
   starting_orbit: 1
-  accuracy: 1.0e-5
+  # Normalized relative/absolute integration tolerance; benchmarked in float64.
+  # See docs/source/orbit_library.md for benchmark and precision guidance.
+  accuracy: 1.0e-9
   # A negative value generates a seed; zero or a positive integer uses that
   # value as the seed for a reproducible run.
   random_seed: -1

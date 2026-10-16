@@ -12,8 +12,8 @@ Everything here -- including `from_configuration` and both
 `minimum_delta_chi2` stopping modes -- is implemented, but only down to what
 it delegates to: `Potential.generate_orbit_library`,
 `AbstractWeightSolver.solve`, `OrbitLibrary.rescaled`,
-`build_weight_solver`, `build_orbit_sampler`, and `build_orbit_dithering`
-are themselves still unimplemented, so `from_configuration`'s result can't
+and `build_weight_solver` are themselves still unimplemented. Sampler
+builders and standalone integration work, but `from_configuration`'s result can't
 actually run `_evaluate` end-to-end yet.
 """
 
