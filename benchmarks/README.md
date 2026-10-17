@@ -1,5 +1,8 @@
 # Gaussian force audit
 
+For the subsequent full 200-period checks of the configured order-800
+evaluator, see [Representative orbit checks](ORBIT_CHECKS.md).
+
 Run date: 2026-10-17. This audit investigates TNT's pinned Galax direct
 Gaussian evaluator, independently of orbit-solver tolerance and interpolation.
 

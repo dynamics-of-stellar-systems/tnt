@@ -88,9 +88,20 @@ This condition is met by identifying the following numerical follow-ups:
   force cost. The setting remains explicit and resume-critical. See
   `benchmarks/README.md` and the potential documentation. The previous
   DYNAMITE audit's order-200 variant remains a historical comparison control.
+- [x] **Representative full-sample orbit checks:** four launches, 200 shared
+  reference periods and 50,000 samples, with order-1600 and accuracy-`1e-11`
+  controls against the configured order 800 / accuracy `1e-9`. All 48 solves
+  completed after bounding forward energy diagnostics to 128 states per batch.
+  The complete matrix fits the original 4 GB VM with cumulative process peak
+  resident memory about 0.81 GiB. Ten pre-change trajectories and retained
+  statistics are bitwise identical after the memory fix. See `benchmarks/ORBIT_CHECKS.md`
+  and `benchmarks/results/orbit_checks.json`. The outer triaxial box retains
+  2.872% / 5.988% raw spatial histogram total variation against the two controls,
+  alongside 37.18% split-half variation; time convergence and observable acceptance
+  remain open. The interrupted full-batch attempt is recorded separately.
 - [ ] **Broader force validation:** thinner shapes, larger radius/width ratios,
   additional directions, parameter derivatives, float32, and representative
-  whole-orbit/library performance remain unvalidated. A fixed order is not a
+  production-library performance remain unvalidated. A fixed order is not a
   universal error guarantee or an enforced domain. Keep convergence checks
   explicit before using settings outside the measured envelope.
 - [ ] **Direct versus interpolated forces:** after establishing a reliable
@@ -161,6 +172,13 @@ and standalone scientific figures are separate from TNT's runtime/tests.
   needed; the selected NPZ trajectory format is diagnostic output, not a
   checkpoint protocol. Specify failure/retry behavior without silently
   replacing failed orbits.
+  The 2026-10-17 full-sample order-800 pilot was OOM-killed in a 4 GB VM.
+  An 8 GB rerun completed both orders 800 and 1600, with cumulative process
+  peak resident memory about 7.3 GiB. Energy diagnostics now evaluate at most
+  128 states per batch, including all saved samples, launch, and endpoint, to
+  bound Gaussian quadrature intermediates. Profile full library execution
+  separately; cumulative process peaks do not establish per-orbit/device
+  memory requirements.
 - [ ] **Optional integrators.** Benchmark Tsit5 as a first alternative after
   Dopri8 has a baseline. Consider fixed-step velocity Verlet separately for
   supported separable Hamiltonians and long-time statistics. Add user-facing

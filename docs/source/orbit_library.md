@@ -132,6 +132,13 @@ details. Sign in with the owning account to view it. The comparison source
 lives in the separate `tnt-dynamite-comparison` repository's
 `orbit-integration/` directory, on `codex/orbit-integration-comparison`.
 
+The representative direct-force follow-up is documented in
+`benchmarks/ORBIT_CHECKS.md`. It uses four shared launches, 200 reference
+periods and 50,000 samples each, comparing quadrature orders 800/1600 and
+solver tolerances `1e-9`/`1e-11`. Its portable results retain full intrinsic
+diagnostic histograms and moments, solver/energy diagnostics, repeated
+whole-solve timings, resource observations, and source/input hashes.
+
 ## Library assembly and optional trajectories
 
 `build_orbit_library` takes an already-built Galax potential, typed initial

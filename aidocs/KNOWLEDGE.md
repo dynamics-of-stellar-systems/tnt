@@ -68,6 +68,24 @@
 
 ## Orbit start-space sampling
 
+- Representative full-sample checks of the configured Gaussian order 800
+  use `benchmarks/orbit_checks.py`, with an explicit read-only checkout of
+  the existing comparison repository. See `benchmarks/ORBIT_CHECKS.md` for
+  the command, controls, statistical definitions, timing scope, and memory
+  limitations. The harness reuses the established physical-model builder,
+  exported launches, clocks, and diagnostic reducers; it runs no new DYNAMITE
+  integrations and implements no interpolation. Raw trajectories go in the
+  ignored `benchmarks/work/` directory; portable JSON retains statistics,
+  diagnostics, source/input hashes, and resource metadata. Use fresh output
+  paths and run scientific processes sequentially.
+  The final 48-solve matrix uses bounded forward energy diagnostics (128 states
+  per batch), fits the original 4 GB VM, and has cumulative process peak
+  resident memory about 0.81 GiB. All ten available pre-change trajectories
+  and statistics are bitwise identical. The outer triaxial box still has raw
+  spatial total variation of 2.872% against order 1600 and 5.988% against
+  accuracy `1e-11`, with 37.18% split-half
+  variation; long-window statistics need separate convergence/acceptance work.
+
 - The direct Gaussian force audit is reproducible with
   `python benchmarks/gaussian_forces.py --output <new-json-path>` in the Linux
   development environment. `benchmarks/README.md` documents its independent
@@ -80,7 +98,8 @@
   supports the working MGE-potential default: worst sampled relative force
   error `1.86e-9` for `q>=0.01` and `r/sigma<=1e4`; for `q>=0.03`,
   `8.95e-12`. This is a sampled envelope, not an enforced domain or guarantee.
-  Warm CPU force cost is about 3x order 200; full orbit timing, GPU throughput,
+  Warm CPU force cost is about 3x order 200. Representative whole-orbit checks
+  are documented above; production-library throughput, GPU performance,
   more extreme shapes/radii, and parameter-derivative accuracy remain open.
   Configure `numerics_settings.gaussian_potential_quad_order` (positive
   integer, default 800), independently of orbit `accuracy` and mass-bin
@@ -273,7 +292,13 @@
   at `/workspace`; its macOS `.venv` is never used in the container because
   `UV_PROJECT_ENVIRONMENT` points to `/opt/tnt-venv` inside the image.
 - For this checkout's local macOS workflow, use Docker's `colima` context.
-  The local Colima VM has 4 GB of memory. Run scientific test suites
+  The local Colima VM has 4 GB of memory on the 16 GB Intel host. On
+  2026-10-17 it was temporarily increased to 8 GB after a full-sample
+  order-800 orbit check was OOM-killed. The investigation exposed large
+  all-state Gaussian energy-diagnostic allocations; diagnostics now evaluate
+  at most 128 states per batch, and the VM was restored to 4 GB for validation.
+  All samples, launch, and endpoint retain their diagnostic coverage.
+  Run scientific test suites
   sequentially, preferably in separate processes; do not run multiple JAX
   test processes in parallel. Accumulated compiled graphs can also exhaust
   memory within one process. The native MGE gradient tests clear JAX's
