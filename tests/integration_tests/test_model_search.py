@@ -309,10 +309,12 @@ def test_model_iterator_reports_real_potential_in_its_own_parameterization(
     assert len({round(c, 6) for c in c_values}) > 1
 
 
+@pytest.mark.parametrize("order", [800, 256])
 def test_potential_to_galax_succeeds_against_the_resolved_example_configuration(
     example_configuration_path: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    order: int,
 ) -> None:
     """`Potential.to_galax()` real end to end, against the realistic config.
 
@@ -325,6 +327,9 @@ def test_potential_to_galax_succeeds_against_the_resolved_example_configuration(
     working `galax` potential rather than just that its unit-tested pieces
     each work in isolation.
     """
+    source = yaml.safe_load(example_configuration_path.read_text())
+    source.setdefault("numerics_settings", {})["gaussian_potential_quad_order"] = order
+    example_configuration_path.write_text(yaml.safe_dump(source))
     config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
     unit_system = config.unit_systems.internal
     _fake_orbit_integration_and_weight_solving(monkeypatch)
@@ -339,6 +344,8 @@ def test_potential_to_galax_succeeds_against_the_resolved_example_configuration(
 
     assert bool(valid)
     galax_potential = potential.to_galax(unit_system)
+    assert potential.components["stars"].integration_order == order
+    assert all(g.integration_order == order for g in galax_potential["stars"].values())
 
     xyz = Quantity(jnp.array([5.0, -3.0, 2.0]), "kpc")
     t = Quantity(0.0, "Myr")

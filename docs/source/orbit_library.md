@@ -112,9 +112,13 @@ benchmark report and presentation retain their original recommendation.
 The benchmark identifies separate force-quadrature and finite-time statistical
 issues, particularly at large radius-to-Gaussian-width ratios and on sensitive
 outer box orbits. Its raw diagnostic spatial histograms precede production
-symmetry operations. Resolve a production force-accuracy policy and appropriate
-convergence diagnostics before treating observational contributions as
-validated. Production projections, counter-rotating populations, and model
+symmetry operations. A subsequent independent Gaussian force audit establishes
+a configurable working quadrature order of 800 for TNT MGE components; see
+[Gaussian force quadrature](potential.md#gaussian-force-quadrature). This
+does not retroactively change the historical benchmark or certify arbitrary
+potentials. Appropriate convergence diagnostics remain necessary before
+treating observational contributions as validated. Production projections,
+counter-rotating populations, and model
 wiring remain separate follow-ups. The earlier start-space comparison below
 validates sampling and should not be confused with this integration benchmark.
 
@@ -193,6 +197,8 @@ Cartesian frame, units, reference period, bundle/member IDs, Dopri8 settings,
 the exact Galax potential's components/constant parameters/constants, a
 potential fingerprint, diagnostics, and the per-orbit random key. Load with
 `numpy.load(path, allow_pickle=False)` and decode the metadata with `json.loads`.
+Gaussian potential metadata includes its actual quadrature `integration_order`,
+so changing force quadrature also changes the saved potential fingerprint.
 This is diagnostic output, not a resumable model-search checkpoint format.
 
 Bundle IDs are zero-based and stable. Folding the supplied key with each ID

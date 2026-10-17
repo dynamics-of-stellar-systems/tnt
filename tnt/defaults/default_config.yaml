@@ -35,6 +35,9 @@ mge_settings:
 # identity checks and solver constraints reproducible across implementations.
 numerics_settings:
   jax_enable_x64: true
+  # Fixed Gauss-Legendre order for MGE Gaussian potentials/forces. Independent
+  # of orbit-solver accuracy and of the two mass-bin quadratures above.
+  gaussian_potential_quad_order: 800
   model_comparison_relative_tolerance: 1.0e-10
   parameter_grid_relative_tolerance: 1.0e-6
   constraint_error_floors:

@@ -7,6 +7,7 @@ from threading import Lock
 import jax
 
 DEFAULT_JAX_ENABLE_X64 = True
+DEFAULT_GAUSSIAN_POTENTIAL_QUAD_ORDER = 800
 
 _configuration_lock = Lock()
 _configured_jax_enable_x64: bool | None = None

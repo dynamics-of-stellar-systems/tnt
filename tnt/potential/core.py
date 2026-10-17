@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import LightMGE, MassMGE
+from tnt.numerics import DEFAULT_GAUSSIAN_POTENTIAL_QUAD_ORDER
 from tnt.orbit_library import AbstractOrbitDithering, AbstractOrbitSampler, OrbitLibrary
 from tnt.potential.components import (
     AbstractPotentialComponent,
@@ -33,6 +34,8 @@ class Potential(eqx.Module):
         cls,
         settings: Mapping[str, Mapping[str, Any]],
         mges: Mapping[str, LightMGE | MassMGE],
+        *,
+        gaussian_potential_quad_order: int = DEFAULT_GAUSSIAN_POTENTIAL_QUAD_ORDER,
     ) -> dict[str, ResolvedPotentialComponent]:
         """Resolve every component's static structure, once per run.
 
@@ -40,13 +43,20 @@ class Potential(eqx.Module):
         `Potential`s from the same configuration (e.g. `ModelIterator`,
         once per proposed `ParameterSet`) should call this once and reuse
         the result via `Potential.build_with_validity`.
+
+        Pass the configured `gaussian_potential_quad_order` to set the static
+        quadrature order of every MGE Gaussian. Non-MGE components keep their
+        own evaluators; omitting the keyword uses TNT's working default.
         """
         resolved: dict[str, ResolvedPotentialComponent] = {}
         for name, component_value in settings.items():
             path = f"potential.{name}"
             component_settings = _mapping(component_value, path)
             resolved[name] = AbstractPotentialComponent.resolve(
-                component_settings, mges, path=path
+                component_settings,
+                mges,
+                path=path,
+                gaussian_potential_quad_order=gaussian_potential_quad_order,
             )
         if not resolved:
             raise ValueError("potential must contain at least one component.")

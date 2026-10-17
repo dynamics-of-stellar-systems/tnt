@@ -169,7 +169,13 @@ class ModelIterator:
             config["population_data"], input_directory, spatial_binnings
         )
         potential_settings = config["potential"]
-        resolved_potential = Potential.resolve(potential_settings, mges)
+        resolved_potential = Potential.resolve(
+            potential_settings,
+            mges,
+            gaussian_potential_quad_order=(
+                config["numerics_settings"]["gaussian_potential_quad_order"]
+            ),
+        )
         cosmological_parameters = resolve_cosmological_parameters(
             config["cosmological_parameters"]
         )

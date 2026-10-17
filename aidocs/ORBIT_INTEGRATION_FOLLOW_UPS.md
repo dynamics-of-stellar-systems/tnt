@@ -79,14 +79,20 @@ numerical issues to resolve before building more functionality.
 
 This condition is met by identifying the following numerical follow-ups:
 
-- [ ] **Gaussian force accuracy:** define and validate a production policy for
-  large radius-to-width ratios and extreme flattening. The agreed next step
-  is to investigate and configure Gaussian quadrature using TNT's existing
-  direct static evaluator. In the matched native
-  parameter audit, fixed quadrature order 50 differs from DYNAMITE direct
-  acceleration by up to `3.65e-3`; orders 200/400 reduce the largest measured
-  difference to about `5.84e-8`. The order-200 variant is a comparison control,
-  not an implemented TNT production policy or a universal recommendation.
+- [x] **Working Gaussian force accuracy and configuration:** add
+  `numerics_settings.gaussian_potential_quad_order`, default 800, and pass it
+  through the four MGE component builders to Galax. An independent adaptive
+  force audit covers 85 class/shape/order rows and 6,630 force comparisons,
+  with `q>=0.01` and sampled radii `1e-4` to `1e4` Gaussian widths. Order 800
+  gives worst relative force error `1.86e-9`, for about 3x order-200 warm CPU
+  force cost. The setting remains explicit and resume-critical. See
+  `benchmarks/README.md` and the potential documentation. The previous
+  DYNAMITE audit's order-200 variant remains a historical comparison control.
+- [ ] **Broader force validation:** thinner shapes, larger radius/width ratios,
+  additional directions, parameter derivatives, float32, and representative
+  whole-orbit/library performance remain unvalidated. A fixed order is not a
+  universal error guarantee or an enforced domain. Keep convergence checks
+  explicit before using settings outside the measured envelope.
 - [ ] **Direct versus interpolated forces:** after establishing a reliable
   direct evaluator, compare direct force evaluation with a precomputed force
   grid and interpolation, as used in DYNAMITE. Measure force accuracy,

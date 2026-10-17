@@ -76,6 +76,22 @@
   probes and provenance. This human-run script refuses to overwrite output
   and uses SciPy from the pinned JAX environment. Run one scientific process
   at a time in the development container.
+  The 85 class/shape/order rows cover 6,630 force comparisons. Order 800
+  supports the working MGE-potential default: worst sampled relative force
+  error `1.86e-9` for `q>=0.01` and `r/sigma<=1e4`; for `q>=0.03`,
+  `8.95e-12`. This is a sampled envelope, not an enforced domain or guarantee.
+  Warm CPU force cost is about 3x order 200; full orbit timing, GPU throughput,
+  more extreme shapes/radii, and parameter-derivative accuracy remain open.
+  Configure `numerics_settings.gaussian_potential_quad_order` (positive
+  integer, default 800), independently of orbit `accuracy` and mass-bin
+  quadratures. `ModelIterator.from_configuration` passes it to
+  `Potential.resolve(..., gaussian_potential_quad_order=...)`, then component
+  resolution retains static `integration_order` through construction and
+  rescaling. The shared `AbstractMGEPotentialComponent` in `components.py`
+  owns the four MGE classes' typed input resolution and order validation.
+  Direct Galax construction bypasses this setting and keeps Galax defaults.
+  The new resolved numerical setting is resume-critical; old archives lacking
+  it are rejected rather than assigned an inferred historical order.
 
 - The ordered integration follow-ups and comparison protocol are maintained
   in [Orbit integration follow-ups](ORBIT_INTEGRATION_FOLLOW_UPS.md).
@@ -95,8 +111,9 @@
   tolerance, and no compatibility guard is implemented. Loosening orbit
   accuracy alone does not validate float32: initial-condition searches also
   have independent fixed tolerances requiring review.
-  Gaussian force accuracy and orbit time/sampling convergence remain the
-  immediate numerical follow-ups before production projections/model wiring.
+  Gaussian force configuration is now implemented; broader-domain force
+  validation and orbit time/sampling convergence remain numerical follow-ups
+  before production projections/model wiring.
   On 2026-10-17 the user confirmed starting with Gaussian force-accuracy
   investigation/configuration in TNT's existing direct static evaluator.
   Compare direct force evaluation against grid interpolation for accuracy

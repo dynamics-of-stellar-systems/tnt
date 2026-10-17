@@ -121,6 +121,46 @@ def test_library_retains_bundle_contributions_and_saves_selected_raw_data(tmp_pa
         )
 
 
+def test_saved_gaussian_metadata_and_identity_include_force_quadrature(tmp_path):
+    records = []
+    for order in (50, 800):
+        potential = gp.CompositePotential(
+            {
+                "stars": gp.TriaxialGaussianPotential(
+                    m_tot=Quantity(1e10, "Msun"),
+                    r_s=Quantity(1.0, "kpc"),
+                    q1=0.8,
+                    q2=0.6,
+                    integration_order=order,
+                    units="galactic",
+                )
+            },
+            units="galactic",
+        )
+        library = build_orbit_library(
+            potential,
+            _starts((10,)),
+            {"observables": _contributions},
+            KEY,
+            OrbitIntegrationSettings(
+                orbital_periods=0.1, n_stored_timesteps=12, accuracy=1e-9
+            ),
+            trajectory_directory=tmp_path / str(order),
+            save_bundle_ids=(10,),
+        )[1.0]
+        with np.load(library.trajectories[0].path, allow_pickle=False) as data:
+            metadata = json.loads(str(data["metadata"]))
+        assert (
+            metadata["potential"]["components"]["stars"]["integration_order"] == order
+        )
+        records.append(metadata)
+    assert records[0]["potential_id"] != records[1]["potential_id"]
+    assert (
+        records[0]["potential"]["components"]["stars"]["parameters"]
+        == records[1]["potential"]["components"]["stars"]["parameters"]
+    )
+
+
 def test_subset_keeps_the_same_sampling_key_for_each_bundle():
     full = build_orbit_library(
         _potential(), _starts(), {"observables": _contributions}, KEY, SETTINGS

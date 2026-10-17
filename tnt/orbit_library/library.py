@@ -223,7 +223,7 @@ def _potential_metadata(potential: gp.AbstractPotential) -> dict[str, Any]:
             "unit": str(quantity.unit),
         }
 
-    return {
+    metadata = {
         "type": type(potential).__name__,
         "parameters": {
             name: quantity_data(getattr(potential, name).value)
@@ -234,6 +234,11 @@ def _potential_metadata(potential: gp.AbstractPotential) -> dict[str, Any]:
         },
         "units": units,
     }
+    if isinstance(
+        potential, (gp.TriaxialGaussianPotential, gp.AxisymmetricGaussianPotential)
+    ):
+        metadata["integration_order"] = potential.integration_order
+    return metadata
 
 
 def _write_trajectory(

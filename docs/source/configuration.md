@@ -102,12 +102,22 @@ TNT makes its JAX precision policy explicit under `numerics_settings`:
 ```yaml
 numerics_settings:
   jax_enable_x64: true
+  gaussian_potential_quad_order: 800
 ```
 
 The packaged default is `true`, enabling 64-bit JAX values for TNT's
 scientific calculations. Setting it to `false` selects JAX's 32-bit mode,
 which can reduce memory use and improve throughput on some accelerators at the
 cost of numerical precision.
+
+`gaussian_potential_quad_order` is a positive integer controlling the fixed
+quadrature used by TNT's MGE Gaussian potentials/forces. Its working default
+is 800, calibrated in float64 on the documented force probes. It is independent
+of orbit-solver accuracy and the `mge_settings` mass-bin quadratures. The
+resolved value is passed through model construction, preserved in run
+configuration, and checked for resume compatibility. See
+[Gaussian force quadrature](potential.md#gaussian-force-quadrature) for the
+accuracy/cost evidence, programmatic API, and tested domain.
 
 Orbit integration defaults to `orbit_library_settings.accuracy: 1.0e-9`,
 intended for the default 64-bit mode. Selecting `jax_enable_x64: false`
