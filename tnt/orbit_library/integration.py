@@ -188,10 +188,16 @@ def _diagnostics(
 ) -> OrbitIntegrationDiagnostics:
     length_unit, time_unit = potential.units["length"], potential.units["time"]
     all_states = jnp.concatenate([initial[None, :], states])
-    phi = potential.potential(
-        Quantity(all_states[:, :3], length_unit), Quantity(0.0, time_unit)
-    ).ustrip(length_unit**2 / time_unit**2)
-    energy = phi + 0.5 * jnp.sum(all_states[:, 3:] ** 2, axis=-1)
+
+    def specific_energy(state: jax.Array) -> jax.Array:
+        phi = potential.potential(
+            Quantity(state[:3], length_unit), Quantity(0.0, time_unit)
+        ).ustrip(length_unit**2 / time_unit**2)
+        return phi + 0.5 * jnp.sum(state[3:] ** 2)
+
+    # Bound Gaussian quadrature intermediates independently of the number of
+    # saved states. Include the launch and endpoint in the same energy check.
+    energy = jax.lax.map(specific_energy, all_states, batch_size=128)
     errors = jnp.abs(energy[1:] - energy[0]) / speed_scale**2
     finite = jnp.all(jnp.isfinite(states)) & jnp.all(jnp.isfinite(errors))
     return OrbitIntegrationDiagnostics(

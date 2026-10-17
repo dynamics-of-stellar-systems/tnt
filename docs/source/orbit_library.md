@@ -58,6 +58,9 @@ Diagnostics report solver success, adaptive step counts, and maximum/final
 energy drift divided by the squared characteristic speed. This avoids
 division by the initial energy, which can be zero by convention. Maximum
 drift includes the saved samples and endpoint, not all internal solver stages.
+Forward energy evaluation includes the launch and runs in batches of at most 128
+states, keeping Gaussian quadrature intermediates independent of the total
+sample count. All configured samples and the exact endpoint remain included.
 An unsuccessful trajectory must not be reduced or saved as a valid orbit.
 No automatic retry or substitute orbit is used.
 

@@ -1,9 +1,12 @@
 """Numerical regression checks independent of DYNAMITE's implementation."""
 
+from types import SimpleNamespace
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
 
+import diffrax
 import equinox as eqx
 import galax.potential as gp
 import jax.numpy as jnp
@@ -13,6 +16,7 @@ from galax.potential.params import LinearParameter
 from unxt import Quantity, unitsystem
 
 from tnt.orbit_library import OrbitIntegrationSettings, integrate_orbit
+from tnt.orbit_library.integration import _diagnostics
 
 UNITS = unitsystem("kpc", "Myr", "Msun", "rad")
 KEY = jax.random.key(17)
@@ -115,6 +119,42 @@ def test_step_exhaustion_is_explicitly_unsuccessful():
     )
     assert not bool(orbit.diagnostics.successful)
     assert int(orbit.diagnostics.num_steps) == 1
+
+
+@pytest.mark.parametrize("n_states", [10, 127, 260])
+def test_energy_diagnostics_match_direct_evaluation_including_endpoint(n_states):
+    potential = gp.TriaxialGaussianPotential(
+        m_tot=Quantity(1e10, "Msun"), r_s=Quantity(1.0, "kpc"),
+        q1=0.8, q2=0.6, integration_order=100, units=UNITS,
+    )
+    initial = jnp.array([1.0, 0.2, 0.3, 0.01, 0.1, 0.0])
+    states = jnp.zeros((n_states, 6)).at[:, 0].set(jnp.linspace(0.5, 2, n_states))
+    states = states.at[:, 1:3].set(jnp.array([0.1, 0.2]))
+    states = states.at[-1, 3].set(1.0)
+    all_states = jnp.concatenate([initial[None], states])
+    phi = potential.potential(
+        Quantity(all_states[:, :3], "kpc"), Quantity(0.0, "Myr")
+    ).ustrip("kpc2/Myr2")
+    energies = phi + 0.5 * jnp.sum(all_states[:, 3:] ** 2, axis=-1)
+    expected = jnp.abs(energies[1:] - energies[0]) / 0.3**2
+    assert int(jnp.argmax(expected)) == n_states - 1
+    solution = SimpleNamespace(
+        result=diffrax.RESULTS.successful,
+        stats={"num_steps": 3, "num_accepted_steps": 2, "num_rejected_steps": 1},
+    )
+    diagnostics = _diagnostics(
+        potential, initial, states, jnp.asarray(0.3), solution
+    )
+    assert bool(diagnostics.successful)
+    np.testing.assert_allclose(
+        diagnostics.max_energy_error, expected.max(), rtol=1e-12, atol=1e-14
+    )
+    np.testing.assert_allclose(
+        diagnostics.final_energy_error, expected[-1], rtol=1e-12, atol=1e-14
+    )
+    assert int(diagnostics.num_steps) == 3
+    assert int(diagnostics.num_accepted_steps) == 2
+    assert int(diagnostics.num_rejected_steps) == 1
 
 
 def test_kernel_differentiates_through_initial_conditions():
