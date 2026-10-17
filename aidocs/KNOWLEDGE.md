@@ -68,6 +68,15 @@
 
 ## Orbit start-space sampling
 
+- The direct Gaussian force audit is reproducible with
+  `python benchmarks/gaussian_forces.py --output <new-json-path>` in the Linux
+  development environment. `benchmarks/README.md` documents its independent
+  adaptive reference, sampled shape/radius envelope, accuracy/runtime results,
+  and limitations; `benchmarks/results/gaussian_forces.json` retains full
+  probes and provenance. This human-run script refuses to overwrite output
+  and uses SciPy from the pinned JAX environment. Run one scientific process
+  at a time in the development container.
+
 - The ordered integration follow-ups and comparison protocol are maintained
   in [Orbit integration follow-ups](ORBIT_INTEGRATION_FOLLOW_UPS.md).
   A controlled DYNAMITE integrator comparison now covers 70 paired runs and
