@@ -88,6 +88,12 @@
   have independent fixed tolerances requiring review.
   Gaussian force accuracy and orbit time/sampling convergence remain the
   immediate numerical follow-ups before production projections/model wiring.
+  On 2026-10-17 the user confirmed starting with Gaussian force-accuracy
+  investigation/configuration in TNT's existing direct static evaluator.
+  Compare direct force evaluation against grid interpolation for accuracy
+  and runtime afterward; distinguish setup/compilation costs from repeated
+  evaluation/integration. No TNT interpolation-grid implementation is agreed
+  yet. Details are in the integration follow-up record.
   A presentation site and standalone scientific figures present the results.
 
 - `build_orbit_sampler` and `build_orbit_dithering` now construct runtime

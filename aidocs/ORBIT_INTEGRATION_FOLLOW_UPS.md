@@ -1,6 +1,6 @@
 # Orbit integration follow-ups
 
-Updated: 2026-10-16.
+Updated: 2026-10-17.
 
 ## Agreed scope and present state
 
@@ -80,11 +80,21 @@ numerical issues to resolve before building more functionality.
 This condition is met by identifying the following numerical follow-ups:
 
 - [ ] **Gaussian force accuracy:** define and validate a production policy for
-  large radius-to-width ratios and extreme flattening. In the matched native
+  large radius-to-width ratios and extreme flattening. The agreed next step
+  is to investigate and configure Gaussian quadrature using TNT's existing
+  direct static evaluator. In the matched native
   parameter audit, fixed quadrature order 50 differs from DYNAMITE direct
   acceleration by up to `3.65e-3`; orders 200/400 reduce the largest measured
   difference to about `5.84e-8`. The order-200 variant is a comparison control,
   not an implemented TNT production policy or a universal recommendation.
+- [ ] **Direct versus interpolated forces:** after establishing a reliable
+  direct evaluator, compare direct force evaluation with a precomputed force
+  grid and interpolation, as used in DYNAMITE. Measure force accuracy,
+  effects on integrated orbits/retained contributions, and runtime. Separate
+  grid construction/loading and JAX compilation costs from repeated force
+  evaluation and orbit-integration time. This concerns the force-evaluation
+  method, not selection of a different orbit integrator; a TNT interpolation
+  grid has not yet been chosen for implementation.
 - [x] **Working default accuracy:** set both packaged configuration and
   `OrbitIntegrationSettings` defaults to `1e-9`, retaining explicit overrides.
   The largest normalized energy drift over twelve 200-period launches falls
