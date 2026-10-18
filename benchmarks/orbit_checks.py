@@ -115,20 +115,33 @@ def evaluate(
     settings: OrbitIntegrationSettings,
     repeats: int,
     work: Path,
+    *,
+    force_model=None,
+    integrator=integrate_orbit,
+    integration_order: int | None = None,
+    separate_compilation: bool = False,
 ) -> dict:
     """Measure the production solve, then retain all-sample statistics outside it."""
     state0 = np.asarray(case["state_km_kms"])
     args = (
-        potential,
+        potential if force_model is None else force_model,
         Quantity(state0[:3], "km"),
         Quantity(state0[3:], "km/s"),
         Quantity(case["period_s"], "s"),
         jax.random.key(case["key_seed"]),
         settings,
     )
-    print(f"Running {case['id']} {variant}: 200 periods, 50000 samples", flush=True)
+    print(
+        f"Running {case['id']} {variant}: {settings.orbital_periods:g} periods, "
+        f"{settings.n_stored_timesteps} samples", flush=True,
+    )
+    runner, compilation_seconds = integrator, None
+    if separate_compilation:
+        started = time.perf_counter()
+        runner = integrator.lower(*args).compile()
+        compilation_seconds = time.perf_counter() - started
     started = time.perf_counter()
-    trajectory = integrate_orbit(*args)
+    trajectory = runner(*args)
     reference.ready(trajectory)
     first = time.perf_counter() - started
     if not bool(trajectory.diagnostics.successful):
@@ -142,7 +155,7 @@ def evaluate(
     timings, repeat_diagnostics = [], []
     for index in range(repeats):
         started = time.perf_counter()
-        trajectory = integrate_orbit(*args)
+        trajectory = runner(*args)
         reference.ready(trajectory)
         timings.append(time.perf_counter() - started)
         diagnostics = {
@@ -178,7 +191,9 @@ def evaluate(
     record = {
         "case_id": case["id"],
         "variant": variant,
-        "integration_order": VARIANTS[variant][0],
+        "integration_order": (
+            VARIANTS[variant][0] if integration_order is None else integration_order
+        ),
         "settings": asdict(settings),
         "diagnostics": diagnostics,
         "repeat_diagnostics": repeat_diagnostics,
@@ -197,6 +212,8 @@ def evaluate(
         ),
         "potential": physics,
     }
+    if separate_compilation:
+        record["lowering_and_compilation_seconds"] = compilation_seconds
     path = work / f"{case['id']}-{variant}.npz"
     with path.open("xb") as stream:
         np.savez_compressed(
@@ -217,13 +234,14 @@ def evaluate(
 
 
 def compare_controls(
-    reference: ModuleType, rows: list[dict], cases: list[dict], work: Path
+    reference: ModuleType, rows: list[dict], cases: list[dict], work: Path,
+    baseline_variant: str = "working",
 ) -> list[dict]:
     """Check matched output times and compare controls against each working run."""
     result = []
     for case in cases:
         selected = [row for row in rows if row["case_id"] == case["id"]]
-        working = next(row for row in selected if row["variant"] == "working")
+        working = next(row for row in selected if row["variant"] == baseline_variant)
         with np.load(work / working["trajectory_file"], allow_pickle=False) as data:
             baseline_times, baseline_state = data["times_s"], data["state_km_kms"]
         baseline_stats = {
@@ -277,16 +295,19 @@ def compare_controls(
     return result
 
 
-def run(args: argparse.Namespace) -> dict:
-    """Run the explicitly selected matrix; never substitute settings or orbits."""
-    comparison = args.comparison_checkout.resolve()
-    reference = load_comparison(comparison)
+def load_cases(comparison: Path, selected: list[str]) -> list[dict]:
+    """Select the exact exported launches used by both offline protocols."""
     prior = json.loads(
         (comparison / "orbit-integration/results/summary.json").read_text()
     )
-    cases = [case for case in prior["provenance"]["cases"] if case["id"] in args.case]
-    if {case["id"] for case in cases} != set(args.case):
+    cases = [case for case in prior["provenance"]["cases"] if case["id"] in selected]
+    if {case["id"] for case in cases} != set(selected):
         raise ValueError("Missing requested launch records in the comparison results.")
+    return cases
+
+
+def require_working_defaults() -> OrbitIntegrationSettings:
+    """Fail explicitly if an agreed benchmark default changes."""
     config_path = ROOT / "tnt/defaults/default_config.yaml"
     config = yaml.safe_load(config_path.read_text())
     settings = OrbitIntegrationSettings()
@@ -309,8 +330,14 @@ def run(args: argparse.Namespace) -> dict:
         raise RuntimeError(
             "This protocol requires the agreed float64/order-800 defaults."
         )
-    args.work_dir.mkdir(parents=True, exist_ok=False)
-    rows, potentials, model_build_seconds = [], {}, {}
+    return settings
+
+
+def build_models(
+    reference: ModuleType, comparison: Path, cases: list[dict]
+) -> tuple[dict, dict]:
+    """Build each shared physical model once, checking configured quadrature."""
+    potentials, model_build_seconds = {}, {}
     for case in cases:
         geometry = case["geometry"]
         if geometry not in potentials:
@@ -327,6 +354,20 @@ def run(args: argparse.Namespace) -> dict:
                 raise RuntimeError(
                     "The TNT builder did not apply quadrature order 800."
                 )
+    return potentials, model_build_seconds
+
+
+def run(args: argparse.Namespace) -> dict:
+    """Run the explicitly selected matrix; never substitute settings or orbits."""
+    comparison = args.comparison_checkout.resolve()
+    reference = load_comparison(comparison)
+    cases = load_cases(comparison, args.case)
+    require_working_defaults()
+    args.work_dir.mkdir(parents=True, exist_ok=False)
+    rows = []
+    potentials, model_build_seconds = build_models(reference, comparison, cases)
+    for case in cases:
+        geometry = case["geometry"]
         for variant in args.variant:
             order, accuracy = VARIANTS[variant]
             started = time.perf_counter()

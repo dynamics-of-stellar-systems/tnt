@@ -1,5 +1,9 @@
 # Gaussian force audit
 
+The experimental direct-versus-grid comparison is documented separately in
+[`FORCE_GRID.md`](FORCE_GRID.md), with its reproduction commands and measured
+force accuracy, setup costs and repeated evaluation timings.
+
 For the subsequent full 200-period checks of the configured order-800
 evaluator, see [Representative orbit checks](ORBIT_CHECKS.md).
 

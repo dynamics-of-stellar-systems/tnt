@@ -74,6 +74,17 @@
   coaxial Gaussian/Plummer/NFW models, rejects out-of-domain queries, and
   retains direct physical-energy diagnostics through the existing solver.
   It is not registered as a production potential or configured evaluator.
+  Run `python -m benchmarks.grid_benchmark` in the Linux container with an
+  explicit read-only comparison checkout and fresh work/output paths, as
+  documented in that report. It shares the existing model/case/provenance
+  helpers and scalar/batch force timers. The 2026-10-18 force matrix covers
+  two models, three resolutions and 27,870 grid/reference comparisons:
+  maximum relative errors fall from about 0.004 to 0.00025; sequential warm
+  force requests are about 21-30 times faster on this CPU. This is not a
+  whole-orbit or production-library performance/accuracy result.
+  Portable probes/timings/hashes are in `benchmarks/results/grid_forces.json`;
+  raw tables are in ignored work directories. The run fits the unchanged
+  4 GB VM, with process peak resident memory about 1.205 GiB.
 
 - Representative full-sample checks of the configured Gaussian order 800
   use `benchmarks/orbit_checks.py`, with an explicit read-only checkout of
