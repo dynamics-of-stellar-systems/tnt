@@ -110,7 +110,9 @@ at `1e-5`, to `1.52e-5` at `1e-8`, to `6.76e-7` at `1e-9`. Moving from
 more total measured warm wall time; the timing observations are not a repeated
 performance study. This is not a universal accuracy guarantee or evidence
 that every spatial/velocity difference from DYNAMITE decreases. The archived
-benchmark report and presentation retain their original recommendation.
+benchmark report retains its original recommendation. The presentation now
+labels that report as historical and separately describes the current `1e-9`
+default and subsequent order-800 validation.
 
 The benchmark identifies separate force-quadrature and finite-time statistical
 issues, particularly at large radius-to-Gaussian-width ratios and on sensitive
@@ -125,10 +127,10 @@ counter-rotating populations, and model
 wiring remain separate follow-ups. The earlier start-space comparison below
 validates sampling and should not be confused with this integration benchmark.
 
-The measured results are available in the owner-private
+The measured results are available in the public
 [integration comparison presentation](https://tnt-orbit-integration-validation.funbass128.chatgpt.site),
 with downloadable scientific figures, a numerical summary, and reproduction
-details. Sign in with the owning account to view it. The comparison source
+details. No sign-in is required. The comparison source
 lives in the separate `tnt-dynamite-comparison` repository's
 `orbit-integration/` directory, on `codex/orbit-integration-comparison`.
 

@@ -1,6 +1,6 @@
 # Orbit integration follow-ups
 
-Updated: 2026-10-17.
+Updated: 2026-10-18.
 
 ## Agreed scope and present state
 
@@ -119,7 +119,8 @@ This condition is met by identifying the following numerical follow-ups:
   adaptive steps. This choice is based on the benchmark, while
   [Diffrax's guidance](https://docs.kidger.site/diffrax/usage/how-to-choose-a-solver/#stiff-problems)
   supports using float64 for tolerances around `1e-8` or tighter. The archived
-  report/site retain their original `1e-8` working recommendation.
+  report retains its original `1e-8` working recommendation. The presentation
+  now distinguishes that historical report from the current `1e-9` default.
 - [ ] **Acceptance and float32 policy:** validate broader production cases
   before establishing energy-rejection thresholds. Float32 currently requires
   users to choose a looser orbit tolerance explicitly; there is no automatic
@@ -184,14 +185,37 @@ and standalone scientific figures are separate from TNT's runtime/tests.
   supported separable Hamiltonians and long-time statistics. Add user-facing
   solver selection only when accuracy/cost evidence justifies it.
 
+## Current force-evaluation decision
+
+On 2026-10-18 the user confirmed retaining direct force computation for the
+present implementation. The separate `codex/force-grid-benchmarks` experiment
+supports this choice: its fine trilinear prototype gives larger physical-energy
+differences and slower whole solves at the working settings. It does not add a
+production interpolation option or settle the best possible interpolation
+method. Intrinsic density contributions are the next implementation milestone;
+smoother, potential-consistent interpolation remains possible later work.
+
 ## Presentation site
 
-Published owner-private presentation:
+Public presentation:
 <https://tnt-orbit-integration-validation.funbass128.chatgpt.site>.
-Sign in with the owning account to view it. The site includes interactive
+Public access was enabled on 2026-10-18. The site includes interactive
 orbit/run/projection selection, energy/convergence plots, distribution
 diagnostics, section-based presentation navigation, the report, JSON data,
 and five standalone scientific figures bundled as a PDF.
+
+The 2026-10-18 update (site source `0899752`) adds current-state and subsequent-
+findings sections: accuracy `1e-9`, quadrature order 800, the independent force
+audit, 48 direct-orbit solves and bounded energy diagnostics, plus the separate
+grid experiment and the decision to retain direct forces for now. The original
+comparison data, report and figures are preserved and explicitly dated. Exact
+follow-up artifacts from orbit commit `69b4c2e` and grid commit `0b1a8dc` are
+bundled with SHA-256 provenance and the standalone interactive grid report.
+The source checkout is the sibling `orbit-integration-site` directory under
+this chat's visualization workspace. Its README describes source maintenance
+and the original exporter's limitations. Publishing uses the Sites workflow;
+the audience is now public by explicit user request. Site source lives on
+`main` in the separate Sites repository; `0899752` is not a TNT Git commit.
 
 - [x] Build a scientific results site from versioned, offline-generated data
   and figures. Keep numerical execution in the reproducible comparison

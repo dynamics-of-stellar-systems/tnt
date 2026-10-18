@@ -139,7 +139,13 @@
   and runtime afterward; distinguish setup/compilation costs from repeated
   evaluation/integration. No TNT interpolation-grid implementation is agreed
   yet. Details are in the integration follow-up record.
-  A presentation site and standalone scientific figures present the results.
+  On 2026-10-18 the user confirmed direct force computation for now, following
+  the separate `codex/force-grid-benchmarks` experiment. Its trilinear prototype
+  remains benchmark-only. Intrinsic density contributions are the next
+  implementation milestone. The presentation was updated with current defaults,
+  the later force/orbit controls and this decision, while preserving and dating
+  the original comparison. The site is publicly accessible as of 2026-10-18.
+  See the follow-up record for its URL and separate Sites source/provenance.
 
 - `build_orbit_sampler` and `build_orbit_dithering` now construct runtime
   objects from the existing configuration schema. Only `n_dither=1` is
