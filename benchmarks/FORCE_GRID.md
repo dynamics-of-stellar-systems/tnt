@@ -10,9 +10,10 @@ Retain the direct static evaluator. The fine trilinear grid has sampled
 relative force differences around `2.6e-4` and maximum normalized physical
 energy drift `4.0e-5` to `2.7e-4`, versus `1.7e-8` to `6.4e-8` for direct
 integration. At the agreed state tolerance `1e-9`, it also requires many
-more adaptive steps. The first three fine-grid whole-solve medians are
-1.44-1.52 times slower than direct evaluation; the final case's wider timing
-spread is being checked separately.
+more adaptive steps. The fine-grid whole-solve medians are about
+1.40-1.52 times slower than direct evaluation, using the protected timing
+control for the final case. Coarse-grid medians are about 1.7-3.1 times
+faster, with much larger physical-energy differences.
 
 Coarse grids offer a runtime saving with substantially larger numerical
 differences. These results do not support enabling this prototype as a
@@ -30,7 +31,7 @@ exact table implementation.
 - [x] Compare off-grid forces and synchronized timings at three resolutions.
 - [x] Compare matched 200-period orbits, retained intrinsic statistics, direct
   energy diagnostics, setup costs and warm execution; record results and limits.
-- [ ] Recheck the noisy final-case timing in rotated order and export summary
+- [x] Recheck the noisy final-case timing in rotated order and export summary
   figures without discarding the original observations.
 
 ## Prototype scope
@@ -197,7 +198,7 @@ observations, including the noisy final-case observation, are preserved below.
 | Triaxial box E5 | fine | 2.586e-04 | 106,806 / 207,554 | 28.50 [26.16-30.09] |
 
 The fine-grid solves require 15.5-16.8 times as many total adaptive steps
-as direct integration. Roughly two-thirds of grid step attempts are rejected.
+as direct integration. About 51-70% of grid step attempts are rejected.
 The force is continuous but its derivatives change at interpolation-cell
 boundaries. Increased adaptive stepping erodes the cheap-force advantage;
 we have not profiled the individual sources of per-step overhead.
@@ -250,15 +251,69 @@ observations remain in the portable artifacts; compilation can be reused
 between matching model structures. The full orbit matrix has process peak
 resident memory 1.100 GiB in the unchanged 4 GB, two-CPU VM.
 
-The final direct outer-box timing series spans 14.89-93.17 s; the other
-cases have much smaller spreads. The cause of that outlier has not been
-isolated. An additional rotated-order timing control is being measured
-and will be reported separately. No original observation is discarded.
+The final direct outer-box timing series spans 14.89-93.17 s. Native host
+power logs show sleep overlapping late measurements; the first rotated-order
+control also contains a 63.03 s fine-grid observation. We cannot assign each
+outlier exclusively to sleep. Both original series are retained, and neither
+is treated as an isolated CPU performance measurement.
 
 Build-only break-even estimates in the JSON divide warm grid-construction
 time by warm time saved per identical repeated launch. A null result means
 no warm solve saving was observed. They exclude compiler cost and accuracy
 acceptance and do not estimate production-library throughput.
+
+### Protected timing control
+
+A second control repeats the final triaxial box E5 under a temporary native
+`caffeinate -i -t 900` assertion, verified before and after the run. The host
+power log shows no new sleep event during that protected interval. No permanent
+power or VM setting was changed. The host-side verification and artifact hashes
+are retained in [`grid_timing_host_context.json`](results/grid_timing_host_context.json).
+
+Each control uses one compiled warmup per method, then three cycles with
+rotated evaluator order. All 16 solves per control reproduce the parent
+trajectory, times and diagnostics exactly. Across the main matrix and both
+timing controls, all **96 solves** succeeded.
+
+| Evaluator | Original matrix median [range] (s) | First control median [range] (s) | Keep-awake control median [range] (s) |
+| --- | --- | --- | --- |
+| direct | 18.11 [14.89-93.17] | 14.49 [13.70-20.63] | 15.12 [14.66-18.74] |
+| coarse | 5.89 [5.64-7.08] | 6.69 [4.84-7.37] | 4.81 [4.75-5.05] |
+| medium | 25.90 [24.47-26.90] | 20.79 [19.18-20.81] | 17.38 [17.27-21.38] |
+| fine | 28.50 [26.16-30.09] | 25.70 [23.09-63.03] | 21.14 [19.62-21.79] |
+
+The protected medians are 15.12 s direct, 4.81 s coarse, 17.38 s medium and
+21.14 s fine. Fine interpolation is about 1.40 times slower than direct
+evaluation in this control. Timings still vary with machine state; three
+repeats do not establish confidence intervals or universal performance ratios.
+Accuracy conclusions are independent of those wall-clock variations.
+
+Both [`grid_timing.json`](results/grid_timing.json) and
+[`grid_timing_awake.json`](results/grid_timing_awake.json) preserve all
+observations, compilation timings and source/parent hashes. Repeat the control
+with this macOS host command; on Linux, omit the native `caffeinate -i` prefix:
+
+```shell
+caffeinate -i docker --context colima compose run --rm --volume /absolute/path/to/tnt-dynamite-comparison:/comparison:ro dev python -m benchmarks.grid_timing --comparison-checkout /comparison --force-result /workspace/benchmarks/results/grid_forces-new.json --force-work-dir /workspace/benchmarks/work/grid-forces-new --orbit-result /workspace/benchmarks/results/grid_orbits-new.json --orbit-work-dir /workspace/benchmarks/work/grid-orbits-new --output /workspace/benchmarks/results/grid_timing-new.json
+```
+
+For future macOS measurements, use the same temporary host keep-awake wrapper
+around each long Docker benchmark command. The assertion ends with the command.
+A Linux guest cannot prevent its macOS host from idling by itself.
+
+## Standalone figures
+
+![Force convergence and orbit accuracy/runtime](figures/force-grid-20261018/comparison.png)
+
+[PNG](figures/force-grid-20261018/comparison.png) ·
+[PDF](figures/force-grid-20261018/comparison.pdf). The runtime panel uses the
+protected timing control for the marked final case; the energy panel uses the
+original numerically identical trajectories. Source JSON hashes are embedded
+in both figure exports. Reproduce them into a new directory:
+
+```shell
+docker --context colima compose run --rm dev python -m benchmarks.plot_grid_results --forces benchmarks/results/grid_forces-new.json --orbits benchmarks/results/grid_orbits-new.json --timing-control benchmarks/results/grid_timing-new.json --output-dir benchmarks/figures/grid-new
+```
 
 ## Validation
 
@@ -267,7 +322,8 @@ Linux development container. They check analytic Plummer convergence and
 radial endpoints, Gaussian nodes/axes/planes and reflection symmetry, units,
 JIT domain rejection, unsupported models, and a circular-orbit comparison
 using the production solver with direct physical-energy evaluation.
-Ruff passed for the prototype and its tests. The full test suite was not run.
+`ruff check .` and the Sphinx HTML build with warnings treated as errors passed.
+The full repository test suite was not run.
 An artifact audit verified all source/table/probe hashes, dtypes/shapes,
 timing medians, convergence and recorded errors. Independent SciPy linear
 interpolation agrees with the JAX grid on all 27,870 force comparisons to
@@ -279,3 +335,6 @@ fingerprints, finite float64 output shapes, matched uniform clocks, physical
 parameters, repeated diagnostics, step counts, all-sample histograms/moments,
 control distances and first-period errors. All four new direct trajectories
 and their saved times are bitwise identical to the previous direct benchmark.
+The supplemental timing audit verified both controls' source/parent hashes,
+rotated orders, positive timings, retained observations/medians and host-context
+links. The exported scientific figure was visually inspected.

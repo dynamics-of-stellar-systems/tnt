@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "host_platform": "Intel macOS host with the unchanged 4 GB, two-vCPU Colima Linux VM",
+  "unprotected_late_measurements_overlap_host_sleep": true,
+  "per_outlier_cause_fully_isolated": false,
+  "protected_start_utc": "2026-10-18 06:12:43 UTC",
+  "protected_end_verified_utc": "2026-10-18 06:17:49 UTC",
+  "idle_sleep_prevention_command": "caffeinate -i -t 900",
+  "idle_sleep_prevention_verified_before_and_after": true,
+  "new_host_sleep_event_during_protected_window": false,
+  "verification_commands": [
+    "pmset -g assertions",
+    "pmset -g log"
+  ],
+  "permanent_power_settings_changed": false,
+  "artifact_sha256": {
+    "grid_orbits.json": "843cea7e5828429a847fd9ff5f58f029295ed1809bbdb6deb346718185eb129f",
+    "grid_timing.json": "cf468817dc774659055c3578808490c18715dc883643788df02fe53f925c47ba",
+    "grid_timing_awake.json": "0753be4c455e3aff3a7e2910a771e74c02abc70e731dc033514233bccee573c9"
+  }
+}

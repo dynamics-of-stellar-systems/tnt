@@ -118,7 +118,13 @@ This condition is met by identifying the following numerical follow-ups:
   comparisons and 64 successful 200-period solves. Fine-grid force/energy
   differences remain much larger than direct numerical controls, while
   adaptive step counts grow about 16 times. Direct evaluation remains the
-  production choice. A noisy final-case timing is being checked separately.
+  production choice. Host sleep confounded some late wall times; two rotated-
+  order controls preserve those observations and a verified keep-awake rerun.
+  All 96 solves succeeded; both controls reproduce their parent trajectories
+  exactly. The protected final-case fine grid is 1.40 times slower than direct
+  integration.
+  Reproduction, host context, raw timing series and scientific figure exports
+  are recorded in the report; no production evaluator/configuration changed.
 - [ ] **Production interpolation decision:** investigate smoother interpolation
   and force/potential consistency before selecting an evaluator. Establish
   contribution error targets, domain/boundary policy, per-model rebuild/cache

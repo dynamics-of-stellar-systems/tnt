@@ -1,0 +1,261 @@
+{
+  "schema_version": 1,
+  "scope": "Interleaved timing control requiring equivalence to parent orbits.",
+  "tnt_commit": "7c7b1ba62510531b7ba28581db23bce705e0ac41",
+  "harness_sha256": "4e17edb7e84b52a2bd086bb1d63fce75980da1e167751356719e2e9a5aa23db1",
+  "tnt_tracked_changes": [],
+  "comparison_commit": "d27f45a4f85f8faa0ec5176df4bf0c3454359a99",
+  "comparison_input_sha256": {
+    "orbit-integration/compare.py": "4fd7c7a1d069ee5f43e59d725dedefb3adb018297c7af657aa6452c978ad1d7a",
+    "orbit-integration/prepare_cases.py": "279b2d3bbcdae3ca68f142f56aa3c7f2f0c9cc294e6bc62845f29571299118d4",
+    "orbit-integration/results/summary.json": "ace5dd925b564987960c442e97b5a209c9f8182d6ba83eb6b0f9915aaef26fa0",
+    "orbit-start-spaces/input/oblate/parameters_pot.in": "394beda1f0538cc794233f4f5fef3800a87299dde30508552050ff0d4bc894aa",
+    "orbit-start-spaces/input/strong_triaxial/parameters_pot.in": "05141a042130806e3d6e14e901662d4a3d1ce812bc797ceabb8a67635162089c",
+    "orbit-start-spaces/mge_lum.ecsv": "6546b9529929c3eda83b6d1afe5fbb4011eaee4ef4cea50d2e23ec97b8cfa191",
+    "orbit-start-spaces/run_comparison.py": "56cd4d1eee44d98e9fee5e2ecddbf7b427e279cfb8058839006640e575f14eba"
+  },
+  "tnt_source_sha256": {
+    "tnt/orbit_library/integration.py": "fe94bc1aff8987c3ccbd3fae8ef9e37c9529b4957bdf99c020386f7cc6188ad0",
+    "tnt/potential/components.py": "e7bc4d814159e5eb55ef8619b195804dbc78dc72cecaabc959b465cce6ad7274",
+    "tnt/potential/triaxial_mge.py": "64539bcaf351df9f30270f9fd1dcde4fe2993cca4dc2d069713323c2344a94ea",
+    "tnt/potential/core.py": "1a1219d16c2a1dbe80867a58e5818ad27f60f5291427abd028edbe1b02328681",
+    "tnt/numerics.py": "e3f85e20dc62c955e024dc038a7333ab5b47f87598bec4a8f863347cb61beeac",
+    "tnt/defaults/default_config.yaml": "319f756d20e4ea59ad19b5becda5d373e1fce4cd8763f9645a726456650399e4"
+  },
+  "potential_source_sha256": "8f2292500c68b03f68843239295dca09a4b76dd0aea32395d102d413e76e894e",
+  "environment": {
+    "python": "3.12.13",
+    "platform": "Linux-6.8.0-117-generic-x86_64-with-glibc2.36",
+    "linux_memory_total_kib": 4007944,
+    "packages": {
+      "jax": "0.10.2",
+      "jaxlib": "0.10.2",
+      "galax": "0.0.4.dev2+g84d4730bb",
+      "diffrax": "0.7.2",
+      "equinox": "0.13.8",
+      "unxt": "1.11.4",
+      "numpy": "2.4.6"
+    },
+    "devices": [
+      "cpu:0"
+    ],
+    "float64": true,
+    "process_peak_rss_kib": 901884
+  },
+  "case_ids": [
+    "strong_triaxial-tube-E3",
+    "strong_triaxial-box-E3",
+    "oblate-box-E5",
+    "strong_triaxial-box-E5"
+  ],
+  "variants": [
+    "direct",
+    "coarse",
+    "medium",
+    "fine"
+  ],
+  "warm_repeats": 3,
+  "cases": [
+    {
+      "id": "oblate-box-E5",
+      "geometry": "oblate",
+      "population": "box",
+      "shell": 5,
+      "state_km_kms": [
+        2.8660991707e+17,
+        1.91506624e+17,
+        3.4470281635e+17,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "period_s": 3419501740800000.0,
+      "force_mode": 0,
+      "regularity_flag": 0,
+      "key_seed": 20261019,
+      "offset": 0.3195341906522382
+    },
+    {
+      "id": "strong_triaxial-tube-E3",
+      "geometry": "strong_triaxial",
+      "population": "tube",
+      "shell": 3,
+      "state_km_kms": [
+        6438612843300000.0,
+        0.0,
+        6438612843300000.0,
+        0.0,
+        676.52788195,
+        0.0
+      ],
+      "period_s": 53737044145000.0,
+      "force_mode": 0,
+      "regularity_flag": 0,
+      "key_seed": 20261021,
+      "offset": 0.19707438020634171
+    },
+    {
+      "id": "strong_triaxial-box-E3",
+      "geometry": "strong_triaxial",
+      "population": "box",
+      "shell": 3,
+      "state_km_kms": [
+        7185075335600000.0,
+        4800913851100000.0,
+        8641416630600000.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "period_s": 53737044145000.0,
+      "force_mode": 0,
+      "regularity_flag": 0,
+      "key_seed": 20261023,
+      "offset": 0.3282508630191425
+    },
+    {
+      "id": "strong_triaxial-box-E5",
+      "geometry": "strong_triaxial",
+      "population": "box",
+      "shell": 5,
+      "state_km_kms": [
+        2.863743933e+17,
+        1.9134925205e+17,
+        3.4441955433e+17,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "period_s": 3365796775500000.0,
+      "force_mode": 0,
+      "regularity_flag": 0,
+      "key_seed": 20261024,
+      "offset": 0.5108148101574499
+    }
+  ],
+  "model_build_seconds": {
+    "oblate": 5.355693928000619,
+    "strong_triaxial": 0.9644122350000544
+  },
+  "rows": [],
+  "control_comparisons": [],
+  "work_directory": "benchmarks/work/grid-orbits-20261018",
+  "statistics_scope": "All 50,000 samples; raw intrinsic normalized histograms/moments, before spatial symmetries, counter-rotation, or observational projection.",
+  "timing_scope": "One compiled warmup per method, then three rotated-order cycles. Whole-solve synchronization includes direct energy diagnostics; all artifact/trajectory verification is outside the timer. No original observation is overwritten or excluded.",
+  "case_id": "strong_triaxial-box-E5",
+  "records": {
+    "direct": {
+      "lowering_and_compilation_seconds": 4.834810223999739,
+      "first_execution_seconds": 19.355054515999655,
+      "warm_seconds": [
+        20.628088515000854,
+        14.485351952000201,
+        13.701345501000105
+      ],
+      "warm_median_seconds": 14.485351952000201
+    },
+    "coarse": {
+      "lowering_and_compilation_seconds": 4.0405045810002775,
+      "first_execution_seconds": 6.216838327000005,
+      "warm_seconds": [
+        7.369935960001385,
+        6.6936387499990815,
+        4.843720844999552
+      ],
+      "warm_median_seconds": 6.6936387499990815
+    },
+    "medium": {
+      "lowering_and_compilation_seconds": 3.4719147230007366,
+      "first_execution_seconds": 24.16830458699951,
+      "warm_seconds": [
+        20.80826479300049,
+        20.790211711000666,
+        19.176398755000264
+      ],
+      "warm_median_seconds": 20.790211711000666
+    },
+    "fine": {
+      "lowering_and_compilation_seconds": 3.9245831400003226,
+      "first_execution_seconds": 26.19153240399828,
+      "warm_seconds": [
+        63.0315118590006,
+        25.704782775999774,
+        23.08952164600123
+      ],
+      "warm_median_seconds": 25.704782775999774
+    }
+  },
+  "chronological": [
+    {
+      "cycle": 0,
+      "variant": "direct",
+      "seconds": 20.628088515000854
+    },
+    {
+      "cycle": 0,
+      "variant": "coarse",
+      "seconds": 7.369935960001385
+    },
+    {
+      "cycle": 0,
+      "variant": "medium",
+      "seconds": 20.80826479300049
+    },
+    {
+      "cycle": 0,
+      "variant": "fine",
+      "seconds": 63.0315118590006
+    },
+    {
+      "cycle": 1,
+      "variant": "coarse",
+      "seconds": 6.6936387499990815
+    },
+    {
+      "cycle": 1,
+      "variant": "medium",
+      "seconds": 20.790211711000666
+    },
+    {
+      "cycle": 1,
+      "variant": "fine",
+      "seconds": 25.704782775999774
+    },
+    {
+      "cycle": 1,
+      "variant": "direct",
+      "seconds": 14.485351952000201
+    },
+    {
+      "cycle": 2,
+      "variant": "medium",
+      "seconds": 19.176398755000264
+    },
+    {
+      "cycle": 2,
+      "variant": "fine",
+      "seconds": 23.08952164600123
+    },
+    {
+      "cycle": 2,
+      "variant": "direct",
+      "seconds": 13.701345501000105
+    },
+    {
+      "cycle": 2,
+      "variant": "coarse",
+      "seconds": 4.843720844999552
+    }
+  ],
+  "parent_orbit_sha256": "843cea7e5828429a847fd9ff5f58f029295ed1809bbdb6deb346718185eb129f",
+  "force_result_sha256": "5f1b80e8ab074e9d298018ba376f574e8cd38933206c6ad88d480e22090b80fa",
+  "prototype_sources_sha256": {
+    "benchmarks/force_grid.py": "f358895cd02f6c3dd77165221c355d158eb44bab7089c6f8830dbbbccc6c4ea8",
+    "benchmarks/grid_benchmark.py": "01894c9c456ef5715467e13d326592a682f0dc69b6bd75a665ba51c53969e6bf",
+    "benchmarks/gaussian_forces.py": "0987d5cbd2dafab212dada1341e1bec6825378a118afe928dd5f9be76a71ab1c",
+    "benchmarks/orbit_checks.py": "60021ffa1d80ff380873bd06276e6ab681fe6cfc027f5c72b48891e2432195e9",
+    "uv.lock": "07ee747d69db0f94deb8fbe07e01559ebe7510f962baf27ee818dd940da66cfe",
+    "benchmarks/grid_orbits.py": "3d44b04670f7d7ce66adb746010c6547e85e0e60ec92333ae5f5f17e08bdf41b",
+    "benchmarks/grid_timing.py": "4e17edb7e84b52a2bd086bb1d63fce75980da1e167751356719e2e9a5aa23db1"
+  }
+}

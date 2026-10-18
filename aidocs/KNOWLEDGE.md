@@ -90,12 +90,26 @@
   All 64 200-period/50,000-sample solves succeeded; all four direct trajectories
   are bitwise identical to the earlier direct benchmark. Fine-grid normalized
   physical energy drift is `4e-5` to `2.7e-4`, versus `1.7e-8` to `6.4e-8`
-  directly, with 15.5-16.8 times more adaptive steps. The first three fine-grid
-  medians are 1.44-1.52 times slower; an outlier in the final direct timing
-  series is being rechecked separately. Keep direct evaluation in production;
+  directly, with 15.5-16.8 times more adaptive steps. Fine-grid medians are
+  about 1.40-1.52 times slower, using the protected control for the final case.
+  Keep direct evaluation in production;
   smooth interpolation and contribution convergence remain future decisions.
   `benchmarks/results/grid_orbits.json` retains all timings and full statistics.
   The orbit process peak is 1.100 GiB, still in the unchanged 4 GB VM.
+  Late timings were confounded by observed macOS host sleep. Two additional
+  rotated-order controls (`python -m benchmarks.grid_timing`) retain the
+  first timing series and a protected rerun, without discarding observations.
+  Both controls verify exact parent trajectory/time/diagnostic equality;
+  the complete experiment has 96 successful solves. The protected outer-box
+  medians are 15.12 s direct, 4.81 s coarse, 17.38 s medium and 21.14 s fine.
+  Results/context are `grid_timing*.json`; native keep-awake was verified
+  before/after that rerun, with no new host sleep event or permanent setting
+  change. For macOS benchmarks, wrap long Docker commands with temporary
+  `caffeinate -i`; a guest process cannot prevent host idle sleep. The report
+  documents reproduction and `python -m benchmarks.plot_grid_results` for
+  standalone PNG/PDF figures; its marked last-case runtimes use the protected
+  control. A loaded table has no gradient link to model parameters: rebuild
+  for each changed model, and validate parameter derivatives separately.
 
 - Representative full-sample checks of the configured Gaussian order 800
   use `benchmarks/orbit_checks.py`, with an explicit read-only checkout of
