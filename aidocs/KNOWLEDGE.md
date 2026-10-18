@@ -68,6 +68,13 @@
 
 ## Orbit start-space sampling
 
+- The experimental force-grid comparison is isolated in `benchmarks/force_grid.py`
+  and documented in `benchmarks/FORCE_GRID.md`. It uses DYNAMITE-style
+  trilinear log restoring coefficients on log-radius/angular nodes for
+  coaxial Gaussian/Plummer/NFW models, rejects out-of-domain queries, and
+  retains direct physical-energy diagnostics through the existing solver.
+  It is not registered as a production potential or configured evaluator.
+
 - Representative full-sample checks of the configured Gaussian order 800
   use `benchmarks/orbit_checks.py`, with an explicit read-only checkout of
   the existing comparison repository. See `benchmarks/ORBIT_CHECKS.md` for
@@ -137,8 +144,9 @@
   investigation/configuration in TNT's existing direct static evaluator.
   Compare direct force evaluation against grid interpolation for accuracy
   and runtime afterward; distinguish setup/compilation costs from repeated
-  evaluation/integration. No TNT interpolation-grid implementation is agreed
-  yet. Details are in the integration follow-up record.
+  evaluation/integration. The benchmark-only prototype above is now being
+  investigated; no production interpolation evaluator is selected.
+  Details are in the integration follow-up record.
   A presentation site and standalone scientific figures present the results.
 
 - `build_orbit_sampler` and `build_orbit_dithering` now construct runtime

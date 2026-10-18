@@ -110,8 +110,10 @@ This condition is met by identifying the following numerical follow-ups:
   effects on integrated orbits/retained contributions, and runtime. Separate
   grid construction/loading and JAX compilation costs from repeated force
   evaluation and orbit-integration time. This concerns the force-evaluation
-  method, not selection of a different orbit integrator; a TNT interpolation
-  grid has not yet been chosen for implementation.
+  method, not selection of a different orbit integrator. A benchmark-only
+  DYNAMITE-style trilinear log-force prototype is being investigated on
+  `codex/force-grid-benchmarks`; see `benchmarks/FORCE_GRID.md`. Production
+  evaluator selection and configuration wiring remain open.
 - [x] **Working default accuracy:** set both packaged configuration and
   `OrbitIntegrationSettings` defaults to `1e-9`, retaining explicit overrides.
   The largest normalized energy drift over twelve 200-period launches falls
