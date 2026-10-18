@@ -85,6 +85,17 @@
   Portable probes/timings/hashes are in `benchmarks/results/grid_forces.json`;
   raw tables are in ignored work directories. The run fits the unchanged
   4 GB VM, with process peak resident memory about 1.205 GiB.
+  The matched orbit phase (`python -m benchmarks.grid_orbits`) requires those
+  exact table artifacts and matching numerical sources/physical models.
+  All 64 200-period/50,000-sample solves succeeded; all four direct trajectories
+  are bitwise identical to the earlier direct benchmark. Fine-grid normalized
+  physical energy drift is `4e-5` to `2.7e-4`, versus `1.7e-8` to `6.4e-8`
+  directly, with 15.5-16.8 times more adaptive steps. The first three fine-grid
+  medians are 1.44-1.52 times slower; an outlier in the final direct timing
+  series is being rechecked separately. Keep direct evaluation in production;
+  smooth interpolation and contribution convergence remain future decisions.
+  `benchmarks/results/grid_orbits.json` retains all timings and full statistics.
+  The orbit process peak is 1.100 GiB, still in the unchanged 4 GB VM.
 
 - Representative full-sample checks of the configured Gaussian order 800
   use `benchmarks/orbit_checks.py`, with an explicit read-only checkout of

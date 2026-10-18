@@ -139,6 +139,12 @@ solver tolerances `1e-9`/`1e-11`. Its portable results retain full intrinsic
 diagnostic histograms and moments, solver/energy diagnostics, repeated
 whole-solve timings, resource observations, and source/input hashes.
 
+The benchmark-only grid experiment in `benchmarks/FORCE_GRID.md` compares
+direct forces with trilinear log-force interpolation at three resolutions.
+It reuses the Dopri8 solve and direct physical-energy diagnostics, with
+explicit radius-domain rejection. It is not exposed as a configured runtime
+potential; the production evaluator remains direct.
+
 ## Library assembly and optional trajectories
 
 `build_orbit_library` takes an already-built Galax potential, typed initial

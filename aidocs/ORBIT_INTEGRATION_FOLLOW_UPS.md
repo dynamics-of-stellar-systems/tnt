@@ -104,16 +104,26 @@ This condition is met by identifying the following numerical follow-ups:
   production-library performance remain unvalidated. A fixed order is not a
   universal error guarantee or an enforced domain. Keep convergence checks
   explicit before using settings outside the measured envelope.
-- [ ] **Direct versus interpolated forces:** after establishing a reliable
+- [x] **Exploratory direct versus interpolated forces:** after establishing a reliable
   direct evaluator, compare direct force evaluation with a precomputed force
   grid and interpolation, as used in DYNAMITE. Measure force accuracy,
   effects on integrated orbits/retained contributions, and runtime. Separate
   grid construction/loading and JAX compilation costs from repeated force
   evaluation and orbit-integration time. This concerns the force-evaluation
   method, not selection of a different orbit integrator. A benchmark-only
-  DYNAMITE-style trilinear log-force prototype is being investigated on
-  `codex/force-grid-benchmarks`; see `benchmarks/FORCE_GRID.md`. Production
-  evaluator selection and configuration wiring remain open.
+  DYNAMITE-style trilinear log-force prototype was measured on
+  `codex/force-grid-benchmarks`; see `benchmarks/FORCE_GRID.md`,
+  `benchmarks/results/grid_forces.json` and `benchmarks/results/grid_orbits.json`.
+  Two galaxy models, three grids and four launches yield 27,870 off-grid
+  comparisons and 64 successful 200-period solves. Fine-grid force/energy
+  differences remain much larger than direct numerical controls, while
+  adaptive step counts grow about 16 times. Direct evaluation remains the
+  production choice. A noisy final-case timing is being checked separately.
+- [ ] **Production interpolation decision:** investigate smoother interpolation
+  and force/potential consistency before selecting an evaluator. Establish
+  contribution error targets, domain/boundary policy, per-model rebuild/cache
+  behavior, parameter gradients and configuration wiring. The current
+  benchmark-only prototype is not validated as a production option.
 - [x] **Working default accuracy:** set both packaged configuration and
   `OrbitIntegrationSettings` defaults to `1e-9`, retaining explicit overrides.
   The largest normalized energy drift over twelve 200-period launches falls
