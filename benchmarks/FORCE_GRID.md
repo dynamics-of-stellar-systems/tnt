@@ -315,6 +315,28 @@ in both figure exports. Reproduce them into a new directory:
 docker --context colima compose run --rm dev python -m benchmarks.plot_grid_results --forces benchmarks/results/grid_forces-new.json --orbits benchmarks/results/grid_orbits-new.json --timing-control benchmarks/results/grid_timing-new.json --output-dir benchmarks/figures/grid-new
 ```
 
+## Interactive HTML report
+
+[`FORCE_GRID.html`](FORCE_GRID.html) is the self-contained sharing version.
+It includes the complete written report, original PNG/PDF figures, interactive
+force/orbit/timing comparisons, and exact compressed copies of all five portable
+JSON artifacts. CSS, JavaScript and assets are embedded; no server or network
+request is needed. The orbit runtime view explicitly distinguishes original
+matrix observations from the protected final-case control. Large raw trajectory
+and grid-table files remain outside the portable report.
+
+Rebuild into a fresh filename using the existing documentation environment:
+
+```shell
+docker --context colima compose run --rm dev python -m benchmarks.export_grid_report --output benchmarks/FORCE_GRID-new.html
+```
+
+The exporter uses `markdown-it-py`, already provided by the MyST documentation
+dependencies, and refuses to overwrite an existing file. Its editable layout
+is `benchmarks/force_grid_report.html.in`. Uncompressed JSON downloads use the
+browser's native gzip decompression; labelled `.gz` copies are also available.
+The report and interactive summaries do not depend on decompression support.
+
 ## Validation
 
 `pytest -q tests/unit_tests/test_force_grid.py`: eight tests passed in the

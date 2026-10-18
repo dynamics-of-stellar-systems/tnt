@@ -110,6 +110,21 @@
   standalone PNG/PDF figures; its marked last-case runtimes use the protected
   control. A loaded table has no gradient link to model parameters: rebuild
   for each changed model, and validate parameter derivatives separately.
+  The portable interactive report is `benchmarks/FORCE_GRID.html`: it embeds
+  the complete Markdown report, original figures and all five exact JSON
+  artifacts (gzip/base64), plus smaller derived interactive summaries.
+  `python -m benchmarks.export_grid_report --output <new-html-path>` rebuilds
+  it in the existing documentation environment using `markdown-it-py` from
+  MyST. The editable template is `benchmarks/force_grid_report.html.in`.
+  The output requires no server, fonts, libraries or data from the network;
+  JSON extraction uses native `DecompressionStream`, with explicitly labelled
+  gzip downloads also offered. No scientific measurements are rerun.
+  The 4.33 MiB export was checked in an isolated offline file location:
+  all model/orbit/grid/timing controls, exact JSON/gzip/Markdown/figure
+  downloads, CSV export, print handling, and layouts at 1440/768/390/320 px
+  passed without network requests or JavaScript errors. The full written
+  report remains readable with JavaScript disabled. Embedded asset hashes
+  were checked against the original files; Python export lint also passed.
 
 - Representative full-sample checks of the configured Gaussian order 800
   use `benchmarks/orbit_checks.py`, with an explicit read-only checkout of
