@@ -1,0 +1,232 @@
+# Orbit integration follow-ups
+
+Updated: 2026-10-18.
+
+## Agreed scope and present state
+
+- Use Diffrax `Dopri8`; numerical equivalence to DYNAMITE's DOP853 is a
+  convergence question, not an assumption of identical adaptive steps.
+- Default duration is 200 DYNAMITE reference periods. The refined
+  tube-boundary clock is shared by populations on the same energy shell;
+  it is not each orbit's measured recurrence period.
+- Support `n_dither=1` for this first implementation. Larger bundles are
+  explicitly rejected until their sampling and averaging are implemented.
+- Retain per-bundle contributions and diagnostics. Save selected trajectories
+  separately, referenced by stable bundle/member IDs. Compute contributions
+  for each requested common mass scale while temporary samples are available.
+- Programmatic integration and reduction were implemented on
+  `codex/orbit-integration`, through commit `a685064`. Analytic tests and a
+  triaxial-potential reduction test pass. A subsequent controlled integrator
+  comparison now covers 70 paired runs and 120 force probes. The user chose
+  `1e-9` as the configurable YAML and Python integration default on 2026-10-16,
+  following the benchmark's initial explicit working recommendation of `1e-8`.
+  Universal production accuracy and distribution equivalence are not certified.
+- The user authorized the comparison, long-time statistics, and presentation
+  site, with incremental commits, before continuing the scientific features.
+  Comparison code and results are on `codex/orbit-integration-comparison` in
+  the separate comparison repository. See its `orbit-integration/REPORT.md`.
+
+## Completed benchmark and remaining calibration
+
+The benchmark below has run. Keep its reference-code harness, resolved inputs,
+results, and reproduction
+instructions in the existing separate
+`dynamics-of-stellar-systems/tnt-dynamite-comparison` repository. Do not make
+DYNAMITE a TNT runtime or unit-test dependency.
+
+- [x] Pin the TNT and DYNAMITE revisions, numerical-library versions, float64
+  initialization, potential parameters and constants, units, initial
+  conditions, reference periods, physical duration, and sampling settings.
+  Use identical exported launch coordinates in both integrations rather than
+  independently generating two nearly identical start spaces.
+- [x] Compare accelerations first at representative points, especially near
+  the centre. DYNAMITE's interpolated force evaluation and TNT's Galax force
+  evaluation can differ independently of their integrators. Document those
+  differences; do not attribute every trajectory discrepancy to Dopri8.
+- [x] Start with a small set of regular spherical/axisymmetric orbits, then
+  triaxial box/tube starts and eccentric, central-mass-dominated orbits.
+  Include inner and outer shells and difficult cases rather than only median
+  examples. Compare short-time phase coordinates where meaningful.
+- [x] Match physical durations using the agreed clocks. For sample-by-sample
+  comparisons, explicitly align output times or use a controlled diagnostic
+  sampling schedule. Matching random seeds across Fortran and JAX does not
+  imply matching sampling offsets.
+- [x] Compare 200-period statistics: intrinsic spatial occupancy, velocity
+  moments, and simple common velocity histograms. These comparison reducers
+  can be small diagnostic tools; a complete observational projection layer
+  is not a prerequisite. Long-time pointwise agreement is not an appropriate
+  pass criterion for chaotic orbits.
+- [x] Vary solver tolerance, output sample count, and integration duration
+  independently. Test both implementations against tighter reference runs;
+  the same numerical tolerance value need not mean the same achieved error.
+  Distinguish integration error from finite-time/sampling variation.
+- [ ] Report sampled/endpoint energy drift with an explicitly common
+  normalization, failed or retried solves, adaptive step counts, runtime,
+  and memory. Separate JAX compilation time from repeated execution time.
+  Exclude or clearly flag any DYNAMITE result that substitutes another orbit
+  after a failure; it is not a valid reference for the requested launch.
+  Energy, solver attempts/counts, and timing are recorded; peak-memory
+  profiling remains deferred. Fortran native CPU and containerized JAX wall
+  timings are not a fair speed ranking.
+- [ ] Agree measurable acceptance thresholds from convergence results and
+  the intended observable accuracy. Record outliers and limitations as well
+  as typical agreement. Calibrate TNT's defaults and any energy acceptance
+  policy from this evidence rather than inheriting a nominal tolerance.
+
+Exit condition: a reproducible small benchmark identifies the sources of
+disagreement and supports explicit production settings, or exposes specific
+numerical issues to resolve before building more functionality.
+
+This condition is met by identifying the following numerical follow-ups:
+
+- [x] **Working Gaussian force accuracy and configuration:** add
+  `numerics_settings.gaussian_potential_quad_order`, default 800, and pass it
+  through the four MGE component builders to Galax. An independent adaptive
+  force audit covers 85 class/shape/order rows and 6,630 force comparisons,
+  with `q>=0.01` and sampled radii `1e-4` to `1e4` Gaussian widths. Order 800
+  gives worst relative force error `1.86e-9`, for about 3x order-200 warm CPU
+  force cost. The setting remains explicit and resume-critical. See
+  `benchmarks/README.md` and the potential documentation. The previous
+  DYNAMITE audit's order-200 variant remains a historical comparison control.
+- [x] **Representative full-sample orbit checks:** four launches, 200 shared
+  reference periods and 50,000 samples, with order-1600 and accuracy-`1e-11`
+  controls against the configured order 800 / accuracy `1e-9`. All 48 solves
+  completed after bounding forward energy diagnostics to 128 states per batch.
+  The complete matrix fits the original 4 GB VM with cumulative process peak
+  resident memory about 0.81 GiB. Ten pre-change trajectories and retained
+  statistics are bitwise identical after the memory fix. See `benchmarks/ORBIT_CHECKS.md`
+  and `benchmarks/results/orbit_checks.json`. The outer triaxial box retains
+  2.872% / 5.988% raw spatial histogram total variation against the two controls,
+  alongside 37.18% split-half variation; time convergence and observable acceptance
+  remain open. The interrupted full-batch attempt is recorded separately.
+- [ ] **Broader force validation:** thinner shapes, larger radius/width ratios,
+  additional directions, parameter derivatives, float32, and representative
+  production-library performance remain unvalidated. A fixed order is not a
+  universal error guarantee or an enforced domain. Keep convergence checks
+  explicit before using settings outside the measured envelope.
+- [ ] **Direct versus interpolated forces:** after establishing a reliable
+  direct evaluator, compare direct force evaluation with a precomputed force
+  grid and interpolation, as used in DYNAMITE. Measure force accuracy,
+  effects on integrated orbits/retained contributions, and runtime. Separate
+  grid construction/loading and JAX compilation costs from repeated force
+  evaluation and orbit-integration time. This concerns the force-evaluation
+  method, not selection of a different orbit integrator; a TNT interpolation
+  grid has not yet been chosen for implementation.
+- [x] **Working default accuracy:** set both packaged configuration and
+  `OrbitIntegrationSettings` defaults to `1e-9`, retaining explicit overrides.
+  The largest normalized energy drift over twelve 200-period launches falls
+  from `1.52e-5` at `1e-8` to `6.76e-7` at `1e-9`, for about 27% more total
+  adaptive steps. This choice is based on the benchmark, while
+  [Diffrax's guidance](https://docs.kidger.site/diffrax/usage/how-to-choose-a-solver/#stiff-problems)
+  supports using float64 for tolerances around `1e-8` or tighter. The archived
+  report retains its original `1e-8` working recommendation. The presentation
+  now distinguishes that historical report from the current `1e-9` default.
+- [ ] **Acceptance and float32 policy:** validate broader production cases
+  before establishing energy-rejection thresholds. Float32 currently requires
+  users to choose a looser orbit tolerance explicitly; there is no automatic
+  adjustment or precision/tolerance compatibility guard. Initial-condition
+  searches also use independent fixed tolerances, so review and validate the
+  full workflow before claiming float32 orbit-library support. Keep any future
+  compatibility enforcement explicit rather than silently changing accuracy.
+- [ ] **Time and sampling convergence:** diagnose sensitive orbits using the
+  intended retained quantities. Some raw spatial split-half differences are
+  large in both codes; outer-box discrepancies do not uniformly disappear
+  at 400 periods. Spatial histograms in this benchmark precede symmetry
+  operations and counter-rotating populations; do not treat them as final
+  symmetrized library error estimates. Formal chaos diagnosis was not done.
+
+The comparison checkout for this chat is
+`/Users/maindl/.codex/visualizations/2026/10/15/01a13ee6-91e7-7b92-b380-3b5de052396c/tnt-dynamite-comparison`.
+Its reproduction scripts, report, full-precision summary, compact NPZ traces,
+and standalone scientific figures are separate from TNT's runtime/tests.
+
+## Subsequent implementation milestones
+
+- [ ] **Intrinsic contributions and counter-rotating populations.** Establish
+  the density-grid contribution contract, normalization, stable IDs, and
+  population bookkeeping. For supported static potentials, time reversal
+  changes `(q, v)` to `(q, -v)`: the spatial occupancy is shared while odd
+  velocity moments change sign. Define mirrored contributions from the
+  temporary samples and test the symmetry, with separate selectable weights
+  where the model requires independent rotation populations. Do not blindly
+  duplicate box populations or assume every observational transform is a
+  symmetric velocity-bin reversal.
+- [ ] **Observational projections, one data family at a time.** Implement
+  viewing-frame transforms, spatial apertures and point-spread-function
+  treatment, then line-of-sight velocity distributions and the configured
+  observational quantities. Add proper-motion projections where required.
+  Preserve each aperture's fraction of total orbit time; do not independently
+  normalize every occupied aperture to one. Verify projections and mirrored
+  populations together on small controlled examples.
+- [ ] **Model execution and weight fitting.** Connect
+  `Potential.generate_orbit_library`, kinematics `design_matrix`,
+  `ModelIterator`, and non-negative least-squares fitting to the retained
+  contribution contract. Replace the old post-binning mass-rescaling path
+  with contributions computed at every requested common mass scale. Validate
+  a small end-to-end model before expanding the library size.
+- [ ] **Larger dither bundles.** Implement launch-space sampling, member
+  averaging, shared shell clocks, member IDs, failure semantics, and optional
+  member trajectories; compare the resulting bundle normalization with
+  DYNAMITE. Keep `n_dither>1` rejected until this is complete.
+- [ ] **Production execution.** Benchmark batching and memory on realistic
+  libraries. Design persistence/resume and cache invalidation explicitly if
+  needed; the selected NPZ trajectory format is diagnostic output, not a
+  checkpoint protocol. Specify failure/retry behavior without silently
+  replacing failed orbits.
+  The 2026-10-17 full-sample order-800 pilot was OOM-killed in a 4 GB VM.
+  An 8 GB rerun completed both orders 800 and 1600, with cumulative process
+  peak resident memory about 7.3 GiB. Energy diagnostics now evaluate at most
+  128 states per batch, including all saved samples, launch, and endpoint, to
+  bound Gaussian quadrature intermediates. Profile full library execution
+  separately; cumulative process peaks do not establish per-orbit/device
+  memory requirements.
+- [ ] **Optional integrators.** Benchmark Tsit5 as a first alternative after
+  Dopri8 has a baseline. Consider fixed-step velocity Verlet separately for
+  supported separable Hamiltonians and long-time statistics. Add user-facing
+  solver selection only when accuracy/cost evidence justifies it.
+
+## Current force-evaluation decision
+
+On 2026-10-18 the user confirmed retaining direct force computation for the
+present implementation. The separate `codex/force-grid-benchmarks` experiment
+supports this choice: its fine trilinear prototype gives larger physical-energy
+differences and slower whole solves at the working settings. It does not add a
+production interpolation option or settle the best possible interpolation
+method. Intrinsic density contributions are the next implementation milestone;
+smoother, potential-consistent interpolation remains possible later work.
+
+## Presentation site
+
+Public presentation:
+<https://tnt-orbit-integration-validation.funbass128.chatgpt.site>.
+Public access was enabled on 2026-10-18. The site includes interactive
+orbit/run/projection selection, energy/convergence plots, distribution
+diagnostics, section-based presentation navigation, the report, JSON data,
+and five standalone scientific figures bundled as a PDF.
+
+The 2026-10-18 update (site source `0899752`) adds current-state and subsequent-
+findings sections: accuracy `1e-9`, quadrature order 800, the independent force
+audit, 48 direct-orbit solves and bounded energy diagnostics, plus the separate
+grid experiment and the decision to retain direct forces for now. The original
+comparison data, report and figures are preserved and explicitly dated. Exact
+follow-up artifacts from orbit commit `69b4c2e` and grid commit `0b1a8dc` are
+bundled with SHA-256 provenance and the standalone interactive grid report.
+The source checkout is the sibling `orbit-integration-site` directory under
+this chat's visualization workspace. Its README describes source maintenance
+and the original exporter's limitations. Publishing uses the Sites workflow;
+the audience is now public by explicit user request. Site source lives on
+`main` in the separate Sites repository; `0899752` is not a TNT Git commit.
+
+- [x] Build a scientific results site from versioned, offline-generated data
+  and figures. Keep numerical execution in the reproducible comparison
+  workflow; the site presents its results.
+- [x] Show the comparison setup and provenance, representative orbit views,
+  energy-drift and convergence plots, occupancy/velocity-statistic
+  differences, failures/outliers, and performance with compilation separated.
+- [x] Clearly distinguish implemented features, measured results, open
+  questions, and planned follow-ups. Include reproduction links and explain
+  why long-time chaotic trajectories can separate while their useful
+  distributions agree. Do not present planned checks as completed validation.
+
+The public API and current limitations are documented in
+[`docs/source/orbit_library.md`](../docs/source/orbit_library.md).

@@ -33,6 +33,68 @@ component types -- triaxial (`"TriaxialLightMGEPotential"`/
 (`"OblateLightMGEPotential"`/`"OblateMassMGEPotential"`) (see
 [MGE composite types](#mge-composite-types)).
 
+## Gaussian force quadrature
+
+The four TNT MGE component types evaluate Gaussian potentials directly through
+Galax. Their fixed Gauss-Legendre quadrature order is configured separately
+from orbit integration:
+
+```yaml
+numerics_settings:
+  jax_enable_x64: true
+  gaussian_potential_quad_order: 800
+
+orbit_library_settings:
+  accuracy: 1.0e-9
+```
+
+`gaussian_potential_quad_order` is a positive integer. It controls every
+Gaussian in each TNT MGE potential, including potential-derived forces, and
+is retained through mass rescaling. It is a static numerical setting, not a
+fitted physical parameter. Non-MGE components do not use it. The two
+`mge_settings` mass-bin quadratures are separate calculations and retain
+their existing settings.
+
+The working default **800** comes from an independent force audit over
+11 shapes, axis ratios down to `0.01`, and sampled radii from `1e-4` to
+`1e4` Gaussian widths. It gave a largest sampled vector-relative force error
+of `1.86e-9` (`8.95e-12` for `q>=0.03`). Order 200 reached approximately
+11% error at 10,000 widths, while thin central configurations needed higher
+order too. Order 800 cost about three times as much as order 200 in repeated
+Linux CPU force-only measurements. These are sampled results, not a guarantee
+over all shapes/radii, and do not predict full orbit/library runtime or GPU
+performance. The reproducible audit, raw results, and limitations are in
+`benchmarks/README.md` and `benchmarks/results/gaussian_forces.json` in the
+repository.
+
+Users overriding the order should compare forces and retained orbit
+contributions against a higher order over their actual spatial domain.
+Radii here are relative to **each Gaussian's width**, including narrow
+components, rather than a single galaxy scale. More extreme shapes/radii,
+parameter derivatives, and float32 require additional validation. There is
+no automatic order adaptation, per-force error estimate, interpolation grid,
+or asymptotic regime switch in this implementation.
+
+`ModelIterator.from_configuration` passes the resolved order into
+`Potential.resolve`. Programmatic callers can specify it explicitly:
+
+```python
+resolved = Potential.resolve(
+    potential_settings, mges, gaussian_potential_quad_order=800
+)
+```
+
+The same keyword is supported by `AbstractPotentialComponent.resolve`.
+Direct MGE component construction has an `integration_order` keyword with
+the same default. Constructing Galax Gaussian objects directly bypasses
+TNT's configuration; supply Galax's `integration_order` explicitly in that
+case. TNT does not change Galax's own constructor defaults.
+
+The resolved order is preserved under `numerics_settings` and is
+resume-critical. Changing it requires a separate model set. Historical
+configurations without this field are not automatically assigned an inferred
+Galax order by the resume-compatibility checker.
+
 ## Parameterizations (optional)
 
 By default, TNT assumes a component's own native `galax` parameterization --
@@ -252,6 +314,15 @@ the flag does not certify Galax's fixed-order Gaussian potential quadrature.
 Very thin Gaussians can have inaccurate potential values and gradients even
 when native deprojection and construction are reliable; quadrature accuracy
 is a separate numerical concern.
+
+The controlled orbit-integration benchmark also finds that large
+radius-to-Gaussian-width ratios can under-resolve the fixed order-50
+quadrature. With DYNAMITE's constants and resolved component parameters
+matched, increasing the order to 200/400 reduces the largest relative
+acceleration discrepancy over 120 probes from about `3.65e-3` to `5.84e-8`.
+These higher-order variants are comparison controls; TNT has not yet adopted
+a production quadrature policy. A tighter orbit-solver tolerance alone cannot
+remove a force-evaluation discrepancy.
 
 ### MGE composite types
 

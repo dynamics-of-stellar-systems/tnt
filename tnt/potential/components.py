@@ -14,7 +14,7 @@ implementation module (`triaxial_mge`, `oblate_mge`) are what make that
 happen in the first place -- a module that's never imported never
 participates.
 `ResolvedPotentialComponent` is a component's static structure
-(`type`/`parameterization`/`mge`), resolved once from its config entry and
+(`type`/`parameterization`/`mge` and Gaussian quadrature order), resolved once and
 reused across every proposed point in parameter space; see
 `AbstractPotentialComponent.resolve`.
 """
@@ -31,6 +31,7 @@ import jax.numpy as jnp
 from unxt import AbstractUnitSystem, Quantity
 
 from tnt.mge import Deprojected3DMGE, LightMGE, MassMGE, _guard_construction
+from tnt.numerics import DEFAULT_GAUSSIAN_POTENTIAL_QUAD_ORDER
 from tnt.potential.registry import (
     _SUPPORTED_GALAX_TYPES,
     ForwardConverter,
@@ -44,7 +45,13 @@ from tnt.potential.registry import (
     raw_parameter_dimensions,
 )
 from tnt.units import validate_dimension
-from tnt.validation import _mapping, _required_string, _string
+from tnt.validation import (
+    _mapping,
+    _positive_integer,
+    _required_string,
+    _resolve_typed_reference,
+    _string,
+)
 
 
 class ResolvedPotentialComponent(NamedTuple):
@@ -165,7 +172,9 @@ def _build_mge_with_validity(
         return model, valid
 
     deprojected, valid = _guard_construction(candidate, (parameters,), raw_valid)
-    return component_cls(parameters=parameters, mge=mge, deprojected=deprojected), valid
+    return component_cls(
+        parameters=parameters, deprojected=deprojected, **extra_fields
+    ), valid
 
 
 def _parameter_values_valid(
@@ -259,6 +268,7 @@ class AbstractPotentialComponent(eqx.Module):
         mges: Mapping[str, LightMGE | MassMGE],
         *,
         path: str = "potential.<component>",
+        gaussian_potential_quad_order: int = DEFAULT_GAUSSIAN_POTENTIAL_QUAD_ORDER,
     ) -> ResolvedPotentialComponent:
         """Resolve one potential component's static structure from its config entry.
 
@@ -277,6 +287,9 @@ class AbstractPotentialComponent(eqx.Module):
                 the four MGE composite types.
             path: This entry's location in the configuration, used in error
                 messages.
+            gaussian_potential_quad_order: Fixed quadrature order for MGE
+                Gaussian potentials/forces; a static numerical setting, not
+                a sampled physical parameter. Ignored by non-MGE components.
 
         Returns:
             This component's resolved static structure.
@@ -289,6 +302,9 @@ class AbstractPotentialComponent(eqx.Module):
             NotImplementedError: If an explicit `parameterization` isn't
                 registered for this `type`.
         """
+        order = _positive_integer(
+            gaussian_potential_quad_order, "gaussian_potential_quad_order"
+        )
         kind = _required_string(settings, "type", path)
         # Every non-native concrete subclass (e.g. the MGE composite types
         # in tnt.potential.triaxial_mge / tnt.potential.oblate_mge) registers
@@ -323,6 +339,9 @@ class AbstractPotentialComponent(eqx.Module):
                 )
             convert = spec.convert
 
+        extra_fields = component_cls._extra_fields(kind, settings, mges, path=path)
+        if component_cls._native_mge:
+            extra_fields["integration_order"] = order
         return ResolvedPotentialComponent(
             component_cls=component_cls,
             raw_dimensions=raw_parameter_dimensions(kind, parameterization_name),
@@ -330,7 +349,7 @@ class AbstractPotentialComponent(eqx.Module):
             canonical_dimensions=raw_parameter_dimensions(kind, None),
             canonical_constraints=parameter_constraints(kind, None),
             convert=convert,
-            extra_fields=component_cls._extra_fields(kind, settings, mges, path=path),
+            extra_fields=extra_fields,
             path=path,
         )
 
@@ -423,6 +442,36 @@ class AbstractPotentialComponent(eqx.Module):
             cosmological_parameters,
             getattr(self, "mge", None),
         )
+
+
+class AbstractMGEPotentialComponent(AbstractPotentialComponent):
+    """Shared static force quadrature and input resolution for MGE potentials."""
+
+    _native_mge: ClassVar[bool] = True
+    _mge_type: ClassVar[type[LightMGE | MassMGE]]
+    integration_order: int = eqx.field(
+        static=True, kw_only=True, default=DEFAULT_GAUSSIAN_POTENTIAL_QUAD_ORDER
+    )
+
+    def __check_init__(self) -> None:
+        _positive_integer(self.integration_order, "integration_order")
+
+    @classmethod
+    def _extra_fields(
+        cls,
+        kind: str,
+        settings: Mapping[str, Any],
+        mges: Mapping[str, LightMGE | MassMGE],
+        *,
+        path: str,
+    ) -> dict[str, Any]:
+        del kind
+        mge_name = _required_string(settings, "mge", path)
+        return {
+            "mge": _resolve_typed_reference(
+                mges, mge_name, f"{path}.mge", "MGEs", cls._mge_type
+            )
+        }
 
 
 class GalaxPotentialComponent(AbstractPotentialComponent):
