@@ -65,6 +65,8 @@ from tnt.orbit_library.common import (
     _xz_direction,
     _xz_orbit_ic,
 )
+from tnt.orbit_library.data import OrbitInitialConditions
+from tnt.orbit_library.integration import require_static_potential
 from tnt.orbit_library.xz_grid_from_origin import _single_shell_ics
 
 # `findtubeorbitwidth`'s own crossing-count cap is `intsteps = 400`
@@ -908,6 +910,33 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
         return self.nE * self.nI2 * self.nI3
 
     def generate_ics(self, potential: gp.AbstractPotential) -> jnp.ndarray:
+        return self._sample(potential, retain_periods=False)[0]
+
+    def generate_initial_conditions(
+        self, potential: gp.AbstractPotential, *,
+        reference_periods: Quantity | None = None,
+    ) -> OrbitInitialConditions:
+        """Retain DYNAMITE's refined boundary clock for every energy shell.
+
+        Inner boundary searches run even on inward-propagated irregular
+        shells when clocks are requested, as DYNAMITE computes each shell's
+        clock before replacing the sampling grid. Outer searches remain
+        skipped on those shells. Supplied clocks explicitly override this
+        calculation, permitting a shared clock across populations.
+        """
+        require_static_potential(potential)
+        if reference_periods is not None:
+            return super().generate_initial_conditions(
+                potential, reference_periods=reference_periods
+            )
+        ics, periods = self._sample(potential, retain_periods=True)
+        return self._with_reference_periods(
+            potential, ics, Quantity(periods, potential.units["time"])
+        )
+
+    def _sample(
+        self, potential: gp.AbstractPotential, *, retain_periods: bool
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         t0 = Quantity(0.0, potential.units["time"])
         length_unit = potential.units["length"]
         rmin_val = self.rmin.ustrip(length_unit)
@@ -933,9 +962,9 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
         # once, reused for every subsequent shell -- they all share the
         # same `theta_grid`/`nI3` shape), avoids that blowup.
         @jax.jit
-        def per_shell(
+        def inner_shell(
             energy: jnp.ndarray, r_x_axis: jnp.ndarray
-        ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        ) -> tuple:
             r_outer_grid, valid_outer = jax.vmap(
                 lambda th: _equipotential_radius(
                     potential, _xz_direction(th), energy, r_x_axis, t0
@@ -966,6 +995,18 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
             outer_t_ceiling, outer_classify_time = _shell_integration_budgets(
                 potential, refined_r, t0
             )
+            return (
+                r_outer_grid, boundin_grid, irregular_inner,
+                jnp.all(valid_outer) & inner_search_valid,
+                outer_t_ceiling, outer_classify_time,
+            )
+
+        @jax.jit
+        def per_shell(energy: jnp.ndarray, r_x_axis: jnp.ndarray) -> tuple:
+            (
+                r_outer_grid, boundin_grid, irregular_inner, inner_valid,
+                outer_t_ceiling, outer_classify_time,
+            ) = inner_shell(energy, r_x_axis)
             boundmid_grid, notubes, outer_search_valid = _outer_tube_boundary(
                 potential,
                 energy,
@@ -983,13 +1024,15 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
                 boundin_grid,
                 boundmid_grid,
                 irregular_inner & ~notubes,
-                jnp.all(valid_outer) & inner_search_valid & outer_search_valid,
+                inner_valid & outer_search_valid,
+                outer_classify_time / _CLASSIFY_PERIODS,
             )
 
         frac = (jnp.arange(1, self.nI3 + 1) - 0.9) / (self.nI3 - 0.8)
 
         shell_rows: list[jnp.ndarray] = [None] * self.nE  # type: ignore[list-item]
         shell_valid: list[jnp.ndarray] = [None] * self.nE  # type: ignore[list-item]
+        periods: list[jnp.ndarray] = [jnp.asarray(jnp.nan)] * self.nE
 
         # Outermost -> innermost, stopping the boundary search the instant a
         # shell comes back locally irregular. That shell, and every one
@@ -1005,10 +1048,15 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
                 shell_rows[i], shell_valid[i] = _single_shell_ics(
                     potential, energy, theta_grid, r_floor, r_x_axis, t0, self.nI3
                 )
+                if retain_periods:
+                    *_, valid, _, classify_time = inner_shell(energy, r_x_axis)
+                    shell_valid[i] = shell_valid[i] & valid
+                    periods[i] = classify_time / _CLASSIFY_PERIODS
                 continue
-            boundin_grid, boundmid_grid, irregular, valid = per_shell(
+            boundin_grid, boundmid_grid, irregular, valid, period = per_shell(
                 energy, r_x_axis
             )
+            periods[i] = period
             shell_valid[i] = valid
             if bool(irregular):
                 shell_rows[i], delegated_valid = _single_shell_ics(
@@ -1035,4 +1083,4 @@ class XZGridFromBoundaryOrbitSampler(AbstractOrbitSampler):
                 "`_equipotential_radius` and `_minimize_tube_width` for "
                 "what each requires."
             )
-        return jnp.concatenate(shell_rows, axis=0)
+        return jnp.concatenate(shell_rows, axis=0), jnp.stack(periods)

@@ -34,6 +34,7 @@ from tnt.validation import (
     _nonnegative_number,
     _number,
     _optional_mapping,
+    _positive_integer,
     _positive_number,
     _reject_unknown_keys,
     _require_keys,
@@ -291,6 +292,7 @@ def _validate_numerics_settings(settings: ConfigDict) -> None:
         {
             "constraint_error_floors",
             "jax_enable_x64",
+            "gaussian_potential_quad_order",
             "model_comparison_relative_tolerance",
             "parameter_grid_relative_tolerance",
         },
@@ -301,6 +303,7 @@ def _validate_numerics_settings(settings: ConfigDict) -> None:
         {
             "constraint_error_floors",
             "jax_enable_x64",
+            "gaussian_potential_quad_order",
             "model_comparison_relative_tolerance",
             "parameter_grid_relative_tolerance",
         },
@@ -312,6 +315,10 @@ def _validate_numerics_settings(settings: ConfigDict) -> None:
     ):
         _positive_number(settings.get(key), f"{path}.{key}")
     _boolean(settings["jax_enable_x64"], f"{path}.jax_enable_x64")
+    _positive_integer(
+        settings["gaussian_potential_quad_order"],
+        f"{path}.gaussian_potential_quad_order",
+    )
     floors = _required_mapping(settings, "constraint_error_floors", path)
     _reject_unknown_keys(
         floors, {"intrinsic_mass", "total_mass"}, f"{path}.constraint_error_floors"

@@ -35,6 +35,9 @@ mge_settings:
 # identity checks and solver constraints reproducible across implementations.
 numerics_settings:
   jax_enable_x64: true
+  # Fixed Gauss-Legendre order for MGE Gaussian potentials/forces. Independent
+  # of orbit-solver accuracy and of the two mass-bin quadratures above.
+  gaussian_potential_quad_order: 800
   model_comparison_relative_tolerance: 1.0e-10
   parameter_grid_relative_tolerance: 1.0e-6
   constraint_error_floors:
@@ -130,7 +133,9 @@ orbit_library_settings:
   orbital_periods: 200
   n_stored_timesteps: 50000
   starting_orbit: 1
-  accuracy: 1.0e-5
+  # Normalized relative/absolute integration tolerance; benchmarked in float64.
+  # See docs/source/orbit_library.md for benchmark and precision guidance.
+  accuracy: 1.0e-9
   # A negative value generates a seed; zero or a positive integer uses that
   # value as the seed for a reproducible run.
   random_seed: -1

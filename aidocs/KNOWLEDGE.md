@@ -53,9 +53,12 @@
   scientific objects, load scientific input data, or begin scientific
   execution.
 - `tnt/orbit_library/` keeps the abstract `AbstractOrbitSampler`/
-  `AbstractOrbitDithering` contracts, `OrbitLibrary`, and the
+  `AbstractOrbitDithering` contracts and the
   `build_orbit_sampler`/`build_orbit_dithering`/`generate_ics` entry points
-  in `base.py`; equipotential-search and launch-point numerics shared across
+  in `base.py`; retained/transient data contracts in `data.py`; single-orbit
+  Dopri8 integration in `integration.py`; bounded-memory reduction and optional
+  trajectory output in `library.py`; equipotential-search and launch-point
+  numerics shared across
   samplers in `common.py`; and one concrete `AbstractOrbitSampler` per
   sibling module (`stationary_grid.py`, `xz_grid_from_origin.py`,
   `xz_grid_from_boundary.py`). `AbstractOrbitSampler.generate_ics` takes an
@@ -64,6 +67,133 @@
   is needed, to build that `galax` potential once.
 
 ## Orbit start-space sampling
+
+- Representative full-sample checks of the configured Gaussian order 800
+  use `benchmarks/orbit_checks.py`, with an explicit read-only checkout of
+  the existing comparison repository. See `benchmarks/ORBIT_CHECKS.md` for
+  the command, controls, statistical definitions, timing scope, and memory
+  limitations. The harness reuses the established physical-model builder,
+  exported launches, clocks, and diagnostic reducers; it runs no new DYNAMITE
+  integrations and implements no interpolation. Raw trajectories go in the
+  ignored `benchmarks/work/` directory; portable JSON retains statistics,
+  diagnostics, source/input hashes, and resource metadata. Use fresh output
+  paths and run scientific processes sequentially.
+  The final 48-solve matrix uses bounded forward energy diagnostics (128 states
+  per batch), fits the original 4 GB VM, and has cumulative process peak
+  resident memory about 0.81 GiB. All ten available pre-change trajectories
+  and statistics are bitwise identical. The outer triaxial box still has raw
+  spatial total variation of 2.872% against order 1600 and 5.988% against
+  accuracy `1e-11`, with 37.18% split-half
+  variation; long-window statistics need separate convergence/acceptance work.
+
+- The direct Gaussian force audit is reproducible with
+  `python benchmarks/gaussian_forces.py --output <new-json-path>` in the Linux
+  development environment. `benchmarks/README.md` documents its independent
+  adaptive reference, sampled shape/radius envelope, accuracy/runtime results,
+  and limitations; `benchmarks/results/gaussian_forces.json` retains full
+  probes and provenance. This human-run script refuses to overwrite output
+  and uses SciPy from the pinned JAX environment. Run one scientific process
+  at a time in the development container.
+  The 85 class/shape/order rows cover 6,630 force comparisons. Order 800
+  supports the working MGE-potential default: worst sampled relative force
+  error `1.86e-9` for `q>=0.01` and `r/sigma<=1e4`; for `q>=0.03`,
+  `8.95e-12`. This is a sampled envelope, not an enforced domain or guarantee.
+  Warm CPU force cost is about 3x order 200. Representative whole-orbit checks
+  are documented above; production-library throughput, GPU performance,
+  more extreme shapes/radii, and parameter-derivative accuracy remain open.
+  Configure `numerics_settings.gaussian_potential_quad_order` (positive
+  integer, default 800), independently of orbit `accuracy` and mass-bin
+  quadratures. `ModelIterator.from_configuration` passes it to
+  `Potential.resolve(..., gaussian_potential_quad_order=...)`, then component
+  resolution retains static `integration_order` through construction and
+  rescaling. The shared `AbstractMGEPotentialComponent` in `components.py`
+  owns the four MGE classes' typed input resolution and order validation.
+  Direct Galax construction bypasses this setting and keeps Galax defaults.
+  The new resolved numerical setting is resume-critical; old archives lacking
+  it are rejected rather than assigned an inferred historical order.
+
+- The ordered integration follow-ups and comparison protocol are maintained
+  in [Orbit integration follow-ups](ORBIT_INTEGRATION_FOLLOW_UPS.md).
+  A controlled DYNAMITE integrator comparison now covers 70 paired runs and
+  120 force probes in the separate comparison repository, branch
+  `codex/orbit-integration-comparison` (`orbit-integration/REPORT.md`). It
+  originally supported explicit working accuracy `1e-8`. On 2026-10-16 the
+  user chose `1e-9` for both the packaged configuration and Python integration
+  defaults. Across the twelve 200-period launches, worst normalized energy
+  drift falls from `1.52e-5` at `1e-8` to `6.76e-7` at `1e-9`, for about
+  27% more total adaptive steps (about 15% more measured warm wall time,
+  without repeated timing trials). Historical benchmark artifacts retain
+  their original recommendation. Diffrax recommends float64 around `1e-8`
+  or tighter; see the linked guidance in `docs/source/orbit_library.md`.
+  Configuration-to-integration wiring remains unfinished; programmatic calls
+  use `OrbitIntegrationSettings`. Float32 does not automatically relax the
+  tolerance, and no compatibility guard is implemented. Loosening orbit
+  accuracy alone does not validate float32: initial-condition searches also
+  have independent fixed tolerances requiring review.
+  Gaussian force configuration is now implemented; broader-domain force
+  validation and orbit time/sampling convergence remain numerical follow-ups
+  before production projections/model wiring.
+  On 2026-10-17 the user confirmed starting with Gaussian force-accuracy
+  investigation/configuration in TNT's existing direct static evaluator.
+  Compare direct force evaluation against grid interpolation for accuracy
+  and runtime afterward; distinguish setup/compilation costs from repeated
+  evaluation/integration. No TNT interpolation-grid implementation is agreed
+  yet. Details are in the integration follow-up record.
+  On 2026-10-18 the user confirmed direct force computation for now, following
+  the separate `codex/force-grid-benchmarks` experiment. Its trilinear prototype
+  remains benchmark-only. Intrinsic density contributions are the next
+  implementation milestone. The presentation was updated with current defaults,
+  the later force/orbit controls and this decision, while preserving and dating
+  the original comparison. The site is publicly accessible as of 2026-10-18.
+  See the follow-up record for its URL and separate Sites source/provenance.
+
+- `build_orbit_sampler` and `build_orbit_dithering` now construct runtime
+  objects from the existing configuration schema. Only `n_dither=1` is
+  implemented; larger cubic dithering is rejected at construction.
+  `XZGridFromBoundaryOrbitSampler.generate_initial_conditions` retains each
+  shell's DYNAMITE refined clock, including an inner search on inward-
+  propagated irregular shells. The array-only `generate_ics` retains its
+  existing sampling-only behavior. Stationary/origin typed launch generation
+  requires explicit reference clocks on the same energy grid; no independent
+  launch-radius fallback is used.
+
+- The orbit-integration work starts with a storage-contract change:
+  `tnt.orbit_library.data.OrbitLibrary` holds named per-bundle contributions,
+  bundle IDs, reference periods, and diagnostics, not raw trajectory arrays.
+  `OrbitInitialConditions` and `OrbitTrajectory` hold unitful launch/sample
+  coordinates separately. Only a size-one member axis is currently supported.
+  Aggregated velocity bins cannot be generically mass-rescaled;
+  `OrbitLibrary.rescaled` raises and requests contribution calculation at
+  each mass scale before temporary samples are discarded. Concrete
+  observational projection and weighting remain unimplemented.
+- `orbit_library.integration.integrate_orbit` is the standalone JIT-compatible
+  Dopri8 kernel for explicit unitful launch coordinates and reference clocks.
+  Its static settings default to 200 reference periods and 50,000 uniformly
+  spaced samples with DYNAMITE's random sampling offset (`D/(N+4)` spacing).
+  Relative and absolute tolerances apply to normalized phase coordinates.
+  Diagnostics include sampled/endpoint energy drift scaled by characteristic
+  speed squared (not initial energy), and solver step counts/success. Solver
+  failures return an unsuccessful diagnostic; callers must reject the data.
+  Time-dependent parameters, rotating Monari bars, custom/transformed force
+  models are rejected. Scientific projections remain a separate concern.
+  Establish the float64 policy before importing Galax (normally by importing
+  TNT first): Galax can create float32 constants at import, and later enabling
+  x64 does not promote them. This can cause apparent integration phase errors
+  when an analytic reference multiplies constants at different precision.
+- `build_orbit_library` is the eager, programmatic execution entry point:
+  it reduces one temporary trajectory at a time through explicit named JAX
+  reducers and returns a mass-scale-to-`OrbitLibrary` mapping. Each requested
+  scale is reduced from scaled samples before those samples are released;
+  no velocity-count rebinning approximation or second integration is used.
+  Stable bundle IDs determine per-orbit keys via `fold_in`, also for subsets.
+  Selected base-mass trajectories can be saved separately as NPZ files with
+  JSON metadata (units, actual potential/parameters/constants, fingerprint,
+  initial state, reference clock, key, integration settings/diagnostics).
+  Libraries hold only `TrajectoryReference` records and their own
+  `potential_mass_scale`. Existing files are not overwritten. Failed orbits
+  and nonfinite contributions raise `OrbitIntegrationError`. This does not
+  implement reverse populations, scientific kinematics reducers, automatic
+  `Potential.generate_orbit_library`/`ModelIterator` wiring, or weight solving.
 
 - Three implemented samplers, each producing one start-space population,
   composable rather than bundled into one combined sampler:
@@ -168,7 +298,13 @@
   at `/workspace`; its macOS `.venv` is never used in the container because
   `UV_PROJECT_ENVIRONMENT` points to `/opt/tnt-venv` inside the image.
 - For this checkout's local macOS workflow, use Docker's `colima` context.
-  The local Colima VM has 4 GB of memory. Run scientific test suites
+  The local Colima VM has 4 GB of memory on the 16 GB Intel host. On
+  2026-10-17 it was temporarily increased to 8 GB after a full-sample
+  order-800 orbit check was OOM-killed. The investigation exposed large
+  all-state Gaussian energy-diagnostic allocations; diagnostics now evaluate
+  at most 128 states per batch, and the VM was restored to 4 GB for validation.
+  All samples, launch, and endpoint retain their diagnostic coverage.
+  Run scientific test suites
   sequentially, preferably in separate processes; do not run multiple JAX
   test processes in parallel. Accumulated compiled graphs can also exhaust
   memory within one process. The native MGE gradient tests clear JAX's
@@ -324,6 +460,12 @@
   reference by about 0.7%, and its q derivative by about 95%, even with a
   well-resolved float64 deprojection. Potential-quadrature accuracy needs
   separate work; do not treat a true construction flag as that guarantee.
+  The 2026-10-15 integrator benchmark also finds a large-radius issue: with
+  DYNAMITE constants and resolved parameters matched, order 50 gives up to
+  `3.65e-3` relative acceleration difference, while orders 200/400 reduce it
+  to about `5.84e-8` over 120 probes. This is diagnostic evidence, not a
+  production policy; test both radius-to-width ratio and flattening when
+  addressing the quadrature follow-up.
   MGE `q_min`, `pqu`, and `T_maj_min` conversions are traceable. The standalone
   scientific methods and registry adapters share numerical candidates and
   predicates, including anchor twists, endpoint margins and round-trip checks.

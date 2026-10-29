@@ -45,7 +45,7 @@ from tnt.mge import (
     _conversion_valid,
     _inverse_reporting_values,
 )
-from tnt.potential.components import AbstractPotentialComponent
+from tnt.potential.components import AbstractMGEPotentialComponent
 from tnt.potential.registry import (
     _VIEWING_ANGLES,
     InvalidPotentialParametersError,
@@ -54,11 +54,10 @@ from tnt.potential.registry import (
     register_default_prior,
     register_parameterization,
 )
-from tnt.validation import _required_string, _resolve_typed_reference
 
 
 @register_component
-class TriaxialLightMGEPotential(AbstractPotentialComponent):
+class TriaxialLightMGEPotential(AbstractMGEPotentialComponent):
     """A triaxial potential from a light MGE, via its `ml` parameter.
 
     The shared builder converts the light MGE to mass via `ml`, deprojects it under
@@ -73,7 +72,7 @@ class TriaxialLightMGEPotential(AbstractPotentialComponent):
     `docs/source/potential.md`).
     """
 
-    _native_mge: ClassVar[bool] = True
+    _mge_type: ClassVar[type[LightMGE]] = LightMGE
     _type: ClassVar[str] = "TriaxialLightMGEPotential"
     _raw_dimensions: ClassVar[dict[str, str]] = {
         "ml": "mass_to_light",
@@ -85,27 +84,12 @@ class TriaxialLightMGEPotential(AbstractPotentialComponent):
     mge: LightMGE
     deprojected: Deprojected3DMGE
 
-    @classmethod
-    def _extra_fields(
-        cls,
-        kind: str,
-        settings: Mapping[str, Any],
-        mges: Mapping[str, LightMGE | MassMGE],
-        *,
-        path: str,
-    ) -> dict[str, Any]:
-        del kind
-        mge_name = _required_string(settings, "mge", path)
-        return {
-            "mge": _resolve_typed_reference(
-                mges, mge_name, f"{path}.mge", "MGEs", LightMGE
-            )
-        }
-
     def to_galax(
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
-        return _galax_potential_from_deprojected(self.deprojected, unit_system)
+        return _galax_potential_from_deprojected(
+            self.deprojected, unit_system, self.integration_order
+        )
 
     def rescale(self, mass_scale: float) -> Self:
         rescaled_parameters = dict(self.parameters)
@@ -121,7 +105,7 @@ class TriaxialLightMGEPotential(AbstractPotentialComponent):
 
 
 @register_component
-class TriaxialMassMGEPotential(AbstractPotentialComponent):
+class TriaxialMassMGEPotential(AbstractMGEPotentialComponent):
     """A triaxial potential from an already-mass-calibrated MGE.
 
     `mge_mass_scale` is the analogue of a light MGE's `ml` for a component
@@ -132,7 +116,7 @@ class TriaxialMassMGEPotential(AbstractPotentialComponent):
     `TriaxialLightMGEPotential` -- see its docstring.
     """
 
-    _native_mge: ClassVar[bool] = True
+    _mge_type: ClassVar[type[MassMGE]] = MassMGE
     _type: ClassVar[str] = "TriaxialMassMGEPotential"
     _raw_dimensions: ClassVar[dict[str, str]] = {
         "mge_mass_scale": "dimensionless",
@@ -144,27 +128,12 @@ class TriaxialMassMGEPotential(AbstractPotentialComponent):
     mge: MassMGE
     deprojected: Deprojected3DMGE
 
-    @classmethod
-    def _extra_fields(
-        cls,
-        kind: str,
-        settings: Mapping[str, Any],
-        mges: Mapping[str, LightMGE | MassMGE],
-        *,
-        path: str,
-    ) -> dict[str, Any]:
-        del kind
-        mge_name = _required_string(settings, "mge", path)
-        return {
-            "mge": _resolve_typed_reference(
-                mges, mge_name, f"{path}.mge", "MGEs", MassMGE
-            )
-        }
-
     def to_galax(
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
-        return _galax_potential_from_deprojected(self.deprojected, unit_system)
+        return _galax_potential_from_deprojected(
+            self.deprojected, unit_system, self.integration_order
+        )
 
     def rescale(self, mass_scale: float) -> Self:
         rescaled_parameters = dict(self.parameters)
@@ -184,6 +153,7 @@ class TriaxialMassMGEPotential(AbstractPotentialComponent):
 def _galax_potential_from_deprojected(
     deprojected: Deprojected3DMGE,
     unit_system: AbstractUnitSystem,
+    integration_order: int,
 ) -> galax.potential.AbstractPotential:
     """Sum one `galax.potential.TriaxialGaussianPotential` per Gaussian component.
 
@@ -206,6 +176,7 @@ def _galax_potential_from_deprojected(
             q1=deprojected.p[i],
             q2=deprojected.q[i],
             units=unit_system,
+            integration_order=integration_order,
         )
         for i in range(n_components)
     }
