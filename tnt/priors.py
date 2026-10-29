@@ -518,6 +518,8 @@ class Prior:
                 cosmological_parameters,
                 unit_system,
             )
+        self._build_potential = build_potential
+        self._potential_settings = potential_settings
         self._model = _build_model(
             potential_settings,
             prior_plugins,
@@ -525,6 +527,77 @@ class Prior:
             build_potential,
             unit_system if build_potential is not None else None,
         )
+
+    def unconstrain(self, values: Mapping[str, Any]) -> dict[str, Array]:
+        """Map one complete prior draw to NumPyro's unconstrained coordinates.
+
+        Replays conditional supports for each draw; do not cache transforms
+        from a single trace when bounds depend on sibling parameters. Point
+        masses use NumPyro's identity transform; consumers must hold constant
+        coordinates fixed. Discrete sites cannot be continuously optimized.
+        """
+        model = numpyro.handlers.seed(self._model, 0)
+        trace = numpyro.handlers.trace(
+            numpyro.handlers.substitute(model, data=values)
+        ).get_trace()
+        for name, site in trace.items():
+            if site["type"] != "sample" or site.get("is_observed", False):
+                continue
+            if name not in values:
+                raise ValueError(f"Missing prior sample site: {name}")
+            if site["fn"].support.is_discrete:
+                raise ValueError(
+                    f"Unconstrained support points require continuous sites: {name}"
+                )
+        return numpyro.infer.util.unconstrain_fn(model, (), {}, values)
+
+    def constrain(self, values: Mapping[str, Any]) -> dict[str, Array]:
+        """Map one unconstrained position back, recomputing conditional bounds.
+
+        This enforces distribution supports, not arbitrary plugin factors or
+        extra geometry restrictions. Check `feasibility` on the result.
+        """
+        return numpyro.infer.util.constrain_fn(
+            numpyro.handlers.seed(self._model, 0), (), {}, values
+        )
+
+    def feasibility(self, samples: Mapping[str, Any]) -> Array:
+        """Check original-coordinate sites against conditional supports and factors.
+
+        Substitution replays conditional default priors and every plugin. Explicit
+        support checks are needed because some log_prob methods do not mask
+        out-of-support values. Geometry is checked even without a plugin.
+        This constructs potentials when context is available, never orbit
+        libraries, likelihoods, or fitted models.
+        """
+        model = numpyro.handlers.substitute(self._model, data=samples)
+        traced = numpyro.handlers.trace(numpyro.handlers.seed(model, 0)).get_trace()
+        valid = jnp.asarray(True)
+        for name, site in traced.items():
+            if site["type"] != "sample":
+                continue
+            if not site.get("is_observed", False) and name not in samples:
+                raise ValueError(f"Missing prior sample site: {name}")
+            distribution, value = site["fn"], site["value"]
+            valid = valid & jnp.all(distribution.support(value))
+            valid = valid & jnp.all(jnp.isfinite(distribution.log_prob(value)))
+        if self._build_potential is not None:
+            candidate = {
+                component: {
+                    parameter: samples.get(
+                        f"{component}.{parameter}", spec.get("value")
+                    )
+                    for parameter, spec in settings.get("parameters", {}).items()
+                }
+                for component, settings in self._potential_settings.items()
+            }
+            _, geometry_valid = self._build_potential(candidate)
+            valid = valid & jnp.all(geometry_valid)
+        return valid
+
+    def is_feasible(self, samples: Mapping[str, Any]) -> bool:
+        """Concrete Python wrapper around the JAX-compatible feasibility check."""
+        return bool(self.feasibility(samples))
 
     def has_factors(self) -> bool:
         """Whether the composed model includes any factor (soft-constraint) term.

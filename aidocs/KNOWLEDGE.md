@@ -1041,8 +1041,9 @@
   Python process. Existing arrays are not converted when the policy changes,
   so callers must prepare configuration before constructing TNT runtime
   objects. The entire `numerics_settings` mapping is resume-critical. Model
-  comparison uses a relative tolerance of `1e-10`, while parameter-grid
-  comparisons use `1e-6`. Total-mass and intrinsic-mass constraint errors have
+  comparison and parameter-grid tolerance settings default to `1e-10` and
+  `1e-6`, but neither currently implements a runtime comparison policy.
+  Total-mass and intrinsic-mass constraint errors have
   floors of `1e-8` and `1e-16`, respectively.
 - Orbit-library radial limits are galaxy-specific and therefore have no
   package-wide defaults; the user configuration must provide them.
@@ -1167,28 +1168,96 @@
   top-level configuration section at once, unlike the synthetic per-feature
   configurations in `tests/unit_tests/test_configuration.py`.
 
+## Prior support-point generation
+
+- `PriorSupportPoints` inherits directly from `AbstractParameterGenerator` and
+  receives the run's already-built `Prior`. It calls its sampling/transform
+  methods directly; it neither subclasses nor constructs `PriorSampler`.
+- Each call proposes `max_new_mods_per_iter` new points; `num_support_points`
+  was removed. All existing AllModels locations are held fixed, with exact
+  uniqueness checked after unit conversion. The combined energy objective
+  includes new/existing repulsion and uses the total point count. Only new
+  points move. Each call samples the prior again; there is no retained or
+  persisted reference cache. With identical settings/seed the cloud and its
+  scaling reproduce deterministically. Only unconstrained coordinates are
+  supported. Mapping back is followed by full prior/geometry validation;
+  invalid designs raise without returning candidates. No model fit is used.
+- `tnt.support_points` evaluates the blocked sp.ccp map (Mak & Joseph, Eq. 22)
+  using `optimistix.fixed_point` and built-in `FixedPointIteration`. There is no
+  custom solver, iteration loop, constrained-coordinate path, or backtracking.
+  The norm is maximum per-point Euclidean displacement; `rtol=0` and generator
+  `tolerance` supplies `atol`. Optimistix uses strict `< tolerance` termination.
+- `optimize_support_points_jax` returns native `optimistix.Solution`; the eager
+  wrapper returns Python diagnostics (initial/final objective, full step,
+  status, iterations, spacing). Per-iteration history is opt-in for diagnostics;
+  ordinary proposal generation does not collect it.
+  `energy_objective_jax` is traceable and `energy_objective` returns a float.
+- Generator-specific iteration budget, displacement tolerance, block size and
+  inverse-distance epsilon have defaults in `tnt/defaults/default_config.yaml`;
+  they are not global `numerics_settings`.
+- `parameter_grid_relative_tolerance` and
+  `model_comparison_relative_tolerance` are declared and validated settings,
+  not implemented runtime comparison policies. They do not define duplicate
+  identity for support-point augmentation.
+- Optimistix is a direct dependency, also used by orbit initial-condition code.
+- `tnt.prior_support_points_diagnostic_plot` reuses the existing prior figure
+  builder, then adds new/fixed support overlays and objective/displacement
+  panels in the new module only. `record_history=True` collects objective,
+  maximum and RMS displacement from actual solver steps via ordered JAX
+  callbacks, without a custom solver or point-trajectory storage. This incurs
+  extra objective evaluation/synchronization only when explicitly requested.
+- Development history: the constrained-coordinate path and backtracking were
+  tried and replaced with the current unconstrained Optimistix implementation.
+  Obsolete settings have no compatibility layer. Development benchmarks and
+  generated results remain local under ignored `benchmarks/`; tests and user
+  documentation carry the supported behavior.
+- The development support-count sweep shows enclosed-mass width rising from 39%
+  at 24 points to 96% at 1,000. This is finite-design behavior, not a variance
+  preservation guarantee or evidence about future posterior accuracy.
+
 ## Human Workflow
 
-Thomas and Prash review each other's pull requests before merging to `main`:
+Prash maintains the project, assisted by coding agents. Prash owns scientific
+and design decisions and decides when to merge.
 
-- A PR author requests review from the other.
-- A reviewer whose feedback is limited to tests or documentation makes those
-  changes directly and completes the merge.
-- A reviewer whose feedback touches code records it in a PR-specific audit
-  doc (`aidocs/pr-<N>-<topic>-audit.md`) and pings the author (`@<username>`
-  in the PR) to respond. They iterate until the PR is ready to merge. The
-  audit doc is removed from the branch once its findings are addressed,
-  before merging.
-- Follow-up work identified during review but out of scope for the current
-  PR is filed as a new GitHub issue rather than folded into the PR.
-- Claim an issue by assigning yourself to it, either up front or as soon as
-  work on it starts. An unassigned issue is open to either of them.
-- GitHub's merge strategy (squash vs. a real merge commit) is chosen per PR
-  at merge time, not fixed for the repo -- don't assume a branch's
-  individual commits will, or won't, survive into `main`'s history without
-  checking.
-- Always prefer merging `main` into a PR branch rather than rebasing on
-  `main` -- rebasing can silently break the other person's copy of a
-  shared branch.
+- CI runs for PRs targeting `main` and pushes to `main` or `ci-test`, as well
+  as scheduled and manually dispatched runs. Both Python 3.12 and 3.13
+  `continuous-integration` checks are required before merging to `main`,
+  including for administrators. PRs remain required, but human approvals and
+  code-owner approval are not required. Prash is the repository code owner.
+- Implement changes and run appropriate checks locally before independent
+  review. Substantial code or scientific changes should be reviewed in a fresh
+  session, preferably by a different agent (for example, Claude reviewing Codex
+  work or vice versa). Small documentation or mechanical changes need
+  proportionate checks rather than a mandatory cross-agent review.
+- Before review, prepare a local review brief stating the purpose, scope,
+  exclusions, acceptance criteria, validation and known limitations. Identify
+  the base commit and exact review target; for an uncommitted target, include
+  new files as well as the tracked diff. Keep temporary briefs and audit notes
+  under ignored `local_reviews/`, outside the remote repository.
+- The brief describes requirements without arguing that the implementation is
+  correct. The reviewer independently inspects the requirements, applicable
+  conventions and diff before reading the implementer's rationale. Reviews
+  should seek counterexamples, check scientific calculations independently and
+  identify missing tests or tests that merely mirror implementation details.
+- Review is read-only by default. Findings should identify an affected location,
+  a concrete failure scenario and supporting evidence; speculative concerns are
+  labelled. No findings is an acceptable result. Agent agreement alone does not
+  establish correctness.
+- The implementer investigates findings rather than accepting them automatically,
+  makes justified fixes and runs relevant checks. The reviewer checks fixes
+  against the revised target. Prash resolves disagreements and accepts any
+  remaining limitations.
+- After local review, raise a PR for substantial changes. Reuse the brief's
+  purpose, scope and validation, and summarize review findings, their resolution
+  and any unresolved concerns. The PR provides a durable decision record;
+  agents need not exchange ceremonial approvals. Small changes may use a clear
+  commit and focused checks when Prash considers a PR unnecessary.
+- Record agreed out-of-scope follow-up work separately. Once authorized, file
+  GitHub issues and link them from the PR. Do not silently expand the change.
+- Choose GitHub's merge strategy (squash or merge commit) per PR; do not assume
+  individual branch commits will survive into `main`'s history.
+- Prefer merging `main` into shared branches over rebasing them, which rewrites
+  history another collaborator or agent may be using.
 
 Above all: communicate whenever something is unclear.

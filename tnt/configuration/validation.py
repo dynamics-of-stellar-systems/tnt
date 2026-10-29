@@ -916,7 +916,15 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
         value = _integer(stopping[key], f"{path}.stopping_criteria.{key}")
         if value <= 0:
             raise ValueError(f"{path}.stopping_criteria.{key} must be positive.")
-    if "num_samples" in required_generator_keys and (
+    if generator_type == "PriorSupportPoints":
+        for key in ("max_iterations", "chunk_size"):
+            key_path = f"{path}.generator_settings.{key}"
+            if key in generator and _integer(generator[key], key_path) < 1:
+                raise ValueError(f"{key_path} must be positive")
+        for key in ("tolerance", "distance_epsilon"):
+            if key in generator:
+                _positive_number(generator[key], f"{path}.generator_settings.{key}")
+    if generator_type == "PriorSampler" and (
         generator["num_samples"] < stopping["max_new_mods_per_iter"]
     ):
         # Otherwise `PriorSampler` would silently return fewer candidates

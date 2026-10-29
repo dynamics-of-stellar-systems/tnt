@@ -25,6 +25,7 @@ def test_parameter_generator_registry_contains_every_explicit_type() -> None:
     assert parameter_generator_type_names() == {
         "GridSearch",
         "PriorSampler",
+        "PriorSupportPoints",
         "SinglePoint",
     }
 
@@ -34,6 +35,14 @@ def test_parameter_generator_registry_exposes_required_settings() -> None:
         "GridSearch": frozenset({"delta_chi2_threshold"}),
         "PriorSampler": frozenset(
             {"num_samples", "num_warmup", "seed", "target_accept_prob"}
+        ),
+        "PriorSupportPoints": frozenset(
+            {
+                "num_samples",
+                "num_warmup",
+                "seed",
+                "target_accept_prob",
+            }
         ),
         "SinglePoint": frozenset(),
     }
@@ -57,7 +66,7 @@ def test_build_parameter_generator_rejects_an_unregistered_type() -> None:
         ValueError,
         match=(
             "Unknown parameter_space_settings.generator_type: 'Unknown'; "
-            "expected one of: GridSearch, PriorSampler, SinglePoint"
+            "expected one of: GridSearch, PriorSampler, PriorSupportPoints, SinglePoint"
         ),
     ):
         build_parameter_generator(
