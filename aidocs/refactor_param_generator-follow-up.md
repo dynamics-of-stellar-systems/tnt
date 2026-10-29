@@ -1,5 +1,7 @@
 # Follow-up PR: refactor_param_generator
 
+Tracked in [GitHub issue #88](https://github.com/dynamics-of-stellar-systems/tnt/issues/88).
+
 Agreed scope, deferred from the PriorSupportPoints successive-iteration work:
 
 1. Implement duplicate filtering in AbstractParameterGenerator: remove repeated

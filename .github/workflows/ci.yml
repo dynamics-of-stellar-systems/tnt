@@ -1,9 +1,12 @@
 name: CI
 
 on:
-  push:
-    # Only run when pushing to these specific branches
+  pull_request:
     branches:
+      - main
+  push:
+    branches:
+      - main
       - ci-test
   workflow_dispatch:
   schedule:

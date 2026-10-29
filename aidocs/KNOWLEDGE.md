@@ -1220,6 +1220,11 @@
 Prash maintains the project, assisted by coding agents. Prash owns scientific
 and design decisions and decides when to merge.
 
+- CI runs for PRs targeting `main` and pushes to `main` or `ci-test`, as well
+  as scheduled and manually dispatched runs. Both Python 3.12 and 3.13
+  `continuous-integration` checks are required before merging to `main`,
+  including for administrators. PRs remain required, but human approvals and
+  code-owner approval are not required. Prash is the repository code owner.
 - Implement changes and run appropriate checks locally before independent
   review. Substantial code or scientific changes should be reviewed in a fresh
   session, preferably by a different agent (for example, Claude reviewing Codex
