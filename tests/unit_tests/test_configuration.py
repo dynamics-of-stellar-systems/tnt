@@ -1887,3 +1887,57 @@ def test_configuration_session_logs_validation_failure(tmp_path: Path) -> None:
 def test_print_requires_read_configuration() -> None:
     with pytest.raises(RuntimeError, match="No configuration has been read"):
         Configuration().print()
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "",
+        "    tolerance: 0\n",
+        "    chunk_size: 0\n",
+    ],
+)
+def test_support_points_configuration(tmp_path: Path, override: str) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(
+        user_path,
+        tmp_path / "output",
+        body="""parameter_space_settings:
+  generator_type: PriorSupportPoints
+  generator_settings:
+    seed: 0
+    num_samples: 200
+    num_warmup: 120
+    target_accept_prob: 0.8
+"""
+        + override
+        + """  stopping_criteria:
+    max_new_mods_per_iter: 10
+""",
+    )
+    if override:
+        with pytest.raises(ValueError):
+            Configuration().read(user_path, workspace_root=tmp_path)
+    else:
+        config = Configuration().read(user_path, workspace_root=tmp_path)
+        assert (
+            config.data["parameter_space_settings"]["generator_type"]
+            == "PriorSupportPoints"
+        )
+
+
+def test_support_points_controls_come_from_packaged_defaults(tmp_path: Path) -> None:
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(
+        user_path,
+        tmp_path / "output",
+        body="""parameter_space_settings:
+  generator_type: PriorSupportPoints
+""",
+    )
+    config = Configuration().read(user_path, workspace_root=tmp_path)
+    controls = config.data["parameter_space_settings"]["generator_settings"]
+    assert controls["max_iterations"] == 500
+    assert controls["tolerance"] == 1e-6
+    assert controls["chunk_size"] == 1024
+    assert controls["distance_epsilon"] == 1e-8

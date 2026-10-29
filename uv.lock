@@ -1802,6 +1802,7 @@ dependencies = [
     { name = "jax" },
     { name = "matplotlib" },
     { name = "numpyro" },
+    { name = "optimistix" },
     { name = "pyyaml" },
     { name = "unxt" },
 ]
@@ -1826,6 +1827,7 @@ requires-dist = [
     { name = "jax", specifier = ">=0.4.30" },
     { name = "matplotlib", specifier = ">=3.9" },
     { name = "numpyro", specifier = ">=0.21.0" },
+    { name = "optimistix", specifier = ">=0.1.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "unxt", specifier = ">=1.11.4,<2" },
 ]

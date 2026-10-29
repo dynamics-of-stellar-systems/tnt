@@ -35,6 +35,7 @@ from tnt.all_models import AllModels
 from tnt.configuration.compatibility import ConfigurationCompatibilityError
 from tnt.model_iterator import ModelIterator
 from tnt.model_search_state import ModelSearchState
+from tnt.parameter_generator import PriorSupportPoints
 from tnt.potential import Potential
 from tnt.potential.nfw import _nfw_concentration_m200
 from tnt.run_config_log import (
@@ -480,3 +481,44 @@ def test_incompatible_resume_is_rejected_before_allocating_a_run(
     runs_directory = first_iterator.configuration_repository / "runs"
     assert [path.name for path in runs_directory.iterdir()] == ["0000"]
     assert resumed_iterator.run_manifest is None
+
+
+def test_support_points_augment_models_across_iterator_rounds(
+    example_configuration_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
+    settings = config.data["parameter_space_settings"]
+    settings["generator_type"] = "PriorSupportPoints"
+    settings["generator_settings"] = {
+        "seed": 0,
+        "num_samples": 64,
+        "num_warmup": 10,
+        "target_accept_prob": 0.8,
+        "max_iterations": 30,
+    }
+    settings["potential_rescalings"]["enabled"] = False
+    settings["stopping_criteria"].update(
+        max_new_mods_per_iter=3, target_model_count=6, n_new_iter=2
+    )
+    settings["stopping_criteria"]["minimum_delta_chi2"]["enabled"] = False
+    _fake_orbit_integration_and_weight_solving(monkeypatch)
+    existing_counts = []
+    generate = PriorSupportPoints.generate_with_diagnostics
+
+    def record_generation(self, all_models, **kwargs):
+        candidates, info = generate(self, all_models, **kwargs)
+        existing_counts.append(info["existing_support_points"])
+        assert info["new_support_points"] == 3
+        return candidates, info
+
+    monkeypatch.setattr(
+        PriorSupportPoints, "generate_with_diagnostics", record_generation
+    )
+    iterator = ModelIterator.from_configuration(config)
+    models, config_log = iterator.run()
+    assert existing_counts == [0, 3]
+    assert len(models) == 6
+    assert models.n_iterations() == 2
+    assert len(config_log) == 2

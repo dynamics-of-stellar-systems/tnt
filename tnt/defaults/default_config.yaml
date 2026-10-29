@@ -168,7 +168,7 @@ parameter_space_settings:
     delta_chi2_threshold:
       mode: "fraction_of_sqrt_2n_observations"
       value: 0.1
-    # Only read by generator_type: "PriorSampler" (tolerated, unused
+    # Read by "PriorSampler" and "PriorSupportPoints" (tolerated, unused
     # otherwise -- recursive default-merging can't remove a mapping key, so
     # these are present regardless of generator_type, same as
     # delta_chi2_threshold above). seed has no auto-generation convention
@@ -178,6 +178,12 @@ parameter_space_settings:
     num_samples: 1000
     num_warmup: 1000
     target_accept_prob: 0.8
+    # PriorSupportPoints controls; each call proposes max_new_mods_per_iter
+    # additional points. Tolerance is in scaled coordinates.
+    max_iterations: 500
+    tolerance: 1.0e-6
+    chunk_size: 1024
+    distance_epsilon: 1.0e-8
   stopping_criteria:
     # Modes: "absolute" or "relative".
     # Set enabled false to leave another criterion or the parameter generator

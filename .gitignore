@@ -13,3 +13,7 @@ docs/build/
 .coverage
 
 .ipynb_checkpoints/
+
+# Local development experiments and generated results
+/benchmarks/
+/local_reviews/
