@@ -918,8 +918,9 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
             raise ValueError(f"{path}.stopping_criteria.{key} must be positive.")
     if generator_type == "PriorSupportPoints":
         for key in ("max_iterations", "chunk_size"):
-            if key in generator and _integer(generator[key], key) < 1:
-                raise ValueError(f"{key} must be positive")
+            key_path = f"{path}.generator_settings.{key}"
+            if key in generator and _integer(generator[key], key_path) < 1:
+                raise ValueError(f"{key_path} must be positive")
         for key in ("tolerance", "distance_epsilon"):
             if key in generator:
                 _positive_number(generator[key], f"{path}.generator_settings.{key}")

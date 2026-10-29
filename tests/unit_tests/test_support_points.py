@@ -553,6 +553,19 @@ def test_unconstrained_rejects_discrete_sites():
         generator.generate_with_diagnostics(AllModels())
 
 
+def test_unconstrained_rejects_vector_sites():
+    from copy import deepcopy
+
+    settings = deepcopy(SETTINGS)
+    settings["dh"]["parameters"]["m"]["prior"] = {
+        "distribution": "Normal",
+        "args": [jnp.full(2, 1e12), jnp.full(2, 1e10)],
+    }
+    _, generator = make_generator(settings)
+    with pytest.raises(ValueError, match="requires scalar parameter sites"):
+        generator.generate_with_diagnostics(AllModels())
+
+
 def test_nonfinite_boundary_transform_is_not_clipped(monkeypatch):
     prior, generator = make_generator()
     _, diagnostics = prior.sample_with_diagnostics(

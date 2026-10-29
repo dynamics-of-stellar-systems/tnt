@@ -1895,6 +1895,7 @@ def test_print_requires_read_configuration() -> None:
         "",
         "    tolerance: 0\n",
         "    chunk_size: 0\n",
+        "    max_iterations: 0\n",
     ],
 )
 def test_support_points_configuration(tmp_path: Path, override: str) -> None:
@@ -1916,7 +1917,11 @@ def test_support_points_configuration(tmp_path: Path, override: str) -> None:
 """,
     )
     if override:
-        with pytest.raises(ValueError):
+        key = override.split(":", 1)[0].strip()
+        with pytest.raises(
+            ValueError,
+            match=rf"parameter_space_settings\.generator_settings\.{key}",
+        ):
             Configuration().read(user_path, workspace_root=tmp_path)
     else:
         config = Configuration().read(user_path, workspace_root=tmp_path)
