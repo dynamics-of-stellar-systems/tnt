@@ -6,13 +6,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from jax import Array
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
-from tnt.all_models import AllModels
-from tnt.parameter_generator import ParameterSet, PriorSupportPoints
-from tnt.priors_diagnostic_plot import _build_diagnostics_figure
+from tnt.parameter_generator.base import ParameterSet
+from tnt.parameter_generator.diagnostics.prior import build_prior_diagnostics_figure
 
 
 def _add_support_points(
@@ -134,7 +132,7 @@ def _add_optimization_panels(
     objective.set(
         xlabel="optimizer iteration",
         ylabel="combined energy objective",
-        title=f"Objective: {info['existing_support_points']} fixed + "
+        title=f"Optimized: {info['existing_support_points']} fixed + "
         f"{info['new_support_points']} new",
     )
     objective.set_gid("support-objective-history")
@@ -158,81 +156,49 @@ def _add_optimization_panels(
     movement.set_gid("support-displacement-history")
     movement.grid(alpha=0.2)
     movement.legend(fontsize=8)
-    fig.suptitle(f"Prior support-point diagnostics — {diagnostics.status}", fontsize=13)
-
-
-def _build_support_points_diagnostics_figure(
-    generator: PriorSupportPoints,
-    key: Array,
-    all_models: AllModels,
-) -> tuple[Figure, list[ParameterSet], dict[str, Any]]:
-    """Generate once with tracing, then reuse the ordinary prior plot layout."""
-    candidates, info = generator.generate_with_diagnostics(
-        all_models, record_history=True
+    fig.suptitle(
+        f"Support points — model-search iteration {info['iteration']} — "
+        f"{diagnostics.status}",
+        fontsize=13,
     )
+
+
+def build_support_points_diagnostics_figure(
+    candidates: list[ParameterSet], info: dict[str, Any]
+) -> Figure:
+    """Render returned candidates, fixed points and recorded generation data."""
+    if "sample_batch" not in info or info["optimization"].history is None:
+        raise ValueError(
+            "Support-point rendering requires record_history=True during generation "
+            "or plot_diagnostics enabled."
+        )
     names = info["site_names"]
     overlay = {}
     for site in names:
         component, parameter = site.split(".")
-        unit = generator.potential_settings[component]["parameters"][parameter].get(
-            "unit", ""
-        )
+        unit = info["parameter_units"][site]
         overlay[site] = np.array(
-            [
-                float(candidate[component][parameter].ustrip(unit))
-                for candidate in candidates
-            ]
+            [float(point[component][parameter].ustrip(unit)) for point in candidates]
         )
-    existing = generator._existing_locations(all_models, names)
-    fixed = (
-        {site: existing[:, index] for index, site in enumerate(names)}
-        if len(existing)
-        else None
+    fig = build_prior_diagnostics_figure(
+        info["sample_batch"], iteration=info["iteration"]
     )
-    fig = _build_diagnostics_figure(
-        generator.prior,
-        key,
-        generator.num_samples,
-        generator.num_warmup,
-        generator.target_accept_prob,
-    )
+    fixed = info["fixed_points"] if info["existing_support_points"] else None
     _add_support_points(fig, names, overlay, fixed)
-    _add_optimization_panels(
-        fig, info, generator.generator_settings.get("tolerance", 1e-6)
-    )
-    return fig, candidates, info
+    _add_optimization_panels(fig, info, info["tolerance"])
+    return fig
 
 
 def plot_prior_support_points_diagnostics(
-    generator: PriorSupportPoints,
-    path: str | Path,
-    key: Array,
-    all_models: AllModels | None = None,
-) -> tuple[list[ParameterSet], dict[str, Any]]:
-    """Generate a design and save prior/support/optimization diagnostics.
+    candidates: list[ParameterSet], info: dict[str, Any], path: str | Path
+) -> None:
+    """Save diagnostic data from one generation call without resampling.
 
-    Args:
-        generator: The configured support-point generator and its run prior.
-        path: Destination image path; its parent must already exist.
-        key: Independently chosen key for the plotted prior background.
-        all_models: Existing locations to hold fixed, or None for the first batch.
-
-    Returns:
-        New candidates and the exact generation diagnostics, including history.
-        The caller may use these candidates without running generation again.
-
-    Orange stars show new points and open black circles show existing fixed
-    locations. Original units and the prior plot's automatic display scales
-    are retained. The objective includes existing points; movement measures
-    only the new ones. Iteration zero is initialization. Trace collection uses
-    ordered JAX diagnostic callbacks from the actual built-in Optimistix solve,
-    not a separate reconstruction or repeated optimization. No point trajectory
-    is retained. Recording adds objective evaluations and host synchronization;
-    ordinary generation does not incur that cost. No expensive model is fitted.
+    Obtain `candidates, info` from `generate_with_diagnostics` with
+    `record_history=True`, or enable the generator's `plot_diagnostics` setting
+    to render automatically. Overlays show only returned points; objective and
+    movement histories describe the optimized design before duplicate filtering.
+    Rendering performs no prior sampling, optimization or model evaluation.
     """
-    history = AllModels() if all_models is None else all_models
-    fig, candidates, info = _build_support_points_diagnostics_figure(
-        generator, key, history
-    )
+    fig = build_support_points_diagnostics_figure(candidates, info)
     fig.savefig(path, dpi=150)
-    return candidates, info

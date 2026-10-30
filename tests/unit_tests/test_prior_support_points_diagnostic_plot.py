@@ -2,23 +2,28 @@
 
 from pathlib import Path
 
-import jax
 import numpy as np
 import pytest
 
 from tnt.all_models import AllModels
 from tnt.model import Model
 from tnt.parameter_generator import build_parameter_generator
-from tnt.potential import Potential
-from tnt.prior_support_points_diagnostic_plot import (
-    _build_support_points_diagnostics_figure,
+from tnt.parameter_generator.diagnostics.support_points import (
+    build_support_points_diagnostics_figure,
     plot_prior_support_points_diagnostics,
 )
+from tnt.potential import Potential
 from tnt.priors import Prior
 from tnt.support_points import optimize_support_points
 
 
-def _generator(single_parameter=False):
+def _generator(
+    single_parameter=False,
+    output_directory=None,
+    constant=False,
+    plot_diagnostics=False,
+    generator_type="PriorSupportPoints",
+):
     potential = {
         "halo": {
             "type": "NFWPotential",
@@ -38,10 +43,16 @@ def _generator(single_parameter=False):
     }
     if single_parameter:
         potential["halo"]["parameters"]["r_s"].update(fixed=True, value=15.0)
+    if constant:
+        potential["halo"]["parameters"]["m"]["prior"] = {
+            "distribution": "Delta",
+            "args": [1e12],
+        }
     return build_parameter_generator(
         {
-            "generator_type": "PriorSupportPoints",
+            "generator_type": generator_type,
             "generator_settings": {
+                "plot_diagnostics": plot_diagnostics,
                 "seed": 1,
                 "num_samples": 200,
                 "num_warmup": 120,
@@ -52,7 +63,13 @@ def _generator(single_parameter=False):
         },
         potential,
         Prior(potential, {}, {}),
+        output_directory=output_directory,
     )
+
+
+def _render(generator, history):
+    candidates, info = generator.generate_with_diagnostics(history, record_history=True)
+    return build_support_points_diagnostics_figure(candidates, info), candidates, info
 
 
 @pytest.mark.parametrize("tolerance", [1e-12, 1e3])
@@ -102,9 +119,7 @@ def test_corner_overlays_existing_and_new_points_and_plots_actual_history():
                 iteration=0,
             )
         )
-    fig, candidates, info = _build_support_points_diagnostics_figure(
-        generator, jax.random.PRNGKey(2), history
-    )
+    fig, candidates, info = _render(generator, history)
     for gid, points in (
         ("support-points-scatter", candidates),
         ("fixed-support-points-scatter", previous),
@@ -142,9 +157,10 @@ def test_corner_overlays_existing_and_new_points_and_plots_actual_history():
 @pytest.mark.parametrize("single_parameter", [False, True])
 def test_plot_saves_and_returns_the_generated_design(tmp_path: Path, single_parameter):
     path = tmp_path / "support.png"
-    candidates, info = plot_prior_support_points_diagnostics(
-        _generator(single_parameter), path, jax.random.PRNGKey(2)
+    candidates, info = _generator(single_parameter).generate_with_diagnostics(
+        AllModels(), record_history=True
     )
+    plot_prior_support_points_diagnostics(candidates, info, path)
     assert path.stat().st_size > 0
     assert len(candidates) == 4
     assert info["optimization"].history is not None
@@ -165,10 +181,142 @@ def test_all_fixed_plot_has_valid_history_and_readable_panels(tmp_path: Path):
         {},
         Prior({}, {}, {}),
     )
-    figure, points, info = _build_support_points_diagnostics_figure(
-        generator, jax.random.PRNGKey(2), AllModels()
-    )
-    assert len(points) == 2
+    figure, points, info = _render(generator, AllModels())
+    assert len(points) == 1
+    assert info["new_support_points"] == 2
+    assert info["returned_support_points"] == 1
     assert info["optimization"].history.objective == (0.0, 0.0)
     assert figure.get_size_inches()[0] >= 10.0
     figure.savefig(tmp_path / "fixed.png")
+
+
+def test_default_output_paths_preserve_each_iteration(tmp_path: Path):
+    generator = _generator(output_directory=tmp_path, plot_diagnostics=True)
+    first, _ = generator.generate_with_diagnostics(AllModels())
+    history = AllModels()
+    for point in first:
+        history = history.append(
+            Model(
+                potential=Potential(components={}),
+                valid_potential=True,
+                raw_parameters=point,
+                orblib_done=False,
+                weights_done=False,
+                weights=None,
+                chi2=None,
+                iteration=0,
+            )
+        )
+    first_path = (
+        generator.output_directory / "support_points_diagnostics_iteration_0000.png"
+    )
+    original = first_path.read_bytes()
+    generator.generate_parameters(history)
+    assert first_path.read_bytes() == original
+    assert (
+        generator.output_directory / "support_points_diagnostics_iteration_0001.png"
+    ).stat().st_size > 0
+
+
+def test_plot_overlays_only_returned_points_after_duplicate_filtering():
+    generator = _generator(single_parameter=True, constant=True)
+    figure, points, info = _render(generator, AllModels())
+    assert len(points) == info["returned_support_points"] == 1
+    assert info["new_support_points"] == 4
+    assert info["proposals"]["duplicates_removed"] == 3
+    rug = next(
+        line
+        for ax in figure.axes
+        for line in ax.lines
+        if line.get_gid() == "support-points-rug"
+    )
+    assert len(rug.get_xdata()) == 1
+    ordinary = generator.generate_parameters(AllModels())
+    assert len(ordinary) == len(points)
+    assert float(ordinary[0]["halo"]["m"].ustrip("Msun")) == float(
+        points[0]["halo"]["m"].ustrip("Msun")
+    )
+
+
+@pytest.mark.parametrize("kind", ["PriorSampler", "PriorSupportPoints"])
+def test_enabled_plots_use_one_actual_batch_and_preserve_candidates(
+    tmp_path, monkeypatch, kind
+):
+    import tnt.parameter_generator.prior_support_points as support_module
+    from tnt.parameter_generator.diagnostics.prior import plot_prior_diagnostics
+
+    plain = _generator(single_parameter=True, generator_type=kind)
+    expected = plain.generate_parameters(AllModels())
+    enabled = _generator(
+        single_parameter=True,
+        generator_type=kind,
+        output_directory=tmp_path,
+        plot_diagnostics=True,
+    )
+    sampled = []
+    optimized = []
+    sample = enabled.prior.sample_with_diagnostics
+    optimize = support_module.optimize_support_points
+
+    def capture_sample(*args, **kwargs):
+        result = sample(*args, **kwargs)
+        sampled.append(result)
+        return result
+
+    def capture_optimize(*args, **kwargs):
+        optimized.append(kwargs.get("record_history"))
+        return optimize(*args, **kwargs)
+
+    monkeypatch.setattr(enabled.prior, "sample_with_diagnostics", capture_sample)
+    monkeypatch.setattr(support_module, "optimize_support_points", capture_optimize)
+    actual, info = enabled.generate_with_diagnostics(AllModels())
+    assert len(sampled) == 1
+    assert optimized == ([True] if kind == "PriorSupportPoints" else [])
+    assert info["sample_batch"].samples is sampled[0][0]
+    assert info["sample_batch"].diagnostics is sampled[0][1]
+    np.testing.assert_array_equal(
+        [float(p["halo"]["m"].ustrip("Msun")) for p in actual],
+        [float(p["halo"]["m"].ustrip("Msun")) for p in expected],
+    )
+    if kind == "PriorSupportPoints":
+        figure = build_support_points_diagnostics_figure(actual, info)
+        prefix = "support_points_diagnostics"
+        plot_prior_support_points_diagnostics(actual, info, tmp_path / "explicit.png")
+    else:
+        from tnt.parameter_generator.diagnostics.prior import (
+            build_prior_diagnostics_figure,
+        )
+
+        figure = build_prior_diagnostics_figure(info["sample_batch"], iteration=0)
+        prefix = "prior_diagnostics"
+        plot_prior_diagnostics(info["sample_batch"], tmp_path / "explicit.png")
+    assert "model-search iteration 0" in figure._suptitle.get_text()
+    assert (
+        tmp_path / "parameter_generator" / f"{prefix}_iteration_0000.png"
+    ).stat().st_size > 0
+    assert len(sampled) == 1  # Rendering previously returned data does no work.
+    assert len(optimized) == (1 if kind == "PriorSupportPoints" else 0)
+
+
+@pytest.mark.parametrize("kind", ["PriorSampler", "PriorSupportPoints"])
+def test_disabled_plots_create_no_output_and_missing_enabled_output_fails_early(
+    tmp_path, monkeypatch, kind
+):
+    disabled = _generator(generator_type=kind, output_directory=tmp_path)
+    assert disabled.generate_parameters(AllModels())
+    assert not (tmp_path / "parameter_generator").exists()
+    enabled = _generator(generator_type=kind, plot_diagnostics=True)
+
+    def must_not_sample(*args, **kwargs):
+        pytest.fail("Missing output destination should be detected before sampling")
+
+    monkeypatch.setattr(enabled.prior, "sample_with_diagnostics", must_not_sample)
+    with pytest.raises(ValueError, match="output_directory is not configured"):
+        enabled.generate_parameters(AllModels())
+
+
+def test_support_renderer_requires_previously_recorded_data():
+    generator = _generator(single_parameter=True)
+    points, info = generator.generate_with_diagnostics(AllModels())
+    with pytest.raises(ValueError, match="requires record_history=True"):
+        build_support_points_diagnostics_figure(points, info)

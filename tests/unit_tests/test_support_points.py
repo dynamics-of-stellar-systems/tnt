@@ -502,7 +502,7 @@ def test_constant_sample_sites():
     }
     _, generator = make_generator(settings)
     points, diag = generator.generate_with_diagnostics(AllModels())
-    assert len(points) == 5
+    assert len(points) == 1
     assert diag["constant_dimensions"] == ("dh.m",)
     assert diag["optimization"].objective == 0
     assert diag["optimization"].minimum_spacing == 0
@@ -534,10 +534,18 @@ def test_all_fixed_generator():
     settings["dh"]["parameters"]["m"].update(fixed=True, value=1e12)
     _, generator = make_generator(settings)
     points, info = generator.generate_with_diagnostics(AllModels())
-    assert len(points) == 5
+    assert len(points) == 1
     assert info["optimization"].objective == 0
     assert info["site_names"] == ()
     assert all(float(point["dh"]["m"].ustrip("Msun")) == 1e12 for point in points)
+    assert info["new_support_points"] == 5
+    assert info["returned_support_points"] == 1
+    assert info["proposals"]["duplicates_removed"] == 4
+    history = _append_history(AllModels(), points, 0)
+    again, later = generator.generate_with_diagnostics(history)
+    assert again == []
+    assert later["proposals"]["returned"] == 0
+    assert generator.generate_parameters(history) == []
 
 
 def test_unconstrained_rejects_discrete_sites():

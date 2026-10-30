@@ -32,16 +32,20 @@ from tnt.run_config_log import (
 
 
 def test_importing_model_iterator_preserves_a_preselected_matplotlib_backend() -> None:
-    # Re-review R4: tnt.model_iterator unconditionally imports
-    # tnt.priors_diagnostic_plot, which used to call matplotlib.use("Agg")
-    # at module scope -- clobbering an application's own already-selected
-    # backend even when that run never touches PriorSampler. A fresh
-    # subprocess isolates the global matplotlib backend state from every
-    # other test in this file/session.
+    # Import and diagnostic rendering must preserve application backend state.
+    # Use a subprocess to isolate Matplotlib globals from other tests.
     script = (
         "import matplotlib\n"
         "matplotlib.use('svg')\n"
         "import tnt.model_iterator\n"
+        "import numpy as np\n"
+        "from tnt.priors import PriorDiagnostics\n"
+        "from tnt.parameter_generator.samples import PriorSampleBatch\n"
+        "from tnt.parameter_generator.diagnostics.prior import "
+        "build_prior_diagnostics_figure\n"
+        "batch = PriorSampleBatch({'a': np.arange(8.)}, "
+        "PriorDiagnostics(np.zeros(8, dtype=bool), {'a': 8.}, {'a': 1.}))\n"
+        "build_prior_diagnostics_figure(batch).canvas.draw()\n"
         "assert matplotlib.get_backend().lower() == 'svg', matplotlib.get_backend()\n"
     )
     result = subprocess.run(

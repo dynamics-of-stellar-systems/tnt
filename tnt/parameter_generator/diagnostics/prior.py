@@ -1,18 +1,7 @@
-"""A human-reviewed diagnostic plot for a `Prior`'s sampled draw.
+"""Corner, trace and sampling diagnostics for an actual generation batch.
 
-Not an automated pass/fail gate -- a threshold can't tell a genuinely
-broken chain from a prior that's simply as wide as the science requires.
-Draws once with the real run's `num_samples`/`num_warmup` and saves a
-figure to review before committing to the full search.
-
-Builds its own `matplotlib.figure.Figure` with an explicit `FigureCanvasAgg`
-attached directly to it, rather than `matplotlib.pyplot`'s `figure()`/
-`subplots()`/`close()` (backed by its global current-figure-manager state)
-or `matplotlib.use("Agg")` (backed by the library's global current-backend
-state). Importing this module -- which `tnt.model_iterator` does
-unconditionally, whether or not a run ever uses `PriorSampler` -- must not
-silently change which backend an importing application's own, unrelated
-plotting ends up using.
+Uses Figure/CanvasAgg directly without changing Matplotlib global state.
+Rendering does not sample, optimize, or evaluate models.
 """
 
 from __future__ import annotations
@@ -20,13 +9,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-from jax import Array
 from matplotlib.axes import Axes
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
-from tnt.priors import Prior
+from tnt.parameter_generator.samples import PriorSampleBatch
 
 _PANEL_SIZE = 2.6  # inches, one corner-plot row/column
 _TRACE_WIDTH_RATIO = 2  # the trace-plot column is this many panel-widths wide
@@ -89,61 +77,28 @@ def _divergence_color(fraction: float) -> str:
 
 
 def plot_prior_diagnostics(
-    prior: Prior,
+    batch: PriorSampleBatch,
     path: str | Path,
-    key: Array,
-    num_samples: int,
-    num_warmup: int | None = None,
-    target_accept_prob: float = 0.8,
+    *,
+    iteration: int = 0,
 ) -> None:
-    """Draw a pilot batch from `prior` and save a diagnostic figure to `path`.
-
-    This is a pilot: `key` is independent of whatever key the real search
-    actually draws its own batches with (`PriorSampler` folds in each
-    iteration's cumulative count, `jax.random.fold_in(PRNGKey(seed),
-    n_iterations())`, which `fold_in`'s own definition guarantees never
-    equals `PRNGKey(seed)` -- not even for iteration `0`). A useful
-    pre-flight sanity check on the composed model as a whole, but not a
-    stand-in for any specific real batch's own diagnostics -- those are
-    logged by `PriorSampler` itself, per iteration, at `INFO` level.
-
-    A corner plot over every non-fixed, prior-bearing parameter: scatter
-    panels (divergent draws in red) below the diagonal, marginal
-    histograms on it, log axes where a parameter spans orders of
-    magnitude. An ESS/split-R-hat table (`_ess_color`/`_split_rhat_color`,
-    plus a divergence-fraction row via `_divergence_color`) fills the
-    blank block above the diagonal; a per-parameter trace plot runs down
-    an extra column on the right.
-
-    When `prior.has_factors()` is `False`, this is an unconditioned
-    `numpyro.infer.Predictive` draw, not MCMC -- `diverging` is trivially
-    all `False`, and ESS/split-R-hat are a sanity check on independence,
-    not a convergence diagnostic (see `PriorDiagnostics`). `target_accept_prob`
-    is then unused -- it only affects `NUTS`'s step-size adaptation.
-    """
-    fig = _build_diagnostics_figure(
-        prior, key, num_samples, num_warmup, target_accept_prob
-    )
+    """Render a generation batch without sampling or modifying its data."""
+    fig = build_prior_diagnostics_figure(batch, iteration=iteration)
     fig.savefig(path, dpi=150)
 
 
-def _build_diagnostics_figure(
-    prior: Prior,
-    key: Array,
-    num_samples: int,
-    num_warmup: int | None,
-    target_accept_prob: float,
+def build_prior_diagnostics_figure(
+    batch: PriorSampleBatch, *, iteration: int = 0
 ) -> Figure:
-    """The actual figure-building logic behind `plot_prior_diagnostics`.
+    """Build corner, trace and sampling-statistic panels from actual draws.
 
-    Split out so a test can inspect the built `Figure` directly (e.g. via
-    `get_window_extent` on its text artists, to check a layout fix actually
-    keeps text on-canvas and non-overlapping) without round-tripping
-    through a saved file.
+    Parameter coordinates and the divergence flags retain their draw ordering.
+    Plot display scales do not change the generator distance metric. No prior
+    sampling, parameter generation or model evaluation occurs during rendering.
     """
-    samples, diagnostics = prior.sample_with_diagnostics(
-        key, num_samples, num_warmup, target_accept_prob
-    )
+    samples, diagnostics = batch
+    num_samples = len(diagnostics.diverging)
+    title = f"Prior sampling diagnostics — model-search iteration {iteration}"
 
     names = sorted(samples)
     n = len(names)
@@ -155,7 +110,7 @@ def _build_diagnostics_figure(
         # is no corner plot to build; return a minimal figure saying so
         # instead, keeping this function's "produces a figure" contract
         # even here.
-        fig = Figure(figsize=(4.0, 2.0), dpi=150)
+        fig = Figure(figsize=(10.0, 2.0), dpi=150)
         FigureCanvasAgg(fig)
         ax = fig.add_subplot()
         ax.axis("off")
@@ -168,6 +123,7 @@ def _build_diagnostics_figure(
             fontsize=_LABEL_FONTSIZE,
             wrap=True,
         )
+        fig.suptitle(title, fontsize=_TITLE_FONTSIZE)
         return fig
 
     values = {name: np.asarray(samples[name]) for name in names}
@@ -296,9 +252,7 @@ def _build_diagnostics_figure(
         trace_axes.append(ax)
         x = values[row_name]
         ax.plot(x, linewidth=0.6)
-        ax.scatter(
-            np.flatnonzero(diverging), x[diverging], s=10, color="red", zorder=3
-        )
+        ax.scatter(np.flatnonzero(diverging), x[diverging], s=10, color="red", zorder=3)
         ax.set_ylabel(row_name, fontsize=_LABEL_FONTSIZE)
         if log_scale[row_name]:
             ax.set_yscale("log")
@@ -372,9 +326,7 @@ def _build_diagnostics_figure(
         block_width_inches = table_position.width * fig_width_inches
         height_bound = block_height_inches / n_table_rows * 72 * 0.45
         longest_text = max(
-            len(s)
-            for row in (col_labels, *cell_text, [divergence_label])
-            for s in row
+            len(s) for row in (col_labels, *cell_text, [divergence_label]) for s in row
         )
         width_bound = block_width_inches * 72 / (longest_text * 0.62)
         fontsize = np.clip(min(height_bound, width_bound), 7, _TABLE_FONTSIZE_MAX)
@@ -401,9 +353,7 @@ def _build_diagnostics_figure(
         total_required = sum(required_widths.values())
         for col, required_width in required_widths.items():
             cells = [
-                cell
-                for (_r, c), cell in param_table.get_celld().items()
-                if c == col
+                cell for (_r, c), cell in param_table.get_celld().items() if c == col
             ]
             for cell in cells:
                 cell.set_width(required_width / total_required)
@@ -443,7 +393,7 @@ def _build_diagnostics_figure(
     )
 
     fig.suptitle(
-        "Prior Sampling Pilot Diagnostics (independent of real search batches)",
+        title,
         fontsize=_TITLE_FONTSIZE,
     )
 

@@ -24,6 +24,25 @@
 - `tnt/configuration/` groups configuration resolution and preservation
   (`core.py`), preparation-time schema validation (`validation.py`), and
   resume compatibility (`compatibility.py`).
+- `tnt/parameter_generator/` separates the base proposal contract, exact
+  coordinate identity, registry/factory, concrete generators, sample conversion,
+  output paths and diagnostic figures. `__init__.py` preserves public generator
+  imports. Prior and support-point plotting implementations live under
+  `parameter_generator/diagnostics/` with no top-level forwarding modules.
+- All generators use shared finalization: exact duplicate removal across the
+  batch and all existing model rows, then the size cap. Compare every declared
+  parameter (including fixed values) after compatible unit conversion, preserve
+  order, and do not refill missing slots or use a numerical tolerance. Empty
+  output stops the iterator. Diagnostic support-point generation uses the same
+  finalization; optimizer metrics describe the optimized design before filtering.
+- Generator outputs use `<output_directory>/parameter_generator/`. The factory
+  accepts the run output root but creates no folder until writing. PriorSampler
+  writes `prior_diagnostics_iteration_<NNNN>.png`; support diagnostics use
+  `support_points_diagnostics_iteration_<NNNN>.png`. Titles identify the
+  model-search iteration. Renderers accept explicit paths and already-generated
+  data, with no sampling or optimization during rendering.
+  Prior caching and density backgrounds remain deferred; `Prior` has no
+  filesystem/output responsibility and the numerical kernel is unchanged.
 - `tnt/registry.py` provides the small shared class-registration mechanic used
   by configured runtime-object families. Each family owns its registry,
   public lookup helpers, and domain-specific decorator; the shared helper
@@ -954,24 +973,15 @@
   (divergence mask, ESS, split-R-hat per site, always populated -- a
   `Predictive` draw is i.i.d. by construction, so its ESS/split-R-hat there
   are a sanity check on that independence, not a convergence diagnostic) --
-  feeds two separate things, at two different times: a one-off **pilot**
-  figure (`tnt.priors_diagnostic_plot.plot_prior_diagnostics`, a corner plot
-  -- pairwise scatter colored by divergence, marginal histograms, an
-  ESS/split-R-hat table, per-parameter trace plots -- to
-  `io_settings.output_directory/prior_diagnostics.png`, generated once by
-  `ModelIterator.from_configuration` whenever `generator_type` is
-  `PriorSampler`, at the real run's own `num_samples`/`num_warmup`/
-  `target_accept_prob` but its *own independent key* -- `jax.random.fold_in`
-  guarantees this never equals any real iteration's actual key, not even
-  the first), and **per-batch logging** (`PriorSampler
-  ._propose_free_parameters` logs its own real batch's divergence count and
-  worst ESS/split-R-hat, at `INFO`, tagged with its iteration, every time it
-  actually proposes). Both purely advisory: nothing raises or blocks, the
-  run proceeds regardless -- a human reviews the figure/logs and decides.
-  `matplotlib` is a regular (not optional) dependency as of this feature,
-  and `tnt.priors_diagnostic_plot` builds its own `Figure`/`FigureCanvasAgg`
-  directly rather than touching `matplotlib.pyplot`'s or `matplotlib.use`'s
-  global state, since `tnt.model_iterator` imports it unconditionally.
+  feeds per-batch log summaries and optional per-generation figures. Both
+  prior-based generators own their diagnostics through
+  `generator_settings.plot_diagnostics` (packaged default true; omitted settings
+  in direct construction mean false). Renderers receive actual sampled batches;
+  they do not resample, regenerate or optimize. Figures and filenames identify
+  the cumulative model-search iteration. SinglePoint has no plotting requirement.
+  ModelIterator only requests candidates; construction makes no separate pilot
+  draw or plot. Advisory thresholds never gate runs, but real sampling/I/O errors
+  still raise. Figure/CanvasAgg rendering avoids Matplotlib global state.
 - Every registered parameterization converts both ways: a
   `register_parameterization` call takes `convert` *and* `invert` (bundled in
   its `ParameterizationSpec`), so one direction can never be registered without
@@ -1173,9 +1183,12 @@
 - `PriorSupportPoints` inherits directly from `AbstractParameterGenerator` and
   receives the run's already-built `Prior`. It calls its sampling/transform
   methods directly; it neither subclasses nor constructs `PriorSampler`.
-- Each call proposes `max_new_mods_per_iter` new points; `num_support_points`
-  was removed. All existing AllModels locations are held fixed, with exact
-  uniqueness checked after unit conversion. The combined energy objective
+- Each call optimizes `max_new_mods_per_iter` new points before shared duplicate
+  filtering; `new_support_points` counts optimized points and
+  `returned_support_points` counts actual candidates. `info["proposals"]` records
+  proposed, duplicate-removed, capped and returned counts. All existing
+  AllModels locations are held fixed, with exact uniqueness checked after unit
+  conversion. The combined energy objective
   includes new/existing repulsion and uses the total point count. Only new
   points move. Each call samples the prior again; there is no retained or
   persisted reference cache. With identical settings/seed the cloud and its
@@ -1190,7 +1203,7 @@
 - `optimize_support_points_jax` returns native `optimistix.Solution`; the eager
   wrapper returns Python diagnostics (initial/final objective, full step,
   status, iterations, spacing). Per-iteration history is opt-in for diagnostics;
-  ordinary proposal generation does not collect it.
+  generation collects it when plotting is enabled or explicitly requested.
   `energy_objective_jax` is traceable and `energy_objective` returns a float.
 - Generator-specific iteration budget, displacement tolerance, block size and
   inverse-distance epsilon have defaults in `tnt/defaults/default_config.yaml`;
@@ -1200,12 +1213,12 @@
   not implemented runtime comparison policies. They do not define duplicate
   identity for support-point augmentation.
 - Optimistix is a direct dependency, also used by orbit initial-condition code.
-- `tnt.prior_support_points_diagnostic_plot` reuses the existing prior figure
+- `tnt.parameter_generator.diagnostics.support_points` reuses the prior figure
   builder, then adds new/fixed support overlays and objective/displacement
   panels in the new module only. `record_history=True` collects objective,
   maximum and RMS displacement from actual solver steps via ordered JAX
   callbacks, without a custom solver or point-trajectory storage. This incurs
-  extra objective evaluation/synchronization only when explicitly requested.
+  extra objective evaluation/synchronization when plots or history are requested.
 - Development history: the constrained-coordinate path and backtracking were
   tried and replaced with the current unconstrained Optimistix implementation.
   Obsolete settings have no compatibility layer. Development benchmarks and
@@ -1261,3 +1274,11 @@ and design decisions and decides when to merge.
   history another collaborator or agent may be using.
 
 Above all: communicate whenever something is unclear.
+
+## Deferred execution pilot
+
+A future execution-level pilot may combine first-round parameter diagnostics
+with representative orbit-integration and weight-solving measurements, including
+peak memory and concurrency effects for resource allocation. This belongs to
+execution orchestration, not the parameter-generator base class. No resource
+profiling or allocation policy is implemented in the generator refactor.
