@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import ClassVar
 
 from tnt.all_models import AllModels
-from tnt.parameter_generator.base import AbstractParameterGenerator, ParameterSet
+from tnt.parameter_generator.base import AbstractParameterGenerator
 from tnt.parameter_generator.registry import register_parameter_generator
+from tnt.parameter_generator.types import ParameterBatch
 
 
 @register_parameter_generator
@@ -19,5 +19,7 @@ class GridSearchParameterGenerator(AbstractParameterGenerator):
         {"delta_chi2_threshold"}
     )
 
-    def _propose_free_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
+    def _generate(
+        self, all_models: AllModels, *, record_history: bool = False
+    ) -> ParameterBatch:
         raise NotImplementedError

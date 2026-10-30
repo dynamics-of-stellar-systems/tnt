@@ -278,9 +278,10 @@ split-R-hat blocks a run. Sampling or rendering errors still raise normally.
 For Predictive draws, ESS/split-R-hat check independence rather than MCMC
 convergence.
 
-`PriorSampler.generate_with_diagnostics(all_models)` returns finalized
-candidates and an `info` mapping containing `sample_batch`, `iteration` and
-proposal-filter counts. `sample_batch` holds the original draws and their
+`PriorSampler.generate_parameters(all_models)` returns a `ParameterBatch`.
+Its `parameters` are finalized candidates; `diagnostics` contains `sample_batch`,
+`sampling`, `iteration` and `proposals` filter counts. The ABC logs these
+completed diagnostics for every generator. `sample_batch` holds the original draws and their
 `PriorDiagnostics`. The pure renderer
 `tnt.parameter_generator.diagnostics.prior.plot_prior_diagnostics` accepts this
 batch and a path; it does not generate candidates or resample. No samples are

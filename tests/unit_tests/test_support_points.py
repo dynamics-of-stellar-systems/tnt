@@ -265,11 +265,14 @@ def test_successive_iterations_reuse_no_sample_state(monkeypatch) -> None:
         return original_sample(*args, **kwargs)
 
     monkeypatch.setattr(prior, "sample_with_diagnostics", sample)
-    first, first_info = generator.generate_with_diagnostics(AllModels())
+    _generated_batch = generator.generate_parameters(AllModels())
+    first, first_info = _generated_batch.parameters, _generated_batch.diagnostics
     history = _append_history(AllModels(), first, 0)
     snapshot = history.table.copy()
-    second, second_info = generator.generate_with_diagnostics(history)
-    repeated, repeated_info = generator.generate_with_diagnostics(history)
+    _generated_batch = generator.generate_parameters(history)
+    second, second_info = _generated_batch.parameters, _generated_batch.diagnostics
+    _generated_batch = generator.generate_parameters(history)
+    repeated, repeated_info = _generated_batch.parameters, _generated_batch.diagnostics
     assert calls == [205, 205, 205]
     assert len(first) == len(second) == generator.max_new_mods_per_iter
     assert second_info["existing_support_points"] == 5
@@ -285,7 +288,8 @@ def test_successive_iterations_reuse_no_sample_state(monkeypatch) -> None:
     for name in snapshot.colnames:
         np.testing.assert_array_equal(history.table[name], snapshot[name])
     history = _append_history(history, second, 1)
-    third, info = generator.generate_with_diagnostics(history)
+    _generated_batch = generator.generate_parameters(history)
+    third, info = _generated_batch.parameters, _generated_batch.diagnostics
     assert len(third) == 5
     assert info["existing_support_points"] == 10
 
@@ -294,7 +298,8 @@ def test_existing_points_convert_units_and_reject_duplicates() -> None:
     from astropy import units as au
 
     _, generator = make_generator()
-    points, _ = generator.generate_with_diagnostics(AllModels())
+    _generated_batch = generator.generate_parameters(AllModels())
+    points, _ = _generated_batch.parameters, _generated_batch.diagnostics
     history = _append_history(AllModels(), points, 0)
     expected = generator._existing_locations(history, ["dh.m"])
     converted = history.table.copy()
@@ -306,7 +311,7 @@ def test_existing_points_convert_units_and_reject_duplicates() -> None:
     )
     duplicate = _append_history(history, [points[0]], 1)
     with pytest.raises(ValueError, match="duplicate existing parameter locations"):
-        generator.generate_with_diagnostics(duplicate)
+        generator.generate_parameters(duplicate)
 
 
 def test_existing_points_must_match_prior_columns_and_bounds() -> None:
@@ -315,16 +320,18 @@ def test_existing_points_must_match_prior_columns_and_bounds() -> None:
     _, generator = make_generator()
     missing = _append_history(AllModels(), [{"dh": {"r_s": Quantity(15.0, "kpc")}}], 0)
     with pytest.raises(ValueError, match="missing prior parameter column"):
-        generator.generate_with_diagnostics(missing)
+        generator.generate_parameters(missing)
     invalid = _append_history(AllModels(), [{"dh": {"m": Quantity(1.0, "Msun")}}], 0)
     with pytest.raises(ValueError, match="outside the current prior"):
-        generator.generate_with_diagnostics(invalid)
+        generator.generate_parameters(invalid)
 
 
 def test_existing_prior_integration_units_bounds_reproducibility():
     prior, generator = make_generator()
-    points, diag = generator.generate_with_diagnostics(AllModels())
-    again, other = generator.generate_with_diagnostics(AllModels())
+    _generated_batch = generator.generate_parameters(AllModels())
+    points, diag = _generated_batch.parameters, _generated_batch.diagnostics
+    _generated_batch = generator.generate_parameters(AllModels())
+    again, other = _generated_batch.parameters, _generated_batch.diagnostics
     assert len(points) == 5
     assert diag["site_names"] == ("dh.m",)
     assert diag["optimization"] == other["optimization"]
@@ -471,7 +478,8 @@ def test_default_conditional_prior_and_geometry(free_ml):
         settings,
         prior,
     )
-    points, info = generator.generate_with_diagnostics(AllModels())
+    _generated_batch = generator.generate_parameters(AllModels())
+    points, info = _generated_batch.parameters, _generated_batch.diagnostics
     assert len(info["site_names"]) == (4 if free_ml else 3)
     assert len(points) == 4
     assert info["optimization"].objective <= info["optimization"].initial_objective
@@ -501,7 +509,8 @@ def test_constant_sample_sites():
         }
     }
     _, generator = make_generator(settings)
-    points, diag = generator.generate_with_diagnostics(AllModels())
+    _generated_batch = generator.generate_parameters(AllModels())
+    points, diag = _generated_batch.parameters, _generated_batch.diagnostics
     assert len(points) == 1
     assert diag["constant_dimensions"] == ("dh.m",)
     assert diag["optimization"].objective == 0
@@ -512,14 +521,16 @@ def test_generator_metric_is_invariant_to_declared_units():
     from copy import deepcopy
 
     _, generator = make_generator()
-    points, _ = generator.generate_with_diagnostics(AllModels())
+    _generated_batch = generator.generate_parameters(AllModels())
+    points, _ = _generated_batch.parameters, _generated_batch.diagnostics
     converted = deepcopy(SETTINGS)
     parameter = converted["dh"]["parameters"]["m"]
     # Use a representable unit conversion at the configured JAX precision.
     parameter["unit"] = "1000 Msun"
     parameter["prior"]["args"] = [1e7, 1e10]
     _, other_generator = make_generator(converted)
-    other, _ = other_generator.generate_with_diagnostics(AllModels())
+    _generated_batch = other_generator.generate_parameters(AllModels())
+    other, _ = _generated_batch.parameters, _generated_batch.diagnostics
     np.testing.assert_allclose(
         [float(point["dh"]["m"].ustrip("Msun")) for point in points],
         [float(point["dh"]["m"].ustrip("Msun")) for point in other],
@@ -533,19 +544,22 @@ def test_all_fixed_generator():
     settings = deepcopy(SETTINGS)
     settings["dh"]["parameters"]["m"].update(fixed=True, value=1e12)
     _, generator = make_generator(settings)
-    points, info = generator.generate_with_diagnostics(AllModels())
+    _generated_batch = generator.generate_parameters(AllModels())
+    points, info = _generated_batch.parameters, _generated_batch.diagnostics
     assert len(points) == 1
     assert info["optimization"].objective == 0
     assert info["site_names"] == ()
     assert all(float(point["dh"]["m"].ustrip("Msun")) == 1e12 for point in points)
     assert info["new_support_points"] == 5
-    assert info["returned_support_points"] == 1
-    assert info["proposals"]["duplicates_removed"] == 4
+    assert info["proposals"]["returned"] == 1
+    assert info["proposals"]["proposed"] == 1
+    assert info["proposals"]["duplicates_removed"] == 0
     history = _append_history(AllModels(), points, 0)
-    again, later = generator.generate_with_diagnostics(history)
+    _generated_batch = generator.generate_parameters(history)
+    again, later = _generated_batch.parameters, _generated_batch.diagnostics
     assert again == []
     assert later["proposals"]["returned"] == 0
-    assert generator.generate_parameters(history) == []
+    assert generator.generate_parameters(history).parameters == []
 
 
 def test_unconstrained_rejects_discrete_sites():
@@ -558,7 +572,7 @@ def test_unconstrained_rejects_discrete_sites():
     }
     _, generator = make_generator(settings)
     with pytest.raises(ValueError, match="require continuous sites: dh.m"):
-        generator.generate_with_diagnostics(AllModels())
+        generator.generate_parameters(AllModels())
 
 
 def test_unconstrained_rejects_vector_sites():
@@ -571,7 +585,7 @@ def test_unconstrained_rejects_vector_sites():
     }
     _, generator = make_generator(settings)
     with pytest.raises(ValueError, match="requires scalar parameter sites"):
-        generator.generate_with_diagnostics(AllModels())
+        generator.generate_parameters(AllModels())
 
 
 def test_nonfinite_boundary_transform_is_not_clipped(monkeypatch):
@@ -586,7 +600,7 @@ def test_nonfinite_boundary_transform_is_not_clipped(monkeypatch):
         lambda *args, **kwargs: ({"dh.m": jnp.full(205, 1e10)}, diagnostics),
     )
     with pytest.raises(ValueError, match="non-finite unconstrained"):
-        generator.generate_with_diagnostics(AllModels())
+        generator.generate_parameters(AllModels())
 
 
 def test_invalid_final_design_returns_no_candidates(monkeypatch):
@@ -639,7 +653,7 @@ def test_invalid_final_design_returns_no_candidates(monkeypatch):
         jax.vmap(prior.feasibility)({"dh.m": matrix[:, 0], "dh.r_s": matrix[:, 1]})
     ).all()
     with pytest.raises(ValueError, match="No candidates returned"):
-        generator.generate_with_diagnostics(AllModels())
+        generator.generate_parameters(AllModels())
 
 
 def test_unconstrained_mixed_constant_and_variable_sites():
@@ -652,7 +666,8 @@ def test_unconstrained_mixed_constant_and_variable_sites():
         fixed=False, prior={"distribution": "Uniform", "args": [5.0, 25.0]}
     )
     _, generator = make_generator(settings)
-    points, info = generator.generate_with_diagnostics(AllModels())
+    _generated_batch = generator.generate_parameters(AllModels())
+    points, info = _generated_batch.parameters, _generated_batch.diagnostics
     assert info["constant_dimensions"] == ("dh.m",)
     assert info["optimization"].objective < info["optimization"].initial_objective
     for point in points:
@@ -669,7 +684,8 @@ def test_conditional_transforms_round_trip_with_soft_factor():
         )
 
     prior, generator = make_generator(plugins={"preference": preference})
-    points, _ = generator.generate_with_diagnostics(AllModels())
+    _generated_batch = generator.generate_parameters(AllModels())
+    points, _ = _generated_batch.parameters, _generated_batch.diagnostics
     for point in points:
         physical = {"dh.m": point["dh"]["m"].ustrip("Msun")}
         reconstructed = prior.constrain(prior.unconstrain(physical))

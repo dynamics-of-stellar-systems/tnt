@@ -24,6 +24,7 @@ import unxt as u
 import tnt.model_iterator as model_iterator_module
 from tnt.mge import LightMGE
 from tnt.model_iterator import ModelIterator
+from tnt.parameter_generator.types import ParameterBatch
 from tnt.potential import Potential
 from tnt.run_config_log import (
     RunConfigLog,
@@ -56,6 +57,7 @@ def test_importing_model_iterator_preserves_a_preselected_matplotlib_backend() -
     )
 
     assert result.returncode == 0, result.stderr
+
 
 # ---------------------------------------------------------------------------
 # Fakes standing in for Potential / OrbitLibrary / AbstractWeightSolver.
@@ -118,11 +120,11 @@ class FakeParameterGenerator:
         self.n_rounds = n_rounds
         self.calls = 0
 
-    def generate_parameters(self, all_models: Any) -> list[dict[str, dict[str, float]]]:
+    def generate_parameters(self, all_models: Any) -> ParameterBatch:
         self.calls += 1
         if self.calls > self.n_rounds:
-            return []
-        return [{"bh": {"m": 1.0}}]
+            return ParameterBatch([])
+        return ParameterBatch([{"bh": {"m": 1.0}}])
 
 
 def _run_reference(run_id: int = 0) -> RunManifestReference:

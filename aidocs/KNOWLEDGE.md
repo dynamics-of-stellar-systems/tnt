@@ -29,12 +29,23 @@
   output paths and diagnostic figures. `__init__.py` preserves public generator
   imports. Prior and support-point plotting implementations live under
   `parameter_generator/diagnostics/` with no top-level forwarding modules.
-- All generators use shared finalization: exact duplicate removal across the
-  batch and all existing model rows, then the size cap. Compare every declared
-  parameter (including fixed values) after compatible unit conversion, preserve
-  order, and do not refill missing slots or use a numerical tolerance. Empty
-  output stops the iterator. Diagnostic support-point generation uses the same
-  finalization; optimizer metrics describe the optimized design before filtering.
+- Every generator implements `_generate` returning a raw `ParameterBatch`.
+  The ABC owns the sole public `generate_parameters` method: finalize, attach
+  common `iteration`/`proposals` diagnostics, log from the completed batch, then
+  optionally render. Callers read `batch.parameters` and `batch.diagnostics`.
+  The base optional plot hook requires no implementation for SinglePoint.
+- Shared finalization compares every declared parameter (including fixed values)
+  after compatible unit conversion, removes exact duplicates against the batch
+  and all existing model rows, preserves order and caps afterward. No tolerance
+  or refill is introduced. Structural/unit/scalar/finiteness errors raise;
+  general physical validity remains in the iterator before integration, with
+  invalid model records retained. Support points retain final-design feasibility
+  checks. Existing duplicate table rows are not silently repaired.
+- Common proposal counts exist for SinglePoint too. Prior generators supply
+  sampling/optimization data, but the ABC owns the logging. Optimizer statistics
+  describe the pre-filter design; plots display finalized candidates. All-fixed
+  generation creates one distinct candidate directly rather than multiplying
+  references to the same dictionary.
 - Generator outputs use `<output_directory>/parameter_generator/`. The factory
   accepts the run output root but creates no folder until writing. PriorSampler
   writes `prior_diagnostics_iteration_<NNNN>.png`; support diagnostics use
@@ -1185,7 +1196,7 @@
   methods directly; it neither subclasses nor constructs `PriorSampler`.
 - Each call optimizes `max_new_mods_per_iter` new points before shared duplicate
   filtering; `new_support_points` counts optimized points and
-  `returned_support_points` counts actual candidates. `info["proposals"]` records
+  `batch.diagnostics["proposals"]` counts actual returned candidates and records
   proposed, duplicate-removed, capped and returned counts. All existing
   AllModels locations are held fixed, with exact uniqueness checked after unit
   conversion. The combined energy objective

@@ -17,22 +17,12 @@ from tnt.parameter_generator.coordinates import (
     proposal_key,
 )
 from tnt.parameter_generator.outputs import diagnostic_path
+from tnt.parameter_generator.samples import _format_batch_diagnostics_summary
+from tnt.parameter_generator.types import ParameterBatch, ParameterSet
 from tnt.potential import raw_parameter_dimensions
 from tnt.validation import _mapping, _number, _required
 
 _LOGGER = logging.getLogger(__name__)
-ParameterSet = dict[str, dict[str, Quantity]]
-"""One proposed point in parameter space: component name -> {parameter name: value}.
-
-Mass parameters (`ml`, `mge_mass_scale`, ...) and shape parameters are both
-just entries here -- `AbstractParameterGenerator` doesn't distinguish
-between them. `parameter_space_settings.potential_rescalings` is a
-separate, `ModelIterator`-owned mechanism layered on top of whichever
-`ParameterSet`s the generator proposes; it isn't part of this type. Each
-`Quantity` keeps whatever unit its parameter was declared in -- nothing
-here converts into a shared internal unit system (see `tnt.potential`'s
-module docstring for why).
-"""
 
 
 def _declared_parameter_quantity(
@@ -82,7 +72,7 @@ class AbstractParameterGenerator(eqx.Module):
     `max_new_mods_per_iter` (from `parameter_space_settings.stopping_criteria`,
     shared and generic -- not any one generator's own setting) caps how many
     candidates `generate_parameters` returns per call, uniformly across
-    every generator regardless of how many its own `_propose_free_parameters`
+    every generator regardless of how many its own `_generate`
     happens to produce.
 
     `output_directory`, when configured, is the generator-owned subdirectory.
@@ -91,6 +81,7 @@ class AbstractParameterGenerator(eqx.Module):
     """
 
     _type: ClassVar[str]
+    _diagnostic_plot_name: ClassVar[str | None] = None
     _required_generator_settings: ClassVar[frozenset[str]] = frozenset()
 
     potential_settings: Mapping[str, Mapping[str, Any]]
@@ -98,17 +89,76 @@ class AbstractParameterGenerator(eqx.Module):
     max_new_mods_per_iter: int
     output_directory: Path | None = eqx.field(default=None, static=True, kw_only=True)
 
-    def generate_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
-        """Propose the next round of `ParameterSet`s, capped at `max_new_mods_per_iter`.
+    def generate_parameters(
+        self, all_models: AllModels, *, record_history: bool = False
+    ) -> ParameterBatch:
+        """Generate once, finalize, log and optionally plot the finished batch.
 
-        Args:
-            all_models: Every model evaluated so far (empty on the first
-                iteration).
+        Structural/unit errors raise rather than being silently filtered.
+        Physical potential validity remains checked by the iterator before
+        integration; concrete generators may enforce stronger feasibility rules.
+        `record_history` requests optional support-point history without plotting.
         """
-        candidates, _ = self._finalize_proposals(
-            self._propose_free_parameters(all_models), all_models
+        iteration = all_models.n_iterations()
+        path = (
+            self._diagnostic_plot_path(self._diagnostic_plot_name, iteration)
+            if self._diagnostic_plot_name is not None
+            else None
         )
-        return candidates
+        raw = self._generate(
+            all_models, record_history=record_history or path is not None
+        )
+        parameters, selection = self._finalize_proposals(raw.parameters, all_models)
+        info = dict(raw.diagnostics)
+        info.update(iteration=iteration, proposals=selection)
+        batch = ParameterBatch(parameters, info)
+        self._log_batch(batch)
+        if path is not None:
+            self._plot_diagnostics(batch, path)
+        return batch
+
+    def _log_batch(self, batch: ParameterBatch) -> None:
+        """Log one summary from finalized common and scientific diagnostics."""
+        info = batch.diagnostics
+        counts = info["proposals"]
+        _LOGGER.info(
+            "%s proposals for iteration %d: %d proposed, %d duplicates removed, "
+            "%d capped, %d returned.",
+            self._type,
+            info["iteration"],
+            counts["proposed"],
+            counts["duplicates_removed"],
+            counts["capped"],
+            counts["returned"],
+        )
+        sampling = info.get("sampling")
+        if sampling is not None:
+            _LOGGER.info(
+                "%s batch for iteration %d: %d/%d divergent draws, %s.",
+                self._type,
+                info["iteration"],
+                int(sampling.diverging.sum()),
+                len(sampling.diverging),
+                _format_batch_diagnostics_summary(sampling),
+            )
+        optimization = info.get("optimization")
+        if optimization is not None:
+            _LOGGER.info(
+                "%s: objective %.8g, status %s, iterations %d.",
+                self._type,
+                optimization.objective,
+                optimization.status,
+                optimization.iterations,
+            )
+            _LOGGER.info(
+                "%s reference: %d feasible draws, %d discarded.",
+                self._type,
+                info["reference_sample_size"],
+                info["discarded_infeasible_draws"],
+            )
+
+    def _plot_diagnostics(self, batch: ParameterBatch, path: Path) -> None:
+        """Optional finalized-batch rendering; generators need not implement it."""
 
     def _finalize_proposals(
         self, candidates: Sequence[ParameterSet], all_models: AllModels
@@ -134,14 +184,6 @@ class AbstractParameterGenerator(eqx.Module):
             "capped": len(unique) - len(selected),
             "returned": len(selected),
         }
-        _LOGGER.info(
-            "%s proposals: %d proposed, %d duplicates removed, %d capped, %d returned.",
-            self._type,
-            diagnostics["proposed"],
-            diagnostics["duplicates_removed"],
-            diagnostics["capped"],
-            diagnostics["returned"],
-        )
         return selected, diagnostics
 
     def diagnostic_path(self, name: str, iteration: int | None = None) -> Path:
@@ -160,13 +202,10 @@ class AbstractParameterGenerator(eqx.Module):
             raise TypeError("generator_settings.plot_diagnostics must be a boolean")
         return self.diagnostic_path(name, iteration) if enabled else None
 
-    def _propose_free_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
-        """This generator's own proposal logic, before the shared size cap.
-
-        Args:
-            all_models: Every model evaluated so far (empty on the first
-                iteration).
-        """
+    def _generate(
+        self, all_models: AllModels, *, record_history: bool = False
+    ) -> ParameterBatch:
+        """Construct raw candidates/data, without shared finalization or plotting."""
         raise NotImplementedError
 
     def _declared_component_values(

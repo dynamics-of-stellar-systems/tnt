@@ -81,13 +81,15 @@ Repulsion includes new/new and new/existing pairs, normalized by the total
 point count. Initial/final objectives and spacing diagnostics describe the full
 combined design. Only new points are returned; old locations are never moved
 or silently deduplicated. Diagnostics include `existing_support_points` and
-`new_support_points` (the number optimized) and `returned_support_points`.
-Both `generate_parameters` and `generate_with_diagnostics` apply the base
-class's duplicate filtering in complete declared coordinates before returning.
-`info["proposals"]` reports proposed, duplicate-removed, capped and returned
-counts. No replacements are generated. For an all-fixed or point-mass prior,
+`new_support_points` (the number optimized). The sole public method
+`generate_parameters` returns a `ParameterBatch`, with finalized `parameters`
+and `diagnostics`. The ABC applies duplicate filtering in complete declared
+coordinates before returning. `batch.diagnostics["proposals"]` reports proposed,
+duplicate-removed, capped and returned counts. No replacements are generated. For an all-fixed or point-mass prior,
 the first call returns one unique location, and later calls return none once
-it exists. Optimizer statistics and histories describe the optimized design
+it exists. With no sampled sites, generation constructs that single parameter
+set directly; it does not manufacture repeated proposals to match the requested
+optimization count. Optimizer statistics and histories describe the optimized design
 before filtering; overlays show only returned points. Existing table rows are
 never silently deduplicated. Sequential batches need not reproduce a
 joint optimization of the same total number of points.
@@ -161,8 +163,8 @@ or optimization. The background retains all original sampling draws (including
 initialization draws and any subsequently excluded infeasible draws), in their
 original ordering with their actual divergence flags and sampling statistics.
 
-`generate_with_diagnostics(all_models)` returns candidates and diagnostics from
-the same call. When plotting is enabled, or `record_history=True` is requested,
+`generate_parameters(all_models)` returns a `ParameterBatch` from the same call.
+Use `batch.parameters` for candidates and `batch.diagnostics` for diagnostic data. When plotting is enabled, or `record_history=True` is requested,
 `info` also contains the actual `sample_batch`, original-coordinate fixed points,
 parameter units and optimizer tolerance needed to render later:
 
@@ -172,10 +174,10 @@ from tnt.parameter_generator.diagnostics.support_points import (
 )
 
 # Set plot_diagnostics: false to collect data without automatically writing.
-candidates, info = generator.generate_with_diagnostics(
-    all_models, record_history=True
+batch = generator.generate_parameters(all_models, record_history=True)
+plot_prior_support_points_diagnostics(
+    batch.parameters, batch.diagnostics, "support_diagnostics.png"
 )
-plot_prior_support_points_diagnostics(candidates, info, "support_diagnostics.png")
 ```
 
 The explicit destination parent must exist. The renderer only draws previously

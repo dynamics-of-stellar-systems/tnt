@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any, ClassVar
 
 import astropy.units as au
@@ -12,17 +12,15 @@ import jax.numpy as jnp
 import numpy as np
 
 from tnt.all_models import AllModels
-from tnt.parameter_generator.base import AbstractParameterGenerator, ParameterSet
+from tnt.parameter_generator.base import AbstractParameterGenerator
 from tnt.parameter_generator.registry import register_parameter_generator
 from tnt.parameter_generator.samples import (
     PriorSampleBatch,
-    _format_batch_diagnostics_summary,
     _parameter_sets_from_samples,
 )
+from tnt.parameter_generator.types import ParameterBatch
 from tnt.priors import Prior, PriorDiagnostics
 from tnt.support_points import SupportPointDiagnostics, optimize_support_points
-
-_LOGGER = logging.getLogger(__name__)
 
 
 @register_parameter_generator
@@ -36,6 +34,7 @@ class PriorSupportPoints(AbstractParameterGenerator):
     """
 
     _type: ClassVar[str] = "PriorSupportPoints"
+    _diagnostic_plot_name: ClassVar[str] = "support_points_diagnostics"
     _required_generator_settings: ClassVar[frozenset[str]] = frozenset(
         {
             "num_samples",
@@ -241,17 +240,15 @@ class PriorSupportPoints(AbstractParameterGenerator):
         }
         return raw, diagnostics, metadata
 
-    def generate_with_diagnostics(
+    def _generate(
         self,
         all_models: AllModels,
         *,
         record_history: bool = False,
-    ) -> tuple[list[ParameterSet], dict[str, Any]]:
+    ) -> ParameterBatch:
         """Resample the reference and optimize new points with history fixed."""
         count, batch_size = self._design_settings()
-        iteration = all_models.n_iterations()
-        path = self._diagnostic_plot_path("support_points_diagnostics", iteration)
-        keep_data = record_history or path is not None
+        keep_data = record_history
         names, rows, sampling, discarded, batch = self._sample_cloud(
             count, batch_size, keep_samples=keep_data
         )
@@ -272,27 +269,10 @@ class PriorSupportPoints(AbstractParameterGenerator):
             )
         selected = {name: raw[:, index] for index, name in enumerate(names)}
         candidates = _parameter_sets_from_samples(selected, self.potential_settings)
-        if not names:
-            candidates *= count
-        candidates, selection = self._finalize_proposals(candidates, all_models)
         diagnostics.update(
             optimization=optimization,
             sampling=sampling,
             discarded_infeasible_draws=discarded,
-            proposals=selection,
-            returned_support_points=len(candidates),
-        )
-        _LOGGER.info(
-            "PriorSupportPoints: objective %.8g, status %s, iterations %d",
-            optimization.objective,
-            optimization.status,
-            optimization.iterations,
-        )
-        _LOGGER.info(
-            "PriorSupportPoints reference: %d feasible draws, %d discarded; %s.",
-            len(rows) - count,
-            discarded,
-            _format_batch_diagnostics_summary(sampling),
         )
         if keep_data:
             diagnostics.update(
@@ -305,19 +285,11 @@ class PriorSupportPoints(AbstractParameterGenerator):
                 },
                 tolerance=self.generator_settings.get("tolerance", 1e-6),
             )
-        diagnostics["iteration"] = iteration
-        if path is not None:
-            from tnt.parameter_generator.diagnostics.support_points import (
-                plot_prior_support_points_diagnostics,
-            )
+        return ParameterBatch(candidates, diagnostics)
 
-            plot_prior_support_points_diagnostics(candidates, diagnostics, path)
-        return candidates, diagnostics
+    def _plot_diagnostics(self, batch: ParameterBatch, path: Path) -> None:
+        from tnt.parameter_generator.diagnostics.support_points import (
+            plot_prior_support_points_diagnostics,
+        )
 
-    def generate_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
-        """Return the same filtered design as the diagnostic interface."""
-        return self.generate_with_diagnostics(all_models)[0]
-
-    def _propose_free_parameters(self, all_models: AllModels) -> Sequence[ParameterSet]:
-        """Adapt the diagnostic interface to the common proposal contract."""
-        return self.generate_with_diagnostics(all_models)[0]
+        plot_prior_support_points_diagnostics(batch.parameters, batch.diagnostics, path)

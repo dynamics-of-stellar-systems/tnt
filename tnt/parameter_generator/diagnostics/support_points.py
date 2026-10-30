@@ -194,9 +194,9 @@ def plot_prior_support_points_diagnostics(
 ) -> None:
     """Save diagnostic data from one generation call without resampling.
 
-    Obtain `candidates, info` from `generate_with_diagnostics` with
-    `record_history=True`, or enable the generator's `plot_diagnostics` setting
-    to render automatically. Overlays show only returned points; objective and
+    Obtain a batch from `generate_parameters(record_history=True)` and pass
+    its `parameters` and `diagnostics`, or enable `plot_diagnostics` to render
+    automatically. Overlays show only returned points; objective and
     movement histories describe the optimized design before duplicate filtering.
     Rendering performs no prior sampling, optimization or model evaluation.
     """

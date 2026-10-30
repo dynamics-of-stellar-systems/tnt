@@ -12,10 +12,12 @@ from tnt.parameter_generator.registry import (
     register_parameter_generator,
 )
 from tnt.parameter_generator.single_point import SinglePointParameterGenerator
+from tnt.parameter_generator.types import ParameterBatch
 
 __all__ = [
     "AbstractParameterGenerator",
     "GridSearchParameterGenerator",
+    "ParameterBatch",
     "ParameterSet",
     "PriorSampler",
     "PriorSupportPoints",

@@ -225,9 +225,21 @@ between runs remains incompatible under the current contract.
 
 A `ParameterSet` is one proposed point in parameter space: a mapping from
 potential-component name to a mapping of parameter name to value (e.g.
-`{"bh": {"m": 5.0, "a": 0.001}, "stars": {"ml": 5.2, ...}}`). Every
-`AbstractParameterGenerator` implements `_propose_free_parameters(all_models)`;
-the shared finalization removes duplicate proposals, then caps the result at
+`{"bh": {"m": 5.0, "a": 0.001}, "stars": {"ml": 5.2, ...}}`).
+Each subclass implements `_generate(all_models)`, returning raw parameters and
+optional scientific data in a `ParameterBatch`. The ABC owns the only public
+entry point, `generate_parameters(all_models)`, which finalizes, logs and
+optionally plots the batch before returning it:
+
+```python
+batch = generator.generate_parameters(all_models)
+parameters = batch.parameters
+info = batch.diagnostics
+```
+
+Every returned batch has common `iteration` and `proposals` diagnostics,
+including for SinglePoint. Prior-based generators add sampling/optimization data.
+The shared finalization removes duplicate proposals, then caps the result at
 `stopping_criteria.max_new_mods_per_iter`. Identity compares every parameter,
 including fixed values, using exact equality after conversion to declared units.
 There is no approximate matching tolerance or minimum separation. Proposals
@@ -252,8 +264,8 @@ configuration-selectable generator:
   the shared filter also uses existing coordinates to avoid repeated evaluations.
   Fitted chi2/scores do not affect sampling.
 - `PriorSupportPoints` optimizes new locations while holding existing locations
-  fixed; see [Support points](support_points.md). Its diagnostic and ordinary
-  proposal interfaces use the same duplicate filtering and size cap.
+  fixed; see [Support points](support_points.md). It uses the same shared
+  generation and finalization pipeline.
 
 Implementations live in the `tnt.parameter_generator` package: the base
 contract, registry/factory, one module per generator, and supporting coordinate,
@@ -286,7 +298,12 @@ omitting the setting leaves plotting disabled.
 Rendering is separate from generation and does not sample or optimize. The
 renderers also accept returned diagnostic data and an explicit destination.
 Support-point history and plot data can be requested without writing a figure
-through `generate_with_diagnostics(..., record_history=True)`.
+through `generate_parameters(..., record_history=True)`. The ABC logs the
+completed batch from its diagnostics; concrete generators do not separately
+finalize or log proposals. Malformed proposals (structure, units, scalar or
+finite values) raise rather than being silently dropped. The iterator retains
+its physical validity check before integration and records invalid models;
+no general physical filtering is added to the ABC.
 
 Prior caching and density backgrounds remain deferred. A future execution-level
 pilot may combine first-round design diagnostics with representative orbit

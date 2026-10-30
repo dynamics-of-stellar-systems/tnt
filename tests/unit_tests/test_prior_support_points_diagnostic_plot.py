@@ -68,7 +68,8 @@ def _generator(
 
 
 def _render(generator, history):
-    candidates, info = generator.generate_with_diagnostics(history, record_history=True)
+    _generated_batch = generator.generate_parameters(history, record_history=True)
+    candidates, info = _generated_batch.parameters, _generated_batch.diagnostics
     return build_support_points_diagnostics_figure(candidates, info), candidates, info
 
 
@@ -104,7 +105,8 @@ def test_history_records_exact_solver_steps_without_changing_solution(tolerance)
 
 def test_corner_overlays_existing_and_new_points_and_plots_actual_history():
     generator = _generator()
-    previous, _ = generator.generate_with_diagnostics(AllModels())
+    _generated_batch = generator.generate_parameters(AllModels())
+    previous, _ = _generated_batch.parameters, _generated_batch.diagnostics
     history = AllModels()
     for point in previous:
         history = history.append(
@@ -157,9 +159,10 @@ def test_corner_overlays_existing_and_new_points_and_plots_actual_history():
 @pytest.mark.parametrize("single_parameter", [False, True])
 def test_plot_saves_and_returns_the_generated_design(tmp_path: Path, single_parameter):
     path = tmp_path / "support.png"
-    candidates, info = _generator(single_parameter).generate_with_diagnostics(
+    _generated_batch = _generator(single_parameter).generate_parameters(
         AllModels(), record_history=True
     )
+    candidates, info = _generated_batch.parameters, _generated_batch.diagnostics
     plot_prior_support_points_diagnostics(candidates, info, path)
     assert path.stat().st_size > 0
     assert len(candidates) == 4
@@ -184,7 +187,7 @@ def test_all_fixed_plot_has_valid_history_and_readable_panels(tmp_path: Path):
     figure, points, info = _render(generator, AllModels())
     assert len(points) == 1
     assert info["new_support_points"] == 2
-    assert info["returned_support_points"] == 1
+    assert info["proposals"]["returned"] == 1
     assert info["optimization"].history.objective == (0.0, 0.0)
     assert figure.get_size_inches()[0] >= 10.0
     figure.savefig(tmp_path / "fixed.png")
@@ -192,7 +195,8 @@ def test_all_fixed_plot_has_valid_history_and_readable_panels(tmp_path: Path):
 
 def test_default_output_paths_preserve_each_iteration(tmp_path: Path):
     generator = _generator(output_directory=tmp_path, plot_diagnostics=True)
-    first, _ = generator.generate_with_diagnostics(AllModels())
+    _generated_batch = generator.generate_parameters(AllModels())
+    first, _ = _generated_batch.parameters, _generated_batch.diagnostics
     history = AllModels()
     for point in first:
         history = history.append(
@@ -221,7 +225,7 @@ def test_default_output_paths_preserve_each_iteration(tmp_path: Path):
 def test_plot_overlays_only_returned_points_after_duplicate_filtering():
     generator = _generator(single_parameter=True, constant=True)
     figure, points, info = _render(generator, AllModels())
-    assert len(points) == info["returned_support_points"] == 1
+    assert len(points) == info["proposals"]["returned"] == 1
     assert info["new_support_points"] == 4
     assert info["proposals"]["duplicates_removed"] == 3
     rug = next(
@@ -231,7 +235,7 @@ def test_plot_overlays_only_returned_points_after_duplicate_filtering():
         if line.get_gid() == "support-points-rug"
     )
     assert len(rug.get_xdata()) == 1
-    ordinary = generator.generate_parameters(AllModels())
+    ordinary = generator.generate_parameters(AllModels()).parameters
     assert len(ordinary) == len(points)
     assert float(ordinary[0]["halo"]["m"].ustrip("Msun")) == float(
         points[0]["halo"]["m"].ustrip("Msun")
@@ -246,7 +250,7 @@ def test_enabled_plots_use_one_actual_batch_and_preserve_candidates(
     from tnt.parameter_generator.diagnostics.prior import plot_prior_diagnostics
 
     plain = _generator(single_parameter=True, generator_type=kind)
-    expected = plain.generate_parameters(AllModels())
+    expected = plain.generate_parameters(AllModels()).parameters
     enabled = _generator(
         single_parameter=True,
         generator_type=kind,
@@ -269,7 +273,8 @@ def test_enabled_plots_use_one_actual_batch_and_preserve_candidates(
 
     monkeypatch.setattr(enabled.prior, "sample_with_diagnostics", capture_sample)
     monkeypatch.setattr(support_module, "optimize_support_points", capture_optimize)
-    actual, info = enabled.generate_with_diagnostics(AllModels())
+    _generated_batch = enabled.generate_parameters(AllModels())
+    actual, info = _generated_batch.parameters, _generated_batch.diagnostics
     assert len(sampled) == 1
     assert optimized == ([True] if kind == "PriorSupportPoints" else [])
     assert info["sample_batch"].samples is sampled[0][0]
@@ -303,7 +308,7 @@ def test_disabled_plots_create_no_output_and_missing_enabled_output_fails_early(
     tmp_path, monkeypatch, kind
 ):
     disabled = _generator(generator_type=kind, output_directory=tmp_path)
-    assert disabled.generate_parameters(AllModels())
+    assert disabled.generate_parameters(AllModels()).parameters
     assert not (tmp_path / "parameter_generator").exists()
     enabled = _generator(generator_type=kind, plot_diagnostics=True)
 
@@ -317,6 +322,7 @@ def test_disabled_plots_create_no_output_and_missing_enabled_output_fails_early(
 
 def test_support_renderer_requires_previously_recorded_data():
     generator = _generator(single_parameter=True)
-    points, info = generator.generate_with_diagnostics(AllModels())
+    _generated_batch = generator.generate_parameters(AllModels())
+    points, info = _generated_batch.parameters, _generated_batch.diagnostics
     with pytest.raises(ValueError, match="requires record_history=True"):
         build_support_points_diagnostics_figure(points, info)

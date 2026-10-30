@@ -8,7 +8,7 @@ from typing import Any, NamedTuple
 
 from unxt import Quantity
 
-from tnt.parameter_generator.base import ParameterSet
+from tnt.parameter_generator.types import ParameterSet
 from tnt.priors import PriorDiagnostics
 
 
