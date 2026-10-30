@@ -10,8 +10,8 @@ Two draws from the same run's `tnt.priors.Prior`:
     `context.build_potential()`. Drawn with `numpyro.infer.NUTS`. `dh.m`'s
     prior is kept narrow (not the much wider range a bare `NFWPotential.m`
     prior could plausibly take) specifically so this draw samples cleanly
-    -- see `tnt.priors_diagnostic_plot.plot_prior_diagnostics`, which this
-    script also calls, for why that matters.
+    -- see `tnt.parameter_generator.diagnostics.prior.plot_prior_diagnostics`,
+    which this script also calls, for why that matters.
 
 Writes `prior_concept_illustration.json` (the raw samples) and
 `prior_concept_illustration_diagnostics.png` next to this file. Run from the
@@ -31,9 +31,10 @@ import unxt as u
 from unxt import Quantity
 
 from tnt.mge import LightMGE
+from tnt.parameter_generator.diagnostics.prior import plot_prior_diagnostics
+from tnt.parameter_generator.samples import PriorSampleBatch
 from tnt.potential import Potential
 from tnt.priors import Prior, PriorContext
-from tnt.priors_diagnostic_plot import plot_prior_diagnostics
 
 _UNITS = u.unitsystem("kpc", "Myr", "Msun", "rad")
 _ANGLES = {
@@ -134,13 +135,7 @@ def main() -> None:
     diagnostics_path = (
         Path(__file__).parent / "prior_concept_illustration_diagnostics.png"
     )
-    plot_prior_diagnostics(
-        with_plugin,
-        diagnostics_path,
-        jax.random.PRNGKey(0),
-        num_samples=2000,
-        num_warmup=800,
-    )
+    plot_prior_diagnostics(PriorSampleBatch(b, diagnostics), diagnostics_path)
 
     m_a = jax.vmap(lambda x, y: _enclosed(resolved, x, y))(a["stars.ml"], a["dh.m"])
     m_b = jax.vmap(lambda x, y: _enclosed(resolved, x, y))(b["stars.ml"], b["dh.m"])

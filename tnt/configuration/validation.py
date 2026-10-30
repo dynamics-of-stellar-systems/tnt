@@ -829,6 +829,10 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
         settings["which_chi2"], {"chi2", "kinchi2", "kinmapchi2"}, f"{path}.which_chi2"
     )
     generator = _required_mapping(settings, "generator_settings", path)
+    if "plot_diagnostics" in generator:
+        _boolean(
+            generator["plot_diagnostics"], f"{path}.generator_settings.plot_diagnostics"
+        )
     required_generator_keys = required_settings_by_type[generator_type]
     # Not `_reject_unknown_keys`: recursive default-merging can't remove a
     # mapping key, so a user who overrides `generator_type` away from the

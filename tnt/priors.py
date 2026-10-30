@@ -233,7 +233,7 @@ def _make_potential_builder(
     """A closure that turns one draw's bare `candidate` into a `Potential`
     and its scalar validity flag.
 
-    Mirrors `tnt.parameter_generator._parameter_sets_from_samples`: each
+    Mirrors `tnt.parameter_generator.samples._parameter_sets_from_samples`: each
     value is re-wrapped as a `Quantity` in its parameter's own declared
     `unit` (absent -> dimensionless), then `Potential.build_with_validity`
     runs, which is itself JAX-traceable. `unit_system` isn't
@@ -655,7 +655,7 @@ class Prior:
         self.has_factors()`), the draws are exact and independent by
         construction -- the diagnostics there are a sanity check on that
         independence, not a convergence check. See
-        `tnt.priors_diagnostic_plot.plot_prior_diagnostics` for a
+        `tnt.parameter_generator.diagnostics.prior.plot_prior_diagnostics` for a
         human-reviewed visualization built from this -- divergence/ESS/
         R-hat thresholds can't distinguish a genuinely broken chain from a
         prior that's simply as wide as the science requires, so this is

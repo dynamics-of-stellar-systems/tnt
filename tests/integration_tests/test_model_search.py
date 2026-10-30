@@ -36,6 +36,7 @@ from tnt.configuration.compatibility import ConfigurationCompatibilityError
 from tnt.model_iterator import ModelIterator
 from tnt.model_search_state import ModelSearchState
 from tnt.parameter_generator import PriorSupportPoints
+from tnt.parameter_generator.types import ParameterBatch
 from tnt.potential import Potential
 from tnt.potential.nfw import _nfw_concentration_m200
 from tnt.run_config_log import (
@@ -81,9 +82,9 @@ class FakeWeightSolver:
 class EmptyParameterGenerator:
     """Propose no model so the run completes without an iteration."""
 
-    def generate_parameters(self, all_models: Any) -> list[Any]:
+    def generate_parameters(self, all_models: Any) -> ParameterBatch:
         del all_models
-        return []
+        return ParameterBatch([])
 
 
 def _fake_orbit_integration_and_weight_solving(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -331,7 +332,9 @@ def test_potential_to_galax_succeeds_against_the_resolved_example_configuration(
     _fake_orbit_integration_and_weight_solving(monkeypatch)
 
     iterator = ModelIterator.from_configuration(config)
-    (parameters,) = iterator.parameter_generator.generate_parameters(AllModels())
+    (parameters,) = iterator.parameter_generator.generate_parameters(
+        AllModels()
+    ).parameters
     potential, valid = Potential.build_with_validity(
         iterator.resolved_potential,
         parameters,
@@ -374,6 +377,7 @@ def test_prior_sampler_writes_a_diagnostic_plot(
     config = Configuration().read(example_configuration_path, workspace_root=tmp_path)
     config.data["parameter_space_settings"]["generator_type"] = "PriorSampler"
     config.data["parameter_space_settings"]["generator_settings"] = {
+        "plot_diagnostics": True,
         "seed": 0,
         "num_samples": 10,
         "num_warmup": 10,
@@ -381,12 +385,17 @@ def test_prior_sampler_writes_a_diagnostic_plot(
     }
     _fake_orbit_integration_and_weight_solving(monkeypatch)
 
-    ModelIterator.from_configuration(config)
+    iterator = ModelIterator.from_configuration(config)
 
     output = Path(config.data["io_settings"]["output_directory"])
-    diagnostics_path = output / "prior_diagnostics.png"
+    diagnostics_path = (
+        output / "parameter_generator" / "prior_diagnostics_iteration_0000.png"
+    )
+    assert not diagnostics_path.exists()
+    iterator.parameter_generator.generate_parameters(AllModels())
     assert diagnostics_path.exists()
     assert diagnostics_path.stat().st_size > 0
+    assert not (output / "prior_diagnostics.png").exists()
 
 
 def test_from_configuration_rejects_an_unread_configuration() -> None:
@@ -505,17 +514,15 @@ def test_support_points_augment_models_across_iterator_rounds(
     settings["stopping_criteria"]["minimum_delta_chi2"]["enabled"] = False
     _fake_orbit_integration_and_weight_solving(monkeypatch)
     existing_counts = []
-    generate = PriorSupportPoints.generate_with_diagnostics
+    generate = PriorSupportPoints.generate_parameters
 
     def record_generation(self, all_models, **kwargs):
-        candidates, info = generate(self, all_models, **kwargs)
-        existing_counts.append(info["existing_support_points"])
-        assert info["new_support_points"] == 3
-        return candidates, info
+        batch = generate(self, all_models, **kwargs)
+        existing_counts.append(batch.diagnostics["existing_support_points"])
+        assert batch.diagnostics["new_support_points"] == 3
+        return batch
 
-    monkeypatch.setattr(
-        PriorSupportPoints, "generate_with_diagnostics", record_generation
-    )
+    monkeypatch.setattr(PriorSupportPoints, "generate_parameters", record_generation)
     iterator = ModelIterator.from_configuration(config)
     models, config_log = iterator.run()
     assert existing_counts == [0, 3]

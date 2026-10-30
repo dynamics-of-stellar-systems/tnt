@@ -1,4 +1,4 @@
-"""Unit tests for `tnt.priors_diagnostic_plot`."""
+"""Unit tests for `tnt.parameter_generator.diagnostics.prior`."""
 
 from __future__ import annotations
 
@@ -12,12 +12,13 @@ import numpyro.distributions as dist
 from unxt import Quantity
 
 from tnt.mge import LightMGE
-from tnt.priors import Prior
-from tnt.priors_diagnostic_plot import (
-    _build_diagnostics_figure,
+from tnt.parameter_generator.diagnostics.prior import (
     _use_log_scale,
+    build_prior_diagnostics_figure,
     plot_prior_diagnostics,
 )
+from tnt.parameter_generator.samples import PriorSampleBatch
+from tnt.priors import Prior
 
 _POTENTIAL_SETTINGS = {
     "dh": {
@@ -61,6 +62,12 @@ def _mass_fraction_plugin(context) -> None:
     numpyro.factor("dh_mass_fraction", dist.Normal(0.5, 0.05).log_prob(f))
 
 
+def _batch(prior, num_samples=50, num_warmup=None):
+    return PriorSampleBatch(
+        *prior.sample_with_diagnostics(jax.random.PRNGKey(0), num_samples, num_warmup)
+    )
+
+
 def test_plot_prior_diagnostics_writes_a_figure_without_factors(tmp_path: Path) -> None:
     """A pure prior-predictive draw still gets a diagnostic figure -- ESS/
     split-R̂ there are a sanity check on independence, not a convergence
@@ -69,7 +76,7 @@ def test_plot_prior_diagnostics_writes_a_figure_without_factors(tmp_path: Path) 
     prior = Prior(_POTENTIAL_SETTINGS, {}, _MGES)
     path = tmp_path / "prior_diagnostics.png"
 
-    plot_prior_diagnostics(prior, path, jax.random.PRNGKey(0), num_samples=50)
+    plot_prior_diagnostics(_batch(prior), path, iteration=0)
 
     assert path.exists()
     assert path.stat().st_size > 0
@@ -81,9 +88,7 @@ def test_plot_prior_diagnostics_writes_a_figure_with_factors(tmp_path: Path) -> 
     )
     path = tmp_path / "prior_diagnostics.png"
 
-    plot_prior_diagnostics(
-        prior, path, jax.random.PRNGKey(0), num_samples=50, num_warmup=50
-    )
+    plot_prior_diagnostics(_batch(prior, num_warmup=50), path, iteration=0)
 
     assert path.exists()
     assert path.stat().st_size > 0
@@ -130,7 +135,7 @@ def test_plot_prior_diagnostics_handles_zero_free_parameters(tmp_path: Path) -> 
     prior = Prior(settings, {}, {})
     path = tmp_path / "prior_diagnostics.png"
 
-    plot_prior_diagnostics(prior, path, jax.random.PRNGKey(0), num_samples=50)
+    plot_prior_diagnostics(_batch(prior), path, iteration=0)
 
     assert path.exists()
     assert path.stat().st_size > 0
@@ -158,7 +163,7 @@ def test_plot_prior_diagnostics_includes_a_summary_for_one_free_parameter(
     prior = Prior(settings, {}, {})
     path = tmp_path / "prior_diagnostics.png"
 
-    plot_prior_diagnostics(prior, path, jax.random.PRNGKey(0), num_samples=50)
+    plot_prior_diagnostics(_batch(prior), path, iteration=0)
 
     assert path.exists()
     assert path.stat().st_size > 0
@@ -191,7 +196,7 @@ def test_one_parameter_summary_is_fully_visible_and_does_not_overlap() -> None:
     }
     prior = Prior(settings, {}, {})
 
-    fig = _build_diagnostics_figure(prior, jax.random.PRNGKey(0), 1000, None, 0.8)
+    fig = build_prior_diagnostics_figure(_batch(prior, 1000), iteration=3)
     fig.canvas.draw()
 
     summary = next(t for t in fig.texts if "ESS" in t.get_text())

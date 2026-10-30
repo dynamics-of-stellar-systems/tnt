@@ -237,8 +237,9 @@ requires `num_samples > 100` and `num_warmup > 100` -- a batch or warmup
 run that small isn't a meaningful MCMC/`Predictive` draw) independent of
 `max_new_mods_per_iter`, which a user is free to set much lower (e.g. to
 throttle how many new models one iteration evaluates). Preparation also
-requires `num_samples >= max_new_mods_per_iter`, so `PriorSampler` never
-silently returns fewer candidates than requested. `target_accept_prob`
+requires `num_samples >= max_new_mods_per_iter`. Shared duplicate filtering may
+return fewer candidates, and reports removals without resampling replacements.
+`target_accept_prob`
 (numpyro's own default, `0.8`) only affects `NUTS`'s step-size adaptation,
 used when the composed model has factor sites -- a plugin, or a declared
 `prior` on a default-prior-covered parameter; a pure-sample model ignores
@@ -264,34 +265,24 @@ distinguish "this prior is wide" from "this chain has a real problem," and
 no fixed threshold on them can either, so TNT doesn't try to automate that
 call.
 
-Two separate things report these diagnostics, at two different times:
+Each `PriorSampler` generation call logs the diagnostics of its actual batch.
+With `generator_settings.plot_diagnostics: true` (the packaged default), it
+also saves a corner/trace/statistics figure from that same batch under
+`<output_directory>/parameter_generator/prior_diagnostics_iteration_<NNNN>.png`.
+The cumulative model-search iteration appears in the title. No extra sampling
+is performed for the plot, and constructing the iterator alone makes no plot.
+`plot_diagnostics: false` disables writing; log summaries remain available.
 
-- A one-off **pilot** figure. Whenever a resolved configuration uses
-  `generator_type: "PriorSampler"`, `ModelIterator.from_configuration`
-  draws once -- at the same `generator_settings.num_samples`/`num_warmup`/
-  `target_accept_prob` the real run will use, but with its own,
-  independent key (`PRNGKey(seed)`, not `PriorSampler`'s own
-  `fold_in(PRNGKey(seed), n_iterations())`) -- and saves a diagnostic
-  figure (pairwise scatter colored by divergence, each parameter's
-  marginal histogram, an ESS/split-R-hat table, and per-parameter trace
-  plots) to `io_settings.output_directory/prior_diagnostics.png`. A useful
-  pre-flight sanity check on the composed model as a whole, but -- because
-  of that independent key -- never literally the same draw as any real
-  iteration's own batch, not even the first.
-- **Per-batch logging.** Every real batch `PriorSampler` actually proposes
-  from logs its own divergence count and worst ESS/split-R-hat across
-  every parameter, at `INFO` level, tagged with the iteration it was drawn
-  for.
+These diagnostics are advisory: no threshold on divergence count, ESS or
+split-R-hat blocks a run. Sampling or rendering errors still raise normally.
+For Predictive draws, ESS/split-R-hat check independence rather than MCMC
+convergence.
 
-Neither raises or blocks on what it finds; review the figure and the
-logged summaries yourself and decide whether `PriorSampler`'s output looks
-usable before relying on it.
-
-`Prior.sample_with_diagnostics(key, num_samples, num_warmup,
-target_accept_prob)` is the underlying call behind both -- the same return
-as `sample`, plus a `PriorDiagnostics` that's always populated. A pure
-`Predictive` draw is exact and independent by construction, so its
-ESS/split-R-hat there are a sanity check on that independence, not a
-convergence diagnostic; `tnt.priors_diagnostic_plot.plot_prior_diagnostics`
-builds the pilot figure from this, and `PriorSampler` logs from it
-directly, either way.
+`PriorSampler.generate_parameters(all_models)` returns a `ParameterBatch`.
+Its `parameters` are finalized candidates; `diagnostics` contains `sample_batch`,
+`sampling`, `iteration` and `proposals` filter counts. The ABC logs these
+completed diagnostics for every generator. `sample_batch` holds the original draws and their
+`PriorDiagnostics`. The pure renderer
+`tnt.parameter_generator.diagnostics.prior.plot_prior_diagnostics` accepts this
+batch and a path; it does not generate candidates or resample. No samples are
+cached between generation calls.

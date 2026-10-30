@@ -1896,6 +1896,7 @@ def test_print_requires_read_configuration() -> None:
         "    tolerance: 0\n",
         "    chunk_size: 0\n",
         "    max_iterations: 0\n",
+        "    plot_diagnostics: invalid\n",
     ],
 )
 def test_support_points_configuration(tmp_path: Path, override: str) -> None:
@@ -1919,7 +1920,7 @@ def test_support_points_configuration(tmp_path: Path, override: str) -> None:
     if override:
         key = override.split(":", 1)[0].strip()
         with pytest.raises(
-            ValueError,
+            (ValueError, TypeError),
             match=rf"parameter_space_settings\.generator_settings\.{key}",
         ):
             Configuration().read(user_path, workspace_root=tmp_path)
@@ -1942,6 +1943,7 @@ def test_support_points_controls_come_from_packaged_defaults(tmp_path: Path) -> 
     )
     config = Configuration().read(user_path, workspace_root=tmp_path)
     controls = config.data["parameter_space_settings"]["generator_settings"]
+    assert controls["plot_diagnostics"] is True
     assert controls["max_iterations"] == 500
     assert controls["tolerance"] == 1e-6
     assert controls["chunk_size"] == 1024

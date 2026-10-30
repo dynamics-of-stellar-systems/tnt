@@ -164,6 +164,9 @@ parameter_space_settings:
       maximum: 10.0
     spacing: "logarithmic"
   generator_settings:
+    # Batch diagnostics for PriorSampler and PriorSupportPoints. Other
+    # generators may ignore this setting; no plot implementation is required.
+    plot_diagnostics: true
     # Modes: "absolute" or "fraction_of_sqrt_2n_observations".
     delta_chi2_threshold:
       mode: "fraction_of_sqrt_2n_observations"

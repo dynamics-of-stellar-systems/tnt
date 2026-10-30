@@ -4,19 +4,26 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
+from astropy import units as au
+from astropy.table import QTable
 from unxt import Quantity
 
 from tnt.all_models import AllModels
 from tnt.model import Model
 from tnt.parameter_generator import (
+    AbstractParameterGenerator,
+    GridSearchParameterGenerator,
+    ParameterBatch,
     PriorSampler,
+    PriorSupportPoints,
     SinglePointParameterGenerator,
-    _format_batch_diagnostics_summary,
     build_parameter_generator,
     parameter_generator_required_settings,
     parameter_generator_type_names,
 )
+from tnt.parameter_generator.samples import _format_batch_diagnostics_summary
 from tnt.potential import Potential
 from tnt.priors import Prior, PriorDiagnostics
 
@@ -105,7 +112,7 @@ def test_single_point_generator_proposes_quantities_in_their_declared_unit() -> 
         max_new_mods_per_iter=10,
     )
 
-    (proposed,) = generator.generate_parameters(AllModels())
+    (proposed,) = generator.generate_parameters(AllModels()).parameters
 
     assert proposed["bh"]["m_tot"].ustrip("kg") == pytest.approx(5.0)
     assert proposed["bh"]["r_s"].ustrip("pc") == pytest.approx(1.0)
@@ -148,7 +155,7 @@ def test_prior_sampler_converts_samples_into_parameter_sets() -> None:
         target_accept_prob=0.8,
     )
 
-    proposed = generator.generate_parameters(AllModels())
+    proposed = generator.generate_parameters(AllModels()).parameters
 
     assert len(proposed) == 5
     for candidate in proposed:
@@ -185,8 +192,9 @@ def test_prior_sampler_logs_its_own_batch_diagnostics(
     with caplog.at_level("INFO", logger="tnt.parameter_generator"):
         generator.generate_parameters(AllModels())
 
-    assert len(caplog.records) == 1
-    message = caplog.records[0].getMessage()
+    messages = [r.getMessage() for r in caplog.records if "batch for" in r.getMessage()]
+    assert len(messages) == 1
+    message = messages[0]
     assert "iteration 0" in message
     assert "divergent draws" in message
     assert "ESS" in message
@@ -239,7 +247,9 @@ def test_prior_sampler_logs_a_constant_sites_non_finite_diagnostics(
     with caplog.at_level("INFO", logger="tnt.parameter_generator"):
         generator.generate_parameters(AllModels())
 
-    message = caplog.records[0].getMessage()
+    message = next(
+        r.getMessage() for r in caplog.records if "batch for" in r.getMessage()
+    )
     assert "dh.r_s" in message
     assert "non-finite" in message
     # dh.m's own finite ESS/split-R-hat is still reported, not swallowed.
@@ -308,14 +318,16 @@ def test_prior_sampler_caps_at_max_new_mods_per_iter() -> None:
         target_accept_prob=0.8,
     )
 
-    assert len(generator.generate_parameters(AllModels())) == 3
+    assert len(generator.generate_parameters(AllModels()).parameters) == 3
 
 
 def _completed_iteration_model(iteration: int) -> Model:
     return Model(
         potential=Potential(components={}),
         valid_potential=True,
-        raw_parameters={"dh": {"c": Quantity(8.0, "")}},
+        raw_parameters={
+            "dh": {"c": Quantity(8.0, ""), "M_200": Quantity(1e12, "Msun")}
+        },
         orblib_done=False,
         weights_done=False,
         weights=None,
@@ -349,14 +361,14 @@ def test_prior_sampler_draws_a_fresh_batch_each_iteration() -> None:
 
     first_round = [
         c["dh"]["M_200"].ustrip("Msun")
-        for c in generator.generate_parameters(AllModels())
+        for c in generator.generate_parameters(AllModels()).parameters
     ]
 
     one_iteration_done = AllModels().append(_completed_iteration_model(0))
     assert one_iteration_done.n_iterations() == 1
     second_round = [
         c["dh"]["M_200"].ustrip("Msun")
-        for c in generator.generate_parameters(one_iteration_done)
+        for c in generator.generate_parameters(one_iteration_done).parameters
     ]
 
     assert first_round != second_round
@@ -365,7 +377,7 @@ def test_prior_sampler_draws_a_fresh_batch_each_iteration() -> None:
     # n_iterations()) proposes the identical next batch, not a new one.
     resumed_second_round = [
         c["dh"]["M_200"].ustrip("Msun")
-        for c in generator.generate_parameters(one_iteration_done)
+        for c in generator.generate_parameters(one_iteration_done).parameters
     ]
     assert second_round == resumed_second_round
 
@@ -374,7 +386,7 @@ def test_prior_sampler_draws_a_fresh_batch_each_iteration() -> None:
     assert two_iterations_done.n_iterations() == 2
     third_round = [
         c["dh"]["M_200"].ustrip("Msun")
-        for c in generator.generate_parameters(two_iterations_done)
+        for c in generator.generate_parameters(two_iterations_done).parameters
     ]
     assert third_round != second_round
 
@@ -397,7 +409,7 @@ def test_build_parameter_generator_dispatches_prior_sampler() -> None:
     )
 
     assert isinstance(generator, PriorSampler)
-    assert len(generator.generate_parameters(AllModels())) == 4
+    assert len(generator.generate_parameters(AllModels()).parameters) == 4
 
 
 def test_build_parameter_generator_requires_a_prior_for_prior_sampler() -> None:
@@ -416,3 +428,172 @@ def test_build_parameter_generator_requires_a_prior_for_prior_sampler() -> None:
         build_parameter_generator(
             parameter_space_settings, _PRIOR_SAMPLER_POTENTIAL_SETTINGS
         )
+
+
+class _BatchGenerator(AbstractParameterGenerator):
+    """Exercise the shared contract with a controlled ordered proposal batch."""
+
+    _type = "Batch"
+    candidates: list
+
+    def _generate(self, all_models, *, record_history=False):
+        return ParameterBatch(self.candidates)
+
+
+_IDENTITY_SETTINGS = {
+    "halo": {
+        "parameters": {
+            "m": {"unit": "Msun", "fixed": False},
+            "r_s": {"unit": "kpc", "fixed": True, "value": 1.0},
+        }
+    }
+}
+
+
+def _point(mass, radius=1.0, radius_unit="kpc"):
+    return {"halo": {"m": Quantity(mass, "Msun"), "r_s": Quantity(radius, radius_unit)}}
+
+
+def test_duplicates_are_removed_before_cap_with_units_and_stable_order() -> None:
+    candidates = [
+        _point(1.0),
+        _point(1.0, 1000.0, "pc"),
+        _point(2.0),
+        _point(2.0),
+        _point(3.0),
+        _point(4.0),
+    ]
+    history = AllModels(
+        QTable(
+            {
+                "halo.m": [1.0] * au.Msun,
+                "halo.r_s": [1000.0] * au.pc,
+                "iteration": [0],
+            }
+        )
+    )
+    snapshot = history.table.copy()
+    generator = _BatchGenerator(
+        potential_settings=_IDENTITY_SETTINGS,
+        generator_settings={},
+        max_new_mods_per_iter=2,
+        candidates=candidates,
+    )
+    actual = generator.generate_parameters(history).parameters
+    assert actual[0] is candidates[2]
+    assert actual[1] is candidates[4]
+    for column in snapshot.colnames:
+        np.testing.assert_array_equal(history.table[column], snapshot[column])
+    assert len(generator.candidates) == 6
+
+
+def test_duplicate_identity_has_no_tolerance_and_includes_fixed_values() -> None:
+    points = [_point(1.0), _point(np.nextafter(1.0, 2.0)), _point(1.0, 2.0)]
+    generator = _BatchGenerator(
+        potential_settings=_IDENTITY_SETTINGS,
+        generator_settings={},
+        max_new_mods_per_iter=10,
+        candidates=points,
+    )
+    actual = generator.generate_parameters(AllModels()).parameters
+    assert len(actual) == 3
+    assert float(actual[0]["halo"]["m"].ustrip("Msun")) != float(
+        actual[1]["halo"]["m"].ustrip("Msun")
+    )
+
+
+def test_single_point_stops_after_existing_failed_evaluation() -> None:
+    generator = SinglePointParameterGenerator(
+        potential_settings={
+            "dh": {
+                "type": "NFWPotential",
+                "parameterization": "concentration_m200",
+                "parameters": {
+                    "c": {"fixed": True, "value": 8.0},
+                    "M_200": {"fixed": True, "value": 1e12, "unit": "Msun"},
+                },
+            }
+        },
+        generator_settings={},
+        max_new_mods_per_iter=10,
+    )
+    assert len(generator.generate_parameters(AllModels()).parameters) == 1
+    history = AllModels().append(_completed_iteration_model(0))
+    assert not history.has_successful_model()
+    assert generator.generate_parameters(history).parameters == []
+
+
+@pytest.mark.parametrize("bad_unit", ["s", None])
+def test_duplicate_filter_rejects_incompatible_or_missing_history_columns(bad_unit):
+    table = QTable({"halo.m": [1.0] * au.Msun, "iteration": [0]})
+    if bad_unit is not None:
+        table["halo.r_s"] = [1.0] * au.Unit(bad_unit)
+    generator = _BatchGenerator(
+        potential_settings=_IDENTITY_SETTINGS,
+        generator_settings={},
+        max_new_mods_per_iter=2,
+        candidates=[_point(2.0)],
+    )
+    with pytest.raises(ValueError, match="halo.r_s"):
+        generator.generate_parameters(AllModels(table))
+
+
+def test_factory_configures_generator_outputs_without_creating_them(tmp_path) -> None:
+    generator = build_parameter_generator(
+        {
+            "generator_type": "SinglePoint",
+            "generator_settings": {},
+            "stopping_criteria": {"max_new_mods_per_iter": 1},
+        },
+        {},
+        output_directory=tmp_path,
+    )
+    directory = tmp_path / "parameter_generator"
+    assert not directory.exists()
+    assert generator.diagnostic_path("prior_diagnostics") == (
+        directory / "prior_diagnostics.png"
+    )
+    assert generator.diagnostic_path("support_points_diagnostics", 3) == (
+        directory / "support_points_diagnostics_iteration_0003.png"
+    )
+
+
+def test_single_point_needs_no_diagnostic_implementation_or_output(tmp_path) -> None:
+    generator = build_parameter_generator(
+        {
+            "generator_type": "SinglePoint",
+            "generator_settings": {"plot_diagnostics": True},
+            "stopping_criteria": {"max_new_mods_per_iter": 1},
+        },
+        {},
+        output_directory=tmp_path,
+    )
+    batch = generator.generate_parameters(AllModels())
+    assert batch.parameters == [{}]
+    assert batch.diagnostics == {
+        "iteration": 0,
+        "proposals": {
+            "proposed": 1,
+            "duplicates_removed": 0,
+            "capped": 0,
+            "returned": 1,
+        },
+    }
+    assert not (tmp_path / "parameter_generator").exists()
+
+
+@pytest.mark.parametrize(
+    "generator_type",
+    [
+        SinglePointParameterGenerator,
+        GridSearchParameterGenerator,
+        PriorSampler,
+        PriorSupportPoints,
+    ],
+)
+def test_every_generator_inherits_one_public_generation_pipeline(generator_type):
+    assert (
+        generator_type.generate_parameters
+        is AbstractParameterGenerator.generate_parameters
+    )
+    assert "_generate" in generator_type.__dict__

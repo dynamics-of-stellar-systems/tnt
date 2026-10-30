@@ -24,7 +24,8 @@ parameter_space_settings:
 ```
 
 This override fragment still requires the usual potential and other run
-settings. `max_new_mods_per_iter` requests that many new points on every call.
+settings. `max_new_mods_per_iter` requests that many new points for optimization
+on every call. Shared exact-duplicate filtering can reduce the returned count.
 Existing downstream potential rescaling still applies; disable it to evaluate exactly this design.
 The packaged defaults request 10 new points per call, 1,000 samples and warmup steps,
 500 optimizer steps, tolerance `1e-6`, block size 1,024, and epsilon `1e-8`.
@@ -80,8 +81,17 @@ Repulsion includes new/new and new/existing pairs, normalized by the total
 point count. Initial/final objectives and spacing diagnostics describe the full
 combined design. Only new points are returned; old locations are never moved
 or silently deduplicated. Diagnostics include `existing_support_points` and
-`new_support_points`. General proposal duplicate filtering in the abstract
-generator remains follow-up work. Sequential batches need not reproduce a
+`new_support_points` (the number optimized). The sole public method
+`generate_parameters` returns a `ParameterBatch`, with finalized `parameters`
+and `diagnostics`. The ABC applies duplicate filtering in complete declared
+coordinates before returning. `batch.diagnostics["proposals"]` reports proposed,
+duplicate-removed, capped and returned counts. No replacements are generated. For an all-fixed or point-mass prior,
+the first call returns one unique location, and later calls return none once
+it exists. With no sampled sites, generation constructs that single parameter
+set directly; it does not manufacture repeated proposals to match the requested
+optimization count. Optimizer statistics and histories describe the optimized design
+before filtering; overlays show only returned points. Existing table rows are
+never silently deduplicated. Sequential batches need not reproduce a
 joint optimization of the same total number of points.
 
 Support transforms encode distribution bounds, but arbitrary hard plugins and
@@ -90,7 +100,7 @@ positions are not physically constrained. The complete final mapped-back design
 is checked against conditional supports, finite sample/factor log probabilities,
 and `Potential.build_with_validity` when potential context is available. Any
 invalid final point causes an error with no candidates returned. There is no
-projection, random replacement, or silent filtering of the final design.
+projection, random replacement, or silent filtering of infeasible final points.
 
 ## Objective and Optimistix solver
 
@@ -133,7 +143,8 @@ validates inputs and returns Python diagnostics: initial/final objective,
 convergence flag/status, iterations, last displacement, minimum spacing, and
 mean nearest-neighbour spacing. Status is `converged`, `iteration_limit`,
 `nonfinite`, or `solver_failure`; final physical validation is separate.
-Ordinary generation does not collect per-iteration history. `energy_objective_jax` is
+Generation collects per-step history when plotting is enabled or history is
+explicitly requested. `energy_objective_jax` is
 traceable; `energy_objective` preserves its Python-float return for analysis.
 
 Reference workspace is `O(m * chunk_size * d)`, with `O(Nd)` stored samples and
@@ -141,39 +152,48 @@ Reference workspace is `O(m * chunk_size * d)`, with `O(Nd)` stored samples and
 
 ## Diagnostic plots
 
-The dedicated `tnt.prior_support_points_diagnostic_plot` module provides
-`plot_prior_support_points_diagnostics(generator, path, key, all_models=None)`.
-It calls the existing prior figure builder without changing that plotter, then
-adds orange stars for new points, open black circles for existing fixed points,
-and panels for combined objective and maximum/RMS new-point displacement.
-The stopping tolerance and actual solver status are displayed.
+With `generator_settings.plot_diagnostics: true` (the packaged default), each
+support-point generation call saves its actual sampled batch, returned/fixed
+point overlays and optimization histories under
+`<output_directory>/parameter_generator/`. Filenames and titles identify the
+cumulative model-search iteration, for example
+`support_points_diagnostics_iteration_0000.png`. The history axes count optimizer
+steps within that round. Neither plotting nor rendering performs another sample
+or optimization. The background retains all original sampling draws (including
+initialization draws and any subsequently excluded infeasible draws), in their
+original ordering with their actual divergence flags and sampling statistics.
+
+`generate_parameters(all_models)` returns a `ParameterBatch` from the same call.
+Use `batch.parameters` for candidates and `batch.diagnostics` for diagnostic data. When plotting is enabled, or `record_history=True` is requested,
+`info` also contains the actual `sample_batch`, original-coordinate fixed points,
+parameter units and optimizer tolerance needed to render later:
 
 ```python
-from tnt.prior_support_points_diagnostic_plot import plot_prior_support_points_diagnostics
+from tnt.parameter_generator.diagnostics.support_points import (
+    plot_prior_support_points_diagnostics,
+)
 
-candidates, info = plot_prior_support_points_diagnostics(
-    generator, "support_diagnostics.png", independent_key, all_models
+# Set plot_diagnostics: false to collect data without automatically writing.
+batch = generator.generate_parameters(all_models, record_history=True)
+plot_prior_support_points_diagnostics(
+    batch.parameters, batch.diagnostics, "support_diagnostics.png"
 )
 ```
 
-This function generates the design once and returns those same candidates and
-diagnostics, so they can be used without another solve. Objective history
-includes initialization (iteration zero), while movement starts at iteration
-one. Histories are recorded from actual Optimistix steps using ordered JAX
-callbacks, not replayed or approximated. Recording is opt-in through
-`generate_with_diagnostics(..., record_history=True)` or
-`optimize_support_points(..., record_history=True)`; results are available as
-`info["optimization"].history`. Only three scalars are retained per step,
-not point trajectories. Extra objective evaluations and host synchronization
-make tracing more expensive; the ordinary proposal path has no callbacks.
-The plotted prior background is a separate independently seeded draw.
+The explicit destination parent must exist. The renderer only draws previously
+generated data. It adds orange stars for returned points, open black circles for
+existing fixed points, and objective/maximum/RMS displacement panels with solver
+status and stopping tolerance. Optimizer statistics describe the design before
+shared duplicate filtering; overlays show only returned candidates.
 
-`generator.generate_with_diagnostics(all_models)` returns `(candidates, info)`
-on every iteration. The ordinary proposal interface
-returns candidates and logs solver and sampling diagnostics. `info` includes
-optimization and sampling diagnostics, site order, transformed reference
-centers/scales, constant dimensions, effective reference size, and discarded
-sample count.
+Objective history includes initialization (optimizer step zero), while movement
+starts at step one. Ordered JAX callbacks record actual solver steps, retaining
+three scalars per step rather than point trajectories. Recording adds objective
+evaluations and synchronization. With plotting disabled and no explicit history
+request, no callbacks or plot-data retention are added. Returned plot data is
+owned by the caller, not cached across generation calls. Independent of plotting,
+`info` includes sampling/optimization diagnostics, site ordering, reference
+centers/scales, constant dimensions, effective reference size and discarded count.
 
 ## Interpreting a finite design
 

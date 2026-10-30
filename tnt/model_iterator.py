@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Any, NamedTuple, Self
 
 import equinox as eqx
-import jax
 import numpy as np
 from unxt import AbstractUnitSystem, Quantity
 
@@ -60,7 +59,6 @@ from tnt.potential import (
     raw_potential_parameters,
 )
 from tnt.priors import Prior, load_prior_plugins
-from tnt.priors_diagnostic_plot import plot_prior_diagnostics
 from tnt.run_config_log import (
     RunConfigLog,
     RunManifestReference,
@@ -184,22 +182,12 @@ class ModelIterator:
             cosmological_parameters=cosmological_parameters,
             unit_system=unit_system,
         )
-        if parameter_space_settings["generator_type"] == "PriorSampler":
-            # A pilot pre-flight check, independent of every real search
-            # batch's own key -- see `plot_prior_diagnostics`'s own
-            # docstring. Each real batch logs its own diagnostics instead,
-            # from `PriorSampler._propose_free_parameters`.
-            generator_settings = parameter_space_settings["generator_settings"]
-            output_directory.mkdir(parents=True, exist_ok=True)
-            plot_prior_diagnostics(
-                prior,
-                output_directory / "prior_diagnostics.png",
-                jax.random.PRNGKey(generator_settings["seed"]),
-                num_samples=generator_settings["num_samples"],
-                num_warmup=generator_settings["num_warmup"],
-                target_accept_prob=generator_settings["target_accept_prob"],
-            )
-
+        parameter_generator = build_parameter_generator(
+            parameter_space_settings,
+            potential_settings,
+            prior=prior,
+            output_directory=output_directory,
+        )
         return cls(
             potential_settings=potential_settings,
             resolved_potential=resolved_potential,
@@ -208,9 +196,7 @@ class ModelIterator:
             kinematic_data=kinematic_data,
             population_data=population_data,
             weight_solver=build_weight_solver(config["weight_solver_settings"]),
-            parameter_generator=build_parameter_generator(
-                parameter_space_settings, potential_settings, prior=prior
-            ),
+            parameter_generator=parameter_generator,
             orbit_library_settings=config["orbit_library_settings"],
             orbit_sampler=build_orbit_sampler(config["orbit_library_settings"]),
             orbit_dithering=build_orbit_dithering(config["orbit_library_settings"]),
@@ -328,7 +314,8 @@ class ModelIterator:
             models.n_iterations() - initial_iteration_count < n_new_iter
             and len(models) < target_model_count
         ):
-            proposed = self.parameter_generator.generate_parameters(models)
+            batch = self.parameter_generator.generate_parameters(models)
+            proposed = batch.parameters
             if not proposed:
                 _LOGGER.info("Parameter generator proposed nothing more; stopping.")
                 break

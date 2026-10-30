@@ -225,12 +225,29 @@ between runs remains incompatible under the current contract.
 
 A `ParameterSet` is one proposed point in parameter space: a mapping from
 potential-component name to a mapping of parameter name to value (e.g.
-`{"bh": {"m": 5.0, "a": 0.001}, "stars": {"ml": 5.2, ...}}`). Every
-`AbstractParameterGenerator` implements `_propose_free_parameters(all_models)`;
-the base class's concrete `generate_parameters(all_models)` calls it and caps
-the result at `stopping_criteria.max_new_mods_per_iter`, uniformly across every
-generator regardless of how many candidates its own proposal logic happens to
-produce. Which implementation runs is chosen by
+`{"bh": {"m": 5.0, "a": 0.001}, "stars": {"ml": 5.2, ...}}`).
+Each subclass implements `_generate(all_models)`, returning raw parameters and
+optional scientific data in a `ParameterBatch`. The ABC owns the only public
+entry point, `generate_parameters(all_models)`, which finalizes, logs and
+optionally plots the batch before returning it:
+
+```python
+batch = generator.generate_parameters(all_models)
+parameters = batch.parameters
+info = batch.diagnostics
+```
+
+Every returned batch has common `iteration` and `proposals` diagnostics,
+including for SinglePoint. Prior-based generators add sampling/optimization data.
+The shared finalization removes duplicate proposals, then caps the result at
+`stopping_criteria.max_new_mods_per_iter`. Identity compares every parameter,
+including fixed values, using exact equality after conversion to declared units.
+There is no approximate matching tolerance or minimum separation. Proposals
+already present in any `AllModels` row count as duplicates even if evaluation
+failed. Within a batch, the first occurrence is retained and order is preserved.
+Filtering happens before the cap, so an early duplicate does not consume a slot.
+No replacement sampling is performed; fewer candidates may be returned, and an
+empty batch stops the iterator. Which implementation runs is chosen by
 `parameter_space_settings.generator_type`. Concrete generators explicitly
 register their `_type`; an undecorated subclass is not a
 configuration-selectable generator:
@@ -238,16 +255,60 @@ configuration-selectable generator:
 - `GridSearchParameterGenerator` ("GridSearch") is the registered scaffold for
   proposing parameters on a grid from each parameter's declared `prior`; its
   proposal algorithm is not implemented yet.
-- `SinglePointParameterGenerator` ("SinglePoint") always proposes the same
-  single point, taken directly from each parameter's configured `value`. It
-  ignores `all_models` entirely and never consults `parameter_space_settings.priors`,
-  so it's meant for evaluating one nominal potential rather than searching --
-  pair it with `stopping_criteria.n_new_iter: 1` to stop after that one round.
+- `SinglePointParameterGenerator` ("SinglePoint") proposes the point taken from
+  each parameter's configured `value` if it is absent from `AllModels`. It never
+  consults `parameter_space_settings.priors`. Later calls return no candidates
+  once that point has been recorded.
 - `PriorSampler` proposes parameters by sampling from a `tnt.priors.Prior` --
-  see [Priors](priors.md). Reads only `all_models.n_iterations()`, folded
-  into its PRNG key so repeated calls draw fresh batches instead of
-  repeating one -- never the fitted chi2/scores `all_models` also holds,
-  so this is not score-conditioned proposing.
+  see [Priors](priors.md). Its sampling key folds in `all_models.n_iterations()`;
+  the shared filter also uses existing coordinates to avoid repeated evaluations.
+  Fitted chi2/scores do not affect sampling.
+- `PriorSupportPoints` optimizes new locations while holding existing locations
+  fixed; see [Support points](support_points.md). It uses the same shared
+  generation and finalization pipeline.
+
+Implementations live in the `tnt.parameter_generator` package: the base
+contract, registry/factory, one module per generator, and supporting coordinate,
+sample, output and diagnostic modules. Existing public generator imports from
+`tnt.parameter_generator` remain available.
+
+### Parameter-generator outputs
+
+`PriorSampler` and `PriorSupportPoints` own their batch diagnostics. With
+`parameter_space_settings.generator_settings.plot_diagnostics: true` (the
+packaged default), each generation call writes a plot using its actual sampled
+batch. `ModelIterator` only requests candidates; construction does not sample
+for a separate figure. `SinglePoint` creates no plots, even when it inherits
+this setting; the base class requires no diagnostic implementation.
+
+Outputs use `<output_directory>/parameter_generator/`, with cumulative
+model-search iteration labels in filenames and figure titles:
+`prior_diagnostics_iteration_0000.png` or
+`support_points_diagnostics_iteration_0000.png`. Optimizer iteration axes on
+support plots count solver steps within that generation round.
+
+`build_parameter_generator(..., output_directory=...)` accepts the run output
+root. With plotting enabled, a prior-based generator requires this output
+location and checks it before sampling. Construction alone creates no output;
+writing is triggered by generation. `ModelIterator.from_configuration` supplies
+the root. Set `plot_diagnostics: false` to generate without writing files or
+recording extra support-point history. For directly constructed generators,
+omitting the setting leaves plotting disabled.
+
+Rendering is separate from generation and does not sample or optimize. The
+renderers also accept returned diagnostic data and an explicit destination.
+Support-point history and plot data can be requested without writing a figure
+through `generate_parameters(..., record_history=True)`. The ABC logs the
+completed batch from its diagnostics; concrete generators do not separately
+finalize or log proposals. Malformed proposals (structure, units, scalar or
+finite values) raise rather than being silently dropped. The iterator retains
+its physical validity check before integration and records invalid models;
+no general physical filtering is added to the ABC.
+
+Prior caching and density backgrounds remain deferred. A future execution-level
+pilot may combine first-round design diagnostics with representative orbit
+integration and weight-solving resource measurements; resource profiling and
+allocation policy are outside this refactor.
 
 ## Model
 
