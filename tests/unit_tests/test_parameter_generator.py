@@ -597,3 +597,32 @@ def test_every_generator_inherits_one_public_generation_pipeline(generator_type)
         is AbstractParameterGenerator.generate_parameters
     )
     assert "_generate" in generator_type.__dict__
+
+
+def test_prior_sampler_plot_overlays_finalized_proposals(monkeypatch, tmp_path):
+    from tnt.parameter_generator.diagnostics import prior as plotting
+
+    captured = {}
+    monkeypatch.setattr(
+        plotting,
+        "plot_prior_diagnostics",
+        lambda batch, path, **kwargs: captured.update(kwargs),
+    )
+    prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
+    generator = PriorSampler(
+        potential_settings=_PRIOR_SAMPLER_POTENTIAL_SETTINGS,
+        generator_settings={"plot_diagnostics": True},
+        max_new_mods_per_iter=3,
+        prior=prior,
+        seed=0,
+        num_samples=120,
+        num_warmup=120,
+        target_accept_prob=0.8,
+        output_directory=tmp_path,
+    )
+    batch = generator.generate_parameters(AllModels())
+    values = captured["proposed_samples"]["dh.M_200"]
+    assert len(values) == len(batch.parameters) == 3
+    assert list(values) == [
+        float(p["dh"]["M_200"].ustrip("Msun")) for p in batch.parameters
+    ]

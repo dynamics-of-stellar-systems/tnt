@@ -52,7 +52,7 @@
   `support_points_diagnostics_iteration_<NNNN>.png`. Titles identify the
   model-search iteration. Renderers accept explicit paths and already-generated
   data, with no sampling or optimization during rendering.
-  Prior caching and density backgrounds remain deferred; `Prior` has no
+  Prior caching remains deferred; `Prior` has no
   filesystem/output responsibility and the numerical kernel is unchanged.
 - `tnt/registry.py` provides the small shared class-registration mechanic used
   by configured runtime-object families. Each family owns its registry,
@@ -1225,9 +1225,9 @@
   identity for support-point augmentation.
 - Optimistix is a direct dependency, also used by orbit initial-condition code.
 - `tnt.parameter_generator.diagnostics.support_points` reuses the prior figure
-  builder, then adds new/fixed support overlays and objective/displacement
+  builder, then adds new/fixed support overlays and objective/minimum-distance
   panels in the new module only. `record_history=True` collects objective,
-  maximum and RMS displacement from actual solver steps via ordered JAX
+  minimum pairwise distance from actual solver steps via ordered JAX
   callbacks, without a custom solver or point-trajectory storage. This incurs
   extra objective evaluation/synchronization when plots or history are requested.
 - Development history: the constrained-coordinate path and backtracking were
@@ -1238,6 +1238,56 @@
 - The development support-count sweep shows enclosed-mass width rising from 39%
   at 24 points to 96% at 1,000. This is finite-design behavior, not a variance
   preservation guarantee or evidence about future posterior accuracy.
+
+## Diagnostic plot display
+
+- `PriorDiagnostics.sample_distributions` records actual unobserved NumPyro
+  sampling-site distribution names, unwrapping Independent/Expanded wrappers.
+  It is obtained from the same trace used for factor detection, without an
+  extra sampling batch or rendering-time model execution. Observed factor sites
+  do not change this metadata; `(p,q,u)` default Uniform sites stay linear.
+- Plot axes use log display only for LogUniform/LogNormal sample sites. Unknown
+  metadata defaults to linear. The support-point optimization metric is unchanged.
+- Pairwise panels use `corner.hist2d` with explicit masses (0.68, 0.95, 0.997),
+  32 display-coordinate bins and one-bin Gaussian smoothing. These are estimated
+  probability-mass contours, not corner's default 2D sigma levels. Prior sample
+  scatter (including tails) is suppressed; contrasting purple crosses mark divergent
+  draws. Constant coordinates use a point projection rather than area density.
+- All fixed support points share open slate circles regardless of earlier
+  iteration. Only new points use small orange diamonds. Prior/fixed/new marginal
+  histograms use common bins and independently normalized fractions per bin;
+  fixed and new outlines are dashed slate and solid orange. Corner's lower-level
+  API receives explicit axes; no pyplot figures or backend changes are introduced.
+- Titles use generator class names; all diagnostic text shares a panel-size
+  font scale, including ticks, labels, legends and tables. Tables use measured
+  cell bounds with muted traffic-light colors. The table sits in the upper
+  corner-grid whitespace with a boxed legend centered underneath. A minimum two-slot
+  grid supplies that space for a single free parameter. Horizontal traces
+  sit to the right, with draw index on x and parameter values on y, preserving
+  the parameter's display scale.
+  Support optimization panels stack vertically, share an iteration axis and
+  span from the corner grid's left edge to the trace plots' right edge. Their heading
+  carries readable solver status and
+  step count; the overall title identifies the class and model-search iteration.
+  These panels show the objective on a linear axis and
+  minimum distinct-pair distance across the combined fixed/new normalized
+  unconstrained design. History retains two scalars per step; pairwise-distance tracing
+  adds distance calculations only when history is requested.
+- Final support-point diagnostics use `final_maximum_displacement` for the
+  stopping residual and `minimum_pairwise_distance` for the same distance
+  statistic used in the history. Pairwise/nearest-neighbour summaries are NaN
+  for fewer than two locations. Per-step displacement histories and the copied
+  plotting tolerance are removed; the displacement-based stopping rule remains.
+- `PriorSampler` overlays its finalized returned proposals using the same
+  diamonds and marginal outlines as new support points. Sampling diagnostics
+  still describe the complete sampling batch. Rendering never selects an
+  independent plotting subset; `max_new_mods_per_iter` controls the proposed
+  count before any reduction by duplicate filtering.
+- Local diagnostic examples may explicitly save plot-input batches under ignored
+  `benchmarks/results/` for render-only styling iterations. This is separate
+  from production prior-sample caching, which remains deferred. Dtype-aware
+  validation of configured numerical tolerances is also deferred to numerical
+  policy work, not part of this plotting change.
 
 ## Human Workflow
 

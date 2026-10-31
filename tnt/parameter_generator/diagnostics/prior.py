@@ -13,47 +13,65 @@ from matplotlib.axes import Axes
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+from matplotlib.ticker import LogFormatterMathtext, LogLocator, NullFormatter
 
+from tnt.parameter_generator.diagnostics.density import plot_density
+from tnt.parameter_generator.diagnostics.marginals import (
+    histogram_edges,
+    marginal_histogram,
+)
+from tnt.parameter_generator.diagnostics.style import (
+    DIVERGENCE_ALPHA,
+    DIVERGENCE_COLOR,
+    DIVERGENCE_LINEWIDTH,
+    DIVERGENCE_SIZE,
+    LEGEND_FONTSIZE,
+    PRIOR_COLOR,
+    place_header,
+    style_axes,
+)
+from tnt.parameter_generator.diagnostics.style import (
+    LABEL_FONTSIZE as _LABEL_FONTSIZE,
+)
+from tnt.parameter_generator.diagnostics.style import (
+    PANEL_SIZE as _PANEL_SIZE,
+)
+from tnt.parameter_generator.diagnostics.style import (
+    TITLE_FONTSIZE as _TITLE_FONTSIZE,
+)
 from tnt.parameter_generator.samples import PriorSampleBatch
 
-_PANEL_SIZE = 2.6  # inches, one corner-plot row/column
-_TRACE_WIDTH_RATIO = 2  # the trace-plot column is this many panel-widths wide
 # wspace/hspace between corner-plot panels; large enough that a diagonal
 # panel's title (drawn just above its axes) doesn't collide with the row above.
 _PANEL_GAP = 0.15
 
-# Font sizes scale with `_PANEL_SIZE` rather than being fixed constants, so
-# the whole figure rescales consistently if `_PANEL_SIZE` changes.
-_LABEL_FONTSIZE = 9.0 / 2.6 * _PANEL_SIZE
-_TITLE_FONTSIZE = 13.0 / 2.6 * _PANEL_SIZE
-_TABLE_FONTSIZE_MAX = _LABEL_FONTSIZE * 1.8
+
+def _use_log_scale(distribution: str | None) -> bool:
+    """Use logarithmic display only for actual LogUniform/LogNormal sites."""
+    return distribution in {"LogUniform", "LogNormal"}
 
 
-def _use_log_scale(values: np.ndarray) -> bool:
-    """True if every value is positive, finite, and spans orders of magnitude.
-
-    Checking only the positive subset (rather than every value) let a
-    signed parameter -- e.g. a bar orientation angle, `Uniform(-1, 1)`
-    radians -- get log-scaled whenever its positive half alone happened to
-    span two-plus orders of magnitude: `np.log10` of the (negative)
-    overall minimum is then `NaN`, so every histogram/axis bin edge built
-    from it is `NaN` too, silently dropping every draw from the rendered
-    figure rather than raising. Requiring the *whole* array positive and
-    finite first means a log axis is never chosen for data it can't
-    actually represent.
-    """
-    if len(values) < 2 or not np.all(np.isfinite(values)) or np.any(values <= 0):
-        return False
-    return bool(np.max(values) / np.min(values) >= 100)
+def _set_log_axis(ax: Axes, which: str) -> None:
+    """Keep logarithmic tick labels sparse, including on shared corner axes."""
+    if which == "x":
+        ax.set_xscale("log")
+        axis = ax.xaxis
+    else:
+        ax.set_yscale("log")
+        axis = ax.yaxis
+    axis.set_major_locator(LogLocator(base=10, numticks=4))
+    axis.set_major_formatter(LogFormatterMathtext(base=10))
+    axis.set_minor_formatter(NullFormatter())
 
 
 def _ess_color(ess: float) -> str:
     """Green/amber/red for ESS `> 100` / `30-100` / `< 30`."""
     if ess > 100:
-        return "lightgreen"
+        return "#DCE9DF"
     if ess >= 30:
-        return "moccasin"
-    return "lightcoral"
+        return "#F3E7C9"
+    return "#EED9D8"
 
 
 def _split_rhat_color(rhat: float) -> str:
@@ -61,19 +79,19 @@ def _split_rhat_color(rhat: float) -> str:
     (Vehtari et al. 2021's recommended convergence threshold).
     """
     if rhat < 1.01:
-        return "lightgreen"
+        return "#DCE9DF"
     if rhat <= 1.05:
-        return "moccasin"
-    return "lightcoral"
+        return "#F3E7C9"
+    return "#EED9D8"
 
 
 def _divergence_color(fraction: float) -> str:
     """Green/amber/red for a divergence fraction of `< 1%` / `1-10%` / `>= 10%`."""
     if fraction < 0.01:
-        return "lightgreen"
+        return "#DCE9DF"
     if fraction < 0.1:
-        return "moccasin"
-    return "lightcoral"
+        return "#F3E7C9"
+    return "#EED9D8"
 
 
 def plot_prior_diagnostics(
@@ -81,35 +99,31 @@ def plot_prior_diagnostics(
     path: str | Path,
     *,
     iteration: int = 0,
+    proposed_samples: dict[str, np.ndarray] | None = None,
 ) -> None:
     """Render a generation batch without sampling or modifying its data."""
-    fig = build_prior_diagnostics_figure(batch, iteration=iteration)
+    fig = build_prior_diagnostics_figure(
+        batch, iteration=iteration, proposed_samples=proposed_samples
+    )
     fig.savefig(path, dpi=150)
 
 
 def build_prior_diagnostics_figure(
-    batch: PriorSampleBatch, *, iteration: int = 0
+    batch: PriorSampleBatch,
+    *,
+    iteration: int = 0,
+    proposed_samples: dict[str, np.ndarray] | None = None,
 ) -> Figure:
-    """Build corner, trace and sampling-statistic panels from actual draws.
+    """Build a corner grid, horizontal traces and a sampling-summary block.
 
-    Parameter coordinates and the divergence flags retain their draw ordering.
-    Plot display scales do not change the generator distance metric. No prior
-    sampling, parameter generation or model evaluation occurs during rendering.
+    Rendering uses actual generation data and never samples or evaluates models.
+    Log display follows sampling distributions without changing design distances.
     """
     samples, diagnostics = batch
-    num_samples = len(diagnostics.diverging)
-    title = f"Prior sampling diagnostics — model-search iteration {iteration}"
-
     names = sorted(samples)
     n = len(names)
+    title = f"PriorSampler — iteration {iteration}"
     if n == 0:
-        # Every potential parameter is fixed (or covered by a default
-        # prior's own `known`-resolved siblings) -- a supported,
-        # degenerate `PriorSampler` setup with nothing left to sample, not
-        # an error. `fig.add_gridspec(0, ...)` rejects zero rows, so there
-        # is no corner plot to build; return a minimal figure saying so
-        # instead, keeping this function's "produces a figure" contract
-        # even here.
         fig = Figure(figsize=(10.0, 2.0), dpi=150)
         FigureCanvasAgg(fig)
         ax = fig.add_subplot()
@@ -121,275 +135,239 @@ def build_prior_diagnostics_figure(
             ha="center",
             va="center",
             fontsize=_LABEL_FONTSIZE,
-            wrap=True,
         )
         fig.suptitle(title, fontsize=_TITLE_FONTSIZE)
         return fig
 
     values = {name: np.asarray(samples[name]) for name in names}
-    log_scale = {name: _use_log_scale(values[name]) for name in names}
+    distributions = diagnostics.sample_distributions or {}
+    log_scale = {name: _use_log_scale(distributions.get(name)) for name in names}
     diverging = np.asarray(diagnostics.diverging)
+    num_samples = len(diverging)
     n_divergent = int(np.sum(diverging))
-    # A narrow spacer column (index `n`) separates the corner grid from the
-    # trace column (index `n + 1`) by more than the usual `_PANEL_GAP`.
-    spacer_ratio = 0.3
-    grid_width = _PANEL_SIZE * (n + spacer_ratio + _TRACE_WIDTH_RATIO)
-    # A single parameter has no off-diagonal table block (see `table_rows`
-    # below) to hold its ESS/split-R-hat/divergence summary, so that text
-    # has to live in the header instead -- reserve genuinely extra height
-    # for it there (not just the sliver the title alone needs), or it
-    # overflows the canvas and collides with the title. The narrower
-    # one-panel canvas also leaves the centered title too little clearance
-    # from the fixed-position legend at its default size, so reserve extra
-    # width too -- as blank left margin, not by stretching the one panel
-    # wider than `_PANEL_SIZE`. (Re-review R3 follow-up: reproduced both
-    # the summary clipping and this title/legend collision in the saved
-    # figure before this.)
-    grid_height = _PANEL_SIZE * n
-    summary_height = _PANEL_SIZE * 0.6 if n == 1 else 0.0
-    legend_clearance = _PANEL_SIZE * 1.3 if n == 1 else 0.0
-    fig_height = grid_height + summary_height
-    fig_width = grid_width + legend_clearance
-    fig = Figure(
-        figsize=(fig_width, fig_height),
-        # Match `savefig`'s dpi: the table's column widths are measured via
-        # a draw at the figure's dpi, and font hinting rounds glyph widths
-        # differently at different dpis.
-        dpi=150,
-    )
+    # A minimum two-slot grid also leaves a summary area for one parameter.
+    grid_n = max(2, n)
+    row_offset = grid_n - n
+    corner_size = _PANEL_SIZE * grid_n + 0.3 * (grid_n - 1)
+    left, bottom, trace_width, trace_gap = 0.95, 0.8, 2 * _PANEL_SIZE, 0.9
+    width = left + corner_size + trace_gap + trace_width + 0.35
+    corner_bottom = bottom
+    height = corner_bottom + corner_size + 0.85
+    fig = Figure(figsize=(width, height), dpi=150)
     FigureCanvasAgg(fig)
-    # `top`/`bottom`/`left`/`right` are fractions of `grid_height`/
-    # `grid_width` -- rescale to the same fractions of the (possibly
-    # taller/wider) full figure, so the grid itself keeps the same
-    # absolute size and position relative to the figure's *right* edge,
-    # with only a reserved header above it and a blank margin to its left
-    # (where the legend already sits) growing.
-    top = 0.84 * grid_height / fig_height
-    bottom = 0.10 * grid_height / fig_height
-    left = (legend_clearance + 0.07 * grid_width) / fig_width
-    right = (legend_clearance + 0.98 * grid_width) / fig_width
     gs = fig.add_gridspec(
-        n,
-        n + 2,
-        width_ratios=[1.0] * n + [spacer_ratio, _TRACE_WIDTH_RATIO],
-        left=left,
-        right=right,
-        bottom=bottom,
-        top=top,
+        grid_n,
+        grid_n,
+        left=left / width,
+        right=(left + corner_size) / width,
+        bottom=corner_bottom / height,
+        top=(corner_bottom + corner_size) / height,
         wspace=_PANEL_GAP,
         hspace=_PANEL_GAP,
     )
-    trace_col = n + 1
-
-    # The largest axis-aligned block strictly above the diagonal (`i < j`
-    # throughout) is rows `[0, a)` x cols `[a, n)`, `a = n // 2` -- the
-    # ESS/split-R-hat table goes there. `n == 1` has no such block, so the
-    # table is skipped rather than contrived for a one-parameter prior.
-    table_rows = n // 2
-
-    def in_table_block(i: int, j: int) -> bool:
-        return table_rows > 0 and i < table_rows and j >= table_rows
-
-    # Shared axes (same x-range per column, same y-range per scatter row),
-    # so only the edge panel needs its tick *labels* (every panel keeps its
-    # own tick marks, just not the numbers).
     col_anchor: dict[int, Axes] = {}
     row_anchor: dict[int, Axes] = {}
-
     for i in range(n):
-        for j in range(n):
-            if in_table_block(i, j):
-                continue
+        for j in range(i + 1):
             row_name, col_name = names[i], names[j]
-            is_diagonal = i == j
+            diagonal = i == j
             ax = fig.add_subplot(
-                gs[i, j],
+                gs[i + row_offset, j],
                 sharex=col_anchor.get(j),
-                sharey=None if is_diagonal else row_anchor.get(i),
+                sharey=None if diagonal else row_anchor.get(i),
             )
+            ax.set_gid(f"prior-corner-{i}-{j}")
             col_anchor.setdefault(j, ax)
-            if not is_diagonal:
+            if not diagonal:
                 row_anchor.setdefault(i, ax)
-            if i < j:
-                ax.axis("off")
-                continue
-            if is_diagonal:
-                x = values[row_name]
-                bins = (
-                    np.logspace(np.log10(x.min()), np.log10(x.max()), 28)
-                    if log_scale[row_name]
-                    else 28
+            if diagonal:
+                bins = histogram_edges(values[row_name], log_scale[row_name])
+                marginal_histogram(
+                    ax,
+                    values[row_name],
+                    bins,
+                    color=PRIOR_COLOR,
+                    gid="prior-marginal",
+                    filled=True,
                 )
-                ax.hist(x, bins=bins)
                 ax.set_title(row_name, fontsize=_LABEL_FONTSIZE, loc="left")
-                ax.set_yticks([])  # a marginal's count scale isn't worth an axis
-                if log_scale[row_name]:
-                    ax.set_xscale("log")
+                ax.set_yticks([])
             else:
-                x, y = values[col_name], values[row_name]
-                ax.scatter(x[~diverging], y[~diverging], s=10, alpha=0.5)
-                ax.scatter(x[diverging], y[diverging], s=16, color="red")
-                if log_scale[col_name]:
-                    ax.set_xscale("log")
+                plot_density(
+                    ax,
+                    values[col_name],
+                    values[row_name],
+                    diverging,
+                    (
+                        "log" if log_scale[col_name] else "linear",
+                        "log" if log_scale[row_name] else "linear",
+                    ),
+                )
                 if log_scale[row_name]:
-                    ax.set_yscale("log")
+                    _set_log_axis(ax, "y")
+            if log_scale[col_name]:
+                _set_log_axis(ax, "x")
             if i == n - 1:
-                ax.set_xlabel(col_name, fontsize=_LABEL_FONTSIZE)
+                ax.set_xlabel(col_name)
             else:
-                ax.tick_params(labelbottom=False)
+                ax.tick_params(which="both", labelbottom=False)
             if j == 0 and i != 0:
-                ax.set_ylabel(row_name, fontsize=_LABEL_FONTSIZE)
-            elif not is_diagonal:
-                ax.tick_params(labelleft=False)
+                ax.set_ylabel(row_name)
+            elif not diagonal:
+                ax.tick_params(which="both", labelleft=False)
 
-    # Per-parameter trace plot, one per row, in the extra right-hand
-    # column -- shared x-axis, tick labels only on the bottom-most panel.
-    trace_axes: list[Axes] = []
-    for i, row_name in enumerate(names):
+    traces = fig.add_gridspec(
+        grid_n,
+        1,
+        left=(left + corner_size + trace_gap) / width,
+        right=(left + corner_size + trace_gap + trace_width) / width,
+        bottom=corner_bottom / height,
+        top=(corner_bottom + corner_size) / height,
+        hspace=_PANEL_GAP,
+    )
+    trace_axes = []
+    draws = np.arange(num_samples)
+    for j, name in enumerate(names):
         ax = fig.add_subplot(
-            gs[i, trace_col], sharex=trace_axes[0] if trace_axes else None
+            traces[j + row_offset, 0],
+            sharex=trace_axes[0] if trace_axes else None,
+            sharey=row_anchor.get(j),
         )
+        ax.set_gid(f"prior-trace-{j}")
         trace_axes.append(ax)
-        x = values[row_name]
-        ax.plot(x, linewidth=0.6)
-        ax.scatter(np.flatnonzero(diverging), x[diverging], s=10, color="red", zorder=3)
-        ax.set_ylabel(row_name, fontsize=_LABEL_FONTSIZE)
-        if log_scale[row_name]:
-            ax.set_yscale("log")
-        if i == n - 1:
-            ax.set_xlabel("draw", fontsize=_LABEL_FONTSIZE)
+        ax.plot(draws, values[name], linewidth=0.55, color=PRIOR_COLOR)
+        ax.scatter(
+            draws[diverging],
+            values[name][diverging],
+            s=DIVERGENCE_SIZE,
+            marker="x",
+            color=DIVERGENCE_COLOR,
+            alpha=DIVERGENCE_ALPHA,
+            linewidths=DIVERGENCE_LINEWIDTH,
+            zorder=3,
+            gid="trace-divergences",
+        )
+        ax.set_ylabel(name)
+        if log_scale[name]:
+            _set_log_axis(ax, "y")
+        ax.set_ylim(col_anchor[j].get_xlim())
+        if j == n - 1:
+            ax.set_xlabel("draw")
         else:
             ax.tick_params(labelbottom=False)
-        if i == 0:
-            ax.set_title("trace", fontsize=_LABEL_FONTSIZE, loc="left")
+        if j == 0:
+            ax.set_title("Prior Sample Traces", loc="left", fontsize=_LABEL_FONTSIZE)
 
-    if table_rows > 0:
-        ax_table = fig.add_subplot(gs[0:table_rows, table_rows:n])
-        ax_table.axis("off")
-        # Small bottom-left margin; top and right stay flush with the
-        # corner grid's own top-right corner.
-        table_margin = 0.015
-        pos = ax_table.get_position()
-        ax_table.set_position(
-            [
-                pos.x0 + table_margin,
-                pos.y0 + table_margin,
-                pos.width - table_margin,
-                pos.height - table_margin,
-            ]
-        )
-        col_labels = ["parameter", "ESS", "split-R̂"]
-        cell_text = []
-        cell_colors = []
-        for name in names:
-            ess = diagnostics.ess[name]
-            rhat = diagnostics.split_rhat[name]
-            cell_text.append([name, f"{ess:.0f}", f"{rhat:.3f}"])
-            cell_colors.append(["white", _ess_color(ess), _split_rhat_color(rhat)])
-        divergence_fraction = n_divergent / num_samples
-        divergence_label = (
-            f"divergent: {n_divergent}/{num_samples} ({divergence_fraction:.1%})"
-        )
+    table_rows = grid_n // 2
+    ax_table = fig.add_subplot(gs[:table_rows, table_rows:grid_n])
+    ax_table.set_gid("prior-sampling-table")
+    ax_table.axis("off")
+    col_labels = ["parameter", "ESS", "split-R̂"]
+    cell_text = []
+    cell_colors = []
+    for name in names:
+        ess = diagnostics.ess[name]
+        rhat = diagnostics.split_rhat[name]
+        cell_text.append([name, f"{ess:.0f}", f"{rhat:.3f}"])
+        cell_colors.append(["white", _ess_color(ess), _split_rhat_color(rhat)])
+    divergence_fraction = n_divergent / num_samples
+    divergence_label = (
+        f"divergent: {n_divergent}/{num_samples} ({divergence_fraction:.1%})"
+    )
 
-        # Two separate tables, not one merged one: `ax.table` has no
-        # native colspan, and `Table._do_cell_alignment` sizes a whole
-        # *column* to its widest cell across every row, so widening one
-        # row's cell to "merge" columns drags every other row along with
-        # it. A standalone single-column table for the divergence summary
-        # avoids that -- with one column, it already spans the full width.
-        param_rows = len(names) + 1  # header + one row per parameter
-        n_table_rows = param_rows + 1  # + 1 for the divergence summary
-        param_height = param_rows / n_table_rows
-        divergence_height = 1.0 - param_height
+    # Two separate tables, not one merged one: `ax.table` has no
+    # native colspan, and `Table._do_cell_alignment` sizes a whole
+    # *column* to its widest cell across every row, so widening one
+    # row's cell to "merge" columns drags every other row along with
+    # it. A standalone single-column table for the divergence summary
+    # avoids that -- with one column, it already spans the full width.
+    param_rows = len(names) + 1  # header + one row per parameter
+    n_table_rows = param_rows + 1  # + 1 for the divergence summary
+    param_height = param_rows / n_table_rows
+    divergence_height = 1.0 - param_height
 
-        param_table = ax_table.table(
-            cellText=cell_text,
-            colLabels=col_labels,
-            cellColours=cell_colors,
-            cellLoc="center",
-            bbox=(0.0, divergence_height, 1.0, param_height),
-        )
-        divergence_table = ax_table.table(
-            cellText=[[divergence_label]],
-            cellColours=[[_divergence_color(divergence_fraction)]],
-            cellLoc="center",
-            bbox=(0.0, 0.0, 1.0, divergence_height),
-        )
+    param_table = ax_table.table(
+        cellText=cell_text,
+        colLabels=col_labels,
+        cellColours=cell_colors,
+        cellLoc="center",
+        bbox=(0.0, divergence_height, 1.0, param_height),
+    )
+    divergence_table = ax_table.table(
+        cellText=[[divergence_label]],
+        cellColours=[[_divergence_color(divergence_fraction)]],
+        cellLoc="center",
+        bbox=(0.0, 0.0, 1.0, divergence_height),
+    )
 
-        # Scale the font to whichever of the block's two dimensions is
-        # tighter. Reads `ax_table`'s own just-shrunk position rather than
-        # a nominal `_PANEL_SIZE`-based formula -- `_PANEL_GAP`/
-        # `table_margin` both make the real block smaller than that.
-        fig_width_inches, fig_height_inches = fig.get_size_inches()
-        table_position = ax_table.get_position()
-        block_height_inches = table_position.height * fig_height_inches
-        block_width_inches = table_position.width * fig_width_inches
-        height_bound = block_height_inches / n_table_rows * 72 * 0.45
-        longest_text = max(
-            len(s) for row in (col_labels, *cell_text, [divergence_label]) for s in row
-        )
-        width_bound = block_width_inches * 72 / (longest_text * 0.62)
-        fontsize = np.clip(min(height_bound, width_bound), 7, _TABLE_FONTSIZE_MAX)
-        for table in (param_table, divergence_table):
-            table.auto_set_font_size(False)
-            table.set_fontsize(fontsize)
+    for table in (param_table, divergence_table):
+        table.auto_set_font_size(False)
+        table.set_fontsize(_LABEL_FONTSIZE)
 
-        # Size each column to its own widest cell, once -- NOT via
-        # `auto_set_column_width`, which only *registers* the column for
-        # continuous resizing on every future draw, overwriting this at
-        # the next redraw (e.g. `savefig` itself).
-        fig.canvas.draw()
-        renderer = fig.canvas.get_renderer()
-        required_widths = {
-            col: max(
-                cell.get_required_width(renderer)
-                for (_r, c), cell in param_table.get_celld().items()
-                if c == col
-            )
-            for col in range(3)
-        }
-        # Required widths rarely sum to 1.0 -- normalize rather than leave
-        # the rest as dead space.
-        total_required = sum(required_widths.values())
-        for col, required_width in required_widths.items():
-            cells = [
-                cell for (_r, c), cell in param_table.get_celld().items() if c == col
-            ]
-            for cell in cells:
-                cell.set_width(required_width / total_required)
-
-    elif n == 1:
-        # No axis-aligned off-diagonal block exists for a single parameter
-        # (`table_rows == n // 2 == 0`) to put the usual table in -- a
-        # plain text summary centered over the trace column, in the extra
-        # header space `summary_height` reserved above the grid (between
-        # it and the title) specifically for this case, instead of no
-        # numerical summary at all.
-        name = names[0]
-        divergence_fraction = n_divergent / num_samples
-        trace_position = trace_axes[0].get_position()
-        header_top = 1.0 - 0.3 * (1.0 - top)  # leaves room below the title
-        fig.text(
-            trace_position.x0 + trace_position.width / 2,
-            (top + header_top) / 2,
-            f"{name}\nESS: {diagnostics.ess[name]:.0f}\n"
-            f"split-R̂: {diagnostics.split_rhat[name]:.3f}\n"
-            f"divergent: {n_divergent}/{num_samples} ({divergence_fraction:.1%})",
-            ha="center",
-            va="center",
-            fontsize=_LABEL_FONTSIZE,
+    # Size each column to its own widest cell, once -- NOT via
+    # `auto_set_column_width`, which only *registers* the column for
+    # continuous resizing on every future draw, overwriting this at
+    # the next redraw (e.g. `savefig` itself).
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    required_widths = {
+        col: max(
+            cell.get_required_width(renderer)
+            for (_r, c), cell in param_table.get_celld().items()
+            if c == col
         )
+        for col in range(3)
+    }
+    # Required widths rarely sum to 1.0 -- normalize rather than leave
+    # the rest as dead space.
+    total_required = sum(required_widths.values())
+    width = max(total_required, divergence_table[0, 0].get_required_width(renderer))
+    text_height = max(
+        cell.get_text().get_window_extent(renderer).height
+        for table in (param_table, divergence_table)
+        for cell in table.get_celld().values()
+    )
+    row_height = 1.8 * text_height / ax_table.get_window_extent(renderer).height
+    # Keep the summary block's top-right anchor; fit around measured text.
+    param_table._bbox = (
+        1 - width,
+        1 - param_rows * row_height,
+        width,
+        param_rows * row_height,
+    )
+    divergence_table._bbox = (
+        1 - width,
+        1 - n_table_rows * row_height,
+        width,
+        row_height,
+    )
+    for col, required_width in required_widths.items():
+        cells = [cell for (_r, c), cell in param_table.get_celld().items() if c == col]
+        for cell in cells:
+            cell.set_width(required_width / total_required)
 
     legend_handles = [
-        Line2D([], [], marker="o", linestyle="", color="C0", label="non-divergent"),
-        Line2D([], [], marker="o", linestyle="", color="red", label="divergent"),
+        Patch(
+            facecolor=PRIOR_COLOR,
+            edgecolor=PRIOR_COLOR,
+            alpha=0.6,
+            label="prior: 68 / 95 / 99.7%",
+        ),
+        Line2D(
+            [],
+            [],
+            marker="x",
+            linestyle="",
+            color=DIVERGENCE_COLOR,
+            label="divergent draws",
+        ),
     ]
     fig.legend(
         handles=legend_handles,
-        loc="upper left",
+        loc="upper right",
         bbox_to_anchor=(0.01, 0.99),
-        fontsize=_LABEL_FONTSIZE,
-        frameon=False,
+        fontsize=LEGEND_FONTSIZE,
+        frameon=True,
     )
 
     fig.suptitle(
@@ -397,4 +375,19 @@ def build_prior_diagnostics_figure(
         fontsize=_TITLE_FONTSIZE,
     )
 
+    if proposed_samples is not None:
+        from tnt.parameter_generator.diagnostics.overlays import add_proposal_overlay
+
+        add_proposal_overlay(
+            fig,
+            tuple(names),
+            proposed_samples,
+            None,
+            values,
+            new_label="prior samples",
+            new_gid="prior-proposal",
+        )
+
+    style_axes(fig)
+    place_header(fig)
     return fig

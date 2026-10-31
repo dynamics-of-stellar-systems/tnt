@@ -38,6 +38,7 @@ def test_importing_model_iterator_preserves_a_preselected_matplotlib_backend() -
     script = (
         "import matplotlib\n"
         "matplotlib.use('svg')\n"
+        "from matplotlib import pyplot as plt\n"
         "import tnt.model_iterator\n"
         "import numpy as np\n"
         "from tnt.priors import PriorDiagnostics\n"
@@ -47,6 +48,7 @@ def test_importing_model_iterator_preserves_a_preselected_matplotlib_backend() -
         "batch = PriorSampleBatch({'a': np.arange(8.)}, "
         "PriorDiagnostics(np.zeros(8, dtype=bool), {'a': 8.}, {'a': 1.}))\n"
         "build_prior_diagnostics_figure(batch).canvas.draw()\n"
+        "assert plt.get_fignums() == []\n"
         "assert matplotlib.get_backend().lower() == 'svg', matplotlib.get_backend()\n"
     )
     result = subprocess.run(

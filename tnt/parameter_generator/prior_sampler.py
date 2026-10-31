@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import jax
+import numpy as np
 
 from tnt.all_models import AllModels
 from tnt.parameter_generator.base import AbstractParameterGenerator
@@ -75,8 +76,21 @@ class PriorSampler(AbstractParameterGenerator):
     def _plot_diagnostics(self, batch: ParameterBatch, path: Path) -> None:
         from tnt.parameter_generator.diagnostics.prior import plot_prior_diagnostics
 
+        proposed = {}
+        for site in batch.diagnostics["sample_batch"].samples:
+            component, parameter = site.split(".")
+            unit = self.potential_settings[component]["parameters"][parameter].get(
+                "unit", ""
+            )
+            proposed[site] = np.array(
+                [
+                    float(point[component][parameter].ustrip(unit))
+                    for point in batch.parameters
+                ]
+            )
         plot_prior_diagnostics(
             batch.diagnostics["sample_batch"],
             path,
             iteration=batch.diagnostics["iteration"],
+            proposed_samples=proposed,
         )

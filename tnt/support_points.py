@@ -17,11 +17,10 @@ from jax import Array
 
 @dataclass(frozen=True)
 class SupportPointHistory:
-    """Objective includes initialization; displacement arrays contain steps only."""
+    """Objective and minimum pairwise distance, including initialization."""
 
     objective: tuple[float, ...]
-    maximum_displacement: tuple[float, ...]
-    rms_displacement: tuple[float, ...]
+    minimum_pairwise_distance: tuple[float, ...]
 
 
 @dataclass(frozen=True)
@@ -33,10 +32,19 @@ class SupportPointDiagnostics:
     converged: bool
     status: str
     iterations: int
-    full_step: float
-    minimum_spacing: float
+    final_maximum_displacement: float
+    minimum_pairwise_distance: float
     mean_nearest_spacing: float
     history: SupportPointHistory | None = None
+
+
+def _minimum_pairwise_distance(points: Array) -> Array:
+    """Minimum over distinct pairs; undefined for fewer than two points."""
+    n = len(points)
+    if n < 2:
+        return jnp.full((), jnp.nan, dtype=points.dtype)
+    distances = jnp.linalg.norm(points[:, None] - points[None], axis=-1)
+    return jnp.min(jnp.where(jnp.eye(n, dtype=bool), jnp.inf, distances))
 
 
 def _blocks(reference: Array, chunk_size: int) -> tuple[Array, Array]:
@@ -126,7 +134,7 @@ def optimize_support_points_jax(
     tolerance: float = 1e-6,
     chunk_size: int = 1024,
     distance_epsilon: float = 1e-8,
-    trace_callback: Callable[[Array, Array, Array], None] | None = None,
+    trace_callback: Callable[[Array, Array], None] | None = None,
 ) -> optx.Solution:
     """Solve the sp.ccp fixed point with Optimistix's built-in iteration.
 
@@ -138,8 +146,8 @@ def optimize_support_points_jax(
         tolerance: Absolute maximum per-point displacement tolerance.
         chunk_size: Positive static reference block size.
         distance_epsilon: Positive inverse-distance safeguard, not separation.
-        trace_callback: Optional ordered host callback recording objective,
-            maximum displacement and RMS displacement after each actual step.
+        trace_callback: Optional ordered host callback recording objective and
+            minimum pairwise distance after each step.
 
     Returns:
         Native Optimistix solution: value contains the final design, aux the
@@ -164,13 +172,11 @@ def optimize_support_points_jax(
             points, fixed, blocks, mask, len(reference), distance_epsilon
         )
         if trace_callback is not None:
-            displacement = jnp.linalg.norm(proposal - points, axis=1)
             combined = jnp.concatenate((proposal, fixed), axis=0)
             jax.debug.callback(
                 trace_callback,
                 _objective(combined, blocks, mask, len(reference)),
-                displacement.max(),
-                jnp.sqrt(jnp.mean(displacement**2)),
+                _minimum_pairwise_distance(combined),
                 ordered=True,
             )
         return proposal, _maximum_point_displacement(proposal - points).astype(
@@ -252,10 +258,10 @@ def optimize_support_points(
     )
     if fixed.ndim != 2 or fixed.shape[1] != z.shape[1] or not np.isfinite(fixed).all():
         raise ValueError("fixed_points must be a finite (k, d) array matching initial")
-    events: list[tuple[float, float, float]] = []
+    events: list[tuple[float, float]] = []
 
-    def collect(objective: Array, maximum: Array, rms: Array) -> None:
-        events.append((float(objective), float(maximum), float(rms)))
+    def collect(objective: Array, spacing: Array) -> None:
+        events.append((float(objective), float(spacing)))
 
     result = optimize_support_points_jax(
         jnp.asarray(x),
@@ -291,8 +297,10 @@ def optimize_support_points(
     history = (
         SupportPointHistory(
             (initial_objective, *(event[0] for event in events)),
-            tuple(event[1] for event in events),
-            tuple(event[2] for event in events),
+            (
+                float(_minimum_pairwise_distance(jnp.asarray(initial_combined))),
+                *(event[1] for event in events),
+            ),
         )
         if record_history
         else None
@@ -303,9 +311,9 @@ def optimize_support_points(
         converged=status == "converged",
         status=status,
         iterations=int(result.stats["num_steps"]),
-        full_step=float(result.aux),
-        minimum_spacing=float(nearest.min()),
-        mean_nearest_spacing=float(nearest.mean()),
+        final_maximum_displacement=float(result.aux),
+        minimum_pairwise_distance=float(nearest.min()) if len(combined) > 1 else np.nan,
+        mean_nearest_spacing=float(nearest.mean()) if len(combined) > 1 else np.nan,
         history=history,
     )
     return points, diagnostics

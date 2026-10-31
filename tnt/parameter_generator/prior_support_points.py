@@ -283,7 +283,6 @@ class PriorSupportPoints(AbstractParameterGenerator):
                     for component, settings in self.potential_settings.items()
                     for name, spec in settings.get("parameters", {}).items()
                 },
-                tolerance=self.generator_settings.get("tolerance", 1e-6),
             )
         return ParameterBatch(candidates, diagnostics)
 

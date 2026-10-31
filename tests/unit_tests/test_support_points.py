@@ -175,7 +175,7 @@ def test_uniform_quantiles_and_independent_discrepancy():
     assert diag.objective < diag.initial_objective
     held_out = rng.uniform(size=(5000, 1))
     assert energy_objective(points, held_out) < energy_objective(initial, held_out)
-    assert diag.minimum_spacing > 0
+    assert diag.minimum_pairwise_distance > 0
 
 
 def test_iteration_limit_is_not_convergence():
@@ -445,7 +445,11 @@ def test_default_conditional_prior_and_geometry(free_ml):
         cosmological_parameters={},
         unit_system=unitsystem("galactic"),
     )
-    draws = prior.sample(jax.random.PRNGKey(3), 10)
+    draws, sampling = prior.sample_with_diagnostics(jax.random.PRNGKey(3), 10)
+    assert all(
+        sampling.sample_distributions[f"stars.{name}"] == "Uniform"
+        for name in ("p", "q", "u")
+    )
     assert any(
         prior.is_feasible({name: values[i] for name, values in draws.items()})
         for i in range(10)
@@ -514,7 +518,7 @@ def test_constant_sample_sites():
     assert len(points) == 1
     assert diag["constant_dimensions"] == ("dh.m",)
     assert diag["optimization"].objective == 0
-    assert diag["optimization"].minimum_spacing == 0
+    assert diag["optimization"].minimum_pairwise_distance == 0
 
 
 def test_generator_metric_is_invariant_to_declared_units():
@@ -691,3 +695,27 @@ def test_conditional_transforms_round_trip_with_soft_factor():
         reconstructed = prior.constrain(prior.unconstrain(physical))
         np.testing.assert_allclose(reconstructed["dh.m"], physical["dh.m"], rtol=1e-6)
         assert prior.is_feasible(reconstructed)
+
+
+@pytest.mark.parametrize("with_fixed", [False, True])
+def test_single_new_point_pairwise_distance_requires_another_location(with_fixed):
+    reference = np.linspace(-1.0, 1.0, 21)[:, None]
+    fixed = np.array([[2.0]]) if with_fixed else None
+    points, info = optimize_support_points(
+        reference,
+        np.array([[0.25]]),
+        fixed_points=fixed,
+        max_iterations=3,
+        record_history=True,
+    )
+    if with_fixed:
+        expected = abs(float(points[0, 0]) - 2.0)
+        assert info.minimum_pairwise_distance == pytest.approx(expected)
+        assert info.mean_nearest_spacing == pytest.approx(expected)
+        assert info.history.minimum_pairwise_distance[-1] == pytest.approx(expected)
+    else:
+        assert np.isnan(info.minimum_pairwise_distance)
+        assert np.isnan(info.mean_nearest_spacing)
+        assert np.isnan(info.history.minimum_pairwise_distance).all()
+    assert np.isfinite(info.final_maximum_displacement)
+    assert info.final_maximum_displacement >= 0
