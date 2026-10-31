@@ -44,6 +44,7 @@ def _config(input_directory: Path) -> dict[str, object]:
         },
         "numerics_settings": {
             "jax_enable_x64": True,
+            "gaussian_potential_quad_order": 800,
             "model_comparison_relative_tolerance": 1.0e-10,
             "parameter_grid_relative_tolerance": 1.0e-6,
             "constraint_error_floors": {
@@ -353,6 +354,11 @@ def test_critical_projection_preserves_declarations_but_excludes_parameter_units
             "mge_settings",
             lambda value: value.update(intrinsic_mass_quad_order=12),
             "critical_configuration.mge_settings.intrinsic_mass_quad_order",
+        ),
+        (
+            "numerics_settings",
+            lambda value: value.update(gaussian_potential_quad_order=400),
+            "critical_configuration.numerics_settings.gaussian_potential_quad_order",
         ),
         (
             "MGEs",
