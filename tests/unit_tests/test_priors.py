@@ -88,6 +88,26 @@ def test_has_factors_is_false_for_a_pure_sample_model() -> None:
     assert prior.has_factors() is False
 
 
+def test_plot_metadata_uses_actual_sample_site_not_added_loguniform_factor():
+    from copy import deepcopy
+
+    settings = deepcopy(_POTENTIAL_PQU)
+    settings["stars"]["parameters"]["p"]["prior"] = {
+        "distribution": "LogUniform",
+        "args": [0.001, 1.0],
+    }
+    prior = Prior(settings, {}, {"stars_mge": _TRIAXIAL_MGE})
+    _, diagnostics = prior.sample_with_diagnostics(
+        jax.random.PRNGKey(7), num_samples=8, num_warmup=8
+    )
+    assert diagnostics.sample_distributions == {
+        "stars.p": "Uniform",
+        "stars.q": "Uniform",
+        "stars.u": "Uniform",
+        "dh.m": "LogUniform",
+    }
+
+
 def test_has_factors_is_true_when_a_plugin_adds_one() -> None:
     prior = Prior(
         _POTENTIAL_SETTINGS, {"dh_mass_fraction": _mass_fraction_plugin}, _MGES

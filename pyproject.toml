@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "astropy>=8.0.1",
+    "corner>=2.2.3",
     "equinox>=0.13.8",
     "galax",
     "jax>=0.4.30",

@@ -479,6 +479,8 @@ class PriorDiagnostics(NamedTuple):
     """Effective sample size per `"component.parameter"` site name."""
     split_rhat: dict[str, float]
     """Split R-hat per `"component.parameter"` site name."""
+    sample_distributions: dict[str, str] | None = None
+    """Actual unobserved sampling-site distribution names, excluding factors."""
 
 
 class Prior:
@@ -607,13 +609,15 @@ class Prior:
         observed site distinguishes a pure-prior model (safe for
         `Predictive`) from one needing real inference (`MCMC`).
         """
-        traced = numpyro.handlers.trace(
-            numpyro.handlers.seed(self._model, 0)
-        ).get_trace()
+        traced = self._model_trace()
         return any(
             site["type"] == "sample" and site.get("is_observed", False)
             for site in traced.values()
         )
+
+    def _model_trace(self) -> dict[str, Any]:
+        """Read composition metadata using the existing factor-detection trace."""
+        return numpyro.handlers.trace(numpyro.handlers.seed(self._model, 0)).get_trace()
 
     def sample(
         self,
@@ -675,7 +679,26 @@ class Prior:
                 "sample_with_diagnostics requires num_samples >= 4 to compute a "
                 f"split R-hat diagnostic; got num_samples={num_samples}."
             )
-        if not self.has_factors():
+        traced = self._model_trace()
+        has_factors = any(
+            site["type"] == "sample" and site.get("is_observed", False)
+            for site in traced.values()
+        )
+        sample_distributions = {}
+        for name, site in traced.items():
+            if site["type"] != "sample" or site.get("is_observed", False):
+                continue
+            distribution = site["fn"]
+            while isinstance(
+                distribution,
+                (
+                    numpyro.distributions.ExpandedDistribution,
+                    numpyro.distributions.Independent,
+                ),
+            ):
+                distribution = distribution.base_dist
+            sample_distributions[name] = type(distribution).__name__
+        if not has_factors:
             predictive = numpyro.infer.Predictive(self._model, num_samples=num_samples)
             samples = predictive(key)
             # Treat the i.i.d. draws as a single pseudo-chain (shape
@@ -683,6 +706,7 @@ class Prior:
             # the MCMC branch uses below apply unchanged.
             pseudo_chain = {name: value[None, ...] for name, value in samples.items()}
             diagnostics = PriorDiagnostics(
+                sample_distributions=sample_distributions,
                 diverging=jnp.zeros(num_samples, dtype=bool),
                 ess={
                     name: float(
@@ -715,6 +739,7 @@ class Prior:
         mcmc.run(key, extra_fields=("diverging",))
         samples_by_chain = mcmc.get_samples(group_by_chain=True)
         diagnostics = PriorDiagnostics(
+            sample_distributions=sample_distributions,
             diverging=mcmc.get_extra_fields()["diverging"],
             ess={
                 name: float(

@@ -286,3 +286,44 @@ completed diagnostics for every generator. `sample_batch` holds the original dra
 `tnt.parameter_generator.diagnostics.prior.plot_prior_diagnostics` accepts this
 batch and a path; it does not generate candidates or resample. No samples are
 cached between generation calls.
+
+### Diagnostic display conventions
+
+Log axes are selected from actual unobserved NumPyro sampling-site metadata:
+`LogUniform` and `LogNormal` sites use log axes; all others use linear axes.
+The observed sample range does not choose the scale. Conditional default
+`(p,q,u)` Uniform sites remain linear even when a declared log distribution
+adds a separate prior factor. Batches without distribution metadata default
+to linear display.
+
+Pairwise panels use `corner.hist2d` smoothed histogram contours enclosing
+approximately **68%, 95% and 99.7%** of the sample mass. Prior sample scatter
+is suppressed, including points outside the outer contour. These are explicit probability fractions,
+not corner's default two-dimensional sigma contours. Estimation uses 32 bins
+per displayed coordinate and Gaussian smoothing of one bin; finite-sample and
+binning effects mean enclosed fractions are approximate. Highest-density
+regions depend on the displayed coordinates (linear or log), while their
+labels refer to enclosed probability mass. Constant coordinates have no
+two-dimensional area density and use a faint point projection instead.
+
+Divergent samples use purple crosses with stronger contrast. Their statistics and flags
+are unchanged. Marginals show normalized fractions per bin, using equal
+spacing in displayed coordinates; this is not a density per physical unit.
+Rendering uses only the actual generation batch and performs no sampling.
+
+`PriorSampler` diagnostics additionally overlay the actual returned proposals as
+orange diamonds and normalized marginal outlines, using the same style as new
+support points. The displayed count is the count after duplicate filtering and
+the `max_new_mods_per_iter` cap, not the full `num_samples` sampling batch.
+Plotting performs no additional sampling. For a direct comparison, request the
+same `max_new_mods_per_iter` from both generators; compare their returned counts
+as filtering can reduce them.
+
+Axis labels, ticks, legends and table text use a shared font scale tied to the
+physical panel size, with larger figure and section titles. Adding parameters
+adds panels without changing the relative text size inside each panel. Table
+cells fit their text. The table occupies the upper whitespace of the corner
+grid, with a boxed legend centered beneath it. A minimum two-slot grid provides that
+space for a single free parameter as well. Horizontal traces sit to the right,
+with draw index on the horizontal axis and parameter values on the vertical
+axis, using the parameter's linear or logarithmic display scale.

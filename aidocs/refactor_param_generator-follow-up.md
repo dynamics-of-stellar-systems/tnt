@@ -2,7 +2,7 @@
 
 Tracked in [GitHub issue #88](https://github.com/dynamics-of-stellar-systems/tnt/issues/88).
 
-Current refactor scope, agreed after the support-point PR:
+Completed in PR #90 (the scope agreed after the support-point PR):
 
 1. Implement duplicate filtering in AbstractParameterGenerator: remove repeated
    proposals within a batch and locations already present in AllModels before
@@ -35,8 +35,14 @@ Still deferred from this refactor:
   Consider `cache_prior_samples` defaulting to true, and account for
   future pilot requirements. No in-memory or persistent prior cache is
   introduced here.
-- Density backgrounds and broader changes to plot appearance remain deferred
-  at Prash's request.
+- Plot appearance was deferred from the original refactor and is now implemented
+  on the diagnostic-plot branch: probability-mass contours, distribution-based
+  log axes, purple divergence markers, fixed/new support marginal histograms,
+  table and boxed legend in the corner-grid whitespace, horizontal traces on
+  the right, and stacked optimization panels with readable solver status.
+- Dtype-aware validation of configured tolerances belongs to separate numerical
+  policy work. This plotting change does not introduce precision-dependent
+  tolerance defaults, validation thresholds or a float32/float64 comparison.
 
 Preserve sequential support-point augmentation: optimize
 `max_new_mods_per_iter` new points with existing `AllModels` locations fixed,

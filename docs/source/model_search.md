@@ -305,7 +305,7 @@ finite values) raise rather than being silently dropped. The iterator retains
 its physical validity check before integration and records invalid models;
 no general physical filtering is added to the ABC.
 
-Prior caching and density backgrounds remain deferred. A future execution-level
+Prior caching remains deferred. A future execution-level
 pilot may combine first-round design diagnostics with representative orbit
 integration and weight-solving resource measurements; resource profiling and
 allocation policy are outside this refactor.

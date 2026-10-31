@@ -44,7 +44,7 @@ mean and population standard deviation. Distances are Euclidean in these
 standardized unconstrained coordinates. This is not whitening or a general
 prior-CDF transport. The support transform is distinct from the prior's density
 shape. Changing coordinates changes the distance metric and therefore the
-finite design; automatic logarithmic plot axes do not change this metric.
+finite design; distribution-selected plot axes do not change this metric.
 No Jacobian weighting is needed for the transformed empirical reference cloud.
 
 Fixed parameters are restored directly. Constant sampled coordinates, including
@@ -136,13 +136,15 @@ solver's changing state. With no existing points, it reproduces ordinary
 support-point generation.
 
 `optimize_support_points_jax` returns a native
-`optimistix.Solution`: `value` is the final design, `aux` the last full
-maximum displacement, and `result`/`stats` report the solver outcome and steps.
+`optimistix.Solution`: `value` is the final design, `aux` the final maximum
+displacement, and `result`/`stats` report the solver outcome and steps.
 It supports JAX `jit` and `vmap`. The eager `optimize_support_points` wrapper
 validates inputs and returns Python diagnostics: initial/final objective,
-convergence flag/status, iterations, last displacement, minimum spacing, and
-mean nearest-neighbour spacing. Status is `converged`, `iteration_limit`,
-`nonfinite`, or `solver_failure`; final physical validation is separate.
+convergence flag/status, iterations, `final_maximum_displacement`,
+`minimum_pairwise_distance`, and mean nearest-neighbour spacing. Both spacing
+summaries are NaN when fewer than two points exist. Status is `converged`,
+`iteration_limit`, `nonfinite`, or `solver_failure`; final physical validation
+is separate.
 Generation collects per-step history when plotting is enabled or history is
 explicitly requested. `energy_objective_jax` is
 traceable; `energy_objective` preserves its Python-float return for analysis.
@@ -166,7 +168,7 @@ original ordering with their actual divergence flags and sampling statistics.
 `generate_parameters(all_models)` returns a `ParameterBatch` from the same call.
 Use `batch.parameters` for candidates and `batch.diagnostics` for diagnostic data. When plotting is enabled, or `record_history=True` is requested,
 `info` also contains the actual `sample_batch`, original-coordinate fixed points,
-parameter units and optimizer tolerance needed to render later:
+and parameter units needed to render later:
 
 ```python
 from tnt.parameter_generator.diagnostics.support_points import (
@@ -181,14 +183,39 @@ plot_prior_support_points_diagnostics(
 ```
 
 The explicit destination parent must exist. The renderer only draws previously
-generated data. It adds orange stars for returned points, open black circles for
-existing fixed points, and objective/maximum/RMS displacement panels with solver
-status and stopping tolerance. Optimizer statistics describe the design before
+generated data. It adds small orange diamonds for returned points, identical open
+slate circles for existing fixed points, and objective and minimum pairwise-distance panels with solver status. Optimizer statistics describe the design before
 shared duplicate filtering; overlays show only returned candidates.
 
-Objective history includes initialization (optimizer step zero), while movement
-starts at step one. Ordered JAX callbacks record actual solver steps, retaining
-three scalars per step rather than point trajectories. Recording adds objective
+All earlier model-search iterations are pooled into one fixed-point group;
+only the current new batch has a different style. Marginals overlay separate
+fixed (dashed slate) and new (solid orange) histogram outlines on the prior
+histogram. All three use common bins and are independently normalized to unit
+total mass, so sample counts do not determine their relative heights. Paired
+panels retain the prior 68/95/99.7% contours and muted divergence markers. See
+[Prior diagnostic display conventions](priors.md#diagnostic-display-conventions)
+for axis selection and contour estimation. These visual changes do not alter
+the scaled unconstrained optimization metric.
+
+The optimization panels are stacked below the corner grid, extend from the
+corner grid's left edge to the trace plots' right edge, and share an
+optimizer-iteration axis. Their heading reports the readable
+solver status and step count; the figure title identifies the generator and
+model-search iteration.
+
+The lower optimization panel shows the minimum Euclidean distance over all
+distinct pairs in the combined fixed-plus-new design, in normalized
+unconstrained coordinates. It includes initialization and every solver step;
+for fewer than two points it is undefined (NaN). Fixed-fixed pairs are included,
+so an existing close pair can set a ceiling on this statistic.
+The upper panel shows the combined energy objective on a linear y-axis.
+A flattening objective alone does not certify the displacement stopping criterion.
+
+Objective and minimum pairwise-distance histories include initialization
+(optimizer step zero). Ordered JAX callbacks record actual solver steps,
+retaining two scalars per step rather than point trajectories. The maximum
+per-point displacement still determines convergence; only its final value is
+retained as `final_maximum_displacement`. Recording adds objective
 evaluations and synchronization. With plotting disabled and no explicit history
 request, no callbacks or plot-data retention are added. Returned plot data is
 owned by the caller, not cached across generation calls. Independent of plotting,
