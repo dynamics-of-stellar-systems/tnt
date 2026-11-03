@@ -45,10 +45,13 @@ types.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import inspect
+import pickle
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from types import ModuleType
 from typing import Any, NamedTuple
 
 import equinox as eqx
@@ -520,6 +523,38 @@ class Prior:
                 cosmological_parameters,
                 unit_system,
             )
+        # Fingerprint the loaded model's inputs, not Python function identity.
+        # Plugin source is captured now: editing a file does not reload a callable.
+        plugin_sources = []
+        try:
+            for name, plugin in prior_plugins.items():
+                source_file = inspect.getsourcefile(plugin)
+                source = (
+                    Path(source_file).read_bytes()
+                    if source_file and Path(source_file).is_file()
+                    else inspect.getsource(plugin).encode()
+                )
+                closure = tuple(
+                    ("module", cell.cell_contents.__name__)
+                    if isinstance(cell.cell_contents, ModuleType)
+                    else cell.cell_contents
+                    for cell in (plugin.__closure__ or ())
+                )
+                plugin_sources.append(
+                    (
+                        name,
+                        plugin.__qualname__,
+                        source,
+                        plugin.__defaults__,
+                        plugin.__kwdefaults__,
+                        closure,
+                    )
+                )
+        except (OSError, TypeError, AttributeError):
+            # Sampling without reuse still supports opaque Python callables.
+            plugin_sources = None
+        self._cache_context = (mges, cosmological_parameters, unit_system)
+        self._cache_plugins = plugin_sources
         self._build_potential = build_potential
         self._potential_settings = potential_settings
         self._model = _build_model(
@@ -529,6 +564,28 @@ class Prior:
             build_potential,
             unit_system if build_potential is not None else None,
         )
+
+    def cache_identity(self) -> str:
+        """Identify prior declarations, loaded plugin source and runtime context.
+
+        Plugins must be pure functions of PriorContext. Hidden external inputs
+        and imported helper changes require opting out of caching or changing
+        the plugin source. No serialized Python objects are loaded from disk.
+        """
+        if self._cache_plugins is None:
+            raise ValueError(
+                "Cannot identify prior plugin source; set cache_prior_samples: false."
+            )
+        try:
+            payload = pickle.dumps(
+                (self._potential_settings, self._cache_context, self._cache_plugins),
+                protocol=5,
+            )
+        except (pickle.PickleError, TypeError, AttributeError) as error:
+            raise ValueError(
+                "Cannot identify prior context; set cache_prior_samples: false."
+            ) from error
+        return hashlib.sha256(payload).hexdigest()
 
     def unconstrain(self, values: Mapping[str, Any]) -> dict[str, Array]:
         """Map one complete prior draw to NumPyro's unconstrained coordinates.

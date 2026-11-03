@@ -52,8 +52,18 @@
   `support_points_diagnostics_iteration_<NNNN>.png`. Titles identify the
   model-search iteration. Renderers accept explicit paths and already-generated
   data, with no sampling or optimization during rendering.
-  Prior caching remains deferred; `Prior` has no
-  filesystem/output responsibility and the numerical kernel is unchanged.
+  Prior pools now live in `parameter_generator/prior_samples.npz`; cache ownership
+  remains in the generator package and the numerical kernel is unchanged.
+  The factory injects PriorSampleCache into the two prior-based generators;
+  direct constructors default to separate cache objects. Prior owns no pool
+  state and the ABC has no prior-cache plumbing.
+  PriorSampler persists reservations before execution; interruptions can skip
+  draws. Pools advance with fold_in(seed, round), not run ID or iteration.
+  Store round/cursor/cumulative reservations; log run/iteration/index ranges.
+  Support points reuse raw reference/initialization draws without consumption.
+  Identity supplements resume compatibility with prior/plugin/context and
+  sampling/software provenance. Hidden plugin dependencies require opt-out.
+  Cache sizing guideline: num_samples >= 100 * max_new_mods_per_iter.
 - `tnt/registry.py` provides the small shared class-registration mechanic used
   by configured runtime-object families. Each family owns its registry,
   public lookup helpers, and domain-specific decorator; the shared helper
@@ -1201,8 +1211,8 @@
   AllModels locations are held fixed, with exact uniqueness checked after unit
   conversion. The combined energy objective
   includes new/existing repulsion and uses the total point count. Only new
-  points move. Each call samples the prior again; there is no retained or
-  persisted reference cache. With identical settings/seed the cloud and its
+  points move. Calls reuse raw prior draws by default; feasibility, transforms
+  and scaling are recomputed. With identical settings/seed the cloud and its
   scaling reproduce deterministically. Only unconstrained coordinates are
   supported. Mapping back is followed by full prior/geometry validation;
   invalid designs raise without returning candidates. No model fit is used.
@@ -1285,7 +1295,7 @@
   count before any reduction by duplicate filtering.
 - Local diagnostic examples may explicitly save plot-input batches under ignored
   `benchmarks/results/` for render-only styling iterations. This is separate
-  from production prior-sample caching, which remains deferred. Dtype-aware
+  from the production generator-owned prior-sample pool. Dtype-aware
   validation of configured numerical tolerances is also deferred to numerical
   policy work, not part of this plotting change.
 

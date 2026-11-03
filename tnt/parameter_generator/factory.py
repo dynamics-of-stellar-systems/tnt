@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from tnt.parameter_generator.base import AbstractParameterGenerator
+from tnt.parameter_generator.prior_cache import PriorSampleCache
 from tnt.parameter_generator.prior_sampler import PriorSampler
 from tnt.parameter_generator.prior_support_points import PriorSupportPoints
 from tnt.parameter_generator.registry import (
@@ -70,6 +71,7 @@ def build_parameter_generator(
             max_new_mods_per_iter=max_new_mods_per_iter,
             output_directory=generator_output,
             prior=prior,
+            sample_cache=PriorSampleCache(),
             seed=generator_settings["seed"],
             num_samples=generator_settings["num_samples"],
             num_warmup=generator_settings["num_warmup"],

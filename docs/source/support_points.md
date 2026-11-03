@@ -54,17 +54,19 @@ nonfinite coordinates raise rather than being clipped. Heavy-tailed reference
 scales may be unstable; energy distance requires a finite first moment in the
 chosen coordinates.
 
-The sampler draws `num_samples + max_new_mods_per_iter` values on every call. Infeasible or
+The reference pool contains `num_samples + max_new_mods_per_iter` direct draws. Infeasible or
 nonfinite draws are filtered, then the last `m` feasible draws initialize the
 design and the rest form its reference cloud. This avoids exact reference
 coincidences at initialization. With MCMC the draws may remain correlated.
 Sampling diagnostics describe the original batch; the effective reference size
 and discarded count are reported. Fewer than `m+1` feasible draws raises.
 
-No reference samples or scaling are cached in memory or persisted. With
-unchanged seed and settings, each call regenerates the same cloud and scaling,
-but still executes sampling and any required MCMC warmup again. Prior-cache
-design and storage remain deferred.
+With caching enabled (the default), successive calls reuse the same raw draws
+and initialization while recomputing feasibility, transforms and scaling.
+Existing model locations remain fixed during each new optimization. The reference
+pool is not consumed. See [prior caching](priors.md#prior-sample-cache) for
+identity, storage and resume behavior. With caching disabled, every call repeats
+sampling and any MCMC warmup with the same seed.
 
 ## Successive iterations
 

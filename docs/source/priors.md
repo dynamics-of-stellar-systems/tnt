@@ -228,7 +228,7 @@ parameter_space_settings:
       plugin: "priors/mass_fraction.py:mass_fraction"
 ```
 
-`num_samples` is how large a batch `Prior.sample` actually draws each call
+`num_samples` is how large a pool `Prior.sample` draws per sampling round
 -- independent of `stopping_criteria.max_new_mods_per_iter` (the generic,
 cross-generator cap on how many candidates `generate_parameters` *returns*).
 They used to be conflated; keeping them separate is what lets `num_samples`
@@ -284,8 +284,70 @@ Its `parameters` are finalized candidates; `diagnostics` contains `sample_batch`
 completed diagnostics for every generator. `sample_batch` holds the original draws and their
 `PriorDiagnostics`. The pure renderer
 `tnt.parameter_generator.diagnostics.prior.plot_prior_diagnostics` accepts this
-batch and a path; it does not generate candidates or resample. No samples are
-cached between generation calls.
+batch and a path; it does not generate candidates or resample. Sampling
+diagnostics describe the complete pool, while overlays show this reservation's
+finalized proposals.
+
+### Prior sample cache
+
+`generator_settings.cache_prior_samples` defaults to `true`. Both prior-based
+parameter generators share the pool implementation. One current artifact,
+`<output_directory>/parameter_generator/prior_samples.npz`, contains direct
+prior draws in constrained coordinates, declared-unit metadata, original
+sampling diagnostics, provenance, and consumption state. It is atomically
+replaced, not archived per run. No scaling or transformed samples are cached.
+Directly constructed generators without an output directory retain their pool
+only in memory on their `PriorSampleCache`; process restart requires the
+persistent artifact. The factory supplies a separate cache object to each
+prior-based generator; direct construction also creates a separate cache by
+default. Sharing a `Prior` does not share in-memory consumption state. `Prior`
+only defines/samples the distribution and supplies its identity; the generator
+ABC has no prior-cache plumbing.
+Calling `Prior.sample` directly does not use this generator-owned cache.
+
+For `PriorSampler`, choose `num_samples` at least **100 times
+`max_new_mods_per_iter`** as a sizing guideline (not a validation constraint).
+Each call reserves up to `max_new_mods_per_iter` consecutive draws. Exact
+filtering can shorten that batch without refilling it. The final reservation
+in a pool may also be shorter. Once consumed, the next call samples a new pool.
+Its JAX key folds the persisted sampling-round index into the configured
+`generator_settings.seed`; successive rounds use different reproducible streams.
+This seed is independent of `orbit_library_settings.random_seed`; TNT has no
+single global seed. With unchanged inputs, continuing from the same cache
+state reproduces the uninterrupted proposal sequence.
+
+Consumption is persisted **before model execution**. Interrupted reservations
+stay consumed even if their models were never recorded. Restoring an older
+model checkpoint does not rewind the pool. The cache stores the round, cursor,
+and cumulative reserved-draw count. The logger records run ID (when supplied by
+`ModelIterator`), iteration, round, and reserved index range. Existing proposal
+counts, execution logs, and `AllModels` status flags supply complementary history.
+Automated detection of abnormal consumption with little execution is deferred.
+
+The prior identity covers parameter declarations, loaded plugin source (including
+function defaults and closures), actual MGE data, cosmological parameters, and
+internal units. Sampling seed/settings, pool size, declared units, precision,
+backend, numerical dependency versions, and TNT source also participate in cache
+invalidation. These checks supplement `ensure_resume_compatible`; generator
+seed and prior search declarations are not all part of that existing check.
+Changing the identity replaces the cache and explicitly starts a new sequence
+at round zero. Switching between sampler consumption and support-point references
+also replaces it. Removing a cache intentionally starts a new sequence; corrupt
+or incomplete cache data raises instead of silently rewinding consumption.
+
+Plugins must be deterministic functions of their captured `PriorContext` and
+identified source. Changes to imported helper code or hidden external inputs
+are not automatically detected: change the plugin source or set
+`cache_prior_samples: false` for those cases. Rebuild `Prior` after changing
+plugin code; editing a file does not reload an already loaded callable. Opaque
+callables whose source cannot be identified require opting out.
+
+With caching disabled, `PriorSampler` retains its previous behavior: a fresh
+`num_samples` batch keyed by cumulative model-search iteration, followed by
+filtering and capping. Support points resample their seed-defined reference on
+each call. Opt-out does not advance or overwrite a saved cache. One coordinator
+must own each output directory; concurrent generator calls are unsupported.
+Parallel evaluation of already reserved models does not access this cache.
 
 ### Diagnostic display conventions
 

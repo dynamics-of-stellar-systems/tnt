@@ -314,7 +314,9 @@ class ModelIterator:
             models.n_iterations() - initial_iteration_count < n_new_iter
             and len(models) < target_model_count
         ):
-            batch = self.parameter_generator.generate_parameters(models)
+            batch = self.parameter_generator.generate_parameters(
+                models, run_id=run_manifest.run_id
+            )
             proposed = batch.parameters
             if not proposed:
                 _LOGGER.info("Parameter generator proposed nothing more; stopping.")

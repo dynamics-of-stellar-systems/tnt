@@ -90,7 +90,11 @@ class AbstractParameterGenerator(eqx.Module):
     output_directory: Path | None = eqx.field(default=None, static=True, kw_only=True)
 
     def generate_parameters(
-        self, all_models: AllModels, *, record_history: bool = False
+        self,
+        all_models: AllModels,
+        *,
+        record_history: bool = False,
+        run_id: int | None = None,
     ) -> ParameterBatch:
         """Generate once, finalize, log and optionally plot the finished batch.
 
@@ -108,6 +112,18 @@ class AbstractParameterGenerator(eqx.Module):
         raw = self._generate(
             all_models, record_history=record_history or path is not None
         )
+        reservation = raw.diagnostics.get("reservation")
+        if reservation is not None:
+            _LOGGER.info(
+                "Prior reservation: run %s, iteration %d, round %d, pool [%d:%d), "
+                "%d draws reserved cumulatively.",
+                run_id,
+                iteration,
+                reservation["round"],
+                reservation["start"],
+                reservation["stop"],
+                reservation["reserved"],
+            )
         parameters, selection = self._finalize_proposals(raw.parameters, all_models)
         info = dict(raw.diagnostics)
         info.update(iteration=iteration, proposals=selection)

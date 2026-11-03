@@ -337,11 +337,8 @@ def _completed_iteration_model(iteration: int) -> Model:
 
 
 def test_prior_sampler_draws_a_fresh_batch_each_iteration() -> None:
-    # PR 61 audit F1: PriorSampler used to reconstruct jax.random.PRNGKey(seed)
-    # on every call, ignoring all_models entirely, so every iteration (and
-    # every resume) repeated the exact first batch. Folding
-    # all_models.n_iterations() into the key fixes this without making
-    # PriorSampler score-conditioned -- it still never reads chi2.
+    # Consecutive reservations must progress even when the model history stays
+    # unchanged, as after a crash between reservation and model execution.
     prior = Prior(_PRIOR_SAMPLER_POTENTIAL_SETTINGS, {}, {})
     generator = PriorSampler(
         potential_settings=_PRIOR_SAMPLER_POTENTIAL_SETTINGS,
@@ -373,13 +370,12 @@ def test_prior_sampler_draws_a_fresh_batch_each_iteration() -> None:
 
     assert first_round != second_round
 
-    # Reproducible: resuming from the same recorded history (same
-    # n_iterations()) proposes the identical next batch, not a new one.
+    # Reservations are consumed before execution, even with no new history.
     resumed_second_round = [
         c["dh"]["M_200"].ustrip("Msun")
         for c in generator.generate_parameters(one_iteration_done).parameters
     ]
-    assert second_round == resumed_second_round
+    assert second_round != resumed_second_round
 
     # And matches an uninterrupted run that reached the same point directly.
     two_iterations_done = one_iteration_done.append(_completed_iteration_model(1))

@@ -833,6 +833,11 @@ def _validate_parameter_space_settings(settings: ConfigDict) -> None:
         _boolean(
             generator["plot_diagnostics"], f"{path}.generator_settings.plot_diagnostics"
         )
+    if "cache_prior_samples" in generator:
+        _boolean(
+            generator["cache_prior_samples"],
+            f"{path}.generator_settings.cache_prior_samples",
+        )
     required_generator_keys = required_settings_by_type[generator_type]
     # Not `_reject_unknown_keys`: recursive default-merging can't remove a
     # mapping key, so a user who overrides `generator_type` away from the
