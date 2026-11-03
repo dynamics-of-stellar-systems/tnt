@@ -100,9 +100,15 @@ def _read(path: Path) -> tuple[dict[str, Any], PriorSampleBatch]:
                 state["split_rhat"],
                 state["sample_distributions"],
             )
+        # Validate identity metadata here so malformed archives receive the
+        # same recovery error as missing arrays, before reuse or invalidation.
+        fingerprint = state["fingerprint"]
+        provenance = state["provenance"]
         size = state["size"]
         if (
-            state["version"] != _VERSION
+            not isinstance(fingerprint, str)
+            or not isinstance(provenance, dict)
+            or state["version"] != _VERSION
             or not isinstance(size, int)
             or size < 1
             or not 0 <= state["cursor"] <= size

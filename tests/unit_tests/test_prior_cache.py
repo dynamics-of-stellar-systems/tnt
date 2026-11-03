@@ -1,5 +1,6 @@
 """Cache lifecycle and resume tests with inexpensive deterministic sampling."""
 
+import json
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -311,3 +312,21 @@ def test_two_generators_sharing_prior_have_independent_memory_pools():
     assert next_a.diagnostics["reservation"]["start"] == 3
     assert len(g.prior.calls) == 2
     assert not hasattr(g.prior, "_sample_pools")
+
+
+@pytest.mark.parametrize("key", ["fingerprint", "provenance"])
+def test_missing_metadata_raises_recovery_error_without_resampling(tmp_path, key):
+    reserve(generator(tmp_path))
+    path = tmp_path / "prior_samples.npz"
+    with np.load(path, allow_pickle=False) as archive:
+        arrays = {name: archive[name] for name in archive.files}
+    metadata = json.loads(str(arrays["metadata"]))
+    del metadata[key]
+    arrays["metadata"] = np.asarray(json.dumps(metadata))
+    np.savez(path, **arrays)
+    original = path.read_bytes()
+    resumed = generator(tmp_path)
+    with pytest.raises(ValueError, match="Cannot resume prior cache"):
+        reserve(resumed)
+    assert not resumed.prior.calls
+    assert path.read_bytes() == original
