@@ -45,7 +45,6 @@ def _config(input_directory: Path) -> dict[str, object]:
         "numerics_settings": {
             "jax_enable_x64": True,
             "model_comparison_relative_tolerance": 1.0e-10,
-            "parameter_grid_relative_tolerance": 1.0e-6,
             "constraint_error_floors": {
                 "total_mass": 1.0e-8,
                 "intrinsic_mass": 1.0e-16,
@@ -371,8 +370,8 @@ def test_critical_projection_preserves_declarations_but_excludes_parameter_units
         ),
         (
             "numerics_settings",
-            lambda value: value.update(parameter_grid_relative_tolerance=2.0e-6),
-            "critical_configuration.numerics_settings.parameter_grid_relative_tolerance",
+            lambda value: value.update(model_comparison_relative_tolerance=2.0e-10),
+            "critical_configuration.numerics_settings.model_comparison_relative_tolerance",
         ),
         (
             "orbit_library_settings",
@@ -437,12 +436,12 @@ def test_resume_rejects_incompatible_baseline_run(tmp_path: Path) -> None:
     _write_inputs(input_directory)
     historical_config = _config(input_directory)
     current_config = deepcopy(historical_config)
-    current_config["numerics_settings"]["parameter_grid_relative_tolerance"] = 2.0e-6
+    current_config["numerics_settings"]["model_comparison_relative_tolerance"] = 2.0e-10
     baseline_run = _run(tmp_path, 0, historical_config)
 
     with pytest.raises(
         ConfigurationCompatibilityError,
-        match="numerics_settings.parameter_grid_relative_tolerance",
+        match="numerics_settings.model_comparison_relative_tolerance",
     ):
         ensure_resume_compatible(
             _critical_configuration(current_config),
@@ -568,3 +567,22 @@ def test_resume_allows_a_legacy_generator_settings_archive_against_current_prior
         AllModels(),
         "kinchi2",
     )
+
+
+def test_resume_ignores_removed_grid_tolerance_in_archived_configuration(tmp_path):
+    input_directory = tmp_path / "input"
+    _write_inputs(input_directory)
+    current_config = _config(input_directory)
+    historical_config = deepcopy(current_config)
+    historical_config["numerics_settings"]["parameter_grid_relative_tolerance"] = 1e-6
+    baseline_run = _run(tmp_path, 0, historical_config)
+    original_archive = baseline_run.absolute_resolved_config_path.read_bytes()
+
+    ensure_resume_compatible(
+        _critical_configuration(current_config),
+        baseline_run,
+        AllModels(),
+        "kinchi2",
+    )
+
+    assert baseline_run.absolute_resolved_config_path.read_bytes() == original_archive

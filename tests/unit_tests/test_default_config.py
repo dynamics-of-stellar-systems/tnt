@@ -24,7 +24,6 @@ def test_default_config_is_packaged() -> None:
         is DEFAULT_JAX_ENABLE_X64
     )
     assert "  model_comparison_relative_tolerance: 1.0e-10" in config_text
-    assert "  parameter_grid_relative_tolerance: 1.0e-6" in config_text
     assert "    total_mass: 1.0e-8" in config_text
     assert "    intrinsic_mass: 1.0e-16" in config_text
     assert "dynamic_object_defaults:" in config_text

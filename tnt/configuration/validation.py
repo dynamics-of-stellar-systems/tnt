@@ -292,7 +292,6 @@ def _validate_numerics_settings(settings: ConfigDict) -> None:
             "constraint_error_floors",
             "jax_enable_x64",
             "model_comparison_relative_tolerance",
-            "parameter_grid_relative_tolerance",
         },
         path,
     )
@@ -302,15 +301,13 @@ def _validate_numerics_settings(settings: ConfigDict) -> None:
             "constraint_error_floors",
             "jax_enable_x64",
             "model_comparison_relative_tolerance",
-            "parameter_grid_relative_tolerance",
         },
         path,
     )
-    for key in (
-        "model_comparison_relative_tolerance",
-        "parameter_grid_relative_tolerance",
-    ):
-        _positive_number(settings.get(key), f"{path}.{key}")
+    _positive_number(
+        settings["model_comparison_relative_tolerance"],
+        f"{path}.model_comparison_relative_tolerance",
+    )
     _boolean(settings["jax_enable_x64"], f"{path}.jax_enable_x64")
     floors = _required_mapping(settings, "constraint_error_floors", path)
     _reject_unknown_keys(
