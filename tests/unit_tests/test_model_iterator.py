@@ -122,7 +122,9 @@ class FakeParameterGenerator:
         self.n_rounds = n_rounds
         self.calls = 0
 
-    def generate_parameters(self, all_models: Any) -> ParameterBatch:
+    def generate_parameters(
+        self, all_models: Any, *, run_id: int | None = None
+    ) -> ParameterBatch:
         self.calls += 1
         if self.calls > self.n_rounds:
             return ParameterBatch([])

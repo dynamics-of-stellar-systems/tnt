@@ -5,14 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
-import jax
+import equinox as eqx
 import numpy as np
 
 from tnt.all_models import AllModels
 from tnt.parameter_generator.base import AbstractParameterGenerator
+from tnt.parameter_generator.prior_cache import PriorSampleCache
 from tnt.parameter_generator.registry import register_parameter_generator
 from tnt.parameter_generator.samples import (
-    PriorSampleBatch,
     _parameter_sets_from_samples,
 )
 from tnt.parameter_generator.types import ParameterBatch
@@ -23,16 +23,13 @@ from tnt.priors import Prior
 class PriorSampler(AbstractParameterGenerator):
     """Proposes parameters by sampling from a `tnt.priors.Prior`.
 
-    The sampling key folds in `all_models.n_iterations()` so successive
-    iterations draw fresh reproducible batches. Shared finalization also reads
-    existing parameter coordinates to remove duplicates. Neither stage uses
-    fitted scores. Composition, factor detection and Predictive/MCMC selection
-    belong to `Prior`.
-
-    `num_samples` controls the batch drawn before filtering and capping to
-    `max_new_mods_per_iter`. Configuration requires `num_samples > 100`,
-    `num_warmup > 100` and `num_samples >= max_new_mods_per_iter`. Exact
-    duplicates can reduce the returned batch; no replacements are sampled.
+    By default, num_samples draws form a reusable pool. Calls reserve up to
+    max_new_mods_per_iter consecutive draws before execution. Exhaustion starts
+    a new round keyed by the configured seed and persisted round number.
+    Duplicate filtering may reduce a reservation; no replacements are drawn.
+    With caching disabled, the sampling key folds in all_models.n_iterations()
+    and each call draws num_samples fresh candidates before filtering/capping.
+    Neither path uses fitted scores. Prior owns composition and MCMC selection.
 
     Every call logs diagnostics of its actual sampling batch. When
     `plot_diagnostics` is enabled, the generator also renders that same batch
@@ -47,6 +44,10 @@ class PriorSampler(AbstractParameterGenerator):
     )
 
     prior: Prior
+    sample_cache: PriorSampleCache = eqx.field(
+        default_factory=PriorSampleCache,
+        kw_only=True,
+    )
     seed: int
     num_samples: int
     num_warmup: int
@@ -56,20 +57,30 @@ class PriorSampler(AbstractParameterGenerator):
         self, all_models: AllModels, *, record_history: bool = False
     ) -> ParameterBatch:
         """Draw one batch and supply raw candidates and sampling data."""
-        key = jax.random.fold_in(
-            jax.random.PRNGKey(self.seed), all_models.n_iterations()
-        )
-        samples, diagnostics = self.prior.sample_with_diagnostics(
-            key,
-            num_samples=self.num_samples,
+        pool, reservation = self.sample_cache.get(
+            self.prior,
+            potential_settings=self.potential_settings,
+            seed=self.seed,
+            size=self.num_samples,
             num_warmup=self.num_warmup,
             target_accept_prob=self.target_accept_prob,
+            output_directory=self.output_directory,
+            enabled=self.generator_settings.get("cache_prior_samples", True),
+            reservation_size=self.max_new_mods_per_iter,
+            iteration=all_models.n_iterations(),
         )
+        samples = pool.samples
+        if reservation is not None:
+            samples = {
+                name: values[reservation["start"] : reservation["stop"]]
+                for name, values in samples.items()
+            }
         return ParameterBatch(
             _parameter_sets_from_samples(samples, self.potential_settings),
             {
-                "sample_batch": PriorSampleBatch(samples, diagnostics),
-                "sampling": diagnostics,
+                "sample_batch": pool,
+                "sampling": pool.diagnostics,
+                "reservation": reservation,
             },
         )
 

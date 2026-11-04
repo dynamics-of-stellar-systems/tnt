@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import astropy.units as au
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from tnt.all_models import AllModels
 from tnt.parameter_generator.base import AbstractParameterGenerator
+from tnt.parameter_generator.prior_cache import PriorSampleCache
 from tnt.parameter_generator.registry import register_parameter_generator
 from tnt.parameter_generator.samples import (
     PriorSampleBatch,
@@ -45,6 +47,10 @@ class PriorSupportPoints(AbstractParameterGenerator):
     )
 
     prior: Prior
+    sample_cache: PriorSampleCache = eqx.field(
+        default_factory=PriorSampleCache,
+        kw_only=True,
+    )
     seed: int
     num_samples: int
     num_warmup: int
@@ -115,12 +121,17 @@ class PriorSupportPoints(AbstractParameterGenerator):
         keep_samples: bool = False,
     ) -> tuple[list[str], np.ndarray, PriorDiagnostics, int, PriorSampleBatch | None]:
         """Draw a reference and separate initialization, retaining diagnostics."""
-        draws, diagnostics = self.prior.sample_with_diagnostics(
-            jax.random.PRNGKey(self.seed),
-            num_samples=self.num_samples + count,
+        pool, _ = self.sample_cache.get(
+            self.prior,
+            potential_settings=self.potential_settings,
+            seed=self.seed,
+            size=self.num_samples + count,
             num_warmup=self.num_warmup,
             target_accept_prob=self.target_accept_prob,
+            output_directory=self.output_directory,
+            enabled=self.generator_settings.get("cache_prior_samples", True),
         )
+        draws, diagnostics = pool
         names = sorted(draws)
         if any(np.asarray(draws[name]).ndim != 1 for name in names):
             raise ValueError(
@@ -246,7 +257,7 @@ class PriorSupportPoints(AbstractParameterGenerator):
         *,
         record_history: bool = False,
     ) -> ParameterBatch:
-        """Resample the reference and optimize new points with history fixed."""
+        """Reuse or sample the reference; optimize new points with history fixed."""
         count, batch_size = self._design_settings()
         keep_data = record_history
         names, rows, sampling, discarded, batch = self._sample_cloud(

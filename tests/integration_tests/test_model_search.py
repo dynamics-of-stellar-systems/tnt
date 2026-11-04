@@ -82,7 +82,9 @@ class FakeWeightSolver:
 class EmptyParameterGenerator:
     """Propose no model so the run completes without an iteration."""
 
-    def generate_parameters(self, all_models: Any) -> ParameterBatch:
+    def generate_parameters(
+        self, all_models: Any, *, run_id: int | None = None
+    ) -> ParameterBatch:
         del all_models
         return ParameterBatch([])
 

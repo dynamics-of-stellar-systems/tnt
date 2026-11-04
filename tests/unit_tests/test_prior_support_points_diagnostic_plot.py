@@ -23,6 +23,7 @@ def _generator(
     constant=False,
     plot_diagnostics=False,
     generator_type="PriorSupportPoints",
+    cache_prior_samples=True,
 ):
     potential = {
         "halo": {
@@ -53,6 +54,7 @@ def _generator(
             "generator_type": generator_type,
             "generator_settings": {
                 "plot_diagnostics": plot_diagnostics,
+                "cache_prior_samples": cache_prior_samples,
                 "seed": 1,
                 "num_samples": 200,
                 "num_warmup": 120,
@@ -343,12 +345,20 @@ def test_enabled_plots_use_one_actual_batch_and_preserve_candidates(
 
 
 @pytest.mark.parametrize("kind", ["PriorSampler", "PriorSupportPoints"])
-def test_disabled_plots_create_no_output_and_missing_enabled_output_fails_early(
+def test_disabled_plots_only_write_cache_and_missing_plot_output_fails_early(
     tmp_path, monkeypatch, kind
 ):
     disabled = _generator(generator_type=kind, output_directory=tmp_path)
     assert disabled.generate_parameters(AllModels()).parameters
-    assert not (tmp_path / "parameter_generator").exists()
+    assert (tmp_path / "parameter_generator" / "prior_samples.npz").is_file()
+    assert not list(tmp_path.rglob("*.png"))
+    no_output = _generator(
+        generator_type=kind,
+        output_directory=tmp_path / "uncached",
+        cache_prior_samples=False,
+    )
+    assert no_output.generate_parameters(AllModels()).parameters
+    assert not (tmp_path / "uncached").exists()
     enabled = _generator(generator_type=kind, plot_diagnostics=True)
 
     def must_not_sample(*args, **kwargs):

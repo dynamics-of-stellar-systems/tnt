@@ -255,7 +255,7 @@ def _append_history(history, points, iteration):
     return history
 
 
-def test_successive_iterations_reuse_no_sample_state(monkeypatch) -> None:
+def test_successive_iterations_reuse_reference_samples(monkeypatch) -> None:
     prior, generator = make_generator()
     original_sample = prior.sample_with_diagnostics
     calls = []
@@ -273,7 +273,7 @@ def test_successive_iterations_reuse_no_sample_state(monkeypatch) -> None:
     second, second_info = _generated_batch.parameters, _generated_batch.diagnostics
     _generated_batch = generator.generate_parameters(history)
     repeated, repeated_info = _generated_batch.parameters, _generated_batch.diagnostics
-    assert calls == [205, 205, 205]
+    assert calls == [205]
     assert len(first) == len(second) == generator.max_new_mods_per_iter
     assert second_info["existing_support_points"] == 5
     np.testing.assert_array_equal(first_info["center"], second_info["center"])

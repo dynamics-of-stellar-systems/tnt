@@ -260,7 +260,7 @@ configuration-selectable generator:
   consults `parameter_space_settings.priors`. Later calls return no candidates
   once that point has been recorded.
 - `PriorSampler` proposes parameters by sampling from a `tnt.priors.Prior` --
-  see [Priors](priors.md). Its sampling key folds in `all_models.n_iterations()`;
+  see [Priors](priors.md). It consumes successive reservations from a cached prior pool;
   the shared filter also uses existing coordinates to avoid repeated evaluations.
   Fitted chi2/scores do not affect sampling.
 - `PriorSupportPoints` optimizes new locations while holding existing locations
@@ -291,7 +291,7 @@ support plots count solver steps within that generation round.
 root. With plotting enabled, a prior-based generator requires this output
 location and checks it before sampling. Construction alone creates no output;
 writing is triggered by generation. `ModelIterator.from_configuration` supplies
-the root. Set `plot_diagnostics: false` to generate without writing files or
+the root. Set `plot_diagnostics: false` to generate without writing figures or
 recording extra support-point history. For directly constructed generators,
 omitting the setting leaves plotting disabled.
 
@@ -305,7 +305,8 @@ finite values) raise rather than being silently dropped. The iterator retains
 its physical validity check before integration and records invalid models;
 no general physical filtering is added to the ABC.
 
-Prior caching remains deferred. A future execution-level
+See [prior caching](priors.md#prior-sample-cache) for pool provenance, resume
+semantics and opt-out. A future execution-level
 pilot may combine first-round design diagnostics with representative orbit
 integration and weight-solving resource measurements; resource profiling and
 allocation policy are outside this refactor.

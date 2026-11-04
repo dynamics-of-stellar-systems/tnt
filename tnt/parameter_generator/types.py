@@ -15,7 +15,7 @@ class ParameterBatch:
 
     Public generation returns finalized parameters and common proposal counts.
     Subclass generation supplies raw parameters and optional scientific data.
-    No batch is cached by the generator between calls.
+    Returned batches are independent; raw prior pools may be reused across calls.
     """
 
     parameters: list[ParameterSet]
