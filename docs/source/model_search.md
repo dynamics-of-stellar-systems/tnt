@@ -183,7 +183,8 @@ It rejects changes to:
   remaining parameter-schema fields;
 - MGE settings, spatial binnings, kinematics, population data, or their
   configured scientific file references;
-- all `numerics_settings` in the current contract;
+- all supported `numerics_settings` in the current contract; the removed,
+  unused `parameter_grid_relative_tolerance` is ignored in historical archives;
 - orbit-library settings; and
 - weight-solver settings.
 
@@ -266,6 +267,13 @@ configuration-selectable generator:
 - `PriorSupportPoints` optimizes new locations while holding existing locations
   fixed; see [Support points](support_points.md). It uses the same shared
   generation and finalization pipeline.
+
+The unused `numerics_settings.parameter_grid_relative_tolerance` setting has
+been removed. Delete it from user configurations; archived run configurations
+remain unchanged and its former value does not affect resume compatibility.
+Duplicate filtering uses exact equality after compatible unit conversion.
+A future step-based grid generator must define consistent grid-location identity
+across proposal paths and refinement levels to account for arithmetic roundoff.
 
 Implementations live in the `tnt.parameter_generator` package: the base
 contract, registry/factory, one module per generator, and supporting coordinate,

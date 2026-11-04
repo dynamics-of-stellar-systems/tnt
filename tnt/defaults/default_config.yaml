@@ -36,7 +36,6 @@ mge_settings:
 numerics_settings:
   jax_enable_x64: true
   model_comparison_relative_tolerance: 1.0e-10
-  parameter_grid_relative_tolerance: 1.0e-6
   constraint_error_floors:
     total_mass: 1.0e-8
     intrinsic_mass: 1.0e-16

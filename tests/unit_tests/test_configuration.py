@@ -1948,3 +1948,14 @@ def test_support_points_controls_come_from_packaged_defaults(tmp_path: Path) -> 
     assert controls["tolerance"] == 1e-6
     assert controls["chunk_size"] == 1024
     assert controls["distance_epsilon"] == 1e-8
+
+
+def test_read_rejects_removed_grid_tolerance(tmp_path):
+    user_path = tmp_path / "user.yaml"
+    _write_user_config(
+        user_path,
+        tmp_path / "output",
+        body="numerics_settings:\n  parameter_grid_relative_tolerance: 1.0e-6\n",
+    )
+    with pytest.raises(ValueError, match="parameter_grid_relative_tolerance"):
+        Configuration().read(user_path, workspace_root=tmp_path)

@@ -49,9 +49,11 @@ Preserve sequential support-point augmentation: optimize
 then apply shared duplicate filtering without refill. Existing locations must
 still be unique; filtering proposals does not repair old duplicate table rows.
 
-The parameter_grid_relative_tolerance configuration field currently has no
-runtime comparison consumer. Its presence does not define duplicate identity;
-retain it pending clarification of its intended role.
+The unused parameter_grid_relative_tolerance configuration field is removed.
+Exact duplicate identity remains independent of spacing. Future step-based
+searches must identify equivalent grid locations despite floating-point
+roundoff, including across refinement levels; define that policy within the
+grid generator rather than adding a global separation tolerance.
 
 A broader pre-flight execution pilot, including representative orbit integration
 and weight-solving peak-memory/concurrency measurements for resource allocation,

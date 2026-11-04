@@ -85,8 +85,13 @@ def _critical_configuration(config: Mapping[str, Any]) -> ConfigDict:
         ),
         "system_attributes": system_attributes,
         "mge_settings": deepcopy(_mapping(config, "mge_settings")),
-        # The current compatibility contract rejects every numerics change.
-        "numerics_settings": deepcopy(_mapping(config, "numerics_settings")),
+        # Reject changes to supported numerics. Older archives also contain
+        # this removed setting, which never affected generated/evaluated models.
+        "numerics_settings": {
+            key: deepcopy(value)
+            for key, value in _mapping(config, "numerics_settings").items()
+            if key != "parameter_grid_relative_tolerance"
+        },
         "MGEs": deepcopy(_mapping(config, "MGEs")),
         "spatial_binnings": deepcopy(_mapping(config, "spatial_binnings")),
         "potential": _potential_schema(_mapping(config, "potential")),

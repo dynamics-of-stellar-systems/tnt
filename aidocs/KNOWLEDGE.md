@@ -1229,10 +1229,14 @@
 - Generator-specific iteration budget, displacement tolerance, block size and
   inverse-distance epsilon have defaults in `tnt/defaults/default_config.yaml`;
   they are not global `numerics_settings`.
-- `parameter_grid_relative_tolerance` and
-  `model_comparison_relative_tolerance` are declared and validated settings,
-  not implemented runtime comparison policies. They do not define duplicate
-  identity for support-point augmentation.
+- `parameter_grid_relative_tolerance` was removed: it never had a runtime
+  consumer and does not define duplicate identity. New configs reject it;
+  resume comparison ignores it in old immutable archives. A future step-based
+  generator must define canonical grid-location identity across search paths
+  and refinement levels, accounting for floating-point arithmetic without
+  imposing global minimum separation on prior samples or support points.
+  `model_comparison_relative_tolerance` remains declared and validated, with no
+  implemented runtime comparison policy.
 - Optimistix is a direct dependency, also used by orbit initial-condition code.
 - `tnt.parameter_generator.diagnostics.support_points` reuses the prior figure
   builder, then adds new/fixed support overlays and objective/minimum-distance
