@@ -16,6 +16,14 @@ is signature-only scaffolding rather than a working implementation -- each
 module's own docstrings say exactly what's implemented and what still raises
 `NotImplementedError`.
 
+Standalone Dopri8 integration and bounded-memory orbit-library assembly are
+available through `tnt.orbit_library` (see [Orbit library](orbit_library.md)).
+Automatic scientific projection and weight solving are not connected to this
+model-search loop yet. Its old `OrbitLibrary.rescaled` call must be replaced
+when that wiring is implemented: the new builder calculates each requested
+mass scale's contributions before releasing temporary trajectories, rather
+than rescaling already-binned counts.
+
 ## The loop
 
 `ModelIterator.run()` repeats a generate -> evaluate -> record -> stop cycle:

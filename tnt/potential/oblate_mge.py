@@ -44,7 +44,7 @@ from tnt.mge import (
     _conversion_valid,
     _inverse_reporting_values,
 )
-from tnt.potential.components import AbstractPotentialComponent
+from tnt.potential.components import AbstractMGEPotentialComponent
 from tnt.potential.registry import (
     InvalidPotentialParametersError,
     ParameterConstraint,
@@ -52,7 +52,6 @@ from tnt.potential.registry import (
     register_default_prior,
     register_parameterization,
 )
-from tnt.validation import _required_string, _resolve_typed_reference
 
 # The single viewing angle an oblate axisymmetric MGE is deprojected under
 # (`tnt.mge.AbstractMGE.deproject_oblate`), in place of the triaxial module's
@@ -67,7 +66,7 @@ _INCLINATION_CONSTRAINT = ParameterConstraint(
 
 
 @register_component
-class OblateLightMGEPotential(AbstractPotentialComponent):
+class OblateLightMGEPotential(AbstractMGEPotentialComponent):
     """An oblate axisymmetric potential from a light MGE, via its `ml` parameter.
 
     The shared builder converts the light MGE to mass via `ml`, deprojects it under
@@ -78,7 +77,7 @@ class OblateLightMGEPotential(AbstractPotentialComponent):
     is this component's native viewing-geometry parameter.
     """
 
-    _native_mge: ClassVar[bool] = True
+    _mge_type: ClassVar[type[LightMGE]] = LightMGE
     _type: ClassVar[str] = "OblateLightMGEPotential"
     _raw_dimensions: ClassVar[dict[str, str]] = {
         "ml": "mass_to_light",
@@ -91,27 +90,12 @@ class OblateLightMGEPotential(AbstractPotentialComponent):
     mge: LightMGE
     deprojected: Deprojected3DMGE
 
-    @classmethod
-    def _extra_fields(
-        cls,
-        kind: str,
-        settings: Mapping[str, Any],
-        mges: Mapping[str, LightMGE | MassMGE],
-        *,
-        path: str,
-    ) -> dict[str, Any]:
-        del kind
-        mge_name = _required_string(settings, "mge", path)
-        return {
-            "mge": _resolve_typed_reference(
-                mges, mge_name, f"{path}.mge", "MGEs", LightMGE
-            )
-        }
-
     def to_galax(
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
-        return _galax_potential_from_oblate_deprojected(self.deprojected, unit_system)
+        return _galax_potential_from_oblate_deprojected(
+            self.deprojected, unit_system, self.integration_order
+        )
 
     def rescale(self, mass_scale: float) -> Self:
         rescaled_parameters = dict(self.parameters)
@@ -127,7 +111,7 @@ class OblateLightMGEPotential(AbstractPotentialComponent):
 
 
 @register_component
-class OblateMassMGEPotential(AbstractPotentialComponent):
+class OblateMassMGEPotential(AbstractMGEPotentialComponent):
     """An oblate axisymmetric potential from an already-mass-calibrated MGE.
 
     `mge_mass_scale` is the analogue of a light MGE's `ml` for a component
@@ -138,7 +122,7 @@ class OblateMassMGEPotential(AbstractPotentialComponent):
     docstring.
     """
 
-    _native_mge: ClassVar[bool] = True
+    _mge_type: ClassVar[type[MassMGE]] = MassMGE
     _type: ClassVar[str] = "OblateMassMGEPotential"
     _raw_dimensions: ClassVar[dict[str, str]] = {
         "mge_mass_scale": "dimensionless",
@@ -151,27 +135,12 @@ class OblateMassMGEPotential(AbstractPotentialComponent):
     mge: MassMGE
     deprojected: Deprojected3DMGE
 
-    @classmethod
-    def _extra_fields(
-        cls,
-        kind: str,
-        settings: Mapping[str, Any],
-        mges: Mapping[str, LightMGE | MassMGE],
-        *,
-        path: str,
-    ) -> dict[str, Any]:
-        del kind
-        mge_name = _required_string(settings, "mge", path)
-        return {
-            "mge": _resolve_typed_reference(
-                mges, mge_name, f"{path}.mge", "MGEs", MassMGE
-            )
-        }
-
     def to_galax(
         self, unit_system: AbstractUnitSystem
     ) -> galax.potential.AbstractPotential:
-        return _galax_potential_from_oblate_deprojected(self.deprojected, unit_system)
+        return _galax_potential_from_oblate_deprojected(
+            self.deprojected, unit_system, self.integration_order
+        )
 
     def rescale(self, mass_scale: float) -> Self:
         rescaled_parameters = dict(self.parameters)
@@ -191,6 +160,7 @@ class OblateMassMGEPotential(AbstractPotentialComponent):
 def _galax_potential_from_oblate_deprojected(
     deprojected: Deprojected3DMGE,
     unit_system: AbstractUnitSystem,
+    integration_order: int,
 ) -> galax.potential.AbstractPotential:
     """Sum one `galax.potential.AxisymmetricGaussianPotential` per Gaussian component.
 
@@ -212,6 +182,7 @@ def _galax_potential_from_oblate_deprojected(
             r_s=widths[i],
             q2=deprojected.q[i],
             units=unit_system,
+            integration_order=integration_order,
         )
         for i in range(n_components)
     }

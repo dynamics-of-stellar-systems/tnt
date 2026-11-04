@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "status": "Interrupted resource investigation; not a complete convergence matrix.",
+  "tnt_commit": "b1c371e082f97b23f2c931589870eff2acaf47ad",
+  "integration_source_sha256": "a8ccb4c5d250343d2326c3e492db18f33be256af387bbf600e45cf7352d272bf",
+  "harness_sha256": "8fe4a55d8a93b924c64cfb9aa065b6997feb08773b71cb4eaf0ccd83ad5c0b5b",
+  "configured_colima_memory_gib": 8,
+  "configured_colima_cpus": 2,
+  "host_memory_gib": 16,
+  "completed_variants": 10,
+  "completed_solves_per_variant": 4,
+  "interrupted_case": "strong_triaxial-box-E5",
+  "interrupted_variant": "higher-order",
+  "elapsed_seconds_without_completed_row_at_stop_decision": 1396.122892,
+  "reason": "Substantial host memory compression/swap activity; stopped the benchmark container to bound production diagnostic allocations.",
+  "exit_code": 143,
+  "limitations": "Interrupted control has no completed result or step count. Warm timings were observed under host memory pressure and cannot establish isolated throughput.",
+  "work_directory": "benchmarks/work/orbit-checks-20261017",
+  "rows": [
+    {
+      "case_id": "oblate-box-E5",
+      "variant": "higher-order",
+      "integration_order": 1600,
+      "settings": {
+        "orbital_periods": 200.0,
+        "n_stored_timesteps": 50000,
+        "accuracy": 1e-09,
+        "max_steps": 1000000
+      },
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 2.885310901184007e-08,
+        "final_energy_error": 2.1618364256079735e-10,
+        "num_steps": 21218,
+        "num_accepted_steps": 14712,
+        "num_rejected_steps": 6506
+      },
+      "first_call_seconds": 154.045581684,
+      "warm_seconds": [
+        108.50938087500003,
+        84.42637416800005,
+        73.22649836599999
+      ],
+      "warm_median_seconds": 84.42637416800005,
+      "trajectory_file": "oblate-box-E5-higher-order.npz",
+      "trajectory_sha256": "9dae00cc0704a6d532457521566a8b767b627686c0521cb1978bcbf29e7a9dda"
+    },
+    {
+      "case_id": "oblate-box-E5",
+      "variant": "tighter-solver",
+      "integration_order": 800,
+      "settings": {
+        "orbital_periods": 200.0,
+        "n_stored_timesteps": 50000,
+        "accuracy": 1e-11,
+        "max_steps": 1000000
+      },
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 8.824395328382193e-10,
+        "final_energy_error": 4.9735330551107894e-11,
+        "num_steps": 35295,
+        "num_accepted_steps": 24656,
+        "num_rejected_steps": 10639
+      },
+      "first_call_seconds": 57.820448033999924,
+      "warm_seconds": [
+        33.10125244999995,
+        30.47680186699995,
+        31.707906164000065
+      ],
+      "warm_median_seconds": 31.707906164000065,
+      "trajectory_file": "oblate-box-E5-tighter-solver.npz",
+      "trajectory_sha256": "293f7a69fdaed4cd604ad8e7f766139c4518b48b018d73c5385abe2ba43e3dd9"
+    },
+    {
+      "case_id": "oblate-box-E5",
+      "variant": "working",
+      "integration_order": 800,
+      "settings": {
+        "orbital_periods": 200.0,
+        "n_stored_timesteps": 50000,
+        "accuracy": 1e-09,
+        "max_steps": 1000000
+      },
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 2.8841190781541377e-08,
+        "final_energy_error": 2.0665419805617798e-10,
+        "num_steps": 21218,
+        "num_accepted_steps": 14712,
+        "num_rejected_steps": 6506
+      },
+      "first_call_seconds": 44.10006765600002,
+      "warm_seconds": [
+        22.36205141800002,
+        21.98639731100002,
+        22.13278853099996
+      ],
+      "warm_median_seconds": 22.13278853099996,
+      "trajectory_file": "oblate-box-E5-working.npz",
+      "trajectory_sha256": "9b83a79e419e39707e0af9a3aab527689b38a679d5a949c0ba2f36dfbf8411d9"
+    },
+    {
+      "case_id": "strong_triaxial-box-E3",
+      "variant": "higher-order",
+      "integration_order": 1600,
+      "settings": {
+        "orbital_periods": 200.0,
+        "n_stored_timesteps": 50000,
+        "accuracy": 1e-09,
+        "max_steps": 1000000
+      },
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 1.7402259689819174e-08,
+        "final_energy_error": 1.2919042410812384e-08,
+        "num_steps": 14202,
+        "num_accepted_steps": 9924,
+        "num_rejected_steps": 4278
+      },
+      "first_call_seconds": 194.02253542800008,
+      "warm_seconds": [
+        151.6847873019999,
+        122.14499608200003,
+        66.58420746899992
+      ],
+      "warm_median_seconds": 122.14499608200003,
+      "trajectory_file": "strong_triaxial-box-E3-higher-order.npz",
+      "trajectory_sha256": "253491fb2d6d0109109e17a8f201609d15e2362f6d9790c00517b18840dbd441"
+    },
+    {
+      "case_id": "strong_triaxial-box-E3",
+      "variant": "tighter-solver",
+      "integration_order": 800,
+      "settings": {
+        "orbital_periods": 200.0,
+        "n_stored_timesteps": 50000,
+        "accuracy": 1e-11,
+        "max_steps": 1000000
+      },
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 2.3240562485547692e-10,
+        "final_energy_error": 1.1658387411629324e-10,
+        "num_steps": 23212,
+        "num_accepted_steps": 16451,
+        "num_rejected_steps": 6761
+      },
+      "first_call_seconds": 84.8751205420001,
+      "warm_seconds": [
+        39.811544139999796,
+        32.880582219999724,
+        21.120140311999876
+      ],
+      "warm_median_seconds": 32.880582219999724,
+      "trajectory_file": "strong_triaxial-box-E3-tighter-solver.npz",
+      "trajectory_sha256": "8a6cc4f9ec4b037c5ecaf5c74d360c5f14abc8d0e8aad7ecab1f3c10b2211425"
+    },
+    {
+      "case_id": "strong_triaxial-box-E3",
+      "variant": "working",
+      "integration_order": 800,
+      "settings": {
+        "orbital_periods": 200.0,
+        "n_stored_timesteps": 50000,
+        "accuracy": 1e-09,
+        "max_steps": 1000000
+      },
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 1.74046768582054e-08,
+        "final_energy_error": 1.2921447934202943e-08,
+        "num_steps": 14202,
+        "num_accepted_steps": 9924,
+        "num_rejected_steps": 4278
+      },
+      "first_call_seconds": 20.01571487199999,
+      "warm_seconds": [
+        30.54892969699995,
+        44.53142241500018,
+        35.21288632000005
+      ],
+      "warm_median_seconds": 35.21288632000005,
+      "trajectory_file": "strong_triaxial-box-E3-working.npz",
+      "trajectory_sha256": "03fe3844fa01afc66ebab62e62eb6c027a9684621f67b3a93f483a862d7b045b"
+    },
+    {
+      "case_id": "strong_triaxial-box-E5",
+      "variant": "working",
+      "integration_order": 800,
+      "settings": {
+        "orbital_periods": 200.0,
+        "n_stored_timesteps": 50000,
+        "accuracy": 1e-09,
+        "max_steps": 1000000
+      },
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 2.599222818932833e-08,
+        "final_energy_error": 3.196215964615437e-09,
+        "num_steps": 20313,
+        "num_accepted_steps": 14100,
+        "num_rejected_steps": 6213
+      },
+      "first_call_seconds": 22.040824190999956,
+      "warm_seconds": [
+        23.990647352999986,
+        20.01574014400012,
+        19.25384256899997
+      ],
+      "warm_median_seconds": 20.01574014400012,
+      "trajectory_file": "strong_triaxial-box-E5-working.npz",
+      "trajectory_sha256": "0e1ecc52af3c508e1f8b295767f2ddc334afb505a35a62b92b9f911ddf1c95a1"
+    },
+    {
+      "case_id": "strong_triaxial-tube-E3",
+      "variant": "higher-order",
+      "integration_order": 1600,
+      "settings": {
+        "orbital_periods": 200.0,
+        "n_stored_timesteps": 50000,
+        "accuracy": 1e-09,
+        "max_steps": 1000000
+      },
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 6.464827511318429e-08,
+        "final_energy_error": 4.741715498656127e-08,
+        "num_steps": 5553,
+        "num_accepted_steps": 4317,
+        "num_rejected_steps": 1236
+      },
+      "first_call_seconds": 59.51535300700016,
+      "warm_seconds": [
+        34.18215389200009,
+        18.529270085999997,
+        20.110711820999995
+      ],
+      "warm_median_seconds": 20.110711820999995,
+      "trajectory_file": "strong_triaxial-tube-E3-higher-order.npz",
+      "trajectory_sha256": "d80de0b879b810c429b9b8f0c2dcdf135111833b923ea5adb543be886fb2f46c"
+    },
+    {
+      "case_id": "strong_triaxial-tube-E3",
+      "variant": "tighter-solver",
+      "integration_order": 800,
+      "settings": {
+        "orbital_periods": 200.0,
+        "n_stored_timesteps": 50000,
+        "accuracy": 1e-11,
+        "max_steps": 1000000
+      },
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 8.935770608838944e-10,
+        "final_energy_error": 3.6095997706233896e-10,
+        "num_steps": 8950,
+        "num_accepted_steps": 7448,
+        "num_rejected_steps": 1502
+      },
+      "first_call_seconds": 12.656343540999842,
+      "warm_seconds": [
+        10.274743875000013,
+        12.96709060399985,
+        12.484646859000122
+      ],
+      "warm_median_seconds": 12.484646859000122,
+      "trajectory_file": "strong_triaxial-tube-E3-tighter-solver.npz",
+      "trajectory_sha256": "440c6c4ce0b0f84d533638e8faa771bf9aa2afaad419250f92672b6a465a5a57"
+    },
+    {
+      "case_id": "strong_triaxial-tube-E3",
+      "variant": "working",
+      "integration_order": 800,
+      "settings": {
+        "orbital_periods": 200.0,
+        "n_stored_timesteps": 50000,
+        "accuracy": 1e-09,
+        "max_steps": 1000000
+      },
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 6.426896142944409e-08,
+        "final_energy_error": 4.703786078062157e-08,
+        "num_steps": 5560,
+        "num_accepted_steps": 4318,
+        "num_rejected_steps": 1242
+      },
+      "first_call_seconds": 9.21722618900003,
+      "warm_seconds": [
+        15.392983472999958,
+        10.151662447000035,
+        9.011792182000136
+      ],
+      "warm_median_seconds": 10.151662447000035,
+      "trajectory_file": "strong_triaxial-tube-E3-working.npz",
+      "trajectory_sha256": "dac36a60be7f31103eb1036a07826de6af744c15c9ddfa18a27ebd2345ae7c59"
+    }
+  ]
+}

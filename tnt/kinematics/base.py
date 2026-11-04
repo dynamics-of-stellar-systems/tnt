@@ -88,11 +88,13 @@ class AbstractKinematics(eqx.Module):
         raise NotImplementedError
 
     def design_matrix(self, orbit_library: OrbitLibrary) -> jnp.ndarray:
-        """Project an orbit library into this data set's observables.
+        """Build this data set's solver matrix from retained orbit contributions.
 
         This interface belongs to the model-architecture scaffold. Concrete
-        projections will be implemented with the orbit integration and weight
-        solving layers; until then, calling it fails explicitly.
+        projection formulas will consume temporary ``OrbitTrajectory`` objects
+        during library assembly, preserving kinematics ownership without
+        retaining every trajectory. This method will transform those stored
+        contributions into solver observables; it still fails explicitly.
         """
         raise NotImplementedError
 
