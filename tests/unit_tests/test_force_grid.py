@@ -27,7 +27,8 @@ def acceleration(model, xyz):
     ).ustrip("kpc/Myr2"))
 
 
-def test_plummer_off_node_force_converges_and_boundaries_are_inclusive():
+@pytest.mark.parametrize("method", ["linear", "cubic"])
+def test_plummer_off_node_force_converges_and_boundaries_are_inclusive(method):
     radii = np.geomspace(0.013, 87, 75)
     directions = np.array([[1, 2, 3], [-3, 0, 1], [0, -1, 0]])
     directions = directions / np.linalg.norm(directions, axis=1)[:, None]
@@ -35,7 +36,9 @@ def test_plummer_off_node_force_converges_and_boundaries_are_inclusive():
     expected = -points / (1 + np.sum(points**2, axis=1))[:, None] ** 1.5
     errors = []
     for n in (16, 32, 64):
-        grid = build_grid(plummer(), GridSpec((n, 5, 5), 0.01, 100))
+        grid = build_grid(
+            plummer(), GridSpec((n, 5, 5), 0.01, 100, interpolation=method)
+        )
         force = acceleration(grid, points)
         errors.append(np.max(np.linalg.norm(force - expected, axis=1)
                              / np.linalg.norm(expected, axis=1)))
@@ -48,12 +51,13 @@ def test_plummer_off_node_force_converges_and_boundaries_are_inclusive():
     assert errors[2] < 0.4 * errors[1]
 
 
-def test_gaussian_node_planes_reflection_and_units():
+@pytest.mark.parametrize("method", ["linear", "cubic"])
+def test_gaussian_node_planes_reflection_and_units(method):
     model = gp.TriaxialGaussianPotential(
         m_tot=Quantity(1e10, "Msun"), r_s=Quantity(1.0, "kpc"),
         q1=0.8, q2=0.6, integration_order=100, units="galactic",
     )
-    grid = build_grid(model, GridSpec((17, 9, 9), 0.01, 100))
+    grid = build_grid(model, GridSpec((17, 9, 9), 0.01, 100, interpolation=method))
     # Exact radial and angular nodes, including coordinate planes and axes.
     points = np.array([
         [1, 0, 0], [0, -1, 0], [0, 0, 1],
@@ -77,17 +81,19 @@ def test_gaussian_node_planes_reflection_and_units():
 
 @pytest.mark.parametrize("point", [[0, 0, 0], [0.001, 0, 0], [101, 0, 0],
                                    [np.nan, 0, 0]])
-def test_grid_rejects_invalid_queries_under_jit(point):
-    grid = build_grid(plummer(), GridSpec((8, 3, 3), 0.01, 100))
+@pytest.mark.parametrize("method", ["linear", "cubic"])
+def test_grid_rejects_invalid_queries_under_jit(point, method):
+    grid = build_grid(plummer(), GridSpec((8, 4, 4), 0.01, 100, interpolation=method))
     with pytest.raises(Exception, match="outside its declared radius range"):
         jax.jit(lambda p: grid.acceleration(
             Quantity(p, "kpc"), Quantity(0.0, "Myr")
         ).value)(jnp.array(point)).block_until_ready()
 
 
-def test_grid_uses_production_solver_and_direct_energy():
+@pytest.mark.parametrize("method", ["linear", "cubic"])
+def test_grid_uses_production_solver_and_direct_energy(method):
     model = plummer()
-    grid = build_grid(model, GridSpec((128, 3, 3), 0.05, 5))
+    grid = build_grid(model, GridSpec((128, 4, 4), 0.05, 5, interpolation=method))
     q = Quantity([1.0, 0.0, 0.0], "kpc")
     speed = 2**-0.75
     v = Quantity([0.0, speed, 0.0], "kpc/Myr")
@@ -119,3 +125,56 @@ def test_invalid_spec_and_unsupported_model_are_rejected():
     )
     with pytest.raises(NotImplementedError, match="only coaxial"):
         build_grid(unsupported, GridSpec((3, 3, 3), 0.01, 100))
+
+
+def test_cubic_matches_independent_scipy_splines_and_has_continuous_slopes():
+    from scipy.interpolate import CubicSpline
+
+    from benchmarks.force_grid import _cubic_value, _spline_coefficients
+
+    rng = np.random.default_rng(85)
+    nodes = rng.normal(size=(7, 6, 5, 3))
+    coefficients = _spline_coefficients(jnp.asarray(nodes))
+    points = rng.uniform([0, 0, 0], [6, 5, 4], size=(20, 3))
+    points = np.vstack([points, [0, 0, 0], [6, 5, 4], [2, 3, 1]])
+    for point in points:
+        expected = nodes
+        for axis, coordinate in enumerate(point):
+            boundary = "natural" if axis == 0 else "clamped"
+            expected = CubicSpline(np.arange(expected.shape[0]), expected,
+                                   axis=0, bc_type=boundary)(coordinate)
+        actual = _cubic_value(coefficients, jnp.asarray(point))
+        np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=2e-12)
+    derivative = jax.jit(jax.jacfwd(lambda x: _cubic_value(coefficients, x)))
+    for axis in range(3):
+        center = jnp.array([2., 3., 1.])
+        shift = jnp.eye(3)[axis] * 1e-8
+        np.testing.assert_allclose(derivative(center - shift),
+                                   derivative(center + shift), atol=1e-6)
+    for axis, maximum in [(1, 5), (2, 4)]:
+        for endpoint in (0, maximum):
+            point = jnp.array([2.3, 2.1, 1.4]).at[axis].set(endpoint)
+            np.testing.assert_allclose(derivative(point)[:, axis], 0, atol=1e-12)
+
+
+def test_cubic_spec_rejects_unknown_methods_and_small_grids():
+    with pytest.raises(ValueError, match="four nodes"):
+        GridSpec((8, 3, 4), 0.01, 100, interpolation="cubic")
+    with pytest.raises(ValueError, match="linear or cubic"):
+        GridSpec((8, 4, 4), 0.01, 100, interpolation="unknown")
+
+
+def test_cubic_table_round_trip(tmp_path):
+    from benchmarks.grid_benchmark import construct
+    from benchmarks.grid_orbits import load_grid
+
+    model = plummer()
+    original, setup = construct(
+        model, GridSpec((8, 5, 4), 0.01, 100, interpolation="cubic"),
+        tmp_path / "cubic.npz",
+    )
+    restored, _ = load_grid(model, setup, tmp_path)
+    assert restored.spec.interpolation == "cubic"
+    points = np.array([[0.1, 0.2, -0.3], [3., 0., 0.]])
+    np.testing.assert_array_equal(acceleration(original, points),
+                                  acceleration(restored, points))

@@ -360,3 +360,35 @@ and their saved times are bitwise identical to the previous direct benchmark.
 The supplemental timing audit verified both controls' source/parent hashes,
 rotated orders, positive timings, retained observations/medians and host-context
 links. The exported scientific figure was visually inspected.
+
+
+## Cubic force-coefficient interpolation
+
+New force experiments may select `--interpolation cubic` in
+`python -m benchmarks.grid_benchmark`; `linear` remains the default and
+reproduces the existing trilinear method. Use fresh work and result paths.
+The orbit and timing harnesses load the interpolation method from each table's
+specification, so their command lines need no additional selector. Historical
+results above describe the linear method; no cubic scientific benchmark has
+been recorded yet.
+
+The cubic method interpolates the same `log(-a_i/x_i)` node data using a
+separable tensor-product cubic B-spline, then reconstructs each force component.
+It interpolates node values rather than applying a smoothing fit. Setup solves
+for B-spline coefficients once; queries use a local 4-by-4-by-4 stencil.
+The potential evaluator remains the original direct physical potential.
+Independent component interpolation does not enforce a conservative field.
+
+Radial endpoints use natural (zero second derivative) conditions in log radius.
+Angular endpoints use zero first derivatives, matching even reflection of the
+restoring coefficients. The latter also handles the polar axis, where the node
+values are azimuth independent to the declared axis-floor approximation.
+All three axes require at least four nodes. Radius-domain rejection and the
+positive coordinate floor used to construct node coefficients are unchanged.
+
+For cubic grids, the stored `log_coefficients` array contains B-spline
+coefficients, not raw nodal logarithms; `spec.interpolation` identifies this
+representation. Older tables without that field continue to load as linear.
+Tests compare the cubic evaluator with independently constructed SciPy splines,
+check cell-slope continuity and angular boundary slopes, exercise direct-force
+convergence, symmetry, units, JIT rejection, orbit integration, and table I/O.

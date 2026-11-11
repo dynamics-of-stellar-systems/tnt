@@ -32,6 +32,7 @@ class GridSpec:
     r_min: float
     r_max: float
     axis_floor: float = 1e-7
+    interpolation: str = "linear"
 
     def __post_init__(self) -> None:
         if len(self.shape) != 3 or any(
@@ -39,6 +40,10 @@ class GridSpec:
             for n in self.shape
         ):
             raise ValueError("Grid shape must contain three integers >= 2.")
+        if self.interpolation not in {"linear", "cubic"}:
+            raise ValueError("Interpolation must be linear or cubic.")
+        if self.interpolation == "cubic" and min(self.shape) < 4:
+            raise ValueError("Cubic interpolation needs four nodes per axis.")
         if not 0 < self.r_min < self.r_max < np.inf:
             raise ValueError("Require finite 0 < r_min < r_max.")
         if not 0 < self.axis_floor <= 1e-4:
@@ -46,7 +51,13 @@ class GridSpec:
 
 
 class ForceGrid(eqx.Module):
-    """Trilinear log coefficients with a direct physical-energy evaluator."""
+    """Linear or cubic log-force coefficients with direct physical energy.
+
+    For cubic grids, log_coefficients stores interpolating B-spline
+    coefficients, not node values. The radial spline has natural endpoint
+    conditions; angular splines have zero endpoint slopes to preserve smooth
+    reflection symmetry. This does not enforce a conservative force field.
+    """
 
     direct: gp.AbstractPotential
     log_coefficients: jax.Array
@@ -84,6 +95,8 @@ class ForceGrid(eqx.Module):
             jnp.arctan2(jnp.linalg.norm(absolute[:2]), absolute[2]) / (jnp.pi / 2),
             jnp.arctan2(absolute[1], absolute[0]) / (jnp.pi / 2),
         ]) * (jnp.asarray(self.spec.shape) - 1)
+        if self.spec.interpolation == "cubic":
+            return -xyz * jnp.exp(_cubic_value(self.log_coefficients, coordinates))
         # Clipping selects the final valid cell at an inclusive upper boundary;
         # the radius check above forbids extrapolation. Angular folding is exact.
         lower = jnp.clip(
@@ -100,6 +113,55 @@ class ForceGrid(eqx.Module):
             indices[:, 0], indices[:, 1], indices[:, 2]
         ]
         return -xyz * jnp.exp(jnp.sum(weights[:, None] * values, axis=0))
+
+
+
+def _spline_coefficients(values: jax.Array) -> jax.Array:
+    """Prefilter node values into tensor-product cardinal cubic coefficients."""
+    for axis in range(3):
+        n = values.shape[axis]
+        matrix = (4 * jnp.eye(n) + jnp.eye(n, k=1) + jnp.eye(n, k=-1)) / 6
+        if axis == 0:
+            # Linear ghost extension makes the radial second derivative zero.
+            matrix = matrix.at[0].set(jnp.eye(n)[0])
+            matrix = matrix.at[-1].set(jnp.eye(n)[-1])
+        else:
+            # Even ghost extension imposes zero angular derivative.
+            matrix = matrix.at[0, 1].set(2 / 6)
+            matrix = matrix.at[-1, -2].set(2 / 6)
+        moved = jnp.moveaxis(values, axis, 0)
+        solved = jnp.linalg.solve(matrix, moved.reshape(n, -1))
+        values = jnp.moveaxis(solved.reshape(moved.shape), 0, axis)
+    return values
+
+
+def _cubic_value(coefficients: jax.Array, coordinates: jax.Array) -> jax.Array:
+    """Evaluate a local 4x4x4 B-spline stencil, including endpoint ghosts."""
+    shape = jnp.asarray(coefficients.shape[:3])
+    lower = jnp.clip(jnp.floor(coordinates).astype(jnp.int32), 0, shape - 2)
+    t = coordinates - lower
+    weights = jnp.stack([
+        (1 - t)**3, 3*t**3 - 6*t**2 + 4,
+        -3*t**3 + 3*t**2 + 3*t + 1, t**3,
+    ], axis=1) / 6
+    # Pad only the selected stencil logically: radial ghosts are linearly
+    # extended, angular ghosts reflected. No full padded table per query.
+    indices = lower[:, None] + jnp.arange(-1, 3)
+    radial = indices[0]
+    clipped = jnp.clip(radial, 0, shape[0] - 1)
+    neighbor = jnp.where(radial < 0, 1, shape[0] - 2)
+    angular = []
+    for axis in (1, 2):
+        index = indices[axis]
+        angular.append(jnp.where(index < 0, -index,
+                                jnp.where(index >= shape[axis],
+                                          2 * (shape[axis] - 1) - index, index)))
+    j, k = angular
+    stencil = coefficients[clipped[:, None, None], j[None, :, None], k[None, None, :]]
+    adjacent = coefficients[neighbor[:, None, None], j[None, :, None], k[None, None, :]]
+    outside = (radial < 0) | (radial >= shape[0])
+    stencil = jnp.where(outside[:, None, None, None], 2 * stencil - adjacent, stencil)
+    return jnp.einsum("i,j,k,ijkc->c", *weights, stencil)
 
 
 def _require_model(potential: gp.AbstractPotential) -> None:
@@ -144,7 +206,10 @@ def build_grid(potential: gp.AbstractPotential, spec: GridSpec) -> ForceGrid:
         values, ~jnp.all(jnp.isfinite(values) & (values > 0)),
         "Grid coefficients must be finite and strictly restoring.",
     )
-    return ForceGrid(potential, jnp.log(values).reshape((*spec.shape, 3)), spec)
+    table = jnp.log(values).reshape((*spec.shape, 3))
+    if spec.interpolation == "cubic":
+        table = _spline_coefficients(table)
+    return ForceGrid(potential, table, spec)
 
 
 @eqx.filter_jit

@@ -112,7 +112,8 @@ def construct(potential, spec: GridSpec, path: Path) -> tuple:
 
 def force_matrix(potential, geometry: str, args: argparse.Namespace) -> list[dict]:
     """Compare identical probes and scalar/batch request patterns for every grid."""
-    spec = GridSpec(RESOLUTIONS[args.resolution[0]], args.r_min, args.r_max)
+    spec = GridSpec(RESOLUTIONS[args.resolution[0]], args.r_min, args.r_max,
+                    interpolation=args.interpolation)
     points = probes(spec)
     # Timings use a separate, fixed subset for all methods and resolutions.
     timing = jnp.asarray(points[:2048])
@@ -144,7 +145,8 @@ def force_matrix(potential, geometry: str, args: argparse.Namespace) -> list[dic
     for name in args.resolution:
         print(f"Building {geometry} {name} {RESOLUTIONS[name]}", flush=True)
         grid, setup = construct(
-            potential, GridSpec(RESOLUTIONS[name], args.r_min, args.r_max),
+            potential, GridSpec(RESOLUTIONS[name], args.r_min, args.r_max,
+                                interpolation=args.interpolation),
             args.work_dir / f"{geometry}-{name}-grid.npz",
         )
         values = np.asarray(batch_force(grid, jnp.asarray(points)))
@@ -187,7 +189,8 @@ def run(args: argparse.Namespace) -> dict:
     )
     result.update({
         "schema_version": 1,
-        "scope": "Experimental direct versus log-spherical trilinear force grid.",
+        "scope": (f"Experimental direct versus log-spherical "
+                  f"{args.interpolation} force grid."),
         "harness_sha256": sha256(Path(__file__)),
         "force_rows": force_rows,
         "probe_seed": 731,
@@ -222,6 +225,9 @@ if __name__ == "__main__":
     parser.add_argument("--case", nargs="+", choices=CASE_IDS, default=list(CASE_IDS))
     parser.add_argument(
         "--resolution", nargs="+", choices=RESOLUTIONS, default=list(RESOLUTIONS)
+    )
+    parser.add_argument(
+        "--interpolation", choices=("linear", "cubic"), default="linear"
     )
     parser.add_argument("--warm-repeats", type=int, default=3)
     parser.add_argument("--r-min", type=float, default=1e-5)
