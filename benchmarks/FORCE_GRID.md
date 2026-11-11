@@ -392,3 +392,44 @@ representation. Older tables without that field continue to load as linear.
 Tests compare the cubic evaluator with independently constructed SciPy splines,
 check cell-slope continuity and angular boundary slopes, exercise direct-force
 convergence, symmetry, units, JIT rejection, orbit integration, and table I/O.
+
+
+## Tricubic Hermite potential interpolation
+
+Select `--interpolation hermite` for a conservative potential/force comparator.
+It interpolates the scalar potential, not the log restoring coefficients.
+Each grid node stores eight quantities: the potential and all combinations
+of at most one derivative in each of log radius, polar angle, and azimuth.
+Nested JAX forward-mode autodiff through Galax and the forward spherical map
+provides these derivatives, including the mixed third derivative. Derivatives
+are stored in grid-index units, including the grid-spacing factors. No
+optimization, global solve, or finite-difference derivative estimates are used.
+Construction evaluates at most 16 nodes per batch; high-order autodiff setup
+cost and memory still need benchmarking on the scientific models.
+
+Queries use tensor-product cubic Hermite basis functions and the eight corner
+jets. The force is the negative Cartesian gradient of this same interpolant.
+Shared nodal jets give a C1 potential and continuous forces inside the domain;
+force derivatives can jump across cells, and overshoot is not excluded.
+Potential and first derivatives match the direct values at nodes, subject to
+floating-point accuracy and the exact symmetry identities described below.
+
+Angular normal derivatives and their mixed counterparts are set to zero on
+reflection planes. On the polar axis the potential and radial derivative are
+made azimuth independent, and all azimuth derivatives vanish. The Cartesian
+force conversion uses the exact polar limit: zero transverse force and only
+the radial force. Nearby queries use the spherical derivative conversion
+without an angular cutoff. Origin queries remain outside the radial domain.
+Unlike coefficient methods, Hermite construction does not use `axis_floor`.
+
+`grid.potential()` deliberately remains the direct physical potential for
+existing integration energy diagnostics. `grid.interpolated_potential()`
+exposes the Hermite Hamiltonian separately. Thus existing benchmark energy
+errors still measure fidelity to the physical potential, rather than merely
+conservation of the approximate Hamiltonian. The harness does not yet record
+both energy histories automatically.
+
+The historical `log_coefficients` artifact field stores Hermite jets with shape
+`(*spec.shape, 2, 2, 2)` for this method; the recorded interpolation selector
+controls loading and validation. Linear and cubic artifact formats are retained.
+No Hermite scientific benchmark results have been recorded yet.

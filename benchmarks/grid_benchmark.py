@@ -227,7 +227,7 @@ if __name__ == "__main__":
         "--resolution", nargs="+", choices=RESOLUTIONS, default=list(RESOLUTIONS)
     )
     parser.add_argument(
-        "--interpolation", choices=("linear", "cubic"), default="linear"
+        "--interpolation", choices=("linear", "cubic", "hermite"), default="linear"
     )
     parser.add_argument("--warm-repeats", type=int, default=3)
     parser.add_argument("--r-min", type=float, default=1e-5)

@@ -27,7 +27,7 @@ def acceleration(model, xyz):
     ).ustrip("kpc/Myr2"))
 
 
-@pytest.mark.parametrize("method", ["linear", "cubic"])
+@pytest.mark.parametrize("method", ["linear", "cubic", "hermite"])
 def test_plummer_off_node_force_converges_and_boundaries_are_inclusive(method):
     radii = np.geomspace(0.013, 87, 75)
     directions = np.array([[1, 2, 3], [-3, 0, 1], [0, -1, 0]])
@@ -51,7 +51,7 @@ def test_plummer_off_node_force_converges_and_boundaries_are_inclusive(method):
     assert errors[2] < 0.4 * errors[1]
 
 
-@pytest.mark.parametrize("method", ["linear", "cubic"])
+@pytest.mark.parametrize("method", ["linear", "cubic", "hermite"])
 def test_gaussian_node_planes_reflection_and_units(method):
     model = gp.TriaxialGaussianPotential(
         m_tot=Quantity(1e10, "Msun"), r_s=Quantity(1.0, "kpc"),
@@ -81,7 +81,7 @@ def test_gaussian_node_planes_reflection_and_units(method):
 
 @pytest.mark.parametrize("point", [[0, 0, 0], [0.001, 0, 0], [101, 0, 0],
                                    [np.nan, 0, 0]])
-@pytest.mark.parametrize("method", ["linear", "cubic"])
+@pytest.mark.parametrize("method", ["linear", "cubic", "hermite"])
 def test_grid_rejects_invalid_queries_under_jit(point, method):
     grid = build_grid(plummer(), GridSpec((8, 4, 4), 0.01, 100, interpolation=method))
     with pytest.raises(Exception, match="outside its declared radius range"):
@@ -90,7 +90,7 @@ def test_grid_rejects_invalid_queries_under_jit(point, method):
         ).value)(jnp.array(point)).block_until_ready()
 
 
-@pytest.mark.parametrize("method", ["linear", "cubic"])
+@pytest.mark.parametrize("method", ["linear", "cubic", "hermite"])
 def test_grid_uses_production_solver_and_direct_energy(method):
     model = plummer()
     grid = build_grid(model, GridSpec((128, 4, 4), 0.05, 5, interpolation=method))
@@ -164,17 +164,91 @@ def test_cubic_spec_rejects_unknown_methods_and_small_grids():
         GridSpec((8, 4, 4), 0.01, 100, interpolation="unknown")
 
 
-def test_cubic_table_round_trip(tmp_path):
+@pytest.mark.parametrize("method", ["cubic", "hermite"])
+def test_cubic_table_round_trip(tmp_path, method):
     from benchmarks.grid_benchmark import construct
     from benchmarks.grid_orbits import load_grid
 
     model = plummer()
     original, setup = construct(
-        model, GridSpec((8, 5, 4), 0.01, 100, interpolation="cubic"),
+        model, GridSpec((8, 5, 4), 0.01, 100, interpolation=method),
         tmp_path / "cubic.npz",
     )
     restored, _ = load_grid(model, setup, tmp_path)
-    assert restored.spec.interpolation == "cubic"
+    assert restored.spec.interpolation == method
     points = np.array([[0.1, 0.2, -0.3], [3., 0., 0.]])
     np.testing.assert_array_equal(acceleration(original, points),
                                   acceleration(restored, points))
+
+
+@pytest.mark.parametrize("model", [plummer(), gp.TriaxialGaussianPotential(
+    m_tot=Quantity(1., "Msun"), r_s=Quantity(1., "kpc"),
+    q1=0.8, q2=0.6, integration_order=30, units="galactic",
+)])
+def test_hermite_nodes_symmetry_axes_and_gradient(model):
+    import equinox as eqx
+
+    grid = build_grid(model, GridSpec((5, 5, 5), 0.1, 10, interpolation="hermite"))
+    theta, phi = np.pi / 8, np.pi / 4
+    point = np.array([np.sin(theta)*np.cos(phi), np.sin(theta)*np.sin(phi),
+                      np.cos(theta)])
+    points = np.vstack([point, [1, 0, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]])
+    np.testing.assert_allclose(acceleration(grid, points), acceleration(model, points),
+                               rtol=2e-10, atol=1e-20)
+    q = Quantity(points, "kpc")
+    np.testing.assert_allclose(
+        grid.interpolated_potential(q, Quantity(0., "Myr")).value,
+                               model.potential(q, Quantity(0., "Myr")).value,
+                               rtol=2e-12)
+    off = jnp.array([0.43, 0.32, 0.71])
+    energy = lambda x: grid.interpolated_potential(
+        Quantity(x, "kpc"), Quantity(0., "Myr")
+    ).ustrip("kpc2/Myr2")
+    gradient = eqx.filter_jit(jax.grad(energy))
+    np.testing.assert_allclose(-gradient(off), acceleration(grid, off), rtol=2e-12)
+    for axis in range(3):
+        for sign in (-1., 1.):
+            endpoint = np.eye(3)[axis] * sign
+            nearby = endpoint + np.array([1., 2., 3.]) * 1e-8
+            np.testing.assert_allclose(acceleration(grid, nearby),
+                                       acceleration(grid, endpoint),
+                                       rtol=1e-6,
+                                       atol=np.linalg.norm(acceleration(grid, endpoint))
+                                       * 1e-6)
+    signs = np.array([-1, 1, -1])
+    np.testing.assert_allclose(acceleration(grid, off * signs),
+                               acceleration(grid, off) * signs, rtol=1e-14)
+
+
+
+def test_hermite_cell_continuity():
+    from benchmarks.force_grid import _hermite_value
+
+    grid = build_grid(plummer(), GridSpec((9, 5, 5), 0.1, 10,
+                                          interpolation="hermite"))
+    value = lambda x: _hermite_value(grid.log_coefficients, x)
+    gradient = jax.jit(jax.grad(value))
+    for axis in range(3):
+        point = jnp.array([3.2, 1.3, 2.4]).at[axis].set(2.)
+        shift = jnp.eye(3)[axis] * 1e-8
+        np.testing.assert_allclose(value(point - shift), value(point + shift),
+                                   rtol=1e-7, atol=1e-14)
+        np.testing.assert_allclose(gradient(point - shift), gradient(point + shift),
+                                   rtol=1e-6, atol=1e-14)
+
+
+def test_hermite_reproduces_tricubic_polynomial_with_mixed_derivatives():
+    from benchmarks.force_grid import _hermite_value
+
+    # Independent exact derivatives, including nonzero mixed third derivatives.
+    powers = np.array([3, 2, 3])
+    table = np.empty((4, 4, 4, 2, 2, 2))
+    for index in np.ndindex(4, 4, 4):
+        for orders in np.ndindex(2, 2, 2):
+            orders = np.array(orders)
+            table[(*index, *orders)] = np.prod(
+                np.where(orders, powers, 1) * np.array(index)**(powers - orders)
+            )
+    points = np.random.default_rng(4).uniform(0.05, 2.95, size=(25, 3))
+    actual = jax.vmap(lambda x: _hermite_value(jnp.asarray(table), x))(points)
+    np.testing.assert_allclose(actual, np.prod(points**powers, axis=1), rtol=2e-12)

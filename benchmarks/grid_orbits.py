@@ -53,10 +53,11 @@ def load_grid(potential, setup: dict, directory: Path) -> tuple[ForceGrid, float
         table = data["log_coefficients"]
     expected = dict(setup["spec"])
     expected["shape"] = tuple(expected["shape"])
-    if declaration != expected or table.shape != (*spec.shape, 3):
+    channels = (2, 2, 2) if spec.interpolation == "hermite" else (3,)
+    if declaration != expected or table.shape != (*spec.shape, *channels):
         raise RuntimeError("Grid geometry does not match its recorded specification.")
     if table.dtype != np.float64 or not np.all(np.isfinite(table)):
-        raise RuntimeError("Grid table must contain finite float64 log coefficients.")
+        raise RuntimeError("Grid table must contain finite float64 coefficients.")
     grid = ForceGrid(potential, jnp.asarray(table), spec)
     grid.log_coefficients.block_until_ready()
     return grid, time.perf_counter() - started

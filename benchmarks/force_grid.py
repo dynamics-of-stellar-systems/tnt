@@ -1,8 +1,9 @@
 """Benchmark-only logarithmic spherical force interpolation.
 
 This is deliberately outside TNT's runtime potential registry. Only static,
-coaxial Gaussian/Plummer/NFW models are accepted, with positive restoring
-coefficients at every node. There is no extrapolation or direct-force fallback.
+coaxial Gaussian/Plummer/NFW models are accepted. Force-coefficient methods
+require positive restoring coefficients at every node. There is no extrapolation
+or direct-force fallback.
 """
 
 from __future__ import annotations
@@ -40,8 +41,8 @@ class GridSpec:
             for n in self.shape
         ):
             raise ValueError("Grid shape must contain three integers >= 2.")
-        if self.interpolation not in {"linear", "cubic"}:
-            raise ValueError("Interpolation must be linear or cubic.")
+        if self.interpolation not in {"linear", "cubic", "hermite"}:
+            raise ValueError("Interpolation must be linear or cubic or hermite.")
         if self.interpolation == "cubic" and min(self.shape) < 4:
             raise ValueError("Cubic interpolation needs four nodes per axis.")
         if not 0 < self.r_min < self.r_max < np.inf:
@@ -52,6 +53,11 @@ class GridSpec:
 
 class ForceGrid(eqx.Module):
     """Linear or cubic log-force coefficients with direct physical energy.
+
+    Hermite grids store potential derivative jets in log_coefficients (a
+    historical field name), with shape (*spec.shape, 2, 2, 2). Their forces
+    derive from one C1 potential. potential() remains the direct energy
+    evaluator; interpolated_potential() exposes the approximate Hamiltonian.
 
     For cubic grids, log_coefficients stores interpolating B-spline
     coefficients, not node values. The radial spline has natural endpoint
@@ -80,6 +86,31 @@ class ForceGrid(eqx.Module):
         result = jax.vmap(self._acceleration)(flat).reshape(xyz.shape)
         return Quantity(result, self.units["length"] / self.units["time"]**2)
 
+    def interpolated_potential(self, position: Quantity, time: Quantity) -> Quantity:
+        """Hermite Hamiltonian; ordinary potential() retains direct diagnostics."""
+        if self.spec.interpolation != "hermite":
+            raise ValueError("Only Hermite grids interpolate a scalar potential.")
+        xyz = position.ustrip(self.units["length"])
+        if xyz.shape[-1:] != (3,):
+            raise ValueError("Expected Cartesian coordinates with trailing axis 3.")
+
+        def value(point):
+            radius = jnp.linalg.norm(point)
+            point = eqx.error_if(
+                point, ~jnp.all(jnp.isfinite(point))
+                | (radius < self.spec.r_min) | (radius > self.spec.r_max),
+                "Force-grid query is non-finite or outside its declared radius range.",
+            )
+            x, y, z = jnp.abs(point)
+            coordinates = jnp.array([
+                jnp.log(radius / self.spec.r_min),
+                jnp.arctan2(jnp.hypot(x, y), z), jnp.arctan2(y, x),
+            ]) / _grid_spacing(self.spec)
+            return _hermite_value(self.log_coefficients, coordinates)
+
+        values = jax.vmap(value)(xyz.reshape(-1, 3)).reshape(xyz.shape[:-1])
+        return Quantity(values, self.units["length"]**2 / self.units["time"]**2)
+
     def _acceleration(self, xyz: jax.Array) -> jax.Array:
         radius = jnp.linalg.norm(xyz)
         xyz = eqx.error_if(
@@ -95,6 +126,21 @@ class ForceGrid(eqx.Module):
             jnp.arctan2(jnp.linalg.norm(absolute[:2]), absolute[2]) / (jnp.pi / 2),
             jnp.arctan2(absolute[1], absolute[0]) / (jnp.pi / 2),
         ]) * (jnp.asarray(self.spec.shape) - 1)
+        if self.spec.interpolation == "hermite":
+            gradient = jax.grad(_hermite_value, argnums=1)(
+                self.log_coefficients, coordinates
+            ) / _grid_spacing(self.spec)
+            rho = jnp.linalg.norm(absolute[:2])
+            pole = rho == 0
+            safe_rho = jnp.where(pole, 1.0, rho)
+            cp, sp = absolute[0] / safe_rho, absolute[1] / safe_rho
+            st, ct = rho / radius, absolute[2] / radius
+            radial = absolute / radius
+            polar = jnp.array([ct * cp, ct * sp, -st])
+            azimuthal = jnp.array([-sp, cp, 0.0])
+            force = -(gradient[0] * radial + gradient[1] * polar) / radius
+            force -= gradient[2] * azimuthal / safe_rho
+            return force * jnp.sign(xyz)
         if self.spec.interpolation == "cubic":
             return -xyz * jnp.exp(_cubic_value(self.log_coefficients, coordinates))
         # Clipping selects the final valid cell at an inclusive upper boundary;
@@ -164,6 +210,73 @@ def _cubic_value(coefficients: jax.Array, coordinates: jax.Array) -> jax.Array:
     return jnp.einsum("i,j,k,ijkc->c", *weights, stencil)
 
 
+
+def _grid_spacing(spec: GridSpec) -> jax.Array:
+    return jnp.array([jnp.log(spec.r_max / spec.r_min), jnp.pi / 2, jnp.pi / 2
+                      ]) / (jnp.asarray(spec.shape) - 1)
+
+
+def _hermite_value(table: jax.Array, coordinates: jax.Array) -> jax.Array:
+    """Tensor Hermite basis; last axes select derivative order 0 or 1."""
+    lower = jnp.clip(jnp.floor(coordinates).astype(jnp.int32),
+                     0, jnp.asarray(table.shape[:3]) - 2)
+    t = coordinates - lower
+    # basis[axis, endpoint, derivative_order]
+    basis = jnp.stack([
+        jnp.stack([2*t**3 - 3*t**2 + 1, t**3 - 2*t**2 + t], axis=-1),
+        jnp.stack([-2*t**3 + 3*t**2, t**3 - t**2], axis=-1),
+    ], axis=1)
+    i, j, k = (lower[a] + jnp.arange(2) for a in range(3))
+    cell = table[i[:, None, None], j[None, :, None], k[None, None, :]]
+    return jnp.einsum("ia,jb,kc,ijkabc->", *basis, cell)
+
+
+def _hermite_table(potential: gp.AbstractPotential, spec: GridSpec) -> jax.Array:
+    """Autodiff all eight derivative combinations; no finite differences."""
+    spacing = _grid_spacing(spec)
+    axes = [jnp.linspace(0, n - 1, n) for n in spec.shape]
+    nodes = jnp.stack(jnp.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
+    length, time = potential.units["length"], potential.units["time"]
+
+    def scalar(index):
+        u, theta, phi = index * spacing
+        r = spec.r_min * jnp.exp(u)
+        xyz = r * jnp.array([jnp.sin(theta) * jnp.cos(phi),
+                             jnp.sin(theta) * jnp.sin(phi), jnp.cos(theta)])
+        return potential.potential(Quantity(xyz, length), Quantity(0., time)
+                                   ).ustrip(length**2 / time**2)
+
+    def derivative(function, axis):
+        def evaluate(index):
+            return jax.jvp(function, (index,), (jnp.eye(3)[axis],))[1]
+        return evaluate
+
+    functions = []
+    for a in range(2):
+        for b in range(2):
+            for c in range(2):
+                function = scalar
+                for axis, order in enumerate((a, b, c)):
+                    if order:
+                        function = derivative(function, axis)
+                functions.append(function)
+
+    def jet(index):
+        return jnp.stack([function(index) for function in functions]).reshape(2, 2, 2)
+
+    table = jax.lax.map(jet, nodes, batch_size=16).reshape((*spec.shape, 2, 2, 2))
+    table = eqx.error_if(table, ~jnp.all(jnp.isfinite(table)),
+                         "Hermite potential derivatives must be finite.")
+    # Exact symmetry identities, removing trigonometric roundoff at boundaries.
+    table = table.at[:, 0, :, :, 1, :].set(0)
+    table = table.at[:, -1, :, :, 1, :].set(0)
+    table = table.at[:, :, 0, :, :, 1].set(0)
+    table = table.at[:, :, -1, :, :, 1].set(0)
+    table = table.at[:, 0, :, :, 0, 0].set(table[:, 0, :1, :, 0, 0])
+    table = table.at[:, 0, :, :, :, 1].set(0)
+    return table
+
+
 def _require_model(potential: gp.AbstractPotential) -> None:
     require_static_potential(potential)
     if isinstance(potential, Mapping):
@@ -184,6 +297,8 @@ def build_grid(potential: gp.AbstractPotential, spec: GridSpec) -> ForceGrid:
     caller synchronizes the returned arrays before stopping a setup timer.
     """
     _require_model(potential)
+    if spec.interpolation == "hermite":
+        return ForceGrid(potential, _hermite_table(potential, spec), spec)
     radii = jnp.geomspace(spec.r_min, spec.r_max, spec.shape[0])
     theta = jnp.linspace(0, jnp.pi / 2, spec.shape[1])
     phi = jnp.linspace(0, jnp.pi / 2, spec.shape[2])
