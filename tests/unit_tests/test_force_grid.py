@@ -252,3 +252,55 @@ def test_hermite_reproduces_tricubic_polynomial_with_mixed_derivatives():
     points = np.random.default_rng(4).uniform(0.05, 2.95, size=(25, 3))
     actual = jax.vmap(lambda x: _hermite_value(jnp.asarray(table), x))(points)
     np.testing.assert_allclose(actual, np.prod(points**powers, axis=1), rtol=2e-12)
+
+
+@pytest.mark.parametrize("method", ["linear", "cubic", "hermite"])
+def test_direct_fallback_matches_direct_outside_and_preserves_inside(method):
+    import equinox as eqx
+
+    model = plummer()
+    grid = build_grid(model, GridSpec((12, 5, 5), .1, 10,
+                                      interpolation=method, outside_policy="direct"))
+    from benchmarks.force_grid import ForceGrid
+
+    strict = ForceGrid(model, grid.log_coefficients,
+                       GridSpec((12, 5, 5), .1, 10, interpolation=method))
+    points = np.array([[0., 0., 0.], [.01, 0., 0.], [20., -2., 1.]])
+    evaluate = eqx.filter_jit(lambda g, x: acceleration_quantity(g, x))
+    np.testing.assert_allclose(evaluate(grid, jnp.array(points)),
+                               acceleration(model, points), rtol=1e-14, atol=1e-14)
+    inside = np.array([[.1, 0., 0.], [.7, -.3, .4], [0., 10., 0.]])
+    np.testing.assert_allclose(evaluate(grid, jnp.array(inside)),
+                               acceleration(strict, inside), rtol=1e-14, atol=1e-14)
+    if method == "hermite":
+        np.testing.assert_allclose(
+            grid.interpolated_potential(
+                Quantity(points, "kpc"), Quantity(0., "Myr")
+            ).value,
+            model.potential(Quantity(points, "kpc"), Quantity(0., "Myr")).value,
+            rtol=1e-14,
+        )
+    with pytest.raises(Exception, match="must be finite"):
+        evaluate(grid, jnp.array([jnp.nan, 0., 0.])).block_until_ready()
+
+
+def acceleration_quantity(model, xyz):
+    return model.acceleration(Quantity(xyz, "kpc"), Quantity(0., "Myr")).value
+
+
+@pytest.mark.parametrize("method", ["linear", "cubic", "hermite"])
+def test_outside_orbit_integrates_using_direct_fallback(method):
+    model = plummer()
+    grid = build_grid(model, GridSpec((8, 4, 4), .1, 1.,
+                                      interpolation=method, outside_policy="direct"))
+    speed = np.sqrt(9 / 10**1.5)
+    settings = OrbitIntegrationSettings(orbital_periods=1., n_stored_timesteps=32)
+    args = (Quantity([3., 0., 0.], "kpc"), Quantity([0., speed, 0.], "kpc/Myr"),
+            Quantity(6*np.pi/speed, "Myr"), jax.random.key(4), settings)
+    reference = integrate_orbit(model, *args)
+    actual = integrate_grid(grid, *args)
+    assert bool(actual.diagnostics.successful)
+    np.testing.assert_allclose(actual.positions.value, reference.positions.value,
+                               rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(actual.velocities.value, reference.velocities.value,
+                               rtol=1e-10, atol=1e-10)

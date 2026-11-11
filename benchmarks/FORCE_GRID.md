@@ -433,3 +433,24 @@ The historical `log_coefficients` artifact field stores Hermite jets with shape
 `(*spec.shape, 2, 2, 2)` for this method; the recorded interpolation selector
 controls loading and validation. Linear and cubic artifact formats are retained.
 No Hermite scientific benchmark results have been recorded yet.
+
+## Optional direct-force fallback
+
+`GridSpec(outside_policy="direct")` evaluates finite out-of-grid queries with
+its direct physical model; `"reject"` remains the default. In-domain queries,
+including both radial endpoints, retain interpolation. Non-finite inputs still
+raise. Scalar `lax.cond` selection avoids evaluating the unused force branch in
+sequential integrations. Array queries use sequential `lax.map` under this
+policy to preserve branch selection; externally vmapping queries may evaluate
+both branches and is not the benchmark execution strategy.
+
+For Hermite, `interpolated_potential` similarly uses direct potential values
+outside the grid. This is a hard switch: boundary force/potential mismatches
+are possible, and global conservation of a single smooth Hamiltonian is not
+guaranteed across it. Direct physical-energy diagnostics remain unchanged.
+
+`interpolation_library/input/config-round2.yaml` prepares grids extending from
+`1e-7` to `200 kpc`, at the same `(160,24,24)` resolution, with direct fallback.
+The broader log-radius span changes radial spacing, so this is a new experiment.
+The library runner records how many **saved samples** lie outside the grid;
+that is not a counter of internal adaptive-stage fallback evaluations.

@@ -2,8 +2,8 @@
 
 This is deliberately outside TNT's runtime potential registry. Only static,
 coaxial Gaussian/Plummer/NFW models are accepted. Force-coefficient methods
-require positive restoring coefficients at every node. There is no extrapolation
-or direct-force fallback.
+require positive restoring coefficients at every node. Extrapolation is never
+used; an explicit policy either rejects out-of-domain queries or uses direct forces.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ class GridSpec:
     r_max: float
     axis_floor: float = 1e-7
     interpolation: str = "linear"
+    outside_policy: str = "reject"
 
     def __post_init__(self) -> None:
         if len(self.shape) != 3 or any(
@@ -45,6 +46,8 @@ class GridSpec:
             raise ValueError("Interpolation must be linear or cubic or hermite.")
         if self.interpolation == "cubic" and min(self.shape) < 4:
             raise ValueError("Cubic interpolation needs four nodes per axis.")
+        if self.outside_policy not in {"reject", "direct"}:
+            raise ValueError("Outside policy must be reject or direct.")
         if not 0 < self.r_min < self.r_max < np.inf:
             raise ValueError("Require finite 0 < r_min < r_max.")
         if not 0 < self.axis_floor <= 1e-4:
@@ -83,11 +86,23 @@ class ForceGrid(eqx.Module):
         if xyz.shape[-1:] != (3,):
             raise ValueError("Expected Cartesian coordinates with trailing axis 3.")
         flat = xyz.reshape((-1, 3))
-        result = jax.vmap(self._acceleration)(flat).reshape(xyz.shape)
+        if xyz.ndim == 1:
+            result = self._acceleration(xyz)
+        elif self.spec.outside_policy == "direct":
+            # Preserve scalar branch selection; vmap(cond) can evaluate both.
+            result = jax.lax.map(
+                lambda point: self._acceleration(point), flat
+            ).reshape(xyz.shape)
+        else:
+            result = jax.vmap(self._acceleration)(flat).reshape(xyz.shape)
         return Quantity(result, self.units["length"] / self.units["time"]**2)
 
     def interpolated_potential(self, position: Quantity, time: Quantity) -> Quantity:
-        """Hermite Hamiltonian; ordinary potential() retains direct diagnostics."""
+        """Hermite energy, with direct values outside if fallback is enabled.
+
+        A hard boundary switch need not be globally potential-consistent.
+        Ordinary potential() always retains direct physical diagnostics.
+        """
         if self.spec.interpolation != "hermite":
             raise ValueError("Only Hermite grids interpolate a scalar potential.")
         xyz = position.ustrip(self.units["length"])
@@ -108,10 +123,43 @@ class ForceGrid(eqx.Module):
             ]) / _grid_spacing(self.spec)
             return _hermite_value(self.log_coefficients, coordinates)
 
-        values = jax.vmap(value)(xyz.reshape(-1, 3)).reshape(xyz.shape[:-1])
+        def selected_value(point):
+            point = eqx.error_if(point, ~jnp.all(jnp.isfinite(point)),
+                                 "Force-grid query must be finite.")
+            radius = jnp.linalg.norm(point)
+            return jax.lax.cond(
+                (radius < self.spec.r_min) | (radius > self.spec.r_max),
+                lambda q: self.direct.potential(
+                    Quantity(q, self.units["length"]), time
+                ).ustrip(self.units["length"]**2 / self.units["time"]**2),
+                value, point,
+            )
+
+        if self.spec.outside_policy == "direct":
+            if xyz.ndim == 1:
+                values = selected_value(xyz)
+            else:
+                values = jax.lax.map(selected_value, xyz.reshape(-1, 3)).reshape(
+                    xyz.shape[:-1])
+        else:
+            values = jax.vmap(value)(xyz.reshape(-1, 3)).reshape(xyz.shape[:-1])
         return Quantity(values, self.units["length"]**2 / self.units["time"]**2)
 
     def _acceleration(self, xyz: jax.Array) -> jax.Array:
+        if self.spec.outside_policy == "reject":
+            return self._in_domain_acceleration(xyz)
+        xyz = eqx.error_if(xyz, ~jnp.all(jnp.isfinite(xyz)),
+                           "Force-grid query must be finite.")
+        radius = jnp.linalg.norm(xyz)
+        return jax.lax.cond(
+            (radius < self.spec.r_min) | (radius > self.spec.r_max),
+            lambda point: self.direct.acceleration(
+                Quantity(point, self.units["length"]), Quantity(0., self.units["time"])
+            ).ustrip(self.units["length"] / self.units["time"]**2),
+            lambda point: self._in_domain_acceleration(point), xyz,
+        )
+
+    def _in_domain_acceleration(self, xyz: jax.Array) -> jax.Array:
         radius = jnp.linalg.norm(xyz)
         xyz = eqx.error_if(
             xyz,
