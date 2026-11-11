@@ -1,5 +1,8 @@
 # Support points from the prior
 
+For a visual comparison of the two generators, start with
+[Choosing model evaluation points](choosing_parameters.md).
+
 `PriorSupportPoints` augments evaluation locations using the existing run
 prior. It draws a cheap reference cloud, transforms it to NumPyro unconstrained
 coordinates, optimizes support points, and maps the design back to the original
