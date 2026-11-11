@@ -246,6 +246,7 @@ def test_read_resolves_defaults_without_allocating_a_run(tmp_path: Path) -> None
         "console": {"enabled": True, "level": "INFO"},
     }
     assert written["numerics_settings"]["jax_enable_x64"] is True
+    assert written["numerics_settings"]["gaussian_potential_quad_order"] == 800
     assert written["io_settings"]["input_directory"] == "input"
     assert written["io_settings"]["output_directory"] == "output"
     assert config.data["io_settings"]["input_directory"] == str(tmp_path / "input")
@@ -276,6 +277,25 @@ def test_read_resolves_defaults_without_allocating_a_run(tmp_path: Path) -> None
     assert written["weight_solver_settings"]["maxiter_factor"] == 3
 
     assert config.source_path == user_path
+
+
+@pytest.mark.parametrize("bad_order", [0, -1, 1.5, True, "200"])
+def test_read_rejects_invalid_gaussian_quadrature_order(
+    tmp_path: Path,
+    bad_order: object,
+) -> None:
+    path = tmp_path / "user.yaml"
+    _write_user_config(
+        path,
+        tmp_path / "output",
+        body=yaml.safe_dump(
+            {"numerics_settings": {"gaussian_potential_quad_order": bad_order}}
+        ),
+    )
+    with pytest.raises(
+        (TypeError, ValueError), match="gaussian_potential_quad_order.*integer"
+    ):
+        Configuration().read(path, workspace_root=tmp_path)
 
 
 def test_read_rejects_non_boolean_jax_precision_policy(tmp_path: Path) -> None:

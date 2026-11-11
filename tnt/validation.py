@@ -86,6 +86,13 @@ def _integer(value: Any, path: str) -> int:
     return value
 
 
+def _positive_integer(value: Any, path: str) -> int:
+    number = _integer(value, path)
+    if number <= 0:
+        raise ValueError(f"{path} must be a positive integer.")
+    return number
+
+
 def _positive_number(value: Any, path: str) -> float:
     number = _number(value, path)
     if number <= 0:

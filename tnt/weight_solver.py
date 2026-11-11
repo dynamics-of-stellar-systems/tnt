@@ -16,7 +16,12 @@ from tnt.orbit_library import OrbitLibrary
 
 
 class OrbitWeights(eqx.Module):
-    """Solved weight of every orbit in an `OrbitLibrary`."""
+    """Solved weight of each fitted bundle in an ``OrbitLibrary``.
+
+    ``weights`` has shape ``(n_bundles,)``. Dithered members, once supported,
+    contribute to their bundle's one column rather than receiving independent
+    fitted weights.
+    """
 
     weights: jnp.ndarray
 
