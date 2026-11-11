@@ -14,6 +14,7 @@ configuration, scientific inputs, potential construction, and model searches.
    orbit_library
    logging
    model_search
+   choosing_parameters
    priors
    support_points
    dynamite_users

@@ -1,5 +1,8 @@
 # Priors
 
+For a visual comparison of the two generators, start with
+[Choosing model evaluation points](choosing_parameters.md).
+
 A `prior` on a potential parameter (`{distribution: "<numpyro.distributions
 class>", args: [...]}`, sibling to `value`/`unit`/`fixed`) declares its
 search-space distribution and compiles to one `numpyro.sample` site, keyed by

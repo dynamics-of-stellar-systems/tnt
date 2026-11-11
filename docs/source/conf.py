@@ -1,3 +1,9 @@
+import sys
+from pathlib import Path
+
+# Local extensions generate the visual guide assets before Sphinx reads pages.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_ext"))
+
 # Configuration file for the Sphinx documentation builder.
 #
 # For the full list of built-in configuration values, see the documentation:
@@ -16,11 +22,12 @@ release = "0.1.0"
 
 extensions = [
     "myst_parser",
+    "prior_generator_examples",
 ]
 
 myst_heading_anchors = 3
 
-exclude_patterns = []
+exclude_patterns = ["_generated/**"]
 
 
 # -- Options for HTML output -------------------------------------------------
