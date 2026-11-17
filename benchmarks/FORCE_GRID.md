@@ -454,3 +454,29 @@ guaranteed across it. Direct physical-energy diagnostics remain unchanged.
 The broader log-radius span changes radial spacing, so this is a new experiment.
 The library runner records how many **saved samples** lie outside the grid;
 that is not a counter of internal adaptive-stage fallback evaluations.
+
+## Quintic potential spline experiment
+
+`--interpolation quintic` retains the cubic Hermite nodal potential and all
+seven derivative combinations exactly, then solves for nodal curvatures along
+each coordinate axis. Tensor quintic pieces share derivatives through order
+three: the potential is C3 and the force C2 at interior grid joins. This is
+equivalent to a degree-five B-spline representation with **double**, rather
+than simple, interior knots. Simple knots do not provide enough coefficients
+for arbitrary exact values and first derivatives at every node.
+
+Angular endpoint third derivatives vanish, permitting C3 even reflection
+alongside the supplied zero first derivatives. Radial endpoint fourth
+derivatives vanish; this is an interpolation boundary condition, not a physical
+condition on the source model. The table has shape `(*shape, 3, 3, 3)` and uses
+27 scalars per node, versus eight for cubic Hermite. Evaluation uses eight
+corner jets, with analytic autodifferentiation of the scalar potential.
+
+These continuity statements concern the interpolation coordinates and regular
+Cartesian points. Spherical-pole regularity beyond the existing force-limit
+checks is not established by tensor continuity alone. Direct fallback still
+uses a hard radial switch and carries no global smoothness guarantee.
+
+Unit checks compare against an independently solved SciPy quintic B-spline
+with double knots, verify derivatives through order three, exact nodal values
+and slopes, force/potential consistency, reflection, convergence and artifacts.

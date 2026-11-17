@@ -42,8 +42,10 @@ class GridSpec:
             for n in self.shape
         ):
             raise ValueError("Grid shape must contain three integers >= 2.")
-        if self.interpolation not in {"linear", "cubic", "hermite"}:
-            raise ValueError("Interpolation must be linear or cubic or hermite.")
+        if self.interpolation not in {"linear", "cubic", "hermite", "quintic"}:
+            raise ValueError(
+                "Interpolation must be linear or cubic or hermite or quintic."
+            )
         if self.interpolation == "cubic" and min(self.shape) < 4:
             raise ValueError("Cubic interpolation needs four nodes per axis.")
         if self.outside_policy not in {"reject", "direct"}:
@@ -61,6 +63,9 @@ class ForceGrid(eqx.Module):
     historical field name), with shape (*spec.shape, 2, 2, 2). Their forces
     derive from one C1 potential. potential() remains the direct energy
     evaluator; interpolated_potential() exposes the approximate Hamiltonian.
+
+    Quintic grids extend these jets to shape (*shape, 3, 3, 3), solving
+    curvatures globally for a C3 potential (C2 force) at interior grid joins.
 
     For cubic grids, log_coefficients stores interpolating B-spline
     coefficients, not node values. The radial spline has natural endpoint
@@ -103,7 +108,7 @@ class ForceGrid(eqx.Module):
         A hard boundary switch need not be globally potential-consistent.
         Ordinary potential() always retains direct physical diagnostics.
         """
-        if self.spec.interpolation != "hermite":
+        if self.spec.interpolation not in {"hermite", "quintic"}:
             raise ValueError("Only Hermite grids interpolate a scalar potential.")
         xyz = position.ustrip(self.units["length"])
         if xyz.shape[-1:] != (3,):
@@ -121,7 +126,7 @@ class ForceGrid(eqx.Module):
                 jnp.log(radius / self.spec.r_min),
                 jnp.arctan2(jnp.hypot(x, y), z), jnp.arctan2(y, x),
             ]) / _grid_spacing(self.spec)
-            return _hermite_value(self.log_coefficients, coordinates)
+            return _potential_value(self.log_coefficients, coordinates)
 
         def selected_value(point):
             point = eqx.error_if(point, ~jnp.all(jnp.isfinite(point)),
@@ -174,8 +179,8 @@ class ForceGrid(eqx.Module):
             jnp.arctan2(jnp.linalg.norm(absolute[:2]), absolute[2]) / (jnp.pi / 2),
             jnp.arctan2(absolute[1], absolute[0]) / (jnp.pi / 2),
         ]) * (jnp.asarray(self.spec.shape) - 1)
-        if self.spec.interpolation == "hermite":
-            gradient = jax.grad(_hermite_value, argnums=1)(
+        if self.spec.interpolation in {"hermite", "quintic"}:
+            gradient = jax.grad(_potential_value, argnums=1)(
                 self.log_coefficients, coordinates
             ) / _grid_spacing(self.spec)
             rho = jnp.linalg.norm(absolute[:2])
@@ -279,6 +284,71 @@ def _hermite_value(table: jax.Array, coordinates: jax.Array) -> jax.Array:
     return jnp.einsum("ia,jb,kc,ijkabc->", *basis, cell)
 
 
+# Polynomial coefficients in increasing powers of the local cell coordinate.
+_QUINTIC_BASIS = np.array([
+    [1, 0, 0, -10, 15, -6], [0, 1, 0, -6, 8, -3],
+    [0, 0, .5, -1.5, 1.5, -.5],
+    [0, 0, 0, 10, -15, 6], [0, 0, 0, -4, 7, -3],
+    [0, 0, 0, .5, -1, .5],
+]).reshape(2, 3, 6)
+
+
+def _second_derivative_operator(n: int, angular: bool) -> np.ndarray:
+    """Infer nodal curvatures from exact values/slopes, enforcing C3 joins.
+
+    Zero third derivatives at angular endpoints permit smooth even reflection.
+    Radial endpoints use zero fourth derivatives. All derivatives here are
+    with respect to the dimensionless grid index, not physical coordinates.
+    """
+    constraints = np.zeros((n, n, 3))
+
+    def weights(order, t):
+        return np.array([[np.polynomial.polynomial.polyval(
+            t, np.polynomial.polynomial.polyder(p, order))
+            for p in endpoint] for endpoint in _QUINTIC_BASIS])
+
+    for i in range(1, n - 1):
+        constraints[i, i-1:i+1] += weights(3, 1.)
+        constraints[i, i:i+2] -= weights(3, 0.)
+    order = 3 if angular else 4
+    constraints[0, :2] = weights(order, 0.)
+    constraints[-1, -2:] = weights(order, 1.)
+    return np.linalg.solve(constraints[:, :, 2],
+                           -constraints[:, :, :2].reshape(n, 2*n))
+
+
+def _quintic_table(jets: jax.Array) -> jax.Array:
+    """Tensor quintic C3 Hermite spline; retain all eight supplied nodal jets.
+
+    Equivalent to degree-five B-splines with double interior knots. The
+    additional second-derivative jets are solved globally along each axis.
+    """
+    for axis in range(3):
+        moved = jnp.moveaxis(jets, (axis, axis + 3), (0, 1))
+        n = moved.shape[0]
+        operator = jnp.asarray(_second_derivative_operator(n, axis != 0))
+        seconds = (operator @ moved.reshape(2*n, -1)).reshape(
+            (n, 1, *moved.shape[2:]))
+        moved = jnp.concatenate([moved, seconds], axis=1)
+        jets = jnp.moveaxis(moved, (0, 1), (axis, axis + 3))
+    return jets
+
+
+def _potential_value(table: jax.Array, coordinates: jax.Array) -> jax.Array:
+    if table.shape[-1] == 2:
+        return _hermite_value(table, coordinates)
+    lower = jnp.clip(jnp.floor(coordinates).astype(jnp.int32),
+                     0, jnp.asarray(table.shape[:3]) - 2)
+    t = coordinates - lower
+    # Horner evaluation avoids cancellation from an expanded spline stencil.
+    basis = jnp.zeros((3, 2, 3))
+    for power in range(5, -1, -1):
+        basis = basis * t[:, None, None] + jnp.asarray(_QUINTIC_BASIS[:, :, power])
+    i, j, k = (lower[a] + jnp.arange(2) for a in range(3))
+    cell = table[i[:, None, None], j[None, :, None], k[None, None, :]]
+    return jnp.einsum("ia,jb,kc,ijkabc->", *basis, cell)
+
+
 def _hermite_table(potential: gp.AbstractPotential, spec: GridSpec) -> jax.Array:
     """Autodiff all eight derivative combinations; no finite differences."""
     spacing = _grid_spacing(spec)
@@ -345,8 +415,11 @@ def build_grid(potential: gp.AbstractPotential, spec: GridSpec) -> ForceGrid:
     caller synchronizes the returned arrays before stopping a setup timer.
     """
     _require_model(potential)
-    if spec.interpolation == "hermite":
-        return ForceGrid(potential, _hermite_table(potential, spec), spec)
+    if spec.interpolation in {"hermite", "quintic"}:
+        table = _hermite_table(potential, spec)
+        if spec.interpolation == "quintic":
+            table = _quintic_table(table)
+        return ForceGrid(potential, table, spec)
     radii = jnp.geomspace(spec.r_min, spec.r_max, spec.shape[0])
     theta = jnp.linspace(0, jnp.pi / 2, spec.shape[1])
     phi = jnp.linspace(0, jnp.pi / 2, spec.shape[2])

@@ -27,7 +27,7 @@ def acceleration(model, xyz):
     ).ustrip("kpc/Myr2"))
 
 
-@pytest.mark.parametrize("method", ["linear", "cubic", "hermite"])
+@pytest.mark.parametrize("method", ["linear", "cubic", "hermite", "quintic"])
 def test_plummer_off_node_force_converges_and_boundaries_are_inclusive(method):
     radii = np.geomspace(0.013, 87, 75)
     directions = np.array([[1, 2, 3], [-3, 0, 1], [0, -1, 0]])
@@ -51,7 +51,7 @@ def test_plummer_off_node_force_converges_and_boundaries_are_inclusive(method):
     assert errors[2] < 0.4 * errors[1]
 
 
-@pytest.mark.parametrize("method", ["linear", "cubic", "hermite"])
+@pytest.mark.parametrize("method", ["linear", "cubic", "hermite", "quintic"])
 def test_gaussian_node_planes_reflection_and_units(method):
     model = gp.TriaxialGaussianPotential(
         m_tot=Quantity(1e10, "Msun"), r_s=Quantity(1.0, "kpc"),
@@ -81,7 +81,7 @@ def test_gaussian_node_planes_reflection_and_units(method):
 
 @pytest.mark.parametrize("point", [[0, 0, 0], [0.001, 0, 0], [101, 0, 0],
                                    [np.nan, 0, 0]])
-@pytest.mark.parametrize("method", ["linear", "cubic", "hermite"])
+@pytest.mark.parametrize("method", ["linear", "cubic", "hermite", "quintic"])
 def test_grid_rejects_invalid_queries_under_jit(point, method):
     grid = build_grid(plummer(), GridSpec((8, 4, 4), 0.01, 100, interpolation=method))
     with pytest.raises(Exception, match="outside its declared radius range"):
@@ -90,7 +90,7 @@ def test_grid_rejects_invalid_queries_under_jit(point, method):
         ).value)(jnp.array(point)).block_until_ready()
 
 
-@pytest.mark.parametrize("method", ["linear", "cubic", "hermite"])
+@pytest.mark.parametrize("method", ["linear", "cubic", "hermite", "quintic"])
 def test_grid_uses_production_solver_and_direct_energy(method):
     model = plummer()
     grid = build_grid(model, GridSpec((128, 4, 4), 0.05, 5, interpolation=method))
@@ -164,7 +164,7 @@ def test_cubic_spec_rejects_unknown_methods_and_small_grids():
         GridSpec((8, 4, 4), 0.01, 100, interpolation="unknown")
 
 
-@pytest.mark.parametrize("method", ["cubic", "hermite"])
+@pytest.mark.parametrize("method", ["cubic", "hermite", "quintic"])
 def test_cubic_table_round_trip(tmp_path, method):
     from benchmarks.grid_benchmark import construct
     from benchmarks.grid_orbits import load_grid
@@ -254,7 +254,7 @@ def test_hermite_reproduces_tricubic_polynomial_with_mixed_derivatives():
     np.testing.assert_allclose(actual, np.prod(points**powers, axis=1), rtol=2e-12)
 
 
-@pytest.mark.parametrize("method", ["linear", "cubic", "hermite"])
+@pytest.mark.parametrize("method", ["linear", "cubic", "hermite", "quintic"])
 def test_direct_fallback_matches_direct_outside_and_preserves_inside(method):
     import equinox as eqx
 
@@ -272,7 +272,7 @@ def test_direct_fallback_matches_direct_outside_and_preserves_inside(method):
     inside = np.array([[.1, 0., 0.], [.7, -.3, .4], [0., 10., 0.]])
     np.testing.assert_allclose(evaluate(grid, jnp.array(inside)),
                                acceleration(strict, inside), rtol=1e-14, atol=1e-14)
-    if method == "hermite":
+    if method in {"hermite", "quintic"}:
         np.testing.assert_allclose(
             grid.interpolated_potential(
                 Quantity(points, "kpc"), Quantity(0., "Myr")
@@ -288,7 +288,7 @@ def acceleration_quantity(model, xyz):
     return model.acceleration(Quantity(xyz, "kpc"), Quantity(0., "Myr")).value
 
 
-@pytest.mark.parametrize("method", ["linear", "cubic", "hermite"])
+@pytest.mark.parametrize("method", ["linear", "cubic", "hermite", "quintic"])
 def test_outside_orbit_integrates_using_direct_fallback(method):
     model = plummer()
     grid = build_grid(model, GridSpec((8, 4, 4), .1, 1.,
@@ -304,3 +304,50 @@ def test_outside_orbit_integrates_using_direct_fallback(method):
                                rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(actual.velocities.value, reference.velocities.value,
                                rtol=1e-10, atol=1e-10)
+
+
+def test_quintic_matches_independent_bspline_and_is_c3():
+    from scipy.interpolate import BSpline
+
+    from benchmarks.force_grid import _potential_value, _quintic_table
+
+    n = 7
+    x = np.arange(n, dtype=float)
+    values, slopes = np.sin(x * .7), .7 * np.cos(x * .7)
+    jets = np.zeros((n, 3, 3, 2, 2, 2))
+    jets[..., 0, 0, 0] = values[:, None, None]
+    jets[..., 1, 0, 0] = slopes[:, None, None]
+    table = _quintic_table(jnp.asarray(jets))
+    # Independently solve in a B-spline basis with double interior knots.
+    knots = np.r_[np.repeat(x[0], 6), np.repeat(x[1:-1], 2),
+                  np.repeat(x[-1], 6)]
+    basis = BSpline(knots, np.eye(len(knots) - 6), 5)
+    matrix = np.concatenate([basis(x), basis(x, nu=1), basis(x[[0, -1]], nu=4)])
+    reference = BSpline(knots, np.linalg.solve(matrix, np.r_[values, slopes, 0, 0]), 5)
+    value = lambda u: _potential_value(table, jnp.array([u, .4, 1.2]))
+    evaluate = jax.jit(jax.vmap(value))
+    points = np.linspace(0, n-1, 101)
+    np.testing.assert_allclose(evaluate(points), reference(points), atol=2e-13)
+    derivative = value
+    for order in range(4):
+        evaluate = jax.jit(jax.vmap(derivative))
+        np.testing.assert_allclose(evaluate(points), reference(points, nu=order),
+                                   atol=2e-11)
+        if order < 2:
+            np.testing.assert_allclose(evaluate(x), [values, slopes][order], atol=2e-12)
+        for join in x[1:-1]:
+            assert abs(float(derivative(join - 1e-8) - derivative(join + 1e-8))) < 1e-7
+        derivative = jax.grad(derivative)
+
+
+@pytest.mark.parametrize("method", ["hermite", "quintic"])
+def test_potential_gradient_matches_force_off_nodes(method):
+    model = gp.TriaxialGaussianPotential(
+        m_tot=Quantity(1e10, "Msun"), r_s=Quantity(1., "kpc"),
+        q1=.8, q2=.6, integration_order=100, units="galactic")
+    grid = build_grid(model, GridSpec((12, 7, 7), .1, 10, interpolation=method))
+    value = lambda q: grid.interpolated_potential(
+        Quantity(q, "kpc"), Quantity(0., "Myr")).ustrip("kpc2/Myr2")
+    point = jnp.array([.43, -.32, .71])
+    np.testing.assert_allclose(-jax.grad(value)(point), acceleration(grid, point),
+                               rtol=3e-12, atol=1e-14)

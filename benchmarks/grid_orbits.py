@@ -53,7 +53,8 @@ def load_grid(potential, setup: dict, directory: Path) -> tuple[ForceGrid, float
         table = data["log_coefficients"]
     expected = dict(setup["spec"])
     expected["shape"] = tuple(expected["shape"])
-    channels = (2, 2, 2) if spec.interpolation == "hermite" else (3,)
+    channels = {"hermite": (2, 2, 2), "quintic": (3, 3, 3)}.get(
+        spec.interpolation, (3,))
     if declaration != expected or table.shape != (*spec.shape, *channels):
         raise RuntimeError("Grid geometry does not match its recorded specification.")
     if table.dtype != np.float64 or not np.all(np.isfinite(table)):
