@@ -1,5 +1,8 @@
 # Small-library interpolation comparison
 
+For cluster continuation, start with the
+[GPU handoff](../../aidocs/GPU_INTERPOLATION_HANDOFF.md).
+
 The experiment uses a strongly triaxial six-Gaussian stellar potential,
 NFW halo and Plummer central mass. The YAML files in `input/` contain TNT
 potential settings plus benchmark-specific MGE, sampling and integration fields. The current CPU baseline is
