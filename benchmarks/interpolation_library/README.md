@@ -169,15 +169,24 @@ to the next experiment; neither float32 performance nor accuracy has been measur
 Use fresh work directories across checkouts: saved resume provenance includes
 source paths and exact source/config hashes.
 
-The two completed round-two work directories remain preserved locally and
-ignored by Git (about 1.4 GiB combined). Retain or back them up before removing
-local files. To recompute every notebook plot on the cluster, transfer both
-`work/round2-20261111/` and `work/round2-quintic-20261117/`. For a smaller GPU
-validation transfer, the committed launch archive plus the 24
-`round2-20261111/orbit-*-direct-1e-11.npz` reference trajectories are sufficient
-for trajectory-reference comparisons; full notebook refresh still needs all
-480 trajectories. The embedded notebook outputs and portable JSON summaries
-can be inspected without those raw arrays.
+The agreed next comparison runs **fresh CPU and GPU benchmarks on the cluster**
+for direct, cubic-force and quintic-potential methods, including float64 and
+float32. Use the same code/software environment, record CPU allocations and
+thread settings, and use the same node where scheduling permits. Generate fresh
+float64 direct-force `1e-11` references on the cluster. The laptop results provide
+historical scientific cross-checks, not cluster performance baselines.
 
-Earlier suite, pilot, smoke and probe work directories are retained as historical
-artifacts. They are not needed for the current round-two GPU comparison.
+No laptop trajectory transfer is required: the checkout contains the exact
+launches and configs; build grids and generate reference trajectories afresh.
+Keep the shared launches/reference periods across all comparisons. Precision
+selection and new cluster analysis still need implementing; the current notebook
+points at the historical laptop run directories. Keep fresh cluster outputs and
+analysis separate from the historical records.
+
+The two completed laptop round-two work directories remain preserved locally
+and ignored by Git (about 1.4 GiB combined). Transfer both
+`work/round2-20261111/` and `work/round2-quintic-20261117/` only if you want to
+recompute the historical notebook on its original raw data. The embedded notebook
+outputs and portable JSON summaries can be inspected without those raw arrays.
+Earlier suite, pilot, smoke and probe work directories are also retained as
+historical artifacts and are unnecessary for the fresh cluster comparison.

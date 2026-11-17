@@ -3,9 +3,14 @@
 ## Objective and agreed scope
 
 Compare **direct forces, cubic force interpolation, and quintic potential
-interpolation on the cluster GPUs**, in both float64 and float32. Linear force
+interpolation on cluster CPUs and GPUs**, in both float64 and float32. Linear force
 and cubic Hermite potential interpolation remain optional diagnostic controls.
 The user explicitly wants float32 investigated, not only float64.
+
+Run the CPU comparisons fresh on the cluster too, using the same benchmark code
+and software environment as the GPU runs. The laptop results below are historical
+scientific cross-checks, not the performance baseline for the cluster comparison.
+No laptop trajectory transfer is required for this plan.
 
 Keep the existing scientific implementation and boundary conditions for this
 comparison. Defer new asymptotic boundary conditions, broad refactoring and
@@ -65,7 +70,7 @@ guarantee a globally smooth Hamiltonian across that boundary.
 Grid memory: linear/cubic force 2.109 MiB; cubic Hermite 5.625 MiB; quintic
 18.984 MiB. The user considers this reasonable relative to orbit-library storage.
 
-## Fixed reference experiment and findings
+## Historical laptop experiment and findings
 
 Strongly triaxial six-Gaussian stellar potential + NFW halo + softened Plummer
 central mass; Gaussian quadrature order 800. Use the committed round-two configs.
@@ -102,13 +107,19 @@ them to the reference mean-square velocity. Preserve that distinction.
 2. Preserve the locked dependency baseline where compatible. Record any GPU
    backend/package changes, exact source/config hashes, hardware and devices.
    Verify actual accelerator availability; do not silently time a CPU fallback.
-3. Reproduce a small CPU float64 case, then the same GPU float64 case using the
-   committed launch archive, before expanding to the full comparison.
+3. Start with a small fresh cluster CPU float64 case, then the same GPU float64
+   case using the committed launch archive, before expanding. Run fresh cluster
+   CPU comparisons for all three candidate methods. Generate and retain the 24
+   direct-force float64 `1e-11` reference trajectories on the cluster; use them
+   for both CPU/GPU trajectory comparisons and reference energy normalization.
+   These remain numerical references, not exact solutions. Record CPU allocation,
+   thread counts, affinity and node model. Where scheduling permits, use the same
+   GPU node and software environment for CPU/GPU runs.
 4. Add explicit precision selection for the benchmark. Audit the unconditional
    x64 setting, numerics config, constants, input arrays and table/evaluator
    dtypes. Establish precision before importing Galax, which may create constants
    at import. Use separate processes for precision configurations.
-5. Investigate GPU float32 for all three candidate methods. Measure its attainable
+5. Investigate CPU and GPU float32 for all three candidate methods. Measure its attainable
    accuracy floor with suitable tolerances; do not blindly reuse `1e-11`.
    Use the shared float64 launches/reference clocks initially to isolate force
    and integration precision from launch-generation changes. This does not
@@ -133,16 +144,20 @@ The committed `input/launches-round2.npz` under the interpolation-library folder
 contains the exact launches, velocities, reference periods and sampler labels.
 Its checksum and units are in `input/launches-round2.json`.
 
-All portable records/results and embedded notebook outputs are in Git. Full
-trajectories, grids and logs are ignored and **will not arrive with a clone**:
+All portable laptop records/results and embedded notebook outputs are in Git.
+For the agreed fresh cluster CPU/GPU comparison, **the checkout is sufficient**:
+use the committed launches and regenerate grids and reference trajectories on
+the cluster. Full laptop trajectories, grids and logs are ignored and will not
+arrive with a clone; none are required for this plan.
 
-- Minimum existing trajectory references: the 24 files
-  `benchmarks/interpolation_library/work/round2-20261111/orbit-*-direct-1e-11.npz`.
-- Full notebook refresh: both `work/round2-20261111/` and
-  `work/round2-quintic-20261117/` (about 1.4 GiB combined).
-- The remaining old work directories are historical and unnecessary for this
-  GPU comparison. All raw data were retained locally; no archive was deleted.
+Optional historical reconstruction only: to rerun the laptop notebook on its
+original data, transfer both `work/round2-20261111/` and
+`work/round2-quintic-20261117/` (about 1.4 GiB combined). The notebook currently
+points at those historical directories; configure a separate cluster analysis
+for the fresh cluster run directories and references. Preserve the laptop
+notebook and results as provenance. All raw laptop data remain retained locally.
 
 Use fresh run directories on the cluster. Existing resume provenance contains
 source paths and hashes; changing checkout paths or source/config invalidates it.
-Do not overwrite the CPU reference results or reuse their records as new GPU runs.
+Do not overwrite historical laptop results or reuse their records as new cluster
+measurements. Keep fresh CPU/GPU and precision run directories distinct.
