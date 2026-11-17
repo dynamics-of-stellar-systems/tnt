@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "status": "pilot_running",
+  "potential": {
+    "geometry": "strong_triaxial",
+    "native_configuration": "input/config.yaml",
+    "gaussian_quadrature_order": 800
+  },
+  "initial_conditions": {
+    "samplers": [
+      "XZGridFromBoundary",
+      "StationaryGrid"
+    ],
+    "nE": 2,
+    "nI2": 4,
+    "nI3": 2,
+    "n_dither": 1,
+    "launches_per_sampler": 16,
+    "total_launches": 32,
+    "reference_periods": "compute with direct-force XZGridFromBoundary; share by energy shell",
+    "reuse_identical_launches_across_evaluators": true,
+    "energy_radius_bounds_kpc": [
+      0.01,
+      100.0
+    ]
+  },
+  "force_grid": {
+    "shape": [
+      160,
+      24,
+      24
+    ],
+    "r_min_kpc": 1e-05,
+    "r_max_kpc": 200.0,
+    "methods": [
+      "linear",
+      "cubic",
+      "hermite"
+    ],
+    "boundary_policy": "reject; no fallback or extrapolation"
+  },
+  "integration": {
+    "reference": "direct",
+    "solver": "Dopri8",
+    "float64": true,
+    "orbital_periods": 200,
+    "n_stored_timesteps": 50000,
+    "max_steps": 1000000,
+    "seed": 20261111,
+    "tolerances": [
+      1e-05,
+      1e-07,
+      1e-09,
+      1e-11
+    ],
+    "total_matrix_solves": 512
+  },
+  "measurements": [
+    "nodal and off-node force errors",
+    "position and velocity error versus time",
+    "direct and Hermite Hamiltonian energy drift",
+    "intrinsic histograms and moments",
+    "accepted and rejected steps",
+    "grid construction, compilation and warm solve timings"
+  ],
+  "provenance": {
+    "tnt_setup_commit": "613bb340dd90b41d5e228f5ea4e40680d5095196",
+    "physical_model_source": "benchmarks/results/grid_orbits.json",
+    "physical_model_source_sha256": "843cea7e5828429a847fd9ff5f58f029295ed1809bbdb6deb346718185eb129f",
+    "comparison_commit": "0df175616073749a5b1453acb326733a62d4dbbb",
+    "note": "Previous comparison is provenance only; execution uses native TNT configuration."
+  }
+}

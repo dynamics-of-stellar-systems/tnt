@@ -1,0 +1,19 @@
+{
+  "archive": "launches-round2.npz",
+  "sha256": "7508985f7f582f76f4452046226600985f1d87f7a48f2f2349d185c040fd21ba",
+  "source_directory": "work/round2-20261111",
+  "source_config_sha256": "0585b0e74d1142608f2c7e9e1bec32bcc4ee48c32f39eeea35872e00f58b41b6",
+  "count": 24,
+  "units": {
+    "positions": "kpc",
+    "velocities": "kpc/Myr",
+    "periods": "Myr"
+  },
+  "fields": [
+    "positions",
+    "velocities",
+    "periods",
+    "sampler"
+  ],
+  "note": "Byte-identical to both completed round-two launch archives. Seed controls integration sampling; launches are generated deterministically by the configured samplers."
+}

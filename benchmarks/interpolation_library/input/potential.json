@@ -1,0 +1,276 @@
+{
+  "type": "CompositePotential",
+  "units": {
+    "length": "kpc",
+    "time": "Myr",
+    "mass": "solMass",
+    "angle": "rad"
+  },
+  "components": {
+    "bh": {
+      "type": "PlummerPotential",
+      "parameters": {
+        "m_tot": {
+          "value": 100000.0,
+          "unit": "solMass"
+        },
+        "r_s": {
+          "value": 0.0001937315469713706,
+          "unit": "kpc"
+        }
+      },
+      "constants": {
+        "G": {
+          "value": 4.498502151469553e-12,
+          "unit": "kpc3 / (solMass Myr2)"
+        }
+      },
+      "units": {
+        "length": "kpc",
+        "time": "Myr",
+        "mass": "solMass",
+        "angle": "rad"
+      }
+    },
+    "dh": {
+      "type": "NFWPotential",
+      "parameters": {
+        "m": {
+          "value": 137474015357.59674,
+          "unit": "solMass"
+        },
+        "r_s": {
+          "value": 0.19247973166940296,
+          "unit": "kpc"
+        }
+      },
+      "constants": {
+        "G": {
+          "value": 4.498502151469553e-12,
+          "unit": "kpc3 / (solMass Myr2)"
+        }
+      },
+      "units": {
+        "length": "kpc",
+        "time": "Myr",
+        "mass": "solMass",
+        "angle": "rad"
+      }
+    },
+    "stars": {
+      "type": "CompositePotential",
+      "units": {
+        "length": "kpc",
+        "time": "Myr",
+        "mass": "solMass",
+        "angle": "rad"
+      },
+      "components": {
+        "0": {
+          "type": "TriaxialGaussianPotential",
+          "parameters": {
+            "m_tot": {
+              "value": 6914368632.378526,
+              "unit": "solMass"
+            },
+            "r_s": {
+              "value": 0.09573710672181976,
+              "unit": "kpc"
+            },
+            "q1": {
+              "value": 0.9245575134105883,
+              "unit": ""
+            },
+            "q2": {
+              "value": 0.8934895158027156,
+              "unit": ""
+            }
+          },
+          "constants": {
+            "G": {
+              "value": 6.6743e-11,
+              "unit": "m3 / (kg s2)"
+            }
+          },
+          "units": {
+            "length": "kpc",
+            "time": "Myr",
+            "mass": "solMass",
+            "angle": "rad"
+          },
+          "integration_order": 800
+        },
+        "1": {
+          "type": "TriaxialGaussianPotential",
+          "parameters": {
+            "m_tot": {
+              "value": 9561332395.643183,
+              "unit": "solMass"
+            },
+            "r_s": {
+              "value": 0.3958128951076885,
+              "unit": "kpc"
+            },
+            "q1": {
+              "value": 0.851926194408563,
+              "unit": ""
+            },
+            "q2": {
+              "value": 0.7868294607969389,
+              "unit": ""
+            }
+          },
+          "constants": {
+            "G": {
+              "value": 6.6743e-11,
+              "unit": "m3 / (kg s2)"
+            }
+          },
+          "units": {
+            "length": "kpc",
+            "time": "Myr",
+            "mass": "solMass",
+            "angle": "rad"
+          },
+          "integration_order": 800
+        },
+        "2": {
+          "type": "TriaxialGaussianPotential",
+          "parameters": {
+            "m_tot": {
+              "value": 3214595868.7570515,
+              "unit": "solMass"
+            },
+            "r_s": {
+              "value": 0.473311367945987,
+              "unit": "kpc"
+            },
+            "q1": {
+              "value": 0.9999267559331696,
+              "unit": ""
+            },
+            "q2": {
+              "value": 0.9998982611056897,
+              "unit": ""
+            }
+          },
+          "constants": {
+            "G": {
+              "value": 6.6743e-11,
+              "unit": "m3 / (kg s2)"
+            }
+          },
+          "units": {
+            "length": "kpc",
+            "time": "Myr",
+            "mass": "solMass",
+            "angle": "rad"
+          },
+          "integration_order": 800
+        },
+        "3": {
+          "type": "TriaxialGaussianPotential",
+          "parameters": {
+            "m_tot": {
+              "value": 17883845279.798378,
+              "unit": "solMass"
+            },
+            "r_s": {
+              "value": 1.2652903965364428,
+              "unit": "kpc"
+            },
+            "q1": {
+              "value": 0.6999999991625695,
+              "unit": ""
+            },
+            "q2": {
+              "value": 0.5400000000693889,
+              "unit": ""
+            }
+          },
+          "constants": {
+            "G": {
+              "value": 6.6743e-11,
+              "unit": "m3 / (kg s2)"
+            }
+          },
+          "units": {
+            "length": "kpc",
+            "time": "Myr",
+            "mass": "solMass",
+            "angle": "rad"
+          },
+          "integration_order": 800
+        },
+        "4": {
+          "type": "TriaxialGaussianPotential",
+          "parameters": {
+            "m_tot": {
+              "value": 5266848827.442899,
+              "unit": "solMass"
+            },
+            "r_s": {
+              "value": 3.3738117396189358,
+              "unit": "kpc"
+            },
+            "q1": {
+              "value": 0.9999267559331696,
+              "unit": ""
+            },
+            "q2": {
+              "value": 0.9998982611056897,
+              "unit": ""
+            }
+          },
+          "constants": {
+            "G": {
+              "value": 6.6743e-11,
+              "unit": "m3 / (kg s2)"
+            }
+          },
+          "units": {
+            "length": "kpc",
+            "time": "Myr",
+            "mass": "solMass",
+            "angle": "rad"
+          },
+          "integration_order": 800
+        },
+        "5": {
+          "type": "TriaxialGaussianPotential",
+          "parameters": {
+            "m_tot": {
+              "value": 38402767191.43326,
+              "unit": "solMass"
+            },
+            "r_s": {
+              "value": 4.2328977069252405,
+              "unit": "kpc"
+            },
+            "q1": {
+              "value": 0.6999999991625695,
+              "unit": ""
+            },
+            "q2": {
+              "value": 0.5400000000693889,
+              "unit": ""
+            }
+          },
+          "constants": {
+            "G": {
+              "value": 6.6743e-11,
+              "unit": "m3 / (kg s2)"
+            }
+          },
+          "units": {
+            "length": "kpc",
+            "time": "Myr",
+            "mass": "solMass",
+            "angle": "rad"
+          },
+          "integration_order": 800
+        }
+      }
+    }
+  }
+}

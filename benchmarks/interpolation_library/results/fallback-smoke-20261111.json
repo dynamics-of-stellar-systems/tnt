@@ -1,0 +1,116 @@
+{
+  "records": [
+    {
+      "index": 16,
+      "sampler": "StationaryGrid",
+      "method": "linear",
+      "tolerance": 1e-05,
+      "successful": true,
+      "compilation_seconds": 0.9421457499265671,
+      "integration_seconds": 0.5274812499992549,
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 0.00032309841490826824,
+        "final_energy_error": 5.6033997275630224e-05,
+        "num_steps": 9417,
+        "num_accepted_steps": 6762,
+        "num_rejected_steps": 2655
+      },
+      "saved_samples_outside_grid": 0
+    },
+    {
+      "index": 24,
+      "sampler": "StationaryGrid",
+      "method": "linear",
+      "tolerance": 1e-05,
+      "successful": true,
+      "compilation_seconds": 0.0007545410189777613,
+      "integration_seconds": 0.7609281670302153,
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 0.07854008774306478,
+        "final_energy_error": 0.07854008774306478,
+        "num_steps": 12998,
+        "num_accepted_steps": 8654,
+        "num_rejected_steps": 4344
+      },
+      "saved_samples_outside_grid": 0
+    },
+    {
+      "index": 16,
+      "sampler": "StationaryGrid",
+      "method": "cubic",
+      "tolerance": 1e-05,
+      "successful": true,
+      "compilation_seconds": 0.7627119170501828,
+      "integration_seconds": 0.8321836669929326,
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 0.0001836321203657642,
+        "final_energy_error": 0.00016263626605950217,
+        "num_steps": 8045,
+        "num_accepted_steps": 4973,
+        "num_rejected_steps": 3072
+      },
+      "saved_samples_outside_grid": 0
+    },
+    {
+      "index": 24,
+      "sampler": "StationaryGrid",
+      "method": "cubic",
+      "tolerance": 1e-05,
+      "successful": true,
+      "compilation_seconds": 0.0006882089655846357,
+      "integration_seconds": 1.360369041096419,
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 0.0003731373718891107,
+        "final_energy_error": 6.638740460830611e-05,
+        "num_steps": 15036,
+        "num_accepted_steps": 9654,
+        "num_rejected_steps": 5382
+      },
+      "saved_samples_outside_grid": 0
+    },
+    {
+      "index": 16,
+      "sampler": "StationaryGrid",
+      "method": "hermite",
+      "tolerance": 1e-05,
+      "successful": true,
+      "compilation_seconds": 0.9222218338400126,
+      "integration_seconds": 0.6737178340554237,
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 0.00032155254868431707,
+        "final_energy_error": 0.00030541761077788795,
+        "num_steps": 8894,
+        "num_accepted_steps": 6188,
+        "num_rejected_steps": 2706
+      },
+      "saved_samples_outside_grid": 0
+    },
+    {
+      "index": 24,
+      "sampler": "StationaryGrid",
+      "method": "hermite",
+      "tolerance": 1e-05,
+      "successful": true,
+      "compilation_seconds": 0.0009050001390278339,
+      "integration_seconds": 0.9343572501093149,
+      "diagnostics": {
+        "successful": true,
+        "max_energy_error": 0.0038585942283509943,
+        "final_energy_error": 0.0035323174767631993,
+        "num_steps": 13386,
+        "num_accepted_steps": 9261,
+        "num_rejected_steps": 4125
+      },
+      "saved_samples_outside_grid": 0
+    }
+  ],
+  "config_sha256": "3c85de6c56da7f5c73a89ad2613a2683b5d9ca8e52b7f7877927938199738d3c",
+  "force_source_sha256": "beea76e63083d7ecfdc7f6a2745878294406c5554099dcb5d75303c7194fdfe0",
+  "description": "Targeted regression checks only: two formerly failing stationary starts, three interpolation methods, tolerance 1e-5. Not the full matrix.",
+  "config": "input/config-round2.yaml"
+}

@@ -13,3 +13,6 @@ docs/build/
 .coverage
 
 .ipynb_checkpoints/
+
+# Regenerated documentation figures.
+docs/source/_generated/

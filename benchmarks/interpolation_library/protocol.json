@@ -1,0 +1,126 @@
+{
+  "schema_version": 2,
+  "status": "completed_cpu_baseline",
+  "configuration": "input/config-round2.yaml",
+  "quintic_configuration": "input/config-round2-quintic.yaml",
+  "launch_archive": "input/launches-round2.npz",
+  "historical_protocol": "protocol-round1.json",
+  "methods": [
+    "direct",
+    "linear",
+    "cubic",
+    "hermite",
+    "quintic"
+  ],
+  "potential": {
+    "bh": {
+      "type": "PlummerPotential",
+      "parameters": {
+        "m_tot": {
+          "value": 100000.0,
+          "unit": "solMass",
+          "fixed": true
+        },
+        "r_s": {
+          "value": 0.0001937315469713706,
+          "unit": "kpc",
+          "fixed": true
+        }
+      }
+    },
+    "dh": {
+      "type": "NFWPotential",
+      "parameters": {
+        "m": {
+          "value": 137474015357.59674,
+          "unit": "solMass",
+          "fixed": true
+        },
+        "r_s": {
+          "value": 0.19247973166940296,
+          "unit": "kpc",
+          "fixed": true
+        }
+      }
+    },
+    "stars": {
+      "type": "TriaxialLightMGEPotential",
+      "mge": "light",
+      "parameters": {
+        "theta": {
+          "value": 75.821261489,
+          "unit": "deg",
+          "fixed": true
+        },
+        "phi": {
+          "value": 88.839550282,
+          "unit": "deg",
+          "fixed": true
+        },
+        "psi": {
+          "value": 90.208143518,
+          "unit": "deg",
+          "fixed": true
+        },
+        "ml": {
+          "value": 5.0,
+          "unit": "Msun/Lsun",
+          "fixed": true
+        }
+      }
+    }
+  },
+  "numerics_settings": {
+    "jax_enable_x64": true,
+    "gaussian_potential_quad_order": 800
+  },
+  "initial_conditions": {
+    "nE": 3,
+    "nI2": 4,
+    "nI3": 1,
+    "rmin": {
+      "value": 1.0,
+      "unit": "kpc"
+    },
+    "rmax": {
+      "value": 100.0,
+      "unit": "kpc"
+    }
+  },
+  "launches": 24,
+  "grid": {
+    "shape": [
+      160,
+      24,
+      24
+    ],
+    "r_min": 1e-07,
+    "r_max": 200.0,
+    "outside_policy": "direct"
+  },
+  "integration": {
+    "orbital_periods": 200,
+    "n_stored_timesteps": 50000,
+    "max_steps": 1000000
+  },
+  "tolerances": [
+    1e-05,
+    1e-07,
+    1e-09,
+    1e-11
+  ],
+  "seed": 20261111,
+  "precision": "float64",
+  "total_solves": 480,
+  "successful_solves": 480,
+  "results": [
+    "results/round2-baseline-20261111.json",
+    "results/quintic-round2-20261117.json"
+  ],
+  "analysis": "analysis-round2.ipynb",
+  "notes": [
+    "The 384 original and 96 quintic solves were performed separately; timing measurements are not controlled repeated comparisons.",
+    "The historical first-round protocol retains its original planning-time status.",
+    "Float32 and GPU execution have not yet been validated."
+  ]
+}

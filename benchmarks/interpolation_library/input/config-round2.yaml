@@ -1,0 +1,97 @@
+potential:
+  bh:
+    type: PlummerPotential
+    parameters:
+      m_tot:
+        value: 100000.0
+        unit: solMass
+        fixed: true
+      r_s:
+        value: 0.0001937315469713706
+        unit: kpc
+        fixed: true
+  dh:
+    type: NFWPotential
+    parameters:
+      m:
+        value: 137474015357.59674
+        unit: solMass
+        fixed: true
+      r_s:
+        value: 0.19247973166940296
+        unit: kpc
+        fixed: true
+  stars:
+    type: TriaxialLightMGEPotential
+    mge: light
+    parameters:
+      theta:
+        value: 75.821261489
+        unit: deg
+        fixed: true
+      phi:
+        value: 88.839550282
+        unit: deg
+        fixed: true
+      psi:
+        value: 90.208143518
+        unit: deg
+        fixed: true
+      ml:
+        value: 5.0
+        unit: Msun/Lsun
+        fixed: true
+mge:
+  I_Lsun_pc2:
+  - 26819.14
+  - 2456.39
+  - 456.8
+  - 645.49
+  - 14.73
+  - 123.85
+  sigma_arcsec:
+  - 0.49416
+  - 2.04299
+  - 2.44313
+  - 6.5305
+  - 17.41488
+  - 21.84711
+  q:
+  - 0.89541
+  - 0.79093
+  - 0.9999
+  - 0.55097
+  - 0.9999
+  - 0.55097
+  distance_Mpc: 39.96
+numerics_settings:
+  jax_enable_x64: true
+  gaussian_potential_quad_order: 800
+initial_conditions:
+  nE: 3
+  nI2: 4
+  nI3: 1
+  rmin:
+    value: 1.0
+    unit: kpc
+  rmax:
+    value: 100.0
+    unit: kpc
+grid:
+  shape:
+  - 160
+  - 24
+  - 24
+  r_min: 1.0e-07
+  r_max: 200.0
+  outside_policy: direct
+integration:
+  orbital_periods: 200
+  n_stored_timesteps: 50000
+  max_steps: 1000000
+tolerances:
+- 1.0e-05
+- 1.0e-07
+- 1.0e-09
+- 1.0e-11
+seed: 20261111
